@@ -7,7 +7,10 @@
 
 ### Andrew
 
-- Read Paper (SimCSE)
+- Read Paper (SimCSE), SBERT
+- Create notebook to generate embeddings. 
+    - Set models, set documents, save embeddings
+- Create notebook to find top k papers
 
 ### Micheal
 
