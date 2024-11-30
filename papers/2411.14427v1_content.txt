@@ -1,0 +1,139 @@
+SECTION: Transformer-based Heuristic for Advanced Air Mobility Planning
+
+Safety is extremely important for urban flights of autonomous Unmanned Aerial Vehicles (UAVs). Risk-aware path planning is one of the most effective methods to guarantee the safety of UAVs. This type of planning can be represented as a Constrained Shortest Path (CSP) problem, which seeks to find the shortest route that meets a predefined safety constraint. Solving CSP problems is NP-hard, presenting significant computational challenges. Although traditional methods can accurately solve CSP problems, they tend to be very slow. Previously, we introduced an additional safety dimension to the traditional A* algorithm, known as ASD A*, to effectively handle Constrained Shortest Path (CSP) problems. Then, we developed a custom learning-based heuristic using transformer-based neural networks, which significantly reduced computational load and enhanced the performance of the ASD A* algorithm. In this paper, we expand our dataset to include more risk maps and tasks, improve the proposed model, and increase its performance. We also introduce a new heuristic strategy and a novel neural network, which enhance the overall effectiveness of our approach.
+
+SECTION: IIntroduction
+
+Path planning is an important task in many research areas, including aerospace. In recent years, extensive scholarly research has been dedicated to optimizing flight path planning for unmanned aerial vehicles (UAVs)[1,2]. This research focuses on identifying optimal flight trajectories characterized by minimized operational costs and avoidance of high-risk zones. This issue can be formulated as a Constrained Shortest Path (CSP) problem. According to the previous research[3], the CSP problem is NP-hard even for acyclic networks.
+
+Currently, the CSP problem can be addressed using various methods. One of the earliest approaches involves dynamic programming, specifically node labeling[4]. Numerous dynamic programming-based methods have been proposed[5,6,7,8,9]. Another significant approach is Lagrangian Relaxation, which relaxes the weight constraint[10]. To close the duality gap resulting from Lagrangian relaxation, the Kth-shortest path method is employed[11,12]. Despite acceleration algorithms, these methods remain computationally expensive, often requiring days to solve complex problems. To accelerate computational processes, heuristic approaches and approximate algorithms have been developed[13]. Heuristic methods prioritize speed in practical scenarios but can not guarantee solution quality.-approximation algorithms ensure solutions withintimes the optimal cost but work slowly due to rigorous quality assurance[14]. RRT*[15]can find the optimal path while handling constraints. However, RRT* requires extensive sampling and frequent rewiring, making it computationally expensive.
+
+Graph searching is another popular method for solving the path planning of drones. In fully visible airspace, searching for the shortest path from a start node to a goal node is easy. Nevertheless, path planning of drones considers not only the distance of the path but also many other features such as efficiency, schedule, and most importantly safety. In real airspace, we need a large number of nodes and edges to model airspace. Therefore, a faster solver is urgently needed. D*[16]and D* based method[17]were proposed to quickly find a suboptimal path and then continue searching for the optimal path. Although these methods are useful in practice, D* does not find the optimal path more quickly. Jump point search[18]can accelerate the A* algorithm by skipping intermediate nodes that do not need to be explicitly considered. However, in the airspace, it is not safe to skip any node.
+
+Deep learning has emerged as a prominent research area driven by stronger computing power and the rising demand for artificial intelligence.
+One recent example of the success of deep learning is the Generative Pre-trained Transformer (GPT), which generates high-quality text, images, and even music. GPT proposed by OpenAI is based on the Transformer architecture[19]. The Transformer architecture is designed to handle sequences of data, such as text or speech, and is well suited for natural language processing tasks. The latest research[20,21,22,23]also has proven the effectiveness of transformers in addressing computer vision-related problems. There are studies[24,25]utilize transformers directly to solve planning problems, yet these methods cannot guarantee to find valid solutions.
+
+In this paper, we proposed transformer-based neural networks that can generate a good heuristic for the additional safety dimension A* (ASD A*)[26]algorithm. With this neural network heuristic generator, the ASD A* algorithm can find the shortest path while exploring as less nodes as possible to accelerate the Advanced Air Mobility (AAM) planning.
+
+The main contributions are summarized as follows:
+
+As shown in Fig.1, we created two AAM planning datasets. One data set, called Riskmap2.0, includes the heuristics for all available grids given the start, destination, and risk map. This dataset basically contains the solution for the task.
+The other one, called Riskmap-state, records the heuristics for the current nodes given the current node, the destination, and the risk map. Riskmap-state focuses on the heuristic value of the current node instead of the task. It will be easier to learn.
+
+We introduce two transformer-based neural networks designed to generate heuristics for ASD A* to solve the AAM planning problem for the two datasets. The first neural network, trained on the Riskmap 2.0 dataset, generates heuristics for all grids in a risk map given the start position, destination, and risk map. The second neural network, trained on the Riskmap-State dataset, generates a heuristic only for a chosen (or current) node.
+
+We conducted experiments on the heuristics generated by the proposed neural networks. The heuristics produced by the Riskmap 2.0 neural network outperformed the baseline heuristics on all 16*16, 24*24, and 32*32 maps. Additionally, experimental results indicate that the Riskmap-State neural network can generate heuristics close to expert-level heuristics, significantly accelerating the ASD A* algorithm. Furthermore, both neural networks demonstrate great potential and adaptability for risk maps with different sizes.
+
+The rest of this paper is organized as follows. SectionIIintroduces the AAM planning problem and the special A* algorithm can solve the problem. SectionIIIdescribes the dataset generation process and specifies the attributes included in each data entry. SectionIVintroduces the two proposed neural network architectures in detail. SectionVshows
+the experiment results. Finally, SectionVIsummarizes our conclusions and proposes the future development plan.
+
+SECTION: IIProblem Statement
+
+In this paper, we want to generate heuristics for ASD A*[26]to solve the AAM planning problem. The AAM planning problem we are trying to solve will be a CSP problem, introduced in our previous work[26]. The ultimate goal is to find the risk-constrained shortest path on a risk map of airspace.
+The CSP is formulated as follows:
+
+whereis the distance cost of moving from gridto grid,is a binary variable determining if the path passes,if the edge is being traversed, otherwise.
+The objective (1) is to minimize the cost along the path subject to three constraints. The first constraint (2) enforces the number of edges leading towards a grid is equal to the number of edges that leave that grid.
+The second constraint (3) is a safety constraint where the accumulated safety (assuming each step is independent) in the path must be greater than the minimum safety threshold. The third constraint (4) eliminates the sub-tour by limiting the maximum number of edges in the path to the total nodes.is a subset ofthat includes all nodes except the starting node.
+
+We assume the graph is an undirected graph, which means if the agent can move from grid A to grid B, then the agent can move from grid B to grid A. At the same time, the safety thresholdis always 0.9. We also assume the agent can only move straight up (y - 1), down (y + 1), left (x - 1), and right (x + 1) for each step. The cost of moving from one grid to an adjacent one is considered to be uniform.
+
+Fig2shows an example of the ADS A* solving the AAM problem.
+The ASD A* algorithm starts from the node (0, 0, 1), where the first two dimensions are the position and the third is the safety level. In the first step, it finds two neighbor nodes (0, 1, 0.9) and (1, 0, 0.95). By exploring these two nodes, the algorithm can find two paths. However, because the red path crosses the safety boundary, it is not valid. The only feasible path is the blue path in the figure.
+
+SECTION: IIITraining Dataset
+
+Each dataset entry includes a risk map, a destination (task), and the corresponding expert heuristic.
+
+SECTION: III-ARisk map and destination
+
+We create random risk maps of varying sizes. For the Riskmap 2.0 dataset, the sizes include 16*16, 24*24, and 32*32. For the Riskmap-State dataset, the sizes include 16*16 and 64*64. Each random map contains an equal number of low-risk, high-risk, and safe grids. Low-risk grids have a risk score ranging from 0 to 0.1, resulting in the agent accumulating a risk penalty when passing through them. High-risk grids have a risk score of 1 and should be avoided by the agent. Safe grids have a risk score of 0, allowing the agent to pass through without any risk penalty. We then randomly select a safe grid or a low-risk grid as the destination.
+
+SECTION: III-BExpert heuristic
+
+We introduced two heuristic-generating strategies. The first strategy generates a heuristic for each grid given the start position, destination, and risk map. We use this strategy to create the Riskmap2.0 dataset. The second strategy generates a heuristic for the current node based on the current node, destination, and risk map. We use this strategy to create the Riskmap-state dataset.
+As mentioned in SecII, all the heuristics are for the safety thresholdequal to 0.9. The detailed process for creating the dataset is as follows:
+
+For each risk map and destination, we pick a random start position. Given the start position, destination, and risk map, we can use a traditional solver to find the shortest path. For all grids not on the shortest path, the expert heuristic will be the Manhattan distance from the grid to the destination plus a penalty. Conversely, the heuristic for the grids on the shortest path will be equal to the Manhattan distance. This approach leads to nodes on the shortest path having a lower heuristic while maintaining consistency. If ASD A* uses this heuristic for the corresponding grid to add a node during the search process, it will only explore the nodes on the shortest path, allowing it to find the shortest path very quickly. We have created more than 128,000 data entries for each map size.
+
+For each risk map with a fixed destination, we randomly select a grid and assign it a random safety level between 0.9 and 1 to construct a current node during the A* search.
+Then, we use a traditional solver to find the shortest path between the current node and the destination. Consequently, we use the searched shortest distance between the current node and the destination as its heuristic for the current node. Since this heuristic is exactly equal to the actual distance, the ASD A* algorithm can find the shortest path without exploring any nodes that are not on the shortest path. We have created more than 128,000 data entries for each map size.
+
+SECTION: IVNeural networks
+
+We proposed two transform-based heuristic-generating neural networks as shown in Fig.3. The first is for the Riskmap2.0 dataset, which is an upgraded version of our previous work[26]. This neural network can take the risk map, the start position, and the destination as inputs and generate the heuristic for each grid in the risk map. In contrast, the second one, which we designed for the Riskmap-state dataset, can take the risk map, a node of the ASD A* process, and the destination as inputs and generate the heuristic of the input node. When training Riskmap2.0, we train the model with datasets of different map sizes separately. In contrast, we train Riskmap-state with datasets of different map sizes together.
+
+SECTION: IV-AOverall architecture
+
+The overall architecture of Riskmap 2.0 is shown in the upper part of Fig.3. We tokenized the starting position and destination based on the map size. For example, on a 16*16 map, (0, 0) is tokenized to integer 0, and (1, 1) is tokenized to integer 17. In addition, we flatten the risk map into a 1D sequence. For instance, on a 24*24 map, the risk of the (0, 0) grid becomes the 0th element in the flattened risk map sequence, and the risk of the (1, 1) grid becomes the 25th element in the flattened risk map sequence.
+Then, we embed the tokenized start and destination using an embedding table. The embedding table maps the tokenized start and destination to their corresponding dense vector representations. On the other hand, we use a single-layer linear layer to embed the risk map sequence into the same dimension. Since we train the model on datasets with different map sizes separately, we removed the position embedding because the position of each sequence in the risk map is fixed. We duplicate the embeddings of the start and destination to match the length of the risk map sequence. Then, the feature of each grid in the risk map sequence is combined with the embeddings of the start and destination. The combined item will then be sent to the transformer. The output layer, as shown in Fig.4will decrease the dimension of the transformed item. Each value of each feature for each grid represents the probability that the heuristic of this grid is the corresponding feature. Finally, the Argmax function can choose the heuristic with the highest probability for all the grids. The advantage of this classification-style output is that the generated heuristic can be bound in a certain set of value.
+
+The overall architecture of Riskmap-State is shown in the lower part of Fig.3. Similarly to Riskmap 2.0, we flatten the risk map into a 1D sequence and embed it using a single linear layer. The size of the risk map can vary, so we pad the risk map with unsafe grids to ensure uniform tensor dimensions for efficient batch processing.
+We also combine the embedded risk map with sinusoidal positional embeddings[19], allowing the transformer to understand the position of each grid. The current node, originally a 3D vector, and the destination, originally a 2D vector, are also embedded into the embedding dimension using a single linear layer. These are combined to form the task embedding. Then, we concatenate the risk map embedding and task embedding together. The concatenated embedding is illustrated in Fig.5.
+After passing through the transformer encoder, we use a linear output layer to process the task embedding channel, which has interacted with all the grid channels during the transformer step. The final output is normalized to ensure it falls within a reasonable range for heuristic purposes.
+
+SECTION: IV-BTransformer and loss function
+
+We use the original Transformer encoder[19]as the backbone for both of our neural networks. A mask is not required because if the map is smaller than the maximum map size, we treat the padding grids as unsafe grids. Thus, there is no issue with other grids interacting with the padding grids.
+
+For Riskmap2.0, we use the cross-entropy loss function, which is widely used in classification tasks. The cross-entropy loss function (5) compares the predicted probability distribution over classes (heuristics in our case) with the true labels (expert heuristics).
+
+where:
+
+is the number of grids.
+
+is the number of heuristic choices.
+
+is a binary indicator (0 or 1) if heuristicis equal to the expert heuristic for the grid.
+
+is the predicted probability that the heuristic of the gridis heuristic.
+
+For Riskmap-state, we use the MSE loss function (6) as in many regression works. MSE loss can help the neural network minimize the average error between the expert and the output.
+
+where:
+
+is the number of task,
+
+is the expert value for the-th task,
+
+is the generated value for the-th task.
+
+SECTION: VResult
+
+SECTION: V-ARiskmap2.0
+
+We evaluate the generated heuristic with the average number of nodes explored, the average search time, and the SPL[27], where SPL stands for Success weighted by (normalized inverse) Path Length that is defined by the following equation:
+
+where:
+
+: The total number of test episodes conducted.
+
+: A binary indicator of success in episode, whereif the agent successfully reaches the goal, andotherwise.
+
+: The shortest path distance from the agent’s starting position to the goal in episode.
+
+: The length of the path actually found by the algorithm in episode.
+
+: The maximum value between the shortest path distance and the actual path taken for episode, ensuring the denominator is at least as large as the shortest path.
+
+Riskmap2.0 is tested in 16*16, 24*24, and 32*32 grid maps. For each map size, we randomly pick 1000 tasks from 100 unseen risk maps. Fig.6shows an example comparison between the Riskmap2.0 heuristic and the Manhattan heuristic. The results are shown in TableI. According to the result, With the heuristic Riskmap2.0 generated, the A* algorithm explores fewer nodes and needs less time to find the path to the destination in all three datasets. Especially for the 16*16 dataset, the number of explored nodes isless than the Manhattan, and the average search time isshorter while achieving aSPL score, indicating high optimality. For the 24*24 dataset, the number of nodes explored isless than the Manhattan, and the average search time isshorter while achieving aSPL score. For the 32*32 dataset, the number of nodes explored isless than the Manhattan, and the average search time isshorter while achieving aSPL score.
+
+The results show that the RiskMap2.0 model can successfully accelerate the A* algorithm while maintaining very high optimality. However, performance decreases as the map size increases. This is because the input size of the neural network increases as the map size grows, leading to higher training costs. Additionally, data generation becomes slower, so we have to reduce the number of tasks per map in the training dataset. Consequently, with the same amount of time and computing resources, the number of training epochs and the quality of the data decrease as the map size increases.
+
+SECTION: V-BRiskmap-state
+
+The trained Riskmap-state model can generate a heuristic close to the expert heuristic. We test the Riskmap-state on 1000 random tasks from 100 unseen risk maps. The MSE loss for the 16*16 risk map is 1.742, and the MSE loss for the 64*64 risk map is 6.234. With the Riskmap-state heuristic, A* can also explore fewer nodes. For the 16*16 dataset, the number of nodes explored isless than the Manhattan. for the 16*16 dataset, the number of nodes explored isless than the Manhattan. However, if the map is small and the task is simple, the heuristic generating time may be longer than the search time, because the Riskmap-state must generate a heuristic for every node A* found. We also can not guarantee to find the optimal path with the Riskmap-state heuristic.
+
+SECTION: V-CRealistic city environment
+
+In addition to pure random maps, we also tested our method on a set of 16*16 risk maps, which we call a city map. The city map is based on wind flow near high buildings generated by a city wind flow simulator[28]. The city wind flow simulator can calculate the risk of each grid turbulence given the position of the buildings, the wind speed, and the height of the assessment. Fig.7shows an example of wind flow in a 128*128 map. We scale those 128*128 maps down to 16*16 maps by dividing the 128*128 maps into 256 8*8 grids and calculating the mean value for each 8 * 8 grid.
+We also tested 1000 tasks picked from 100 different risk maps. The average number of nodes explored (20.49) of our method isless than the Manhattan (44.09), and the average search time (0.38 ms) isshorter than the Manhattan (0.74 ms) while achieving aSPL score. Fig.8shows an example of how Riskmap2.0 heuristic beat the Manhattan heuristic on this city map.
+
+SECTION: VIDiscussion and conclusion
+
+The results have proven that the Riskmap2.0 model can accelerate the A*-like algorithm without losing too much optimality in a relatively small map. Additionally, the Riskmap-state also shows the ability to generate accurate expert heuristics. Riskmap2.0 can generate the solution directly for the A*. If heuristic generating is correct, the process can be very fast. However, if the heuristic generating is wrong, the heuristic may be very misleading. Riskmap-state can generate a heuristic for any nodes found during the A* process. A* can only explore the shortest path as well if the heuristic generating is correct. However, riskmap2.0 needs to be processed for every node A* process found.
+
+Compared to state-of-the-art AI path planners, such as DeepCube[29], Gato[25], and searchformer[24], the biggest advantage of our method is we cansolve the problem while previous planning generating AI can not guarantee that. At the same time, we also achieve higher optimality in the complex task. Moreover, the proposed method requires less training time and a smaller dataset. Our model is also smaller and requires fewer computing resources during the operation.
+Our research agrees with the previous research[24]that planning on a larger grid map is still challenging. In the future, we aim to decrease the model generation time and expand the dataset by creating more expert heuristics for larger risk maps.
+
+SECTION: References

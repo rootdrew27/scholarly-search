@@ -1,0 +1,189 @@
+SECTION: CompetitorFormer: Competitor Transformer for 3D Instance Segmentation
+
+Transformer-based methods have become the dominant approach for 3D instance segmentation.
+These methods predict instance masks via instance queries, ranking them by classification confidence and IoU scores to select the top prediction as the final outcome.
+However, it has been observed that the current models employ a fixed and higher number of queries than the instances present within a scene. In such instances, multiple queries predict the same instance, yet only a single query is ultimately optimized.
+The close scores of queries in the lower-level decoders make it challenging for the dominant query to distinguish itself rapidly, which ultimately impairs the model’s accuracy and convergence efficiency. This phenomenon is referred to as inter-query competition.
+To address this challenge, we put forth a series of plug-and-play competition-oriented designs, collectively designated as theCompetitorFormer, with the aim of reducing competition and facilitating a dominant query.
+Experiments showed that integrating our designs with state-of-the-art frameworks consistently resulted in significant performance improvements in 3D instance segmentation across a range of datasets.
+
+SECTION: 1Introduction
+
+The landscape of modern 3D instance segmentation methods has changed dramatically following the pioneering work of 2D segmentation transformer, Mask2Former[6]. The transformer-based methods[30,28,18,23,1,16]have demonstrated superior performance compared to the top-down proposal-based methods[34,14,10,17,31,35,29]and bottom-up grouping-based methods[15,5,13,22,40,32]. This is attributed to their comprehensive end-to-end pipeline architecture that directly outputs instance predictions. Fundamentally, these models leverage a predefined number of instance queries and refine mask predictions via capturing global feature.
+
+The majority of current transformer-based methods utilize a fixed number of instance queries that exceeds the actual number of instances, which make multiple queries predict the identical instance. However, only one query can be distinguished, optimized by bipartite matching, or represented an instance in the inference phase.
+The recently proposed EASE-DETR[12]for 2D detection has demonstrated that there is competition between queries that affects the model’s detection performance. A similar issue is observed in the domain of 3D instance segmentation. Figure1(a)illustrates the competing queries from the initial decoder layers of SPFormer[30], while Figure1(b)provides a quantitative representation of the average number of competing queries. To mitigate such competition, it is ideal to expand the query score by capturing the spatial and competitive relationships between queries, which allows dominant queries to emerge and be distinguished quickly.
+
+The complexity of 3D spatial information is typically greater than that of 2D scenarios. A strategy that relies exclusively on spatial information and competitive relationships (such as EASE-DETR) may prove inadequate for accurately assessing the competitive state between queries. The relational and semantic information between query categories that have been overlooked can be equally beneficial in the construction of competitive states.
+Therefore, in this study, we use 3D spatial data and queries, as well as fully incorporate relational and semantic information between categories of queries, in order to further mitigate competition and enhance the segmentation capability of the model.
+
+Specifically, we introduce three novel competition-oriented designs: query competition layer, relative relationship encoding and rank cross attention. These designs effectively utilize the spatial and competitive relationships between queries, and semantic information to mitigate competition.
+First, we determine the spatial and competitive relationships between queries before each decoder layer. The query competition layer utilizes two distinct sets of static embeddings to capture these relationships and fuses them with the instance query semantic feature. This approach enhances classification confidence for matched queries in bipartite matching and attenuates classification confidence for unmatched queries.
+Second, the relative relationship encoding refines the weight by quantifying these relationships in conjunction with the query and the key features from self-attention.
+Third, the rank cross attention mechanism amplifies the disparity between queries by normalizing the dot product similarity between each feature and all queries. Overall, our competition-oriented designs improve model’s segmentation performance by progressively mitigating inter-query competition.
+
+Our contributions can be summarized as follows:
+
+We observe that existing 3D instance segmentation transformer-based methods suffer from inter-query competition, which causes training difficulty, lower accuracy.
+
+To mitigate inter-query competition, we propose three competition-oriented designs, query competition layer, relative relationship encoding, and rank cross attention, collectively referred to asCompetitorFormer.
+
+The experimental results demonstrate that CompetitorFormer achieves performance improvements on a variety of popular baselines over multiple datasets, including ScanNetv2, ScanNet200, S3DIS and STPLS3D, ultimately exceeding their results.
+
+SECTION: 2Related Work
+
+In this section, we briefly overview related works on 3D instance segmentation, competing mechanism and the clustering of cross-attention.
+
+SECTION: 2.13D instance segmentation.
+
+Existing works on 3D instance segmentation can be classified into proposal-based, grouping-based and transformer-based. The proposal-based methods[34,14,10,17,31,35]are based on the advancements in 2D image instance segmentation. They start with coarse detection and then perform a refinement step to obtain a detailed segmentation. The essence of these approaches is the fine-grained segmentation of objects within a predicted 3D bounding box. Enhancing the precision of 3D bounding box predictions is a central optimization objective for these approaches.
+
+In contrast, grouping-based methods[15,5,13,22,40,32]adopt a bottom-up pipeline that learns potential embeddings to facilitate point-wise predictions. These methods utilize the centroid offset of each point to predict a shifted point cloud, which is then used in conjunction with the original point cloud to form clusters. Such methods necessitate accurate prediction of the centroid offset for each point, which can be challenging to achieve when considering a diverse range of spatial distributions.
+
+Recently, transformer-based methods[30,28,18,23,1,16]have emerged and are rapidly becoming the new state-of-the-art (SOTA). Compared to previous approaches, these methods offer an elegant pipeline that directly outputs instance predictions. The generation of the final instance masks is achieved through the computation of the dot product similarity between queries and superpoint (or voxel) features. Although the powerful architectural advantage has driven the performance of transformer-based approaches, slow convergence and how to mitigate competition queries remain challenges.
+
+SECTION: 2.2Competing mechanism.
+
+In transformer-based models, the ranking relationship between queries directly affects the final result in the inference phase. Therefore, it is important to formulate a reasonable ranking. The majority of current approaches[38,11,20]rely on the IoU-aware score and joint classification scores, to mitigate ranking inconsistencies and refine detection output accuracy. Additionally, some works[3,26]have incorporated IoU-aware techniques to refine the loss and bipartite matching cost designs in DINO-DETR[39]. This has resulted in a reduced number of erroneous queries and an acceleration in model convergence.
+
+Nevertheless, the inter-query competition has been relatively understudied. A recent work of EASE-DETR[12]considered the non-duplicate detection capability to be the result of inter-query competition. It constructed competitive states by sensing the spatial and relative ranking relationships between queries and introduced explicit relations between queries in the decoder to enhance the query suppression process.
+
+SECTION: 2.3Clustering cross-attention.
+
+The most popular transformer-based methods use cross-attention to cluster superpoint (or voxel) features into a set of masks, which are progressively refined by several decoder layers. Recently, works like CMT-deeplab[36]and KMax-deeplab[37]explored parallels between cross-attention and clustering algorithms in the vision Transformer. Specifically, CMT-deeplab used clustering updates as a complementary term in cross-attention, whereas KMax-deeplab introduced k-means cross-attention, which employs cluster-wise argmax to compute the attention graph and is then directly used for supervision. Another work, QueryFormer[23], reduced the computational effort by employing the argmax operation along the query dimensions. This approach only requires the computation of an attention graph over a set of analogous backbone features for each query. Furthermore, it is noteworthy that several recent works[33,21,24]have similarly revisited the relationship between queries and keys in attention operations.
+The softmax operation was applied along the query dimension in cross-attention, yielding promising results.
+
+SECTION: 3Method
+
+The architecture of the proposedCompetitorFormeris illustrated in Figure2. We visit the overall pipeline of the modern transformer-based methods in Section3.1and introduce how to capture spatial and competitive relationships between queries in Section3.2. The detailed design of the proposed method, including the competition-oriented designs, are subsequently illustrated in Section3.3,3.4and3.5.
+
+SECTION: 3.1Pipeline
+
+Assuming that an input point cloud containspoints, the input can be formulated as. Each 3D point is parameterized with three colors, and three coordinates. Following[8], we voxelize point cloud, and use a U-Net-like backbone composed of sparse 3D convolutions to extract point-wise features.
+
+Following[16], we implement pooling based on either superpoints or voxels.
+Superpoints are oversegmented from input point cloud following[19]. Voxels are obtained through voxelization. We refer to this superpoint-based / voxel-based pooling as flexible pooling. The pooling featuresare obtained via average pooling of point-wise features, whereis the number of superpoints or voxels.
+
+The initialised query, along with the pooling features, are fed into the decoder layers, whereandrepresent the number of queries and feature dimensions, respectively. The prediction head generates a set of prediction classification scores, prediction IoU scoresand instance masksbased on the updated instance queries, whererepresents the layer index of the decoder andrepresents the class number.
+
+SECTION: 3.2Preparation
+
+In the initialisation phase of the model, two sets of static embeddings with the same dimensions as the query are randomly generated for each decoder layer. These are divided into two categories: leader embeddingsand laggard embeddings.
+The query competition scoreis constructed by multiplying the maximum classification scoreand the prediction IoU score.
+The aforementioned scoresare employed to calculate the relative differencebetween queries, thereby establishing the “leading/lagging” relationship. The formulas are as follows:
+
+The IoUis calculated using the instance maskpredicted by each query, which is then used to facilitate the subsequent steps in identifying competitors. The formula is as follows:
+
+SECTION: 3.3Query Competition Layer (QCL)
+
+Here, the query competition layer is introduced before each of thedecoder layers. The degree of overlap between queries is indicative of the strength of competition. The indices constituting the set of the most formidable competitors for each query, denoted as, can be obtained from. The competitor-query pairsis jointly constructed by the competitor indexand the “leading/lagging” relationshipas:
+
+where the operation symbolrepresents the arrangement of A in accordance with the index of B.
+
+Subsequently,andare employed in the construction of a list of leader queriesand a list of laggard queriesas:
+
+whereis a sequence of consecutive integers starting from 1 and ending at, like.
+
+Next, the competition-aware embeddings are constructed based on:
+
+The two static embeddings are then ordered according to the leader and laggard lists and the updated two static embeddings are concatenated in the feature dimension.
+Subsequently, the embeddings are fused back to the original dimensions using a fully-connected layer, resulting in featuresthat encode the competitive relationships between queries. Finally, the aforementioned process is repeated forand, thereby completing the update to the query. The key motivation behind QCL is adjusting the classification scores of the instance queries according to their spatial and competitive relationships, integrating semantic features, thereby promoting positive predictions and suppressing negative predictions.
+
+SECTION: 3.4Relative Relationship Encoding (RRE)
+
+In this work, we draw inspiration from MAFT[18]and adopt a contextual relative relationship encoding approach in self-attention. Our design shares certain similarities with the relative position encoding technique employed in MAFT. However, there is a crucial differentiation exists: MAFT computes relative positions concerning queries and superpoints, whereas our focus lies in encoding the relative relationships between queries themselves. In the following paragraphs, we provide a detailed explanation of the methodology utilized in establishing these inter-query relative relationships.
+
+First, the “leading/lagging” relationshipand the degree of competitionare calculated in thepreparationphase.
+Subsequently, we further integrateand. The, being binary, is denoted byand. We directly multiply thevalues with, to construct the relative competitive statewith “leading/lagging”.
+After that, relative competitive stateis quantized into discrete integersas:
+
+wheredenotes the quantization size, anddenotes the length of the relationship encoding table. We plusto guarantee that the discrete relative relationship is non-negative.
+
+Next, the discrete relative competitive stateis employed as an index to identify the corresponding relationship encoding tablefor relative relationship encoding, and a dot product operation is performed with the query vectorand key vectorin the self-attention as:
+
+whereis the relationship bias. It is then added to the self-attention weights, as shown in Figure2(c).
+
+It is noteworthy that all parameters, with the exception of the requisite relationship encoding table, are shared withQCL. Consequently, the additional computational burden is minimal. In contrast to the direct application of theto obtain the attention weight through the spatial information between queries[12], our approach represents a novel method of quantifying the spatial and competitive relationships between queries into relative relationship encoding. This facilitates the acquisition of relationship bias through the interaction with semantic features in self-attention, thereby enhancing the robustness of self-attention.
+
+SECTION: 3.5Rank Cross Attention (RCA)
+
+The traditional transformer-based approaches typically compute the similarities of queriesbetween the pooling features(ascended fromtowith) in the cross-attention as:
+
+whererefers to the dot product similarity. The subscriptrepresents the axis for softmax on the spatial dimension.
+
+We argue that transformer-based instance segmentation differs from standard NLP tasks, with vision tasks cross-attention queries and keys sourced separately. In the traditional cross-attention approach, a query is treated as a set of features, with all key features competing for the query, to calculate the query-key similarity, which determines how the query should incorporate value features. Departing from this convention, we introduce the notion of query competition and propose a new variant: Rank Cross Attention. In Rank Cross Attention, it is postulated that there is competition between queries. For a pooling feature, it should be absorbed by the query that has the highest dot product similarity with it, while other queries should reduce their similarity to this feature, thus increasing the discrepancy between the leading and lagging queries. Consequently, the dot product similarity of queries and pooling features indimensions is normalized to ensure that the highest similarity remains unaffected, while other similarities are reduced relatively, according to:
+
+This design fosters dominance of primary queries in the Rank Cross Attention, empowering them to assimilate richer and denser pooling features, thereby aligning more closely with the ground truth segmentation masks.
+
+SECTION: 4Experiments and Analysis
+
+bath
+
+bed
+
+bk.shf
+
+cabinet
+
+chair
+
+counter
+
+curtain
+
+desk
+
+door
+
+other
+
+picture
+
+fridge
+
+s. cur.
+
+sink
+
+sofa
+
+table
+
+toilet
+
+wind.
+
+SECTION: 4.1Experiments Settings
+
+The experiments are performed on ScanNetv2[9], ScanNet200[27], S3DIS[2]and STPLS3D[4]datasets. The ScanNetv2 dataset[9]has 1613 indoor scenes, of which 1201 are used for training, 312 for validation and 100 for testing. The dataset comprises 20 semantic categories and 18 object instances. We report results on both validation and hidden test splits.
+ScanNet200[27]extends the original ScanNet semantic annotation with fine-grained categories with the long-tail distribution, resulting in 198 instance with 2 more semantic classes. The training, validation, and testing splits are similar to the original ScanNetv2 dataset.
+The S3DIS dataset[2]comprises 6 large-scale regions, encompassing a total of 272 scenes. The instance segmentation task comprises 13 categories. We follow common splits to train on Area[1,2,3,4,6] and evaluate on Area 5. The STPLS3D dataset[4]is synthetic and outdoor, and closely resembles the data generation process of an aerial photogrammetry point cloud. A total of 25 urban scenes, encompassing 6, have been meticulously annotated with 14 distinct instance classes. The common split[28]is followed to train.
+
+This study employs state-of-the-art open-source transformer-based frameworks, including SPFormer[30], Mask3D[28], MAFT[18]and OneFormer3D[16]as experimental baselines.
+Due to the distinctive query selection mechanism inherent to OneFormer3D, only RRE and RCA are incorporated into OneFormer3D.
+The SPFormer model is employed for the primary ablation experiments on the ScanNetv2 validation dataset, in order to illustrate the effectiveness of our various components.
+
+Task-mean average precision (mAP) is utilized as the common evaluation metric for instance segmentation, which averages the scores with IoU thresholds set fromto, with a step size of. Specifically, mAP50and mAP25denote the scores with IoU thresholds ofand, respectively. We report mAP, mAP50and mAP25on all datasets.
+
+CompetitorFormer is integrated into the SPFormer[30], Mask3D[28], MAFT[18], and OneFormer3D[16]frameworks, with all training parameters inherited from the original frameworks. The method utilized for query initialisation and the selection of backbones are consistent with that employed in the original framework.
+For the SPFormer and MAFT, the number of queries employed ison ScanNetv2[9]and S3DIS[2], andon ScanNet200[27]. For the OneFormer3D, the number of queries is related to the number of superpoints. In the case of the Mask3D, the number of queries employed ison ScanNetv2 and S3DIS datasets andon STPLS3D[4].
+
+On ScanNetv2 and ScanNet200, we use a voxel size of 2cm. On S3DIS, voxel size is set to 5cm. As for the STPLS3D, the voxel size is set to 0.33due to larger scenes. Furthermore, we apply graph-based superpoint clusterization and superpoint pooling on ScanNetv2 and ScanNet200. Following[7], we get superpoint of S3DIS. Voxels are applied as superpoint on STPLS3D.
+
+SECTION: 4.2Main Results
+
+We present the results of instance segmentation on both the ScanNetv2 test and val sets in Tables1and2, respectively. In hidden test, Competitor-SPFormer increases bymAP,mAP50compared to baseline, SPFormer[30]. Besides, Competitor-SPFormer scores top-2 in the ScanNet hidden test leaderboard at the time of submission withmAP andmAP50, compared with other transformer-based methods. We present segmentation results for 18 classes per method in mAP. Competitor-SPFormer achieves SOTA for five categories, the first in number. In validation set, CompetitorFormer, when combined with four baselines, exhibits improvements of,,andmAP, respectively. Furthermore, we present the extra hidden test results of all models just on the training set without post-processing, which can be found inAppendix.
+
+Table3summarizes the results on Area 5 of the S3DIS dataset. Our Method is integrated into OneFormer3D[16], resulting in improving SOTA performance in mAP and mAP50forand, respectively. Furthermore, it enhances the remaining three frameworks to varying degrees. The number of initial queries of Mask3D is less than that of the other three frameworks, and the degree of competition between queries is naturally limited, which results in less significant improvements.
+
+Table4(a)illustrates the quantitative result on ScanNet200. Our proposed method outperforms the second best performing method with margins ofandin mAP, mAP50, improving the performance of SOTAandrespectively.
+
+Table4(b)shows the quantitative comparison on the validation set of STPLS3D dataset. Our method outperforms all existing methods, improving SOTA performance in mAP and AP50 forand, respectively. The limited number of queries in Mask3D and the sparse query distribution limit the performance of ComeptitorFormer.
+
+SECTION: 4.3Ablation Studies
+
+The systematic analysis was performed to assess the impact of each proposed component in our approach.
+A step-by-step approach was employed, whereby modules were added incrementally to the baseline (Table6(a)), then merged into the baseline (Table6(b)), and finally removed from the approach (Table6(c)).
+This process allowed us to understand the impact of each individual component on the final performance. In addition, we performed statistical and quantitative analyses to fully assess the functionality of each component.
+
+The QCL mechanism effectively integrates the competition of queries into SPFormer, compensating for the lack of handling the competitive relationship of queries in the self-attention. The performance of segmentation is continuously improved by utilizing QCL (mAP when adding QCL to the SPFormer;mAP when completing our approach). Furthermore, the classification scores of matched and unmatched queries in bipartite matching are counted after each decoder layer, and the cumulative probability distribution is calculated. Figure3(a)illustrates that the matched query scores generated by our method exhibit a marked enhancement in comparison to SPFormer, with a notable reduction in accumulation at low scores (green area). In contrast, Figure3(b)illustrates that the unmatched query scores produced by our method are more concentrated at low scores (red area). It has been demonstrated that QCL can effectively mitigate competition between queries by enhancing the classification accuracy of matched queries and suppressing the classification scores of unmatched queries. A more comprehensive account can be found inAppendix.

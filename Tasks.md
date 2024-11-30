@@ -1,6 +1,5 @@
 # Tasks
 
-
 - General
 
 - Find 100 papers that answer questions
@@ -11,6 +10,8 @@
 - Create notebook to generate embeddings. 
     - Set models, set documents, save embeddings
 - Create notebook to find top k papers
+- Find models that can be trained/fine-tuned in an unsupervised manner
+- Increase sparity of the embeddings
 
 ### Micheal
 

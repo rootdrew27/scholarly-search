@@ -4,6 +4,24 @@ Gomes' Instructions:
 - Try with CPU first.
 - GPU usage is reserved for batch scripts only.
 
+Important Dates:
+
+Nov 19:
+You should have:
+- Dataset
+- Input -> Output
+- Models
+- Parameters to tune
+- Data Imbalance?
+- Objective
+- 
+
+Nov 26:
+- Results
+
+Dec 3:
+- Results on Cluster
+
 **Semantic Similarity**
 
 - Use an SS model with a large context window.

@@ -1,0 +1,140 @@
+SECTION: TaQ-DiT: Time-aware Quantization for Diffusion Transformers
+
+Transformer-based diffusion models, dubbed Diffusion Transformers (DiTs), have achieved state-of-the-art performance in image and video generation tasks. However, their large model size and slow inference speed limit their practical applications, calling for model compression methods such as quantization.
+Unfortunately, existing DiT quantization methods overlook (1) the impact of reconstruction and (2)
+the varying quantization sensitivities across different layers, which hinder their achievable performance.
+To tackle these issues, we propose innovative time-aware quantization for DiTs (TaQ-DiT). Specifically, (1) we observe a non-convergence issue when reconstructing weights and activations separately during quantization and introduce a joint reconstruction method to resolve this problem. (2) We discover that Post-GELU activations are particularly sensitive to quantization due to their significant variability across different denoising steps as well as extreme asymmetries and variations within each step.
+To address this, we propose time-variance-aware transformations
+to facilitate more effective quantization.
+Experimental results show that when quantizing DiTs’ weights to 4-bit and activations to 8-bit (W4A8), our method significantly surpasses previous quantization methods.
+
+SECTION: IIntroduction
+
+Due
+to the efficiency of hierarchical architectures, U-Net-based Diffusion Models (DMs)[1]have achieved remarkable performance in visual generation tasks[2,3,4].
+Recently, inspired by the success of Transformers[5,6,7], Transformer-based DMs dubbed Diffusion Transformers (DiTs) have been developed[8]and exhibit great scalability on more complex generation tasks. Particularly, the state-of-the-art (SOTA) generation framework Sora[9]is built upon DiTs, highlighting their great potential and effectiveness.
+However, their large model size and intensive computations involved in the iterative denoising process result in slow inference speeds[10], calling for effective model compression methods.
+
+Quantization[11], which converts full-precision (FP) parameters into integers, is one of the most effective model compression techniques. Particularly, Post-Training Quantization (PTQ) has gained significant attention, as it only requires a small calibration dataset and eliminates the expensive weight fine-tuning process[12,13,14].
+However, existing quantization methods are primarily designed for U-Net-based DMs[15,16,17], leading to performance degradation when directly applied to DiTs due to their unique algorithmic properties and architectures[18]. This underscores the need for specialized quantization algorithms tailored to DiTs.
+For example, PTQ4DiT[10]identifies the presence of salient channels within DiTs that exhibit extreme magnitudes and variability over timesteps, and proposes dedicated techniques to facilitate quantization.
+Additionally, Q-DiT[18]observes significant variances in both weights and activations within DiTs, and introduces fine-grained quantization with an automatic granularity search strategy to boost performance.
+Despite the effectiveness of these methods, they overlook
+(1) the impact of reconstruction on DiT quantization and (2)
+the distinct quantization sensitivities of different layers within DiTs.
+
+To push the frontier of DiT quantization, we propose TaQ-DiT and make the following contributions:
+
+We observe that the widely adopted quantization reconstruction method, which optimizes the quantization of weights and activations separately, suffers from non-convergence issues. To address this, we propose using ajoint reconstruction approachthat integrates the reconstruction of weights and activations to enhance their compatibility and boost quantization performance.
+
+We further identify that activations after GELU (Post-GELU activations) within DiTs are particularly sensitive to quantization, due to their (1) significant variability across different denoising steps and (2) extreme asymmetries and variations along the input channel dimension within each step. To address them, we propose time-variance-aware transformations that integrate innovativemomentum-base shiftingandreconstruction-driven migrationtechniques to facilitate the quantization of Post-GELU activations with boosted performance.
+
+Extensive experiments demonstrate the effectiveness of TaQ-DiT. Specifically, TaQ-DiT outperforms the SOTA DiT-dedicated quantization methods byFID (lower is better) when weights are quantized to-bit and activations to-bit (W4A8).
+
+SECTION: IIPreliminaries
+
+SECTION: II-AThe Structure of DiT
+
+As illustrated in Fig.1, DiT consists ofTransformer-based DiT blocks. Each block consists of two key components: Multi-Head Self-Attention (MHA) and Pointwise Feedforward (PF), both influenced by class conditions and timestep information during the denoising process.
+Specifically, MHAs are primarily composed of linear projection layers and matrix multiplications (Matmuls) between queries/keys/values, while each PF consists of two linear layers with a GELU activation function in between.
+Therefore, considering both the time-dependent characteristic and the architectural property of Transformer blocks is essential for designing an effective quantization scheme for DiT.
+
+SECTION: II-BUniform Quantization
+
+Uniform quantization is the most common and easily implementable model compression method, which converts the floating-point parametersinto-bit integervia:
+
+where theandrepresent the scaling factor and zero point, respectively, detailed by:
+
+Uniform quantization can be applied at different levels of granularity. Specifically, as shown in Fig.2(a), activations typically employ tensor-wise quantization[19], where a single scaling factor is applied to all elements to ease implementation. As elements within each activation token need to be multiplied and summed with elements in the corresponding weight channel, token-wise quantization can also be used for finer granularity[12]. As depicted in Fig.2(b), it assigns distinct scaling factors to individual activation tokens, thus improving quantization performance without sacrificing hardware efficiency. Similarly, as shown in Fig.2(d), weights often use channel-wise quantization[20], where each channel is assigned a separate scaling factor, aiming to enhance quantization performance while maintaining hardware efficiency.
+
+SECTION: IIIMethodology
+
+SECTION: III-AJoint Reconstruction for DiT Quantization
+
+Observation: Non-Convergence Issue in Quantization Reconstruction for Activations.To explore the challenges and opportunities in DiT quantization, we start by applying existing DM quantization approaches[17,11], which reconstruct scaling factors for weights and activations separately following[21]. However, as listed in TableI,
+we observe that quantizing weights to-bit (W4) alone leads to aFréchet Inception Distance (FID), while further quantizing activations to-bit (W4A8) results in a significantFID. This indicates that this widely adopted reconstruction method is unsuitable for DiT quantization, particularly for activations.
+We attribute this failure to the non-convergence issue during reconstruction. As depicted in Figs.3(a) and3(b), although quantization reconstruction for weights converges, the reconstruction for activations exhibits oscillation, thereby limiting the achievable performance in DiT quantization.
+
+Tested on 10,000 samples generated by 100 timesteps.
+
+Method:
+Joint Reconstruction of Both Activations and Weights.To address this issue and boost quantization performance, motivated by QDrop[22], we integrate the reconstruction of weights and activations to facilitate their compatibility:
+
+whererepresents the blocks or layers to be reconstructed, anddonates the quantization function.andrepresent weights and activations, respectively, withandas their corresponding scaling factors.
+As shown in Figs.3(c) and TableI, the joint reconstruction resolves the non-convergence issue and improves quantization performance byFID on W4A8 compared to the separate reconstruction method.
+
+SECTION: III-BShifting and Migration for Post-GELU Activations
+
+As demonstrated in TableI, despite the effectiveness of joint reconstruction, there still exists a non-negligible performance gap (FID) between the W4A8 quantized model and the full-precision counterpart.
+To investigate the reason for this, we further conduct ablation studies on the quantization of different layers. As seen in TableII, PF layers are more sensitive to quantization than attention blocks, leading to even worse performance (FID) than quantizing the entire model. Going a step further, we identify that activations after GELU (Post-GELU activations) are the primary contributors to the performance drop in PFs byFID.
+
+Tested on 10,000 samples generated by 100 timesteps.
+
+To address this, we first visualize and analyze Post-GELU activations, then introduce our momentum-based shifting (Method 1) and reconstruction-driven migration (Method 2) to facilitate quantization.
+
+Observation 1: Significant Variability Across Different Denoising Steps.As shown in Figs.3(d), Post-GELU activations exhibit significant variability across different timesteps during denoising, posing challenges to quantization. To accommodate timestep dependency, two main quantization methods can be considered. The first is dynamic quantization[18,23,12], which computes unique scaling factors for each timestep during inference, enhancing performance but increasing latency. The second is static quantization[23,10], which relies on aggregated statistics across all timesteps to precompute a single scaling factor during calibration, improving quantization efficiency but often leading to performance degradation.
+
+Observation 2:Extreme AsymmetriesWithin Each Denosing Step.Besides step-wise variability, as shown in Figs.4(a) and4(d), Post-GELU activations exhibit extreme irregularities and asymmetries within each denoising step, with a clear boundary between positive and negative values. These irregularities result in the majority of activations having extremely low quantization resolution, thus challenging the vanilla uniform quantization and limiting its achievable performance. For instance, for the Post-GELU activation of theblock at thetimestep, when quantizing it to-bit, negative values that constituteof the activations can be allocated merelyof the quantization bins. Additionally, although positive activations are assigned the majority of quantization bins (), due to the existence of extremely larger values,of positive values only havequantization bins.
+
+Method 1: Momentum-Base Shifting for Extreme Asymmetries.To regularize distributions of Post-GELU activations and facilitate quantization, we propose to adopt channel-wise shifting to symmetrize their distributions before quantization. Specifically, we subtract activation elementsinchannel by its channel-wise mean (shifting) valueto obtain the symmetrized channelfor easing quantization:
+
+To preserve mathematical equivalence while avoiding online computations, the shifting valuescan be precomputed with weightsand then merged into the original biasto form a new bias:
+
+whereandrepresent the original and shifted activations, respectively.
+
+However, as shown in Figs.3(d) and explained inObservation 1, activation ranges vary across timesteps, necessitating dynamic shifting values to accommodate temporal variability. However, this yields online calculations of shifting values for each denoising step, leading to huge computational and latency overheads. Thus, we propose a momentum-based method to pre-compute shifting values during calibration:
+
+whereis the momentum coefficient and is set tofollowing[12].represents the shifting value calculated from the calibration data at the current timestep following Eq. (5). Meanwhile,anddonate the updated and previous shifting values, respectively.
+This implies that rather than directly using Eq. (5) to calculatefor shifting activations in Eq. (4), we use Eq. (7) instead to accommodate temporal variability and enhance quantization performance.
+
+As depicted in Figs.4(b), the shifted activations transfer from power-law-like distributions to more regular and symmetric Gaussian distributions.
+For example, in theshiftedPost-GELU activation of theblock at thetimestep, when quantized to-bit,of the values can now be allocated toof the quantization bins, which islarger than before, demonstrating our effectiveness.
+
+Observation 3: Channel-Wise Variations of Post-GELU Activations.Although our proposed momentum-base shifting method helps regularize the distributions of Post-GELU activations, the existence of outliers (a small number of extremely large values) still leads to low quantization resolution for the majority of values.
+To address this, we take a step further to observe and analyze the distributions of outliers. As shown in Figs.4(e), outliers are concentrated in only a fewchannels, yielding significant variations along the channel dimension.
+A natural solution is to adopt channel-wise quantization, which assigns distinct scaling factors to each channel to enhance quantization performance, as shown in Figs.2(c). However, as discussed in Sec.II-B, this leads to floating-point summations among channels, which hinders quantization efficiency.
+
+Method 2: Reconstruction-DrivenMigration to Remove Outliers.To handle channel-wise variations, rather than adopting channel-wise quantization, we propose applying channel-wiseoutlier factorson top oftensor-wisequantizationexclusivelyfor outlier channels, thereby enhancing quantization efficiency. Specifically, after shifting input activations, we identify the top-k channels with the largest ranges of shifted activationsas outlier channels, while treating the remaining channels as normal ones. Then, the tensor-wise scaling factor is computed based onfollowing Eq. (2). Subsequently, the channel-wise outlier factorfor theoutlier channelcan be calculated as follows:
+
+To incorporate, two methods can be considered. The first involvessplittinginto multiple sub-channels by dividing them byto mitigate outliers. As shown in Figs.4(c) and4(f), this approach significantly reduces activation ranges, thus enhancing quantization resolution and performance. However, to maintain the same functionality, the matrix sizes of both activations and weights must be expanded, leading to computational and memory overhead.
+
+The second solution is channel-wise migration, which migrates outliers ininto corresponding rows in the subsequent weights via outlier factors(can also be referred to as migration factors in this case) as follows:
+
+whereis thecolumn/channel of shifted activations andis therow/input channel of weights.,, andare numbers of input channels, output channels, and tokens, respectively.This approach achieves the same effect as channel-wise splitting in eliminating channel-wise outliers, while avoiding matrix expansion and the associated overheads. Despite its hardware efficiency, it may hinder weight quantization and potentially degrade performance. Fortunately, our experimental results demonstrate the robustness of weights to quantization (will be discussed in Sec.IV-Cand TableV), leading us to choose this channel-wise migration solution.
+
+However, this approach only addresses the outlier issue within a single timestep, requiring dynamic migration factors for step-wise variability. To address this while maintaining quantization efficiency, instead of dynamically determining them at each noising step, we optimize them only once during the calibration step. Specifically, we first initialize them using Eq. (8) as a good starting point to ease optimization, then finetune them along with scaling factors using our proposed joint reconstruction method to boost performance.
+
+SECTION: IVExperiment
+
+SECTION: IV-AExperimental Settings
+
+To ensure fair comparisons, we adopt similar experimental settings to prior DiT quantization works[19,10,18].Dataset: We evaluate TaQ-DiT on the ImageNet dataset at a resolution of.
+For the generation process, we set the sampling steps toand use a Classifier-Free Guidance (CFG) score of.
+To construct our calibration dataset, we uniformly selectsteps from the total steps and generatesamples at each selected step, then randomly shuffle them across chosen steps.Quantization Settings: We utilize uniform quantization for both activations and weights, with-bit channel-wise quantization for weights and-bit tensor-wise quantization for activations.
+Our codes are implemented on PyTorch and experimented on NVIDIA RTX A100 GPUs.Baselines: We compare withsevenbaselines, including (i) PTQ works tailored for U-Net-based DMs, i.e., PTQ4DM[15], Q-Diffusion[17], PTQD[16], and RepQ[20], which are applied to DiTs following quantization settings in PTQ4DiT[10]for fair comparisons, as well as (ii) PTQ works dedicated to DiTs, i.e., PTQ4DiT[10], DiTAS[19]and Q-DiT[18].Metrics: To quantitatively evaluate generated images, we sampleimages and assess them usingfourmetrics: Fréchet Inception Distance (FID), spatial FID (sFID), Inception Score (IS), and Precision. All metrics are computed using the ADM toolkit following previous works[19,10,18].
+
+SECTION: IV-BComparisons With SOTA Works
+
+Results are derived from PTQ4DiT.
+
+As shown in TableIII, TaQ-DiT surpasses all baselines, validating our effectiveness.
+Specifically,(1)when compared with quantization methods tailored for U-Net-based DMs, TaQ-DiT outperforms them by a huge margin, e.g.,FID. This highlights the need for DiT-specialized quantization algorithms. Besides,(2)TaQ-DiT also exhibits superior results compared to DiT-dedicated quantization baselines. For example, we can offerandon FID and IS, respectively, when compared to the most competitive baseline Q-DiT[18]. We attribute the improvements to (i) the joint reconstruction method to boost overall performance and (ii) our momentum-based shifting and reconstruction-driven migration to facilitate quantization for sensitive Post-GELU activations.
+
+Besides, as shown in Fig.5, we achieve significantly higher generative quality than other quantization baselines, further highlighting our superiority from a qualitative perspective.
+
+SECTION: IV-CAblation Study
+
+Effectiveness of Proposed Methods.As shown in TableIV,(1)our joint reconstruction method results in significant performance improvements, e.g.,FID andIS.(2)Incorporating it with our channel-wise shifting and migration methods further enhances the performance, e.g.,FID andIS, which validates our effectiveness.
+
+Comparison With Dynamic Quantization.By integratingmomentum-base shiftingandreconstruction-driven migration, as seen in TableV, our time-variance-aware static approach achieves comparable performance (FID andIS) compared to the quantization-inefficient dynamic counterpart, which needs online computations for each denoising step.
+This highlights our effectiveness in accommodating temporal variability while enhancing quantization efficiency.
+
+The top-2% channels with the largest ranges of shifted activations are regarded to be split or migrated.
+
+SECTION: VConclusion
+
+In this paper, we have proposed, developed, and validated TaQ-DiT, an advanced post-training quantization framework for DiTs. First, we propose leveraging joint reconstruction of activations and weights to resolve the non-convergence issue.
+Then, we develop innovative momentum-based shifting and reconstruction-driven migration techniques to facilitate the effective quantization of sensitive Post-GELU activations. Experimental results validate the effectiveness of our method and
+show its capability of outperforming state-of-the-art quantization methods and narrowing the gap between quantized and full-precision models.
+
+SECTION: References

@@ -1,0 +1,257 @@
+SECTION: On the Surprising Effectiveness of Attention Transfer for Vision Transformers
+
+Conventional wisdom suggests that pre-training Vision Transformers (ViT) improves downstream performance by learning useful representations. Is this actually true?
+We investigate this question and find that the features and representations learned during pre-training are not essential.
+Surprisingly, using only the attention patterns from pre-training (i.e., guiding how information flows between tokens) is sufficient for models to learn high quality features from scratch and achieve comparable downstream performance.
+We show this by introducing a simple method called attention transfer, where only the attention patterns from a pre-trained teacher ViT are transferred to a student, either by copying or distilling the attention maps.
+Since attention transfer lets the student learn its own features, ensembling it with a fine-tuned teacher also further improves accuracy on ImageNet.
+We systematically study various aspects of our findings on the sufficiency of attention maps, including distribution shift settings where they underperform fine-tuning.
+We hope our exploration provides a better understanding of what pre-training accomplishes and leads to a useful alternative to the standard practice of fine-tuning. Code to reproduce our results is athttps://github.com/alexlioralexli/attention-transfer.
+
+SECTION: 1Introduction
+
+Pre-training has emerged as a dominant paradigm in machine learning and has significantly improved performance on a variety of tasks[27,11,2,22]. In computer vision in particular, self-supervised representation learning methods[21,6,4,22]and weakly supervised methods[40,45]have enabled learning from large amounts of images. It is widely accepted that these methods work because they teach models useful features that are relevant for downstream tasks. But is this story actually true? Perhaps there is another capability learned during pre-training that is sufficient to explain its benefits.
+
+In this paper, we present an alternative explanation: pre-training teaches the model how information should be routed between tokens. We specifically focus on Vision Transformers (ViT)[12], not only because they are the most popular architecture for scaling, but also because Transformers explicitlydecouplethis information flow. Inter-token communication is solely fulfilled by attention, while the remaining bulk of computation are intra-token operations that are applied to each token independently. In contrast, other architectures such as ConvNets[33,20]simultaneously expand the receptive fields and extract the features, making it difficult to isolate the effect of information flow. We hypothesize that the features computed by the intra-token operations are not essential to explain the benefits of pre-training, and that the pre-trained attention maps are typically sufficient for downstream tasks.
+
+We test our hypothesis by introducing a new set of methods called attention transfer. Concretely, we treat a pre-trained ViT as the teacher and train a student model for downstream tasks while transferring only the attention patterns from the teacher. In contrast to the common fine-tuning paradigm of transferring all the weights (which mixes the effect of features and attention maps),onlythe inter-token flow is transferred. In this way, the student must learn features from scratch, while isolating the benefits of the attention maps learned during pre-training.
+
+We study two types of attention transfer. The first isAttention Copy, which directly “copy-and-pastes” the attention maps. The learning is fully decoupled, as inter-token computation is entirely from the teacher, and the student only learns intra-token patterns routed by the teacher’s attention maps. This is well-suited as a scientific probe, but is less practical since both networks need to be forwarded during the inference. The second isAttention Distillation, where the student simply distills attention patterns from the teacher, whose attention maps are no longer used after training. This is practical, but also helps identify the importance of the teacher’s inter-token information flow.
+
+While both attention transfer variants are straightforward, we find themhighly effective.Figure1illustrates this with a ViT-L[12]pre-trained using Masked Autoencoding (MAE)[22]. Compared to no transfer (training from scratch) and full transfer (fine-tuning all the MAE weights), Attention Copy can close most of the gap in performance, whereas Attention Distillation canmatchthe fine-tuning accuracy on ImageNet-1K classification[10]. This is achieved by only transferring the inter-token flow from the same model. Furthermore, since attention transfer requires the student to learn features from scratch, those features are significantly different from the teachers’ (Figure5) and improve ImageNet-1K accuracy score to 86.3 (+0.6) when ensembled with the teacher (Figure6).
+
+To summarize, we make the following contributions:
+
+Detailed analysis on the sufficiency of attention maps. We find that solely using the pre-trained attention patterns is typicallysufficientto achieve the same downstream accuracy as fine-tuning on ImageNet-1K. Furthermore, we observe practical benefits, as ensembling with attention transfer significantly improves ImageNet performance. This calls into question the commonly-believed story that pre-training is only about feature learning. While our main observation is robust w.r.t.different models and pre-training methods, wedo find settings where pre-trained features are indeed necessaryto realize the full gains from pre-training. Our bare-minimum solution for attention transfer is more affected by data distribution shifts compared to weight tuning.Section4presents extensive analyses to better understand the behaviors of attention transfer. They are i) partial transfer with a subset of layers or heads; ii) variants of our method that transfer other attention-related activations; and importantly, iii) various ways to verify that the student isnotjust re-learning the teacher model.Section5systematically tests how well our findings apply across a variety of pre-training and fine-tuning datasets, pre-training methods, model sizes, and tasks.
+
+Attention transfer methods. We introduce Attention Copy and Attention Distillation, which are methods to train a ViT on a downstream task while utilizing only the attention maps of a pre-trained teacher ViT. These methods help us understand the role of the features versus the attention patterns learned during pre-training. With further research, attention transfer could offer a potential alternative to the decade-long practice of fine-tuning pre-trained vision models[16,12,22]. Nearly all aspects of the fine-tuning pipeline have been thoroughly examined, suggesting a probable saturation of recipes. Weight sharing can also face security risks (e.g., white-box attacks[17]). We hope our systematic examination of attention transfer sheds new light on how to leverage pre-trained ViTs, and will help establish this approach as an effective alternative when weight transfer is less applicable.
+
+SECTION: 2Attention Transfer
+
+SECTION: 2.1Attention Preliminaries
+
+To work with a Vision Transformer (ViT)[12], an image is first “patchified” intotokens. Their intermediate activations are represented as a sequence,, whereis the embedding dimension.
+The self-attention[57]mechanism mainly introduces three learnable parameters(is the number of heads).is often referred to as the queries,as the keys, andas the values.
+Then the attention function is defined as:
+
+where the softmax function is computed per query for theattention map. Attention maps determine how the values from other tokens are aggregated, and with multiple heads, each token
+uses multiple attention distributions
+within the same Multi-headed Self-Attention (MSA) block.
+
+For an-layer Transformer, MSA blocks are interleaved with MLP blocks, and each Transformer layer contains one of each block type. Most operations areintra-token computations, which are applied independently to each token: value and projection matrices, normalization layers[1], and MLPs. The onlyinter-token computationis applying the attention map, which is the only way for information to flow between tokens. Transformers are unique because their inter- and intra-token computations aredecoupled; however, the relative importance of each type of operation is not well understood, and Transformers are typically trained byjointlyfine-tuning all the weights.
+
+Deviating from the common practice of joint weight tuning, we propose two attention transfer methods with the goal of exploring decoupled training for ViTs, described next.
+
+SECTION: 2.2Attention Copy
+
+In this setup, we utilize two separate networks: a pre-trained teacher network thatonlydoes a forward pass to compute its attention maps, and a student network that directly copies the attention maps from the teacher but computes all of the other activations. The student’s weights are randomly initialized and trained via back-propagation, while the teacher’s weights are kept frozen. This setting fully isolates the attention maps from the features that they are applied to, and thus is ideal for measuring the utility of pre-trained attention patterns when the student network learns to perform other tasks (e.g., image classification).
+
+We call this methodAttention Copy, as we “copy-and-paste” the attention maps from teacher to student.Figure2(left) shows a diagram of this approach. Note that it requires forward passes through both the teacher and student networks during the inference time. Given the extra computation, Attention Copy is not meant to be an entirely practical method. We mitigate this issue next.
+
+SECTION: 2.3Attention Distillation
+
+InAttention Distillation, the teacher network is only utilized at the training time. Given each training example, we forward both networks in parallel, with the student also computing its own attention maps. But besides the task-driven loss, we also enforce a distillation loss between student’s attention maps and the teacher’s counterparts as (soft) targets. Formally, usingfor the student andfor the teacher, the loss is then defined as:
+
+wherecomputes the cross entropy.
+As there can be multiple heads and layers in a Transformer, we simply sum up all the losses from wherever attention distillation is applied. Again, the student is trained via back-propagation.Figure2(right) shows the diagram of Attention Distillation.
+
+Compared to Attention Copy, Attention Distillation is much more practical. After training, the teacher is no longer needed, and the student can be used as a standalone model. Compared to training ViTs from scratch, the only addition is the distillation loss, meaning most of the optimization (e.g., learning rate, momentum) and regularization (e.g., weight decay, dropout rate[50]) hyperparameters can follow the scratch recipe with minimal adjustments. It does introduce a new hyperparameter, which weights the distillation loss and balances it with the task loss.
+
+Attention Distillation can be viewed as a form of generalized knowledge distillation, but it has several key differences from the design proposed byHinton et al. [26]. Attention Distillation trains the student to match the teacher’s intermediate attention maps, not the final teacher output. This gives the flexibility of distilling from models trained on any task, not just models trained on the same final task. This property is well-suited for today’s “pre-train and transfer” paradigm, where the pre-training task (e.g., reconstruction) and the downstream task (e.g., classification) are usually different.
+However, Attention Distillation does add the constraint that the architecture needs to compute attention maps. We leave experimenting on this idea for other architectures as future work.
+
+Overall, while fancier designs can be used for both Attention Copy and Attention Distillation, we choose to keep them simple for cleaner assessments of their effectiveness.
+
+SECTION: 2.4Connection to Transformer Training Dynamics
+
+Our investigation is also linked to recent attempts to theoretically understand the training dynamics of Transformers. Specifically, the inter-token flow encoded in the pre-trained attention maps can be regarded as a discovered latenthierarchyfrom the dataset. Self-attention can quickly capture frequently co-occurring token pairs[31,52]. However, more occasional co-occurrences need to be explained by the top-level hierarchy, rather than directly learned in the lower levels[53]. This is due to many potential spurious correlations[30], especially in the over-parameterized setting. Transferring attention maps from a trained teacher reduces these spurious inter-token correlations, so the student can focus on intra-token learning (i.e., computing useful features).
+
+SECTION: 3Main Results
+
+As featured inFigure1, attention transfer is highly effective despite its simplicity. Specifically, we demonstrate this with a ViT-L[12]pre-trained with Masked Autoencoding (MAE)[22]for ImageNet-1K classification[10]. Note that this is thesignatureresult that established MAE’s effectiveness for pre-training: compared to a ViT-L trained from scratch (with an accuracy score of 83.0), fine-tuning the MAE pre-trained on the same dataset results in a significant improvement to 85.7.111If not otherwise specified, our results are based on our faithful reimplementation of the official code in JAX.
+
+For attention transfer, we use the same pre-trained MAE model as our teacher, and since scratch training can be viewed as no transfer, and fine-tuning weights transfers all the weights, the above two results serve as natural lower and upper bounds for the effectiveness of our attention transfer methods. We make two observations (fromTable2andFigure1).
+
+SECTION: Attention Copy can largely close the gap between scratch training and full weight fine-tuning
+
+We report an accuracy of 85.1 with Attention Copy. This has largely closed the gap between scratch and full weight tuning (to be precise, 77.8% of the 2.7 percentage point gap). This is surprising, since the teacher’s attention maps are frozen after pre-training for a different task (image reconstruction), and the student must learn everything else (the intra-token operations) completely from scratch.
+
+As another upper-bound, we also experimented with Attention Copy from thefine-tunedmodel. This reaches an accuracy score of 85.6 – almost matching the teacher’s performance (85.7), suggesting that adapting attention maps to the specific task is still helpful, but not crucial, especially as MAE pre-training is performed on the same data distribution.
+
+SECTION: Attention Distillation can match fine-tuning performance
+
+Even more surprisingly, we find Attention Distillation can achieve 85.7 –on parwith fine-tuning the ViT-L weights from MAE. Since Attention Distillation and weight tuning both result in the same-sized model, which requires the same compute budget for inference, this result suggests Attention Distillation can be an effective drop-in replacement for weight tuning when the latter is less applicable (e.g., if weight sharing poses security risks, we can instead send the teacher’s attention maps).
+
+We hypothesize that distillation is better than copy because the student can choose how closely it matches the teacher attention maps, to better suit the task objective. This is also supported by the 85.6 accuracy of copying from fine-tuned MAE, which has the correct task-specific attention maps.
+
+SECTION: 4Analysis
+
+Next, we provide extensive analyses to better understand the effectiveness of attention transfer. Broadly speaking, the explorations are driven by the following two questions:
+
+How important are different activations, layers, and heads? (Section4.1)
+
+Is attention transfer re-learning everything from the teacher? (Section4.2)
+
+SECTION: 4.1Variants of Attention Transfer
+
+We study four variants of attention transfer. We use Attention Copy within this section, since it is a fully-decoupled setting well-suited for scientific analysis.
+
+A natural alternative to transferring attention maps is to transfer different activations that come with self-attention (Eq.1), namely queries, keys, or values. Without loss of generality, if we transfer the teacher’s, the student will compute its ownandand use them normally. Note that transferring bothandis equivalent to transferring the map.Table2shows that transferringworks surprisingly well, and is actually better than transferring the attention map.
+
+We suggest that copyinggives the model the flexibility to deviate from the teacher attention maps and use attention patterns that are better suited for the downstream task. This is supported by the fact that copyingand Attention Copy from the fine-tuned model both achieve the same accuracy of.SectionB.3dives deeper into this hypothesis and finds that the attention maps for copyingare similar to the teacher’s but less constrained than they are in other transfer methods. While more investigation could be done in future work, our findings suggests that the queriesare more important than the keys, which is consistent with previous findings in text sequence modeling where the number of keys and values per layer can be significantly reduced[49].
+
+Finally, we test whether distillingcould outperform full Attention Distillation. However,Table3shows thatdistillation does significantly worse. We hypothesize that this is because it is harder for the student to learn useful keyswhileis still being learned, and because Attention Distillation already has the flexibility to adjust its attention maps to suit the downstream task.
+
+We next change the number of Transformer layers transferred, aiming to identify which layers are more valuable from the teacher. The baseline transfers all the layers. InFigure4, we try
+transferring attention maps only from the first or last layers. For the remaining layers, the student learns to compute its own attention maps.
+
+We make several observations: i) We find transferring more layers is always more helpful. This is a bit surprising, as one may expect attention patterns optimized for MAE’s patch-wise reconstruction task to be sub-optimal for a high-level recognition task like classification. ii) We find transferring the later attention maps is generally better. In fact, performance roughly saturates when transferring the last 15 attention maps out of a total of 24. This indicates that ViTs are capable of learning good low-level representations, as long as they are told how to combine these features into higher-level ones; but not vice versa. This reinforces the theory fromTian et al. [53]that guidance on top-level hierarchy is more important, as there are many more possibilities, and attention transfer can reduce possible spurious correlations in the lower levels.
+
+Finally, we switch back to transferring all the layers, but change the number of heads copied from each MSA block. Specifically, instead of copying the attention map from every head, we can selectively choose to use a subset of the teacher’s heads. The student can then compute its own attention patterns for the unused heads.Figure4shows the effect of transferring fewer heads for each layer. Performance improves as we do attention transfer with more heads, though performance almost saturates at 12 out of 16 heads. Note that we simply follow a naïve selection strategy and use the first set of heads; more advanced strategies based on diversity or activation magnitude can potentially improve the robustness as we reduce the number of heads.
+
+SECTION: 4.2Are We Re-Learning the Teacher?
+
+Since attention transfer provides a significant amount of information from the teacher (ViT-L attention maps have about 10M activations total per image, seeSectionA.1for detailed calculations), a natural question is whether the student performs well because it simply relearns the same representations as the teacher. We thoroughly test this hypothesis on different aspects of the student model.
+
+One way that the student can reproduce the teacher is by learning the same intermediate features. We measure this using Centered Kernel Alignment (CKA)[32], a similarity measure for representations that has been shown to be effective even for networks trained with different initializations or architectures. CKA is a layer-wise comparison that ranges from 0 (completely dissimilar) to 1 (identical) and is invariant to orthogonal linear transformations and isotropic scaling of the features.Figure5shows the CKA between our fine-tuned model and our attention transfer methods. We also show the pre-trained model and a ViT-L trained from scratch for reference. We compute CKA with respect to the fine-tuned model, even though we copy or distill from the pre-trained MAE model, since the features change significantly during fine-tuning to become more task-specific.
+Overall, Attention Copy and Attention Distillation are both quitedissimilarto the fine-tuned MAE model, following the same similarity trend as the scratch model. Our sanity check passes, as CKA shows that pre-trained and fine-tuned MAE have very similar representations in the early layers. This is expected since fine-tuning with layer-wise learning rate decay[8]means the earliest layers change very little during fine-tuning.
+
+Our CKA analysis may not catch some similarity of the intermediate representations, as CKA does not detect all forms of the same information (e.g., invertible nonlinear transforms)[32]. Since intermediate representations may not tell the full story, we also examine the similarity of the network outputs. We measure this using network ensembling: given softmax predictionsfrom the fine-tuned model andfrom another model, we test the accuracy of their average.
+The more independent the model predictions are, the higher their ensemble accuracy is. Figure6compares accuracy before and after ensembling with the fine-tuned model.
+Attention transfer is dissimilar enough to achieve high ensemble accuracy, and ensembling Attention Distillation with a fine-tuned MAE achieves 86.3, +0.6 over the fine-tuned MAE model.
+
+Finally,SectionB.4visualizes the attention maps learned by Attention Distillation and shows that they match for distilled attention blocks but are drastically different for layers that are not distilled.
+
+SECTION: 5Generalization and Limitations
+
+In this section, we test how well our findings on attention transfer apply across a variety of pre-training and fine-tuning datasets, pre-training methods, model sizes, and tasks.
+
+SECTION: 5.1Pre-training and fine-tuning datasets
+
+So far, we have focused on a MAE model pre-trained and evaluated on ImageNet-1K. What happens if we pre-train or evaluate on different datasets? We first test this by pre-training MAE ViT-L models on two new datasets: ImageNet-22K[10]and COCO[37]. These have substantially different dataset bias[54]from ImageNet, across axes like appearance, class balance, and diversity.Table5shows that the resulting MAE models maintain relatively good performance when fine-tuning on ImageNet-1K, with a maximum drop of at most 0.5. However, Attention Copy accuracy drops more, losing as much as 2.1. We see a similar phenomenon inTable5where we use a MAE pre-trained on ImageNet and transfer to the iNaturalist datasets[56]. Again, when the pre-training dataset does not match the transfer dataset, Attention Copy accuracy drops significantly. We hypothesize that the frozen teacher’s attention maps are ill-suited for the fine-tuning dataset, which limits the performance.
+
+SECTION: 5.2Out-of-distribution robustness
+
+One notable aspect of a standard fine-tuned MAE model is that it shows slight “effective robustness,”i.e., it achieves slightly better out-of-distribution (OOD) accuracy than expected based on its in-distribution (ID) accuracy[14]. We test whether Attention Distillation, which achieves the same ID accuracy, has the same benefits OOD.Table6shows that Attention Distillation still does quite well, but has lower accuracy than fine-tuned MAE on all 4 distribution shifts we tried. These results indicate that the attention maps do not account for the full robustness benefits, and that the features learned by MAE during pre-training are helpful OOD even if they are not ID.
+
+SECTION: 5.3Pre-training methods
+
+We have so far focused on MAE, a reconstruction-based pre-training method. We now check whether attention transfer still works if the teacher has been pre-trained with a different algorithm. Specifically, we test MoCo-v3[7], a self-supervised contrastive learning approach, and FLIP[36], which does image-text contrastive learning.Table8shows that Attention Copy still achieves most of the performance benefits for each pre-training method.Impressively, ViT-L is even able to reach 86.6 by just transferring attention maps from FLIP. This confirms that learning the proper attention patterns is indeed a significant bottleneck during learning. Note that the FLIP model we used is pre-trained on LAION-2B[48], yet its effectiveness is less affected by distribution shifts to ImageNet-1K.
+
+SECTION: 5.4Model size
+
+We test whether attention transfer works across model sizes. For all experiments so far, we have used ViT-L; here, we try Attention Copy from a smaller (ViT-B) and larger (ViT-H) model, both pre-trained with MAE.Table8shows that Attention Copy continues to improve with scale, even reaching 86.1% accuracy with ViT-H. It can do this even though scratch model performance already saturates at the ViT-L size. Again, this indicates that models need proper inter-token routing in order to learn good features that generalize. Otherwise, they cannot properly utilize increased model capacity.
+
+SECTION: 5.5Object Detection
+
+Finally, we examine the performance of attention transfer in the standard ViTDet pipeline[35]for COCO object detection. We compare training from scratch against fine-tuning and attention transfer from a MAE ViT-B pre-trained on COCO, which is done to mitigate the effect of distribution shift. For fair comparisons, we use ainput to remove the effect from window attention and positional embedding interpolation, and remove the effect of relative positional embeddings.Table9shows that Attention Distillation recovers a majority of the gains from pre-training in this dense prediction setting as well. Based onTable8, we anticipate that the gap between fine-tuning and attention transfer will decrease with ViT-L, but we are limited by computational resources.
+
+SECTION: 6Related Work
+
+Numerous previous works have studied the attention patterns of pre-trained vision transformers[59,63,43].
+These works present these differences only as qualitative observations, whereas we are able to isolate the attention patterns and show that they are causally responsible for most of the differences in fine-tuning performance. Other methods, such as Lora[28]or Prompt-to-Prompt[25], do rely on the importance of high quality attention patterns within pre-trained networks, but they also utilize pre-trained features and do not provide our insight thatthese features are typically unnecessaryfor the tasks we examine.Trockman and Kolter [55]observe diagonal structure within the product of attention layer weights in a trained supervised network. They show that initializing the weights with this structure moderately improves accuracy for small models early in training.
+The work most similar to us isZhang et al. [68]in the language domain, which finds that pre-trained BERT models improve length generalization on a few particular synthetic tasks. They attribute it to the attention patterns of a few, specific heads and show that hardcoding these patterns into the network achieves the same benefit. Our work is complementary and emphasizes the importance of attention maps over features.
+
+GLoMo[64]also attempts to decouple features from the way they should be combined. They use unsupervised pre-training to train a network to output a graph, which is later used to combine task-specific features.
+We find that there is no need to develop a specialized architecture to achieve this – Vision Transformersalready do this naturally.
+
+Knowledge distillation is a popular framework for training small, high-performing student networks[26]. Knowledge distillation methods typically add a loss to encourage the student network to match the teacher network’s logits, but variants often use other feature statistics as targets, such as the final representations[41,13], intermediate feature similarities[19], or intermediate feature magnitudes[66,34]. This last approach has also previously been called “attention transfer,” but their method is quite different and actually refers to distilling spatial activation magnitudes in ConvNets.
+These knowledge distillation approaches all assume that students need to be explicitly taught the right features.
+In contrast, our analysis with attention transfer shows that attention maps are sufficient to recover all of the gains from pre-training.
+Some papers have used attention distillation as an auxiliary loss to help a smaller model learn the teacher outputs more effectively[62,61]. However, these only consider transferring the same function across model sizes, instead of transferring knowledge from a pre-trained model to a different downstream task.
+
+The lottery ticket hypothesis[15]suggests that large, dense neural networks contain small, sparse subnetworks (“winning tickets”) that, when trained from scratch, can match or even outperform the performance of the original dense network. This is particularly interesting because these sparse subnetworks maintain their performance only with their original initialization values; the strength of their connections betweenneuronsis special in some way. Our findings draw a parallel, indicating that the connections betweenpatches, controlled solely by the attention patterns, are similarly special within pretrained ViTs.Frankle and Carbin [15]further conjecture that overparameterization improves performance because larger models contain exponentially more sparse subnetworks in superposition and are thus more likely to contain a “winning ticket” – a hypothesis supported by subsequent empirical and theoretical work[46,44,42,3]. However, this phenomenon does not arise in our setting with ViT attention patterns, since there are only a handful of attention maps per layer (rather than thousands of neurons). Consequently, good attention patterns are unlikely to appear by chance and must instead be learned during pretraining. We hope that a new model architecture that efficiently combines many more attention maps per layer can address this limitation and learn better from scratch than existing ViTs.
+
+SECTION: 7Conclusion
+
+Even as Transformers have surged in popularity, the way we use them has remained stagnant: pre-train, then fine-tune the weights.
+In this work, we present attention transfer, a simple alternative to ViT fine-tuning that decouples intra-token operations (how to extract more usable features for each token) from inter-token operations (how those features should be combined).
+Our key finding is that the attention patterns (inter-token operations) are the key factor behind much of the effectiveness of pre-training – our Attention Distillation methodcompletely matches fine-tuningon ImageNet-1K.
+We do find some limitations: attention transfer does not work well if the pre-training and transfer datasets are different, and it loses a bit of OOD robustness. Nevertheless, our findings provide insights into the role of attention in pre-trained ViTs, and we hope
+future work fixes attention transfer’s shortcomings and explores the advantages of this new transfer method.
+
+Some directions for future work are particularly interesting. First, a deeper investigation of the queriescould help us better understand their importance and potentially yield better transfer strategies.
+Second, attention transfer eliminates the need for tricks that fine-tuning requires, such as layerwise learning rate decay. Layerwise learning rate decay adds the prior that early layers should change less compared to later layers. However, this prior may be overly restrictive for next-generation models, since it prevents early features from changing, and getting rid of it could open up new opportunities. Finally, since attention maps are, whereis the sequence length, attention maps could be transferred more easily across model sizes. In contrast, weight tuning is more difficult to apply when the models have different dimensions. Pre-training a smaller model and transferring its attention patterns to a larger downstream model could be more practical than the current practice of fine-tuning.
+
+SECTION: Acknowledgments and Disclosure of Funding
+
+AL is supported by the NSF GRFP DGE1745016 and DGE2140739 and performed the work during an internship at FAIR.
+
+SECTION: References
+
+SECTION: Appendix
+
+SECTION: Appendix AKey Numbers
+
+SECTION: A.1Information in Attention Transfer
+
+How much information is transferred during attention transfer?Table10shows two ways of doing this accounting. If considering the map as 24 layers16 heads197 query tokens197 key tokens, there are about 15 million activations transferred per example. However,is low rank sinceandare very “tall,” so the attention mapcan be considered 24 layers16 heads197 tokens64 head dim2 matrices, which is about 9.7 million activations.
+
+SECTION: A.2Computational Cost of Attention Transfer
+
+Attention transfer has the same computational and memory cost as any other knowledge distillation method that does a forward pass through a teacher. We compare fine-tuning vs attention distillation on a 16GB NVIDIA GP100 with ViT-L and a batch size of 16:
+
+Training these large models on ImageNet-1K is quite computationally expensive. 100 epochs of regular fine-tuning is about 2070 GPU-hours per 100 epochs, and 100 epochs of attention transfer is about 2735 GPU-hours. In total, we estimate about 150k GPU-hours are required to reproduce all experiments.
+
+SECTION: Appendix BAdditional Analysis
+
+SECTION: B.1Aggregated Attention Transfer
+
+InSection4.1, we conducted a thorough analysis of which aspects of attention matter the most.
+Another way to identify key properties of the teacher’s attention maps is to average them across some axis during the transfer. For example, one can average the attention maps over all layers of the teacher network, so that the student uses the same map at every layer.Table12shows the results with aggregations over several natural axes. Averaging over examples (i.e., using the same attention map, independent of the input) or averaging over query tokens (i.e., each attention distribution is the same, regardless of the query token given an image) does quite poorly. This indicates, unsurprisingly, that these are key elements of self-attention. This also shows that prior work that focuses on aggregate statistics of the attention maps (e.g., averaged over examples)[59]fail to capture the per-example nature of the attention maps that are actually responsible for full fine-tuning performance.
+Attention copy performance is more reasonable when averaging over heads or layers. This partially corroborates previous findings that attention maps can largely be shared across all layers[58]. However, while the results can be potentially improved with more recipe search, the performance is far short of the full fine-tuning accuracy (85.7).
+
+SECTION: B.2Comparison to Knowledge Distillation
+
+Our central hypothesis has been that the pre-trained attention maps aresufficient, and the pre-trained features are notnecessary. Since our attention transfer methods are special instances of knowledge distillation[26], we additionally compare to a baseline of distilling the residual stream features from a pre-trained MAE ViT-L. InTable13, we obtain a downstream accuracy of 81.3 on ImageNet-1k. This is significantly lower than the 85.7 that can be achieved through fine-tuning or attention distillation. This makes sense: the features learned during self-supervised pre-training are not directly well-suited for classification, so trying to match them can hurt performance. CKA analysis of the features (Figure5) supports this hypothesis – the fine-tuned MAE does well by significantly changing the features in the latter half of the network. Overall, transferring attention appears to do much better than distilling the features.
+
+SECTION: B.3Attention Map Analysis for Transferring
+
+InSection4.1, we found that copying the queriesdoes surprisingly well, almost matching Attention Distillation or fine-tuning the pre-trained weights. Here, we compare the attention maps learned by the copymodel to those of other models, in hopes of understanding why copydoes so well.
+
+Each of the 24 layers within a ViT-L has 16 attention heads, which each compute anattention map for an image withpatches. We would like to determine the similarity between the attention heads in two models using some divergence measure; we use the Jensen-Shannon divergence (JSD) because it is symmetric in its arguments. However, there is one caveat. Because the output of the attention layer is invariant to the ordering of its heads, it is insufficient to compare theth head of one model against theth head of another. We need to properly match heads up across models. We explored four ways of doing so:
+
+Direct pair: this is the naive approach of computing the JSD between theth head of the first model and theth head of the second model. This can fail since similar heads may not be in the same order across models.
+
+Bipartite matching: for each layer, we compute the JSD between each of the 16 heads in the first model and the 16 heads in the second model. We then use bipartite matching to create a one-to-one pairing between the heads that minimizes the cumulative JSD. This solves the previous problem, but can still be thrown off, such as if one of the models has heads that it applies no weight to (ororis orthogonal to the values).
+
+Minimum: instead of creating a one-to-one matching, we allow many-to-one matching between heads. We call this Minimum because each head in the first model is paired with the head from the second model with the smallest JSD. This allows our metric to potentially ignore extraneous heads in the second model, but is still susceptible to extraneous heads in the first model.
+
+Averaged maps: we average the attention maps of all heads in a layer and compare the averaged maps across models. This can still be thrown off by extraneous heads.
+
+Figure7shows the results of comparing models against the pre-trained teacher (top row) or fine-tuned model (bottom row) as the second model in the JSD. Most of our findings align with our intuition. In the top row, when comparing against the pre-trained teacher, attention distillation matches the teacher maps closely until layer 18, the last layer whose attention maps it is trained to approximate. The fine-tuned model’s attention maps diverge more in later layers, since layerwise learning rate decay ensures that the earlier layers don’t change much. However, copyis only somewhat similar to the pre-trained teacher or the fine-tuned model, across all of our ways to measure attention map similarity. Furthermore, it is less similar than copyis, even though copyhas much lower downstream performance than copy.
+
+Note that these plots have major limitations in what kinds of similarity they capture. With enough attention heads per layer, the same exact attention map can be partitioned differently across the heads between two models. Hypothetically, let’s say that an attention layer wants to attend uniformly across all locations (i.e.,perform average pooling), and that we have 3 models, each with 2 attention heads:
+
+Head 1 attends uniformly over all locations, head 2 attends arbitrarily over locations, and the second head’s values are set to 0.
+
+Head 1 attends uniformly over the top half of the image, head 2 attends uniformly over the bottom half of the image, and both use values.
+
+Head 1 attends uniformly over the left half of the image, head 2 attends uniformly over the right half of the image, and both use values.
+
+All 3 heads compute the same exact attention operation, yet would register as highly dissimilar in the setup fromFigure7.
+Overall, this experiment shows that copy’s behavior is highly complex, and its strong downstream performance is still not fully understand.
+
+SECTION: B.4Attention Map Visualizations
+
+Section4.2provided several results to show that attention transfer does not simply “relearn” the teacher. Here, we examine one final piece of evidence. We show the attention maps of different networks inFigure8. We focus on Attention Distillation, since Attention Copy’s maps are identical to those in the teacher. Attention Distillation’s maps generally match the teacher (pre-trained MAE), but are not completely identical for layers that are distilled (e.g.,layer 13). For layer 24, which is not distilled, Attention Distillation looks very different from pre-trained model, instead resembling the attention map of a model trained from scratch. These visualizations also highlight the fact that these attention maps are a very strong prior on what the model should use. While the randomly initialized model attends completely uniformly over all tokens, the pre-trained teacher attention maps already separate the relevant object from potentially spurious correlations (like the branch or background in the example). We show additional attention map visualizations inFigure11andFigure12.
+
+SECTION: B.5Attention Distillation Hyperparameter Sensitivity
+
+We show the sensitivity of Attention Distillation to its hyperparameters.
+
+We first consider the distillation loss weightwhich is used to compute the overall loss for the student:
+
+Table10shows that a larger weight,, does best. This may be because it encourages the student to learn useful attention maps more quickly, letting it guide feature learning earlier in training. We use this value offor our main result, where we match the 85.7 accuracy of fine-tuning. However, all other results in this paper usefor simplicity.
+
+Just as we tried for Attention Copy, we also tried distilling various numbers of layers from the MAE teacher network, starting from the bottom of the network. Table10shows that there is a “sweet spot” when distilling the first 21 out of 24 layers. Distilling all layers may hurt performance by forcing the student to use attention maps that are more suited for reconstruction than classification. Note that all other distillation results in this paper use the first 18 layers by default.
+
+SECTION: B.6Mix and Match, Student and Teacher
+
+In the main paper, we focused on transferring attention maps from a pre-trained teacher to a randomly initialized student. However, the fact that Transformers have decoupled inter- and intra-token computation means that we can actually initialize the student with a pre-trained network as well. This entails testing whether the attention patterns from one network can improve the features of an already-pre-trained student model. We try Attention Distillation for various combinations of MAE, MoCo-v3, FLIP, and a randomly initialized network. Table14shows that this “mix-and-match” training does better than training from scratch (83.0) but does not match the performance inTable8, where the students are randomly initialized. These are preliminary results, as the overall training recipe may need to be changed to accommodate the different learning dynamics of a different student model. Further hyperparameter tuning may significantly improve these results.
+
+SECTION: Appendix CImplementation Details
+
+We present the training recipe for Attention Copy inTable15and the recipe for Attention Distillation inTable16. For our partial layer transfer experiments inFigure4, we setas it helps avoid training instabilities.
+
+SECTION: Appendix DAdditional Attention Map Visualizations
