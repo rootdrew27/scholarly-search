@@ -15,6 +15,7 @@ class EmbeddingLibrary():
         self.paper_ids:list[str] = sorted([file.stem.replace('_content', '') for file in path_to_papers.iterdir() if file.name not in papers_to_skip])
         self.paper_paths:list[Path] = sorted([file for file in path_to_papers.iterdir() if file.name not in papers_to_skip])
         self.path_to_log = path_to_log
+        #self.path_to_clean_papers = None TODO: Implement (perhaps create a PaperLibrary class)
         self.log_lvl:int = log_lvl
         self.name:str = name
         self.end_of_paper_words:list[str] = end_of_paper_words
@@ -101,6 +102,8 @@ class EmbeddingLibrary():
                 except Exception as ex:
                     self.logger.error(f'Error caught while embedding file: {file.name}:\nException: {ex}\nMessage: ' + traceback.format_exc())
         
+            assert self.paper_ids == [file.stem for file in sorted(self.path_to_embs.iterdir())], 'the paper IDs and the embeddings IDs must be in the same order.'
+
         except Exception as ex:
             self.logger.error('Error in Embedding Process: {ex}')
             raise ex
@@ -111,7 +114,7 @@ class EmbeddingLibrary():
             for file in sorted(self.path_to_embs.iterdir()):
                 paper_embs.append(np.load(file))
             all_embs = np.concatenate(paper_embs, axis=0)
-            assert all_embs.shape[0] == len(self.paper_ids), print(f'The shape of the full paper embeddings ({all_embs.shape[0]}) does not equal the number of papers ({len(self.paper_ids)}).')
+            assert all_embs.shape[0] == len(self.paper_ids), f'The shape of the full paper embeddings ({all_embs.shape[0]}) does not equal the number of papers ({len(self.paper_ids)}).'
             self.paper_embs = all_embs
         return self.paper_embs
 
@@ -133,7 +136,8 @@ class EmbeddingLibrary():
         print(r_secs)
         r_emb = self.model.encode(r_secs, normalize_embeddings=self.norm_embs).mean(axis=0)
         scores = self.model.similarity(r_emb, self.paper_embs)
-        top_n_idxs = np.argsort(scores).tolist()[0][:n_results]
+        top_n_idxs:list = np.argsort(scores).tolist()[0][-n_results:]
+        top_n_idxs.reverse()
         top_paper_ids = [self.paper_ids[idx] for idx in top_n_idxs]
         return top_paper_ids
 
