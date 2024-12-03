@@ -7,9 +7,9 @@ model = AutoModelForCausalLM.from_pretrained("weights/hugging_pt/model")
 
 prompt = "Chill guy?"
 
-inputs = toker(prompt, return_tensors="pt")#.to('cuda')
+inputs = toker(prompt, return_tensors="pt")
 
-ids = model.generate(inputs.input_ids, max_length=10) # TODO: Pass in attn mask
+ids = model.generate(inputs.input_ids, max_length=5)
 
 output = toker.batch_decode(
     ids,

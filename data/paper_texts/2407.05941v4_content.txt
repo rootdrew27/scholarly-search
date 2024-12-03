@@ -1,0 +1,394 @@
+SECTION: Pruning One More Token is Enough: Leveraging Latency-Workload Non-Linearities for Vision Transformers on the Edge
+
+This paper investigates how to efficiently deploy vision transformers on edge devices for small workloads.
+Recent methods reduce the latency of transformer neural networks by removing or merging tokens, with small accuracy degradation.
+However, these methods are not designed with edge device deployment in mind: they do not leverage information about the latency-workload trends to improve efficiency.
+We address this shortcoming in our work.
+First, we identify factors that affect ViT latency-workload relationships.
+Second, we determine token pruning schedule by leveraging non-linear latency-workload relationships.
+Third, we demonstrate a training-free, token pruning method utilizing this schedule.
+We show other methods may increase latency by 2-30%, while we reduce latency by 9-26%.
+For similar latency (within 5.2% or 7ms) across devices we achieve 78.6%-84.5% ImageNet1K classification accuracy, while the state-of-the-art, Token Merging, achieves 45.8%-85.4%.
+
+SECTION: 1Introduction
+
+In the past decade, Internet of Things (IoT) and commodity edge devices have become ubiquitous[3,21,41].
+Edge devices have become sufficiently powerful, and model miniaturization techniques sufficiently capable, that machine learning (ML) models can be deployed to the network edge for various tasks, including computer vision applications[11,36].
+However, state of the art performance on various computer vision tasks is often claimed by large vision transformer (ViT) based neural network[9]architectures.
+ViT models such as DeiT[37]and DINOv2[29]are not designed nor miniaturized for edge deployment.
+Additionally, latency (the time required to do a forward pass given a batch of inputs) is often of critical importance on edge devices, and only small inputs or workloads can be processed[17].
+
+Prior work has shown that ViTs have high redundancy that can be exploited for latency reduction benefits[22].
+One approach involves identifying and removing low-information tokens; this is called token sparsification.
+Training-free token sparsification methods such as Token Merging (ToMe)[1]have been effective at reducing latency of pre-trained models.
+Other approaches like DynamicViT[34]can yield better accuracy than training-free methods, but require training on server-grade hardware.
+
+We address three key shortcomings in existing techniques.
+(1) Many existing efficient methods do not consider fine-grained hardware or latency characteristics[1,18,40].Fig.1demonstrates the diversity of latency-workload trends across devices and workload sizes.
+As a result, there is room to improve efficient methods in a hardware-aware manner by considering this relationship.
+(2) Some existing efficient methods may require extensive training[46,34,4], hindering the deployment of pre-trained models on edge devices.
+(3) Prior work has investigated hardware-aware methods for CNNs[45,44], but there is little work that shows how to handle or leverage latency-workload behavior for ViTs.
+Finally, these works lack direct measurements of underlying GPU or kernel behavior.
+Thus, our work focuses on reducing ViT latency by considering ViT latency-workload relationships, and without requiring training.This paper has the following contributions:
+
+We identify and profile factors that can affect ViT latency-workload relationships.
+
+We propose the first method using latency-workload relationships for deciding ViT token pruning schedules.
+
+We design a novel training-free token pruning mechanism. For similar latency across various hardware and workload sizes, we achieve 0.46 to 43.7 percentage points higher accuracy than ToMe, a state-of-the-art method.
+
+SECTION: 2Background and Related Work
+
+In this section, we review related work on model acceleration and efficient methods for vision transformers (ViT).
+Some post-processing or fine-tuning methods such as quantization[20]are compatible with token sparsification techniques such as our method.
+
+SECTION: 2.1Model Acceleration of Vision Transformers
+
+ViT[9]architectures such as DINOv2[29]have achieved state-of-the-art accuracy on multiple computer vision tasks, including image classification and object detection.
+State-of-the-art models such as DINOv2-G[29]have over 1 billion parameters.
+It is important to address the efficiency of ViT models when deploying on edge devices.
+Numerous techniques exist for accelerating ViT models, including: quantization[20], knowledge distillation[43], low-rank factorization[5], and optimized kernels for attention[7].
+In general, these techniques either remove redundant information or reduce network layer compute.
+
+One approach related to redundant information removal is token sparsification[1,16,35,34].
+These methods are easily applied to a variety of ViT architectures[37,29,9].
+One advantage of sparsification methods is that they often do not necessarily require training or fine-tuning[39,1].
+However, some methods[34,46,4,40]may require significant training time,e.g.100+ epochs, to recover more accuracy and yield latency reductions.
+Training poses a high barrier to application; training-free methods are more accessible[1,39].
+
+SECTION: 2.2Latency-Workload Relationship
+
+The premise behind token pruning is that reducing the workload (tokens) can decrease latency.
+However, this relationship can be non-linear, as demonstrated inFig.1.
+This relationship can stem from how workloads are dispatched to the GPU by an ML framework, framework overhead[10], and kernel design decisions[26].Tab.1illustrates primary causes of kernel inefficiency.
+
+An example of Cause 1 occurs where a kernel grid size is chosen such that a partial wave of computation must be launched on the GPU — this can lead to a phenomenon termed the GPU tail effect[27].
+A partially filled wave incurs the same latency cost as a fully filled one, and this effect can compound across layers.
+Thus, even minor adjustments in workload size can result in significant latency changes due to the cumulative overhead of partial waves across layers.
+For example, on the NVIDIA AGX Orin[23], removing one token (97 to 96) can decrease latency by up to 33% (Fig.1.b).
+
+There are many factors that affect latency.
+Differences in hardware, changes across ML framework versions, and reliance on proprietary backend libraries like cudNN[6]and cuBLAS[25]complicate the modeling and prediction of neural network latency.
+To illustrate this difficulty, we show more examples inSec.3.1.
+
+Prior work has exploited the tail effect, which is related to Cause 1, to guide pruning methods for convolutional networks[45,44].
+Kernel-based optimization methods such as FlashAttention[7]may attempt to choose kernel launch configurations that maximize occupancy.
+Quantization addresses Cause 2 by employing data types with fewer bits than 32-bit floating point for network parameters.
+Cause 3 can be addressed by choosing low-level operators that might be faster at the cost of precision, or vice-versa[26].
+
+In this work, we address token pruning in the context of ViT models.
+Previous work frames CNN channel pruning in the context of Cause-1 problems, specifically the GPU tail effect.
+However, ViT token pruning mechanisms are fundamentally different from previous CNN channel pruning[13]approaches due to architectural differences between CNNs and ViTs.
+We hypothesize and later demonstrate that latency-workload relationships can also be leveraged to make better token pruning decisions for ViTs.
+
+SECTION: 3Token Pruning with Consideration of Latency and Workload Size
+
+InSec.2.1andSec.2.2, we discussed the advantages of training-free token pruning methods and how previous work considered latency and workload size relationships for efficiency benefits.
+Therefore, we set two design goals:
+(1) require no training or fine-tuning of a pre-trained ViT model;
+and
+(2) achieve better accuracy-latency tradeoffs by pruning tokens according to these relationships.Tab.2illustrates qualitative differences between our work and others as a result of these goals.
+
+As depicted inFig.3, our token pruning approach consists of two main parts.
+First, we establish a pruning schedule for specific model-device pairs, which involves determining the number of tokens to prune and the layers where pruning occurs.
+Second, we devise a training-free technique for pruning non-informative tokens at inference time.
+InSec.3.1we show how to decide the number of tokens to prune based on the latency-workload relationship.
+Next, inSec.3.2we explain our choice of which layers to prune, completing our offline pruning schedule selection.Sec.3.3describes our token pruning mechanism which is used at inference time.
+Last,Sec.3.4clarifies qualitative differences between our method and existing approaches.
+
+SECTION: 3.1Deciding a Number of Tokens to Prune for our Pruning Schedule
+
+ViT workload size.Before explaining our method we discuss the core operator of ViT models, the attention mechanism[38].
+ViT models are partially parameterized by an embedding dimension, with inputs characterized by a batch sizeand a number of tokens.
+The input size, or workload, for attention is a tensor with shape.Fig.1demonstrates how varying,, andaffects the relationship between workload size and latency across various devices.
+
+This wide variety of behavior across devices and workload sizes leads us to consider how ViT latency-workload relationships can be reasonably measured or modeled.
+We now explain underlying reasons for latency-workload non-linearity, and how we decide to measure it.
+
+Measuring latency behavior effects vs. predicting them.As previously mentioned, the GPU tail effect is one phenomenon that arises due to suboptimal kernel grid size choice.
+Prior work has modeled[19]or utilized[45,44]GPU tail effect behavior with respect to convolutional neural networks CNNs.
+Other work has noted the (sometimes drastic) effect of latency overhead from ML frameworks[10].
+
+Yu et al.[44]claims that the latency of CNNs increases in discrete jumps, and in all other workload size intervals latency remains the same.
+In our experiments,we find that internal ML framework operator selection can lead to a range of latency behavior.
+This claim for CNNs does not hold in our evaluations for ViTs.Fig.2depicts the latency-workload characteristics of various attention operators in PyTorch[31]with=1 and varyingfor a DinoV2-G[29]attention operation.
+This was measured on an NVIDIA RTX 3090 Ti GPU.
+Additionally, wefind that the tail effect is not always the primary factor
+for drastic latency changes, as was described in previous work.We illustrate these findings with measurements of metrics mentioned inSec.2.2and their co-occurrence with latency behavior.
+
+In one example fromFig.2, theMemEffattention operator features a40% latency increase from 128 to 130 tokens that is correlated with a40% increase in pipeline stall or wait time (Cause 3).
+But, the kernel grid size remained the same, indicating that the tail effect (Cause 1) was not the primary cause of this latency increase.
+A second example is the13% latency decrease ofMemEfffrom 132 to 134 tokens is correlated with a 125% increase in kernel grid size (Cause 1) and a 34% decrease in pipeline stall time (Cause 2).
+These effects seem to be downstream of a different kernel being chosen due to internal heuristics.
+Importantly, we notelatency can even decrease as workload increases, due to underlying kernel, hardware, and framework behaviors.
+
+Considering these observations, we empirically measure the latency-workload relationship due to the difficulty in predicting or modeling its behavior.
+The next section describes how we perform this measurement.
+
+Ranking token importance.Given a modelwithinput tokens, we define the selection oftokens to prune as a multi-objective optimization problem, balancing latency gains against accuracy degradation.
+This is theoffline computationfor selecting a pruning schedule foron a target device, as seen inFig.3.
+
+First, we measure latencyofon the target device for each number of tokens to keep.
+Measuring latency and accuracy ofis performed with a grid search across— this is demonstrated inAlgorithm1.
+Running times for all configurations we evaluate over are listed later inSec.4.2.
+
+[fontsize=]python
+def measure_latency(model, b, N):
+""" b refers to batch size,
+N is the number of tokens ’model’ expects """
+#L(n), as a dictionary
+L = 
+for n in range(1, N):
+# Latency is independent of random inputs
+# model.d is the embedding size (Sec. 3.1)
+x = torch.rand(b,n,model.d)
+# Benchmark for fixed time
+latency = bench(model, x)
+L[n] = latency
+return L
+
+[fontsize=]python
+def measure_accuracy(model, dataset, N):
+""" dataset is the eval split,
+N is the number of tokens ’model’ expects """
+#A(n), as a dictionary
+A = 
+for n in range(1, N):
+# Running accuracy for n
+n_acc = 0.0
+for image,label in dataset:
+# Shape (b, N, model.d)
+x = model.embed(image)
+# Shape (b, n, model.d)
+x = random_prune(x, n)
+y_pred = model.predict(x)
+n_acc += sum(y_targ == label)
+A[n] = n_acc / len(dataset)
+return A
+
+Second, we estimate the accuracyofafter pruning tokens.
+We need to measurein a way that does not depend on our pruning schedule selection, however.
+Furthermore it is useful to underestimate the accuracy ofso our selection algorithm is hesitant to remove too many tokens, which can degrade accuracy significantly.
+A simple proxy for the accuracy of eachis to apply random token removal after the first layer on[30], which we refer to asrandom_prune.Algorithm2depicts how to compute.
+It is assumed that any token pruning method should be better than random token removal since random token pruning does not consider token information content at all[40].
+Furthermore, pruning at the first layer will degrade accuracy more than pruning later in the network[2].
+Thus, random token pruning is a suitable choice for estimating accuracy.
+
+Third, in order to solve the multi-objective optimization problem, we need to transform our measurementsandinto utility functions Uand U.
+We want Uto be normalized to [0,1], and thewith minimum latency has, and thewith maximum latency receives.
+Similarly,forwith maximum accuracy, andforwith minimum accuracy.
+
+The following definitions meet these criteria:
+
+Now that we have separate utilities for latency and accuracy Uand U, we can combine them to yield an overall utility score.
+This allows us to solve the optimization problem by choosingthat maximizes the overall utility.Eq.3represents the solution to this multi-objective optimization problem, defining the overall utility as a convex combination of Uand U.
+We measure the effect of differentlater inSec.4.2.
+
+SECTION: 3.2Pruning Schedule: Deciding Layers at which to Prune
+
+We explainwherein the ViT our pruning mechanism is applied.
+Our schedule prunes alltokens at one layer, early in the model.
+This differs from other methods such as ToMe[1], Top-K[12,18], and DynamicViT[34]that progressively prune tokens.
+This choice is based on two observations supported by our evaluation:
+First, on small workloads, the repeated application of pruning operations can introduce significant latency (Sec.4.3).
+Second, latency reductions accumulate with each subsequent layer after pruning; thus, pruning earlier allows more layers to benefit from low latency.
+
+[fontsize=]python
+def vit_forward(model, x, N, R, L):
+""" x is an image-like input. N is
+the number of tokens after embedding x.
+R is the number of tokens to prune, and L
+is the layer at which to prune (Sec. 3.2). """
+# Tokenize input image, x has shape (b, N, d)
+x = model.embed(x)
+for idx, layer in enumerate(model.layers):
+# Standard self-attention
+x, attn, V = layer(x)
+if idx == L:
+scores = rank_tokens(attn, V)
+x = prune_tokens(x, scores, N, R)
+return model.head(x)
+
+def rank_tokens(attn, V):
+""" attn and V are from self-attention.
+attn has shape (b, h, N, N), where h is
+the number of attention heads. V has
+shape (b, h, N, d / h).
+’keepdim=True’ means the tensor dimension reduced
+over is not removed, but is kept with length=1.
+"""
+am = max(attn,dim=1).sum(dim=1,keepdim=True)
+am /= max(am.transpose(-2,-1))
+# V metric (ours)
+vm = max(V, dim=1).sum(dim=-1,keepdim=True)
+vm = softmax(vm, dim=1)
+# Tokenwise scores with shape (b, N, 1)
+return am + vm
+
+def prune_tokens(x, scores, N, R):
+""" x is a tensor of tokens. We prune
+such that N-R tokens remain. """
+# Sort by score, descending
+sorted_scores_idx = argsort(scores,dim=1)
+# Shape (b, N-R-1, d)
+kept = gather(x, sorted_scores[:,:N-R-1])
+# Shape (b, 1, d)
+inattentive = gather(x,
+sorted_scores[:,N-R-1:]).mean(dim=1)
+# Shape (b, N-R, d)
+return torch.cat([kept, inattentive], dim=1)
+
+We perform pruning after the first 25% of ViT layers, akin to the first pruning layer of DynamicViT[34]— this yields latency reduction for the remaining 75% of layers.
+We refer to the index of this pruning layer as.
+Different pruning locations are evaluated in the supplemental work.
+
+SECTION: 3.3Token Pruning Method
+
+The schedule selection described inSecs.3.1and3.2identifies the location and number of tokens to prune.
+Now, we give a training-free token pruning mechanism to decidewhichtokens to prune at inference as inFig.3.The offline pruning schedule, consisting of a number of tokens to pruneand the layer indexat which to prune, is an input to our token pruning mechanism.
+The primary design goal for our pruning mechanism is to require no finetuning onand be lightweight - thus we restrict ourselves to using intermediate computations from the attention operation.
+
+First, we choose a method to rank the importance of tokens.
+Following prior work[2,14], we rank token importance by measuring the attention each token receives from all others, utilizing the softmax attention matrix.
+We also incorporate an importance term derived from thematrix, which marginally increased accuracy.
+
+Second, we borrow from EViT[18]and instead of discarding pruned tokens, we create a new “inattentive” token based on the features of all pruned tokens, then and append it to the set of kept tokens.
+Information is thus preserved from the pruned tokens, increasing accuracy while reducing the total token count.
+
+Algorithm3depicts a forward pass using our pruning mechanism.
+Inputs from our offline computation,and, are utilized to rank tokens and decide at which layer to prune.rank_tokensranks each token based on our V matrix importancevmand a standard attention matrix importance termam.prune_tokensprunestokens using a standard token removal implementation[34].
+
+SECTION: 3.4Qualitative Comparison with Pruning and Merging
+
+Here, we justify why we classify our method as token pruning rather than merging.
+Our method uses the “inattentive“ token from EViT, which the EViT authors consider a hybrid method.
+However, we take the position that the core mechanism of deciding which tokens to prune is an important differentiating factor.
+A majority of pruning-based approaches treat the selection of tokens to prune as a ranking problem, rather than a matching problem as merging methods do.
+Our importance score computation is most similar to ranking-based approaches.
+Thus, we see ourselvesprimarilyas a pruning method, though we could be considered a hybrid between pruning and merging.
+
+SECTION: 4Evaluation
+
+After describing experimental setup (Sec.4.1),
+we characterize our technique via ablation overand by measuring offline computation costs (Sec.4.2).
+Then we compare to the state-of-art ToMe method and relevant baselines (Sec.4.3).
+
+SECTION: 4.1Experimental Setup
+
+Hardware: We use three devices with varying characteristics (Tab.3).
+Our technique targets edge workloads, so we use two edge-caliber development boards designed for machine learning:
+NVIDIA TX2[28]and NVIDIA AGX Orin[23].
+To assess generalization beyond edge devices, we also use a server-grade NVIDIA A100 GPU[24].
+On the TX2 and Orin we used fixed CPU and GPU clock rates for consistency.
+The A100 system clocks could not be locked because those servers are shared resources.
+
+Models:Tab.4summarizes the models used.
+We evaluate common vision transformer models across a variety of scales (21M to 1.1B parameters).
+For DeiT and ViT models we use the TIMM pretrained weights, while we use the DinoV2-G weights from the DinoV2 Github.
+
+Measurements:
+In order to measure latency for evaluation, we use the PyTorchbenchmarkmodule[32].
+Latency is measured over 16 seconds.To be clear, we define latency as the compute time required for a forward pass of a model given a batch of input images.
+Accuracy was measured using the A100 system, with a batch size of 512 on the classification evaluation subset of ImageNet1K.
+In subsequent experiments, we decide the pruning hyperparameters of each token pruning method for fair comparison with our method.
+For reproducibility, our code is open source.
+
+SECTION: 4.2Characterizations of our technique
+
+Here we evaluate two of the three design decisions of our method.
+First, we ablate the hyperparameterused in our utility function.
+Second, we measure the cost (time) for offline computation.
+The third decision, selecting the layerfor pruning, is evaluated in supplemental material.
+
+Pruning schedule ablation study across.InSec.3.1we introduce an algorithm to decide a number of tokens to pruneaccording to the GPU tail effect.
+
+Thehyperparameter governs the relative weighting of accuracy and latency utilities in our algorithm.
+Settingprioritizes accuracy, and only a few tokens might be pruned.
+Settingprioritizes latency, and would prune all or nearly-all tokens.
+To decide the value of, we performed an ablation study inTab.5.
+
+When evaluated on the AGX Orin with, we computed(over 75% of tokens pruned), resulting in a2.8% accuracy drop for a 2.1% latency reduction.
+We consider this to be an unfavorable tradeoff.
+This ablation, in addition to results inSec.4.3, suggest thatis a good choice.
+Thus we usefor all evaluations that appear in this work.
+Intuitively speaking this means accuracy degradation and latency reduction are considered with equal weight according toEq.3when selecting.
+
+Offline computation time.InSec.3.1, we describe our offline computations to decide anumberof tokens to prune in which we utilize a grid search to measure latency and estimate accuracy degradation.Tab.6illustrates the total times required for measuring the workload-latency characteristics of DeiT-S and ViT-L across devices.
+The offline computation is relatively fast (no more than 4.5 hours), especially compared with the time required to train any ViT.
+
+SECTION: 4.3Comparison to Other Methods
+
+In this section, we demonstrate the effectiveness of our token pruning schedule and pruning mechanism across devices and workload sizes.
+Our primary focus is on smaller workloads, which are typical in edge deployment scenarios[17].
+
+For inter-method comparison, we systematically compare to the state-of-the-art method, Token Merging (ToMe)[1].
+We also evaluate two common benchmarks, Top-K[12,18]and DynamicViT[34].
+We measure Top-K in all conditions; we use DynamicViT only with models for which its pre-trained weights were available.
+DynamicViT is not emphasized as it involves training, making it an unfair comparison with our method, ToMe, and Top-K.
+
+Accuracy-latency tradeoffs.In this section, we discuss the results of our training-free token pruning mechanism and offline computed pruning schedule.Tab.7illustrates our method’s ability to retain higher accuracy for similar latency across devices and workload sizes.Fig.4demonstrates that our token pruning mechanism and schedule expands the accuracy-latency tradeoffs on the pareto front across devices and workload sizes.
+
+First, our method is able to achieve higher accuracy than other training-free pruning techniques ToMe and Top-K.Tab.7is an ablation study across various workload sizes (batch size, models) and devices, where we tune the hyperparameters of methods such that similar latency is achieved.
+Unsurprisingly, DynamicViT retains accuracy since it was finetuned for 300 epochs.
+However, compared to ToMe and Top-K, our method consistently results in lower accuracy degradation.
+In one case, Top-K degrades accuracy by more than 45.6%, while we degrade accuracy by only 2%.
+Across all workload sizes and devices, ToMe had 0.47 to 15.16lowerTop-1 percentage points than our method for similar latency (within 5.2% or 7ms).
+
+Second, we note that for larger pruning rates such asand, ToMe and Top-K remove nearly all input tokens by the last layer of DinoV2-G.
+These high pruning ratios yield high accuracy degradation of over 40% in the case of A100 batch-size 4 for ToMe, as seen inFig.4.
+Comparatively, by pruning 54%-75% of tokens at the 10th layer of DinoV2-G according to the tail effect, we achieve higher accuracy and lower latency.
+
+In bothTab.7andFig.4, our method features lower accuracy degradation than ToMe and Top-K.
+At small workloads, the marginal latency of pruning additional tokens becomes negligible.
+As a result,pruning tokens at each layer degrades accuracy significantly for little latency benefit; existing methods do not account for this behavior.Thus, we prunetokens early; the remaining tokens propagate through the ViT, retaining information which leads to better accuracy.
+Simultaneously, we achieve high latency reduction due to pruning early in the network.
+
+Low workload size observations.For small workloads, token sparsification can actually increase latency due to the overhead associated with token removal mechanisms.Tab.8illustrates three examples of this.
+ToMe and Top-K mayincreaselatency by 2-30% with respect to baseline, while wereduceit by 9-26%.
+There are also cases where all methods, including ours, increase latency by 40%-134%.
+We find that for some workloads, using a baseline model or our method is strictly better than attempting to use a token removal method with high overhead.
+
+SECTION: 5Limitations
+
+Our token pruning approach is optimized for cases where latency-workload relationships are non-linear.
+For large workloads such as DinoV2-G with batch size 256+, our method is less effective because latency-workload relationships becomes linear and more predictable in this case.
+
+SECTION: 6Conclusion
+
+In this work, we offered practical guidance on how to improve token pruning for ViTs in the presence of small workloads by utilizing latency-workload relationships.
+We showed how to determine a token pruning schedule by leveraging non-linear latency-workload relationships; in comparison with prior work, our method yields equal or greater latency reductions while maintaining greater accuracy.
+Ultimately, we demonstrated that leveraging workload-latency behavior is effective at improving ViT efficiency via token pruning, especially for small workloads.
+
+SECTION: References
+
+SECTION: 7Supplemental Material
+
+This supplemental data presents details fromTab.7inSec.4.3, and explaining limitations of our method mentioned inSec.5.
+First, inSec.7.1we ablate over various pruning locations for our method.
+Second, inSec.7.2we list the hyperparameters of Top-K and ToMe pruning methods used in evaluation with our method, in case others want to reproduce our work.
+Third, inSec.7.3we show an example in which the accuracy-latency tradeoffs of our method become less significant at larger workload sizes.
+
+SECTION: 7.1Pruning location ablation study
+
+In3.2we decide at which layer our pruning mechanism should be applied.
+To provide insight into the potential pruning locations, we performed an ablation study.Tab.9illustrates latency and accuracy tradeoffs for various pruning locations of DinoV2-G.
+
+As expected, pruning earlier yields lower latency but greater accuracy degradation.
+For the batch size 1, our method pruned54% of input tokens at the first layer degraded accuracy by 3.19% but yielded a 40% overall latency reduction.
+Across both batch size 1 and 2 in this ablation study, pruning after the first 25% of layers (layer 10) results in a good balance between latency reduction and accuracy degradation.
+
+Pruning later in the network will reduce accuracy degradation, however we prioritize yielding latency benefits with our method.
+Therefore, we perform pruning at the layer 25% of the way into the network for all models evaluated in this work, as stated inSec.3.2.
+
+SECTION: 7.2Pruning Hyperparameters Used for Comparison with Other Work
+
+InTab.7we perform an experiment where we show the differences in accuracy of our method and others across models and devices.
+InTab.10we present the same data annotated with an extra column for the hyperparameters of each method.
+Note that in both tables hyperparameters are chosen such that all methods achieve similar latency to our method.
+
+SECTION: 7.3Large Workload Size Tradeoffs
+
+InSec.5, we hypothesize that our method may achieve worse tradeoffs for larger workload sizes.
+Our method prioritizes pruning a number of tokens for which large latency changes occur.
+However, at larger workload sizes the latency-workload relationship becomes more linear.Fig.5depicts this phenomena for DeiT-B on the AGX Orin with batch size 128.
+It can be seen there are no large changes in latency to exploit, which is how our method is able to outperform other techniques like ToMe for small workload sizes.
