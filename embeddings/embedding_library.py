@@ -112,7 +112,7 @@ class EmbeddingLibrary():
 
                         self.logger.info(f'END OF FILE - SAVING EMBEDDINGS FOR {file.name}\n')
                         paper_emb_mean = np.concatenate([title_emb, chunk_embs]).mean(axis=0)
-                        paper_emb = paper_emb_mean / np.linalg.norm(paper_emb_mean) # normalize paper emb
+                        paper_emb = (paper_emb_mean / np.linalg.norm(paper_emb_mean)).reshape(-1, self.emb_size) # normalize paper emb
                         np.save(self.path_to_embs / file.stem.replace('_content', ''), paper_emb)
 
                 except Exception as ex:
