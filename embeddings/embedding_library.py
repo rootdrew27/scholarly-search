@@ -1,6 +1,7 @@
 from pathlib import Path
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, SimilarityFunction
+from sentence_transformers.models.Normalize import Normalize
 import logging
 import traceback
 import re
@@ -10,11 +11,12 @@ class EmbeddingLibrary():
         self.path_to_papers:Path = path_to_papers
         self.path_to_embs:Path = path_to_embs
         self.model = model
+        if norm_embs: model.similarity_fn_name = SimilarityFunction.DOT_PRODUCT
+        if isinstance(model._last_module(), Normalize): norm_embs = False # this prevents the model from normalizing twice
         self.emb_size = model.encode(['']).shape[-1]
         self.paper_embs = None
         self.paper_ids:list[str] = sorted([file.stem.replace('_content', '') for file in path_to_papers.iterdir() if file.name not in papers_to_skip])
         self.paper_paths:list[Path] = sorted([file for file in path_to_papers.iterdir() if file.name not in papers_to_skip])
-        self.path_to_log = path_to_log
         #self.path_to_clean_papers = None TODO: Implement (perhaps create a PaperLibrary class)
         self.log_lvl:int = log_lvl
         self.name:str = name
@@ -22,6 +24,7 @@ class EmbeddingLibrary():
         self.end_of_paper_regex = re.compile('(' + "|".join([f'SECTION: (\d+.?)*{word}s?' for word in end_of_paper_words]).lstrip('|') + ').*', flags=re.IGNORECASE|re.DOTALL)
         self.norm_embs = norm_embs
         self.logger = logging.getLogger(f'{self.name}_embs_{logging._levelToName[self.log_lvl]}')
+        self.path_to_log = path_to_log
         self.logger.setLevel(self.log_lvl)
         logging.basicConfig(
             filename=self.path_to_log / f'{self.name}_embs_{logging._levelToName[self.log_lvl]}.log',
@@ -37,12 +40,13 @@ class EmbeddingLibrary():
     def remove_citations(self, chunk):
         chunk = re.sub(r'\[(\d+[,]?)+\]([^\w\s])', r'\2', chunk) # for when punc follow cite
         chunk = re.sub(r'\[(\d+[,]?)+\](\w+)', r' \2', chunk) # for when chars follow cite
+        chunk = re.sub(r'\(\w+ et\.? al\.\)(\w+)', r'\1', chunk)
         return chunk
 
     def preprocess_paper(self, paper: str):
 
         title = re.search(r'SECTION:\s+[\d\.]*(.*)\n', paper, flags=re.IGNORECASE).group(1)
-        paper = re.sub(self.end_of_paper_regex, r'', paper)
+        paper = re.sub(self.end_of_paper_regex, r'', paper) # remove ending
         chunks = [
             self.remove_citations(self.remove_links(chunk))
             for sec in re.split(r'SECTION:\s+[\d\.]*.*\n', paper)
@@ -69,7 +73,18 @@ class EmbeddingLibrary():
 
         return good_paper
 
-    def multi_sec_embed(self, skip_existing:bool):
+
+    def set_paper_embs(self):
+        if not isinstance(self.paper_embs, np.ndarray):
+            paper_embs = []
+            for file in sorted(self.path_to_embs.iterdir()):
+                paper_embs.append(np.load(file))
+            all_embs = np.concatenate(paper_embs, axis=0)
+            assert all_embs.shape[0] == len(self.paper_ids), f'The shape of the full paper embeddings ({all_embs.shape[0]}) does not equal the number of papers ({len(self.paper_ids)}).'
+            self.paper_embs = all_embs
+        return
+
+    def embed_papers(self, skip_existing:bool):
         try:
             if skip_existing:
                 existing_embs = [name.stem for name in self.path_to_embs.iterdir()]
@@ -96,32 +111,25 @@ class EmbeddingLibrary():
                         chunk_embs = self.model.encode(chunks, normalize_embeddings=self.norm_embs).reshape(-1, self.emb_size)
 
                         self.logger.info(f'END OF FILE - SAVING EMBEDDINGS FOR {file.name}\n')
-                        paper_emb = np.concatenate([title_emb, chunk_embs]).mean(axis=0).reshape(1, self.emb_size)
+                        paper_emb_mean = np.concatenate([title_emb, chunk_embs]).mean(axis=0)
+                        paper_emb = paper_emb_mean / np.linalg.norm(paper_emb_mean) # normalize paper emb
                         np.save(self.path_to_embs / file.stem.replace('_content', ''), paper_emb)
 
                 except Exception as ex:
                     self.logger.error(f'Error caught while embedding file: {file.name}:\nException: {ex}\nMessage: ' + traceback.format_exc())
-        
-            assert self.paper_ids == [file.stem for file in sorted(self.path_to_embs.iterdir())], 'the paper IDs and the embeddings IDs must be in the same order.'
 
+            assert self.paper_ids == [file.stem for file in sorted(self.path_to_embs.iterdir())], 'the paper IDs and the embeddings IDs must be in the same order.'
+            self.set_paper_embs()
+
+            self.logger.info('Ending Embedding Process')
         except Exception as ex:
             self.logger.error('Error in Embedding Process: {ex}')
             raise ex
-        
-    def get_paper_embs(self) -> np.ndarray:
-        if self.paper_embs == None:
-            paper_embs = []
-            for file in sorted(self.path_to_embs.iterdir()):
-                paper_embs.append(np.load(file))
-            all_embs = np.concatenate(paper_embs, axis=0)
-            assert all_embs.shape[0] == len(self.paper_ids), f'The shape of the full paper embeddings ({all_embs.shape[0]}) does not equal the number of papers ({len(self.paper_ids)}).'
-            self.paper_embs = all_embs
-        return self.paper_embs
 
     def preprocess_llm_response(self, prompt:str, response:str) -> list[str]:
         response = response.replace(prompt, '').strip()
         response = re.sub(self.end_of_paper_regex, r'', response)
-        response_secs = re.split(r'SECTION:\s\w+\n', response)
+        response_secs = re.split(r'SECTION:.*\n', response)
         response_chunks = [
             self.remove_citations(self.remove_links(chunk)).strip(' ') 
             for response_sec in response_secs
@@ -133,7 +141,6 @@ class EmbeddingLibrary():
     def search_papers(self, prompt:str, response:str, n_results=5):
         assert self.paper_embs is not None, print("self.paper_embs must be set to use this function!")
         r_secs = self.preprocess_llm_response(prompt, response)
-        print(r_secs)
         r_emb = self.model.encode(r_secs, normalize_embeddings=self.norm_embs).mean(axis=0)
         scores = self.model.similarity(r_emb, self.paper_embs)
         top_n_idxs:list = np.argsort(scores).tolist()[0][-n_results:]
