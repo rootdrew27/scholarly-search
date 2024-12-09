@@ -1,0 +1,89 @@
+SECTION: Parallelization of the K-Means Algorithm with Applications to Big Data Clustering
+
+The K-Means clustering using LLoyd’s algorithm is an iterative approach to partition the given dataset into K different clusters. The algorithm assigns each point to the cluster based on the following objective function
+
+The serial algorithm involves iterative steps where we compute the distance of each datapoint from the centroids and assign the datapoint to the nearest centroid. This approach is essentially known as the expectation-maximization step.
+
+Clustering involves extensive computations to calculate distances at each iteration, which increases as the number of data points increases. This provides scope for parallelism. However, we must ensure that in a parallel process, each thread has access to the updated centroid value and no racing condition exists on any centroid values.
+
+We will compare two different approaches in this project. The first approach is an OpenMP flat synchronous method where all processes are run in parallel, and we use synchronization to ensure safe updates of clusters. The second approach we adopt is a GPU based parallelization approach using OpenACC wherein we will try to make use of GPU architecture to parallelize chunks of the algorithm to observe decreased computation time. We will analyze metrics such as speed up, efficiency,time taken with varying data points, and number of processes to compare the two approaches and understand the relative performance improvement we can get. .
+
+The dataset on which clustering is to be performed.\entryA d-dimensional vector.\entryThe size of the dataset.\entryThe cluster indicator ofat theiteration. Can take any integer value from 1 to K.\entryThe cluster center of thecluster during theiteration.\entryThe proposition function.\entryThe L2 norm error between the cluster centers of two successive iterations.
+
+SECTION: INTRODUCTION
+
+Clustering is an unsupervised machine-learning technique used for grouping data in such a way that similar samples are clustered into the same group due to some underlying pattern without any explicit markers or labeling. Clustering finds applications in various fields such as pattern recognition, image segmentation, anomaly detection, and data compression.
+
+Various clustering algorithms exist, with each having its metric in defining similarity, partitioning of data, and quality of clustering. Some of the popular clustering algorithms that are widely used include K-Means, Hierarchical clustering, DBSCAN, and Gaussian Mixture Models.
+
+The K-Means clustering algorithm is one such clustering algorithm that makes use of an iterative method in clustering N data points into K clusters by computing the cluster mean for every cluster and minimising the L2 distance of each point from the cluster centers/means during each iteration. The time complexity for the algorithm is, where N is the total number of data points, T is the number of iterations required for the algorithm to converge, K is the number of clusters, and d is the dimension of each data point. Since the values of K and d are generally way smaller than N, they can be ignored. It is also observed that, hence the effective time complexity reduces to. Due to this high time complexity, the computation of the clusters would be time-consuming for large datasets.
+
+However, due to the simple nature of the steps and calculations in the algorithm, it provides us with the scope of running the algorithm in a parallel or distributed environment. This paper aims to explore the scope and extent of parallelisation of the algorithm mainly using two parallelisation models, namely a Shared Memory Model using OpenMP and a GPU Programming Model using OpenACC.
+
+SECTION: PROBLEM STATEMENT
+
+Given an extensive dataset comprising data points in a two and three-dimensional space, the aim is to cluster these data points into K clusters using the Lloyd’s Algorithm for K-means clustering. The algorithm is to be appropriately parallelised based on the parallelisation paradigm chosen and the relevant parallelisation parameters are to be evaluated to compare performances.
+
+SECTION: THE LLOYD’S ALGORITHM
+
+The Lloyd’s algorithm is an iterative method that forms the basis of K-Means clustering. Given a dataset, whereis a d-dimensional vector, the Lloyd’s algorithm can be broken down into three steps as follows.
+
+Initialisation: Assuming the dataset is to be clustered into K clusters, we first initialise the cluster centers by randomly selecting K points from the dataset. These initial cluster centers are denoted by, where the superscript indicates the iteration.
+
+Reassignment: For theiteration, the distance of everyfrom, is computed for all values of k. Ifdenotes the cluster indicator offor theiteration, the data pointis assigned to the cluster k for theiteration according to:
+
+Whereis the L2 norm.
+
+Mean Calculation: Once everyhas been reassigned in theiteration, the respective cluster centers/meansare to be calculated according to:
+
+Whereis the proposition function defined as:
+
+The algorithm iterates over steps 2 and 3 until the algorithm converges. Convergence of the Lloyd’s algorithm implies that the cluster indicators of everydo not change for further iterations. The Lloyd’s algorithm produces a hard clustering for each data point and it always converges to a local minima. Thus, the algorithm is sensitive to the initialisation step and will produce different clusterings based on the initialisation.
+
+SECTION: SERIAL LLOYD’S ALGORITHM
+
+The serial version of the Lloyd’s algorithm can be implemented straightforwardly. The inputs to the program would be the dataset, the number of clusters to be produced, and the total number of observations in the dataset. The convergence criterion can be implemented by calculating an error term according to:
+
+This error term is calculated at the end of each iteration by making use of the cluster centers of two consecutive iterations. This error can be compared with a tolerance value of the order ofinside the loop that performs the other steps of the algorithm. Apart from the convergence criterion, the loop will also contain lines of code that will perform Steps 2 and 3 as mentioned above according to the Lloyd’s algorithm. Once the algorithm has converged, the final cluster indicators and the corresponding cluster means are produced.
+
+For evaluating the serial version of the algorithm as well as the parallelised version in the upcoming sections, we shall make use of three datasets. The three datasets are of sizes 100000, 200000, and 500000 and all three of them are generated in a similar manner using a mixture of Bivariate Gaussian Distributions of some mean and covariance. Additionally, we will also be using another set of datasets of three-dimensional points of sizes 100000, 200000, 400000, 800000, and 1 million samples By using datasets of varying sizes, it would allow us to evaluate the algorithm with respect to the scaling of the dataset.
+
+The main metric concerning the project is the time complexity of the algorithm as well as the number of iterations required for convergence for various cases. After running the serial algorithm on the datasets for clusters of, the results are:
+
+SECTION: PARALLEL LLOYD’S ALGORITHM
+
+As seen in the previous section, the Lloyd’s algorithm takes an increasing amount of time when the size of the dataset increases, as well as when the number of clusters also increases. However, the main advantage of the Lloyd’s algorithm is the underlying simplicity of its steps and calculations. A large portion of the steps in the algorithm can be parallelised, which shall be elucidated in the subsequent subsections of the paper.
+
+SECTION: Using OpenMP
+
+With OpenMP, the aim is to work with a Shared Memory Model on the algorithm. For this particular algorithm, we’ve majorly implemented a data parallelisation model with task data parallelisation sections. The dataset is to be divided among the number of threads specified by the user. For this, the threads have to be spawned before the algorithm begins. Each thread will independently perform the reassignment step as well as calculate the local cluster means. Once these local cluster means have been calculated, these are transferred to a global variable. The global variable is used by the master thread in calculating the errorwhich is then transferred to a global error variable.
+
+For this particular OpenMP program, only the,, anddirectives have been made use of. The reason whywas preferred overis because the number of iterations required for convergence is unknown. Thedirective is used in the global cluster means section to prevent a racing condition among the threads while writing into the global variable.
+
+The results obtained after running the parallelised algorithm for various number of threads for both the two and three-dimensional datasets have been tabulated below. The number of clusters to be produced is fixed to a value of 8 for the 2-dimensional dataset and 4 for the 3-dimensional dataset:
+
+SECTION: Using OpenACC
+
+With OpenACC, the aim is to create a CPU-GPU work-sharing environment for the algorithm. Since the GPU is intelligent enough to identify the workload, it will appropriately spawn the required number of gangs and workers while running parallel codes. Just like OpenMP, a task parallelisation model is made use of here. The difference between the OpenMP and OpenACC model is that thedirective isn’t called at the beginning before the algorithm begins. Rather, the directive is called at the blocks of code corresponding to the various steps of the algorithm. Due to this, there’s a constant forking/de-forking of gangs and workers in each iteration, unlike the OpenMP version.
+
+Since the parallel directives are called for each block of code, this would enable the use of other directives such as,,, andto further parallelise, optimise and speed up the code.
+
+The results obtained after running the parallelised algorithm for both the two and three-dimensional datasets have been tabulated below. The number of clusters to be produced is fixed to a value of 8 for the 2-dimensional dataset and 4 for the 3-dimensional dataset:
+
+SECTION: RESULTS AND DISCUSSION
+
+The results of clustering the 3-dimensional dataset into 4 clusters have been plotted below for both the serial and the parallel program by OpenACC. We can observe that the parallel program achieves similar clustering to the serial program which also are the optimal clusters for K = 4.
+
+The results of clustering the 2-dimensional dataset into 11 clusters have been plotted below for both the serial and the parallel program by OpenACC. The parallel program achieves similar clustering as the serial program. The clusters may not be optimal due to overlapping regions between them, the presence of closely spaced groups of points and possibly needing more iterations to generate more optimal clusters due to a large number of clusters.
+
+The Speedupas a function of number of threads () for both the 2D and 3D datasets has been plotted as well. We can see an increase in the speedup as the size of the dataset increases across the 2D and 3D datasets (except for maybe the smallest datasets due to the small size of the datasets). We can also observe that the speedup values are larger for the larger datasets, indicating strongly that for large datasets parallelization can offer a significant boost.
+
+The Efficiencyas a function of number of threads () for both the 2D and 3D datasets has been plotted too. We can observe that the highest efficiency occurs for the number of threads = 2 and it drops as the number of threads increases.
+
+The variation of time taken with the scaling/size of the dataset for both the 2D and 3D datasets. We can see that for the same value of K, the time taken to compute the clusters increases as the size of the dataset increases.
+
+SECTION: CONCLUSIONS
+
+With this paper, we have successfully implemented a parallelised version of the K-Means algorithm with both a shared memory model as well as with GPU programming. Both parallel versions were able to produce results with no loss in accuracy and an appreciable decrease in computation time. When comparing both the OpenMP and OpenACC models, it is observed that the OpenACC version performs better in terms of saving computation time. This provides scope for decreasing computation time in extremely large datasets with real-world data or complex applications of the clustering paradigm such as image segmentation, anomaly detection, etc.[3][4][2][1]
+
+SECTION: References

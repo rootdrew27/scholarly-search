@@ -49,7 +49,7 @@ class ArxivFetcher:
                 "search_query": search_query,
                 "sortBy": sort_by,
                 "sortOrder": sort_order,
-                "start": 40,
+                "start": 20,
                 "max_results": str(max_results)
             }
             
@@ -285,8 +285,8 @@ def process_multiple_search_terms(
 if __name__ == "__main__":
     # Example usage
     search_terms = [
-        'ti:"KMEANS"',
-        'ti:"Unsupervised Learning"',
+        'ti:"K-means"',
+        'ti:"LSTM"',
         'ti:"Random Forest"',
         'ti:"XGBoost"',
     ]

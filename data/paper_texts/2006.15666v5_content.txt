@@ -1,0 +1,416 @@
+SECTION: Breathing K-Means: Superior K-Means Solutions through Dynamic K-Values
+
+We introduce thebreathing-meansalgorithm, which on average significantly improves solutions obtained by the widely-knowngreedy-means++algorithm, the default method for-meansclustering in thescikit-learnpackage. The improvements are achieved through a novel ”breathing” technique, that cyclically increases and decreases the number of centroids based on local error and utility measures. We conducted experiments usinggreedy-means++as a baseline, comparing it withbreathing-meansand five other-meansalgorithms. Among the methods investigated, onlybreathing-meansandbetter-means++consistently outperformed the baseline, withbreathing-meansdemonstrating a substantial lead. This superior performance was maintained even when comparing the best result of ten runs for all other algorithms to a single run ofbreathing-means, highlighting its effectiveness and speed. Our findings indicate that thebreathing-meansalgorithm outperforms the other-meanstechniques, especiallygreedy-means++with ten repetitions, which it dominates in both solution quality and speed. This positionsbreathing-means(with the built-in initialization by a single run ofgreedy-means++) as a superior alternative to runninggreedy-means++on its own.
+
+Keywords:k-means, k-means++, generalized Lloyd algorithm, clustering, vector quantization, scikit-learn
+
+SECTION: 1Introduction
+
+This section defines the-meansproblem and describes the classicGeneralized Lloyd Algorithm(a.k.a.-meansalgorithm), the-means++algorithm, and its widely-used variant,greedy-means++.
+
+SECTION: 1.1The-MeansProblem
+
+A common task in data analysis or compression is to describe an extensive data
+set consisting of numeric vectors by a smaller set of representative vectors,
+often calledcentroids. This task is known as the-meansproblem.
+
+We assume an integerand a set ofdata points. The-meansproblemis to position a setof-dimensional centroids such that the error
+function
+
+is minimized.
+We will also refer toasSummed Squared Erroror shortly SSE. In the context of vector
+quantization, the centroid setis called acodebook, centroids are referred to ascodebook vectors, andis denoted asquantization error.
+
+For each centroid, one can determine its so-calledVoronoi set,
+which is the setof data points for whichis the nearest centroid:
+
+A necessary but not sufficient condition for a solutionto be optimal is the fulfillment of thecentroid condition: Each centroidmust be the mean of its Voronoi set:
+
+While the termcentroidtypically refers to the mean of a Voronoi set, we will use it in this article to generally denote a codebook vector, even if is not yet the mean of its Voronoi set. We will also use the termcodebookinstead ofcentroid setfor brevity.
+
+Finding the optimal solution to the-meansproblem is known to be NP-hard(Aloise et al.,2009). Therefore, approximation algorithms are used to find a solution with an SSE as low as possible.
+
+Please note: In this article, we are not concerned with the general clustering problem or whether solutions to the-meansproblem lead to
+“good” or even “correct” clusterings. We also do not require the data to fulfill any pre-conditions or criteria beyond the above definition of the-meansproblem. We are exclusively interested in minimizing the SSE as defined in Equation (1) for a given data setand a given value of.
+
+SECTION: 1.2The Generalized Lloyd Algorithm
+
+TheGeneralized Lloyd Algorithm, proposed byLinde et al. (1980), is a multidimensional version of a scalar quantization method initially proposed by John Stuart Lloyd in a 1957 technical report and published 25 years later(Lloyd,1982). It differs from the-meansalgorithm proposed by MacQueen (1967) and described in Section3.2.1. Despite common misconceptions, theGeneralized Lloyd Algorithmis not synonymous with ’the’-meansalgorithm, as several-meansalgorithms exist.
+
+Defined in Algorithm1, theGeneralized Lloyd Algorithmstarts with theseedingstep (the initial codebook choice), followed by repeatedLloyd iterationsas long as the SSE decreases. Alternatively, it can stop when the relative SSE improvement falls below a certain threshold.
+
+The algorithm is proven to converge in finite steps(Selim and Ismail,1984), but solution quality can vary greatly depending on seeding. Hence, it is common to perform multiple runs with different seedings and select the best result(Fränti and Sieranoja,2019).
+
+SECTION: 1.3-Means++
+
+Arthur and Vassilvitskii (2007)proposed-means++, a specific way of seeding thegeneralized Lloyd algorithm. Centroids are sequentially added by randomly selecting from the data set. The probability of a data point x to be selected is proportional to its quadratic distance to the nearest centroid already in the current codebook (see Algorithm2).
+
+Arthur and Vassilvitskii (2007)proved the following theorem providing an upper bound for the expected errorof a-means++seeding:
+
+Theorem.For any set of data points,
+
+Thereby,is the error of the optimal solution.
+The theorem provides a significant theoretical improvement over random initialization, which lacks an upper bound for expected error. While seeding is only the algorithm’s initial phase, subsequent Lloyd iterations often lead to substantial error reduction. Yet, there is a lack of theoretical evidence quantifying the expected error reduction during this post-seeding phase.
+
+SECTION: 1.4Greedy ​​-Means++
+
+Greedy-means++, a variant of-means++introduced byArthur and Vassilvitskii (2007), draws multiple centroid candidates in each step, choosing the one that maximizes overall error reduction. This reduces the chance of two closely located centroids, which could limit error reduction. Despite reporting improved solution quality, theapproximation no longer holds, as confirmed byBhattacharya et al. (2020).
+
+The Python library,scikit-learn, usesgreedy-means++as its default seeding method, making it the most commonly used seeding approach. It served as our baseline for experimental evaluations. The default number of candidates drawn per step inscikit-learnis, resulting for example in 4 for, 6 for, and 8 for.
+
+SECTION: 2Breathing-Means
+
+In this section, we motivate and define the core components of the proposed approach before presenting the complete algorithm.
+
+SECTION: 2.1Algorithm Outline
+
+Thegeneralized Lloyd algorithmis deterministic and only performs local movements of its centroids (by moving them to the center of gravity of their associated data points). This makes this approach very dependent on the initial seeding. To overcome this locality, we added so-called ”breathing cycles” consisting of the following steps which are executed after one initial execution of thegeneralized Lloyd algorithm:
+
+Insertadditional centroids (“breathe in”).
+
+Run thegeneralized Lloyd algorithmon the resulting enlarged codebook of size.
+
+Deletecentroids (“breathe out”).
+
+Run thegeneralized Lloyd algorithmon the resulting codebook of size.
+
+The purpose of a breathing cycle is to position theadditional centroids to minimize the SSE, and subsequently removecentroids without significantly increasing the SSE thus leading to an improved solution withcentroids. Usually, the removed centroids differ from the added ones, effectively leading to non-local movements of the centroids.
+
+Because of the periodic changes in codebook size, we refer to the new algorithm as “breathing-means.” Several questions must be addressed to complete the description of the approach, which are covered in the following sections:
+
+Where should new centroids be inserted during the “breathe in” step?
+
+Which centroids should be deleted in the “breathe out” step?
+
+When should the algorithm terminate?
+
+SECTION: 2.2Breathe In: Adding Centroids Based on High Error
+
+An established strategy(Fritzke,1993,1995)for minimizing error, regardless of the underlying data distribution, involves adding new centroids near those generating significant errors in quantizing their Voronoi sets.
+Let us denote withthequantization errormade for data pointusing the
+codebook, i.e., the squared distance betweenand the nearest centroid in, defined as
+
+Given a codebookand a data set, we define for each centroidits associated erroras
+
+which is the sum of all-values over its Voronoi set(defined in Equation2).
+
+We can now define the set of thosecentroids, which will serve as anchors for placing new centroids as
+
+One new centroid will be inserted near the position of each centroid in, modified by adding a small random offset vectorto ensure
+distinct centroid values. To be independent of the scaling of the data,
+we set the length of these offset vectors proportional to the root-mean-square error, defined as
+
+Accordingly, we compute each offset vectoras
+
+with a small constantand a random vectordrawn uniformly from the-dimensional unit hypercube centered at the origin. This leads to the following setof new centroids
+
+The setis added to the current codebook to finalize the “breathe in” step:
+
+SECTION: 2.3Breathe Out: Removing Centroids Based on Low Utility
+
+Removing centroids inevitably increases the SSE. To minimize this effect, we select for removal thecentroids causing the smallest
+error increase. Fortunately, the subsequent run of thegeneralized Lloyd algorithmwill lower the resulting SSE again to some degree.
+
+FollowingFritzke (1997), we define theUtilityof a
+given centroidas
+
+The utility measures the increase in the overall error caused by removingfrom the original codebook. If this difference is significant, thenis considered useful.
+
+Using the definition ofin Eq. (1), the utility of a centroidcan be expressed as
+
+The second sum in Equation (10) contains only zero summands since for anyoutside the Voronoi regionthe following holds (and makes the terms in the second sum to be zero):
+
+Thus, the
+utilityof a centroidonly depends on the data points in its Voronoi set. Moreover, the utility is always non-negative. This follows from the fact that the expressioninside the sum in Equation (11) is non-negative since.
+
+This expression inside the sum in Equation (11) can be denoted as the utilityof the centroidfor a particular data point:
+
+The overall utility can now be expressed as the sum of the utilities of the individual data points in the Voronoi region of:
+
+The utility of a centroid,, only becomes zero when another centroid,, is at the same distance from. This happens whenlies on the so-calledbisecting normal hyperplaneofand, an event with practically zero probability assuming random positions ofand. Similarly, the complete utility of a centroid,, becomes zero only when all its associated data points lie on bisecting hyperplanes, another event of virtually zero probability.
+Figure1illustrates the error and utility values for a simple-meansproblem.
+
+To reduce the codebook back to its original size, one might consider deleting thecentroids with the lowest utility values. However, there is a fundamental flaw in this approach: If the
+distance between two centroids,, and, is small, also their utility valuesandare small because they mutually act as the second-nearest centroid for their
+Voronoi sets (see below). Both seem rather “useless.” However, removing bothandcan lead to a colossal error increase, as becomes evident further below.
+
+Let us first calculate what happens to the utility values of two centroids approaching each other:
+
+Since alsoholds and because of symmetry reasons, the following is fulfilled:
+
+As centroids move closer, their utility values decrease and become zero if they are identical, as they can perfectly substitute for each other in quantizing data points. However, removing such neighboring centroids because of low utility can drastically increase error, especially if the next nearest centroid is far away (see Figure2). This often occurs in datasets with isolated smaller clusters, where data points from these close centroids are quantized by a distant centroid, leading to substantial error. To counter this, we introduce a ”freezing” mechanism to prevent the concurrent removal of neighboring centroids.
+
+SECTION: 2.4Freezing The Nearest Neighbors
+
+How can we avoid a significant error increase in the “Breathe out” step because of the removal
+of neighboring centroids? One possible solution would be to remove one centroid at
+a time, run thegeneralized Lloyd algorithm, recompute the utility, remove the next centroid, and so on. This strategy avoids large error increases, though it may come at the cost of high computational demands due to the many required runs of thegeneralized Lloyd algorithm.
+
+To enable the simultaneous removal of multiple centroids, we take the following approach:
+
+Initialize empty sets for ”frozen” centroids () and centroids to be removed ().
+
+Rank the centroids by increasing utility.
+
+Scan through the centroids; skip ”frozen” ones. Add the first non-frozen centroid to.
+
+After selecting a centroid for removal, add its nearest neighbor to(i.e., ”freeze” it).
+
+Repeat steps 3 and 4 untilequals.
+
+One can construct cases where the above procedure would deliver less thancentroids to remove since too many have been “frozen.” To prevent this, we perform freezing (step 4) only as long as the following condition holds:
+
+Together with this condition, the above strategy effectively prevents the problematic case of concurrently removing two closely neighboring centroids.
+
+SECTION: 2.5Ensuring Termination
+
+To define a termination criterion, we demand a decrease in error after each “breathe out” step (the error after a
+“breathe in” step is irrelevant because of the enlarged number of centroids). Moreover, we empirically found that once the error stops sinking for a given value of, additional breathing steps with reduced-values can further lower the error. The above results in the simple approach to guarantee termination shown in Algorithm3:
+
+For each value of, breathing cycles are repeated as long as the errorstrictly decreases, which each time requires finding a previously unseen solution. Since bothand the number of partitions of the data intoVoronoi sets are finite and positive, termination occurs in finitely many steps.
+
+SECTION: 2.6TheBreathing-MeansAlgorithm in Pseudo-Code
+
+The complete algorithm in pseudo-code is shown in Figure4.
+
+SECTION: 3Related Work
+
+The literature on algorithms for the-meansproblem is vast and can not be fully surveyed here. In the following,
+we describe two relevant groups of approaches. The first group contains methods for finding a good seeding of the centroids before finally running thegeneralized Lloyd algorithm. The second group employs thegeneralized Lloyd algorithmalso in intermediate phases or not at all.
+
+SECTION: 3.1Seeding Methods
+
+Many methods proposed in the literature focus on finding a seeding used as a starting configuration for thegeneralized Lloyd algorithm.
+Here several relevant examples are described in the order they were historically developed.
+
+Forgy (1965)randomly assigns each data point to a cluster and then calculates the centroids as the means of these clusters. Consequently, all centroids are typically very close together near the mean of the whole data set, and one can expect a large number of Lloyd iterations before convergence.
+
+In his first method,MacQueen (1967)proposed using the firstelements of the data setas initial centroids. A drawback of this method is that it may initialize all centroids to similar positions in the case of ordered data.
+
+In his second (and more popular) method,MacQueen (1967)proposed to pick random elements from the data set. This avoids the possible problem of ordered data which his first method has. A drawback of this method is that it may initialize many centroids to similar positions, e.g., if the data set contains a large high-density cluster of data points and a smaller number of spaced-out data points.
+
+In the Maximin method(Gonzalez,1985), the first centroidis chosen arbitrarily. The-thcentroidis chosen to have the largest minimum distance to all previously selected centroids, i.e.,. The method can be seen as a deterministic ancestor of-means++(see sections1.3and3.1.6) and avoids positioning centroids close to each other even if the data contains high-density clusters.
+
+Bradley and Fayyad (1998)proposed a method to efficiently produce an initial codebook for large data sets. Initially,small random sub-samplesare drawn from the original data set, and thegeneralized Lloyd algorithmis performed on each of the sub-samples. Thereafter, thesolutions, are merged to a data setof sizeon which thegeneralized Lloyd algorithmis runtimes with the solutionsfrom the first step as seedings. From all obtained solutions in the second step, the one with the smallest SSE when encodingis chosen.
+
+The-means++algorithm(Arthur and Vassilvitskii,2007)is described in detail in Section1.3and can be interpreted as a randomized version of the Maximin method (see Section3.1.4) since it uses a point’s minimum distance to all previous centroids to set the probability of choosing this point as the next centroid.
+
+Greedy-means++(Arthur and Vassilvitskii,2007)differs from-means++by drawing several new centroid candidates in each step and selecting the one that maximally reduces the overall error (see Section1.4).Greedy-means++is the default-meansmethod for thescikit-learnpackage(Pedregosa et al.,2011).
+
+The “better”-means++variant(Lattanzi and Sohler,2019)extends the-means++initialization by continuing to select centroid candidates beyondand possibly replacing existing centroids if there is an improvement (see Algorithm5).
+
+Lattanzi and Sohler (2019)proved the following theorem guaranteeing that with a sufficiently large computational budget (parameter Z), the expected cost of the solution produced bybetter-means++will be close to the optimal cost (within a constant factor).
+
+Letbe a set of points and C be the
+output of Algorithm 1 withthen we
+have,
+whereis the set of optimum centers. The algorithm’s running time is.
+
+SECTION: 3.2Integrated Methods
+
+The approaches described here have in common that they cannot be described as seeding methods for thegeneralized Lloyd algorithm. Rather, they perform various operations on the codebook (e.g., splitting, merging, adding, removing, or replacing centroids), and most of them alternate this with Lloyd iterations.
+
+MacQueen (1967)proposed an algorithm he called-means(thereby coining the term-means) described as follows (excerpt from the article):
+
+Informally, the-meansprocedure consists of simply starting withgroups, each consisting of a single random point, and then adding each new point to the group whose mean the new point is nearest. After a point is added to a group, the mean of that group is adjusted to take the new point into account. Thus at each stage, themeans are, in fact, the means of the groups they represent (hence the term-means).
+
+This highly efficient algorithm recalculates the mean (centroid) by shifting towards the new point byof total distance upon adding the n-th point to a group. While the means situate at the gravity center of all nearest points when added, a full data sweep does not always ensure the centroid condition, implying each mean is not necessarily at the gravity center of its Voronoi set. As the centroid condition is key for optimality, additional Lloyd iterations often enhance MacQueen’s-meanssolutions, even if only towards a local optimum.
+
+TheHartigan-WongAlgorithm(Hartigan and Wong,1979)skips Lloyd iterations. It starts by randomly choosingcentroids, forming initial clusters using MacQueen’s Second Method (Section3.1.3). It then reassigns a random data pointfrom its clusterto another clusterif it reduces the sum of intra-cluster variances ofand, choosingto maximize variance reduction. Termination occurs when no reassignment reduces overall variance (Algorithm6).
+
+Hartigan and Wong’s implementation introduces aQuick Transferphase, whereis the centroid second-nearest to, reducing computation. This phase iterates until no improvement occurs. TheOptimal Transferphase, involving a complete search among all clusters (Algorithm 6), alternates with the Quick Transfer phase. Termination occurs when the Optimal Transfer phase finds no improvement.
+
+This algorithm is the default-meansalgorithm in thestatspackage of R({R Core Team},2019). WhileTelgarsky and Vattani (2010)reported improvements over ”online”-means, we generally found better results withvanilla ​-means++andgreedy-means++thanHartigan-Wong(see TableA.6).
+
+When thegeneralized Lloyd algorithm(a.k.a. LBG) was proposed byLinde et al. (1980), the authors also discussed a method to produce a series of increasingly large codebooks. In particular, given a codebook consisting ofcentroids, one can produce a codebook consisting of twice as many centroids by “splitting” each centroid, adding small offsets to enforce distinct values, and applying thegeneralized Lloyd algorithmto the resulting enlarged codebook. If one starts with a codebook of size one and performssplitting steps, the resulting codebook has the size.
+In each splitting step, all existing centroids are split. Thus, this method does not consider which centroids are
+most suited for splitting to reduce the overall error. This can limit the quality of the results compared to approaches splitting based on error reduction.
+
+Fritzke (1997)proposed theLBG-Ualgorithm to improve thegeneralized Lloydalgorithmby non-local movements of centroids. Central to this approach is the concept ofUtility(thus the “U” in the name) initially defined in that work and also used forbreathing-means(see Equation9). The core mechanism of LBG-U is to repeatedly move the least useful centroid to the centroid with maximum error and perform thegeneralized Lloyd algorithmafter each such move. LBG-U delivered better solutions than thegeneralized Lloyd algorithm(-means++was not yet invented) at the price of additional compute time. Lacking the idea of nearest neighbor freezing introduced in the current article, LBG-U could only insert and delete one centroid at a time which led to larger computational effort and smaller improvements thanbreathing-means.
+
+This algorithm(Fränti et al.,1997)starts with a codebook of size one and iteratively enlarges the codebook by a splitting procedure until it reaches size. Different approaches for selecting the cluster to be split (largest variance, largest width, largest skewness) and for technically performing the splitting (fixed offset vector, random choice of new centroids, mutually furthest data points, local PCA) are discussed. Also the question of how to refine the partition of the data set and the centroids after the splitting is addressed.
+
+Fränti et al. (1998)proposed an algorithm adapted from a previous clustering method byAl-Sultan (1995). Tabu search generates new solution candidates through random operations, allowing for potentially worse solutions and possible cyclic behavior. To prevent non-termination, the algorithm employs atabu list—a record of previously visited solutions that helps avoid considering them multiple times.
+For larger data sets, the exact recurrence of-meanssolutions is rare. To excludesimilarsolutions as well, the authors propose checking candidates for a minimum distance from all tabu list elements using a suitable distance measure. Two methods for the randomized generation of new solutions are considered: (1) randomly assigning a fraction of the data set to different (but nearby) clusters and (2) adding noise to existing cluster centers.
+
+Kaukoranta et al. (1998)describe an iterative splitting and merging algorithm for vector quantization codebook generation.
+Repeatedly the following steps are performed: (1) a cluster is selected which is split. (2) Two clusters are selected which are merged. (3) Some Lloyd iterations are performed to refine the codebook.
+For (1) a local optimization strategy is applied where each cluster is tentatively split, and the one decreasing the
+distortion most is chosen. For (2) the pairwise nearest neighbor (PNN) approach as described byEquitz (1989)is employed. This approach determines the neighboring pair of clusters,and, which least increases the overall error when merged. For (3) the authors suggest performing a fixed small number (e.g., 2) of Lloyd iterations.
+
+This approach is somewhat similar tobreathing-meanswith breathing depth.Breathing-means, however, avoids the effort to split each cluster by splitting only the cluster with the largest quantization error. Moreover,breathing-meansavoids the computation of many possible merges by always deleting the centroid with the smallest utility.
+
+Thebisecting-means(Steinbach et al.,2000)has large similarities to the splitting method proposed byFränti et al. (1997). It starts with one single cluster and iteratively “bisects” (i.e., “splits”) one of the present clusters into two by performing-meanswithon the selected cluster. This bisection step is repeated several times (saytimes) with different random initializations before choosing the bisection with the lowest error. This is iterated until a predefined number of clusters is reached
+or the overall error falls below a threshold.
+Optionally, thegeneralized Lloyd algorithmcan be applied to the resulting codebook after each bisecting step.
+If this optimization isnotdone, the algorithm produces a hierarchical clustering (obtained by considering all intermediate codebooks).
+To select the cluster to be split,Steinbach et al. (2000)propose to use either the size of the cluster or the SSE of the cluster as a criterion. In the latter case, there is a similarity to the error-based insertion proposed byFritzke (1993,1994).
+
+Genetic algorithms typically make use of a condensed “genetic” representation of the candidate solutions. They do attempt to simulate natural evolution by employing concepts such as selection (survival of the fittest), cross-over (recombination of several different genetic representations), and mutation (random modifications of genetic representations). Here we consider the genetic algorithm described byFränti (2000), which is specifically adapted to the problem of vector quantization.
+
+The top-level algorithm is shown in Algorithm7and does not show any problem-specific properties apart from the use of thegeneralized Lloyd algorithmfor fine-tuning.
+
+The problem-specific properties proposed byFränti (2000)are the representation of a solution and the cross-over operation. Each solution is represented as a pairwhereis a codebook, andis a corresponding partition of the data set. Maintaining both types of information makes it possible to perform the cross-over operation of two solutionsandin a very effective and efficient way:
+
+A new codebookis created as the union ofand:.
+
+The partitionsandare combined to form a new partitionby mapping each data point to its cluster fromor, depending on which corresponding centroid is closer.
+
+is updated to contain the centroids of the clusters in.
+
+Empty clusters are removed from.
+
+The number of clusters inis reduced to the desired numberof clusters by using the pairwise-nearest-neighbor (PNN) approach on (,). PNN is performed on the(fewer if empty clusters were removed) centroids instead of the full data set. The partition is updated accordingly by combining merged clusters.
+
+Mutation was considered but not performed inFränti (2000)because of the concentration on efficiency.
+
+“Global-means”(Likas et al.,2003)is a deterministic method that finds an approximate solution for a given-meansproblem () by starting with the trivial solution for a codebook size of one. This solution is used to find a solution for codebook size two by combining the size-one solution sequentially with each element of the data setand running thegeneralized Lloyd algorithmstarting from there. The best solution found is taken as the solution for size two. This is iterated for all codebook sizes until a solution for codebook sizeis found. The algorithm requiresruns of thegeneralized Lloyd algorithmleading to very high computation demand for data sets of non-trivial size.
+
+Fränti and Virmajoki (2006)describe an iterative shrinking algorithm for vector quantization codebook generation. The method starts by assigning each data vector to its own cluster. This huge codebook is then stepwise reduced by deleting the single centroid leading to the smallest error increase. The major difference between the “shrinking” described in this algorithm and the “merging” described inKaukoranta et al. (1998)(see section3.2.7) is the following: During “shrinking,” a centroidis removed, and each associated data pointis assigned to the respective nearest other centroid, whereas during “merging,” two neighboring clusters,andare combined into a new cluster, i.e., all affected data points end up in the same cluster(before any further optimizations, e.g., Lloyd iterations, are done.).
+
+Random swap clustering(Fränti,2018)is based on the idea of repeatedly replacing a randomly chosen centroidwith a randomly chosen data vector. This operation, also called “swap,” is followed by a small number of Lloyd iterations. If the resulting error is lower than before the swap, the swap is “accepted,” and the algorithm continues. If the resulting error is higher than before the swap, the algorithm continues from the codebook state before the swap (basically ignoring the
+swap). The algorithm is shown in Algorithm8.
+
+This number of required Lloyd operations after a swap operation can be reduced by locally repartitioning the data points associated with the deleted centroid and by specifically determining which data points will be assigned to the new centroid. This is merely an efficiency measure and is denoted as optional byFränti (2018)if two or more Lloyd iterations are performed.
+
+A general method to improve results for any randomized algorithm is selecting the best result from multiple repeated runs(Fränti and Sieranoja,2019). The improvements obtained depend on the variance of the results produced by the algorithm at hand. The required amount of computation is proportional to the number of repetitions.
+
+SECTION: 4Algorithms Selected for Comparison
+
+The following algorithms were selected as contenders forbreathing-means(a brief reasoning is given for the inclusion of each approach):
+
+(see Section1.4). This method was selected as the baseline algorithm for all other methods since it probably is the most widely-used algorithm for-meansbecause of being the default-meansmethod in the popularscikit-learnpackage(Pedregosa et al.,2011). The implementation is the classKMeansofscikit-learn.
+Sources:https://scikit-learn.org/stable/modules/generated/sklearn.cluster.KMeans.html
+
+(see Section1.3). The original (non-greedy) variant of-means++. For this method, anupper bound was proven. The implementation stems from thescikit-learnpackage(Pedregosa et al.,2011), in particular from the functionkmeans_pluspluswith default parameters, except for settingn_local_trials=1.
+Sources:https://scikit-learn.org/stable/modules/generated/sklearn.cluster.kmeans_plusplus.html
+
+(see Section3.1.8). A modification of-means++that was selected after being independently suggested by two reviewers. The algorithm was implemented by the author in Python since no open-source (or other) implementation could be found. The parameterfor the number of additional centroid selections was set to, following the experiments described in the original paper ofLattanzi and Sohler (2019).
+
+(see Section3.2.2). This method was selected since it is the default-meansalgorithm in thestatspackage of the R programming language({R Core Team},2019). The approach is special since it does not rely on theGeneralized Lloyd Algorithm. Parameter settings:iter.max=500, nstart=1, algorithm="Hartigan-Wong". Implementation: Fortran code from thestatspackage of R.
+Sources:https://cloud.r-project.org
+
+(see Section3.2.9). We included this approach following a reviewer’s suggestion and promising results in a pre-study. The implementation used is part of a C-Package published on github by the authors of the original publication(Fränti,2000). The default parameters defined by the package were used in the experiments.
+Sources:https://github.com/uef-machine-learning/CBModules
+
+(see Section3.2.12). We included this approach following a reviewer’s suggestion and promising results in a pre-study. The implementation used is part of a C-Package published on github by the authors of the original publication(Fränti,2018). The default parameters defined by the package were used in the experiments.
+Sources:https://github.com/uef-machine-learning/CBModules
+
+SECTION: 5Empirical Results
+
+We first list the algorithms selected for comparison withbreathing-means. Then, the-meansproblems used for the experiments are described. Finally, the empirical results are presented.
+
+SECTION: 5.1-MeansProblems Investigated
+
+We used four groups of two-dimensional problems (9 problems per group) and one group of high-dimensional problems (15 members) for a total of 51-meansproblems. These groups were selected to showcase the algorithms’ strengths and weaknesses.
+
+The problems included varied point densities, reflecting the diversity of real datasets, unlike the mixtures of identically shaped Gaussians found in many textbook examples. Of the 51 problems, 24 are from the literature, and 27 are self-generated. The following subsections describe the problems in detail.
+
+Each problem in this group is constructed with a known optimal solution. The datasets consist ofidentical, well-separatedmacro-blocks, each comprisingadjacent quadratic base blocks of data points, wherecan be 1, 3, or 4. The number of centroidsis set to. The optimal solution places one centroid at the center of each base block, as shown in Figure3with optimal solutions in red.
+
+The optimality is justified because the macro-blocks are identical and well-separated, ensuring an optimal solution distributes centroids evenly among them. Thus, the overall solution’s optimality equates to that of an individual macro-block.
+
+For, the optimal solution is the centroid of the single block, thus satisfying the centroid condition. Foror, it is assumed that the optimal partial solution involves placing one centroid in each base block’s center. Hence, the optimal solution for the entire problem is to center one centroid in each base block across all macro-blocks.
+
+The problems in this group are based on data sets from the literature. The-values were freely chosen, resulting in the problems listed in Table1and displayed in Figure4.
+
+The problems in this group were generated from the “literature problems” in the previous section as follows.
+
+Randomly select 200 data points from the literature problem.
+
+Add a very dense cluster of 4000 data points below the area occupied by the selected 200 data points.
+
+The purpose of this modification is to test the algorithms’ ability to deal with data sets having a large variation in density.
+
+This group of problems (see Figure6) was designed to check the effect of letting an increasing fraction of the data originate from high-density clusters. One common part of all data sets consists of 500 data points located in 25 Gaussian clusters of 20 points, each positioned on a spiral. The other part of the data sets consists of one or more high-density Gaussian clusters arranged on a second spiral intertwined with the first one. The number of high-density clusters, each consisting of 500 data points, varies from one to 25 in steps of three.
+The value ofis always set to 100.
+
+The problems in this group are based on three data sets (see Figure7) used in the original paper on-means++(Arthur and Vassilvitskii,2007)where the-values were chosen from. We added two larger-values resulting in. The data sets are described below.
+
+Norm25:This data set consists ofvectors of dimension. The original data used byArthur and Vassilvitskii (2007)is not publicly available anymore, but their paper contains the following description (and also states that the number of data points is 10000):
+
+“The first data set,Norm25, is synthetic. 25 “true” centers were drawn uniformly at random
+from a 15-dimensional hypercube of side length 500.
+Then points from Gaussian distributions of variance 1 around each true center were added, resulting in
+25 well-separated Gaussians with the true centers providing a close approximation to the optimal
+clustering.”
+
+Using this information, we generated a new data set,Norm25, with statistical properties similar to those of the original one.
+
+Cloud:This data set consists ofvectors of dimension. It is theClouddata set from the UCI Machine Learning Repository(Dua and Graff,2017)and is available athttps://archive.ics.uci.edu/ml/datasets/Cloud. The data was derived from two-pixel satellite images of clouds (one image in the visible spectrum and one in the infrared spectrum) taken with an AVHRR (Advanced Very High-Resolution Radiometer) sensor. The images were divided into 1024 super-pixels of size, and from each pair of super-pixels, ten numerical features were extracted to form the final data set.
+
+Spam:This data set consists ofvectors of dimension. It is theSpamdata set from the UCI Machine Learning Repository(Dua and Graff,2017)and is available athttps://archive.ics.uci.edu/ml/datasets/Spambase. According to the data set description, the data was generated from spam and non-spam emails. Most of the features (48 of 58) are word frequencies from different words. Other features measure the occurrence frequencies of certain characters or capital letters.
+
+SECTION: 5.2Solution Quality
+
+The primary findings on solution quality are summarized below, with detailed results in AppendixA. Table2presents the core results, with each row representing a problem group and each column an algorithm. The values denote the mean relative MSE improvement over the baselinegreedy-means++algorithm, marked as 0.0%. Positive values indicate improvements, while negative values denote poorer results.
+
+The following observations can be made regarding solution quality:
+
+Onlybreathing-meansandbetter-means++consistently beat the baseline algorithm for all problem groups. Thereby, the improvements found bybreathing-meanswere much larger than those found bybetter-means++.
+
+Random swapfound the best solutions for the “Literature” problems.
+
+Vanilla-means++(the original-means++variant with theupper bound) found significantly worse solutions than the baseline algorithm.
+
+Hartigan-Wong(the default-meansalgorithm in thestatspackage of the R programming language) always produced the worst results of all methods (far below the baseline algorithm).
+
+In Table3, the average standard deviation corresponding to Table2is shown. A noticeable pattern is that the standard deviations forbreathing-meansare tiny, indicating a quite homogeneous quality of the solutions. Overall there seems to exist a negative correlation between SSE improvement and standard deviation: the higher the SSE improvement, the smaller the standard deviation, and vice versa.
+
+SECTION: 5.3CPU Time Usage
+
+Here we present the primary findings on CPU time usage from our experiments which were performed on a Linux PC (AMD FX™-8300 eight-core Processor, 16GB RAM) running Ubuntu 22.04 LTS. Detailed, problem-specific results are provided in AppendixB.
+
+To reduce bias in the experimental results, we selected the most widely used open-source implementation of each algorithm. Forbetter-means++, no implementation was available, so we implemented it in Python based onscikit-learnwith reasonable effort to obtain an efficient implementation. Overall, this approach resulted in three different programming languages being used: Python, Fortran, and C. For algorithms with different implementation languages, the CPU time usage is not directly comparable. With this caveat, the observed CPU time usage is reported here to provide some efficiency indication.
+
+Table4contains one row per problem group. It shows in the second column the mean CPU time in seconds used by the baseline algorithm,greedy-means++, and in the following columns, the percentual CPU time usage relative to the baseline algorithm for all investigated approaches.
+
+The algorithms implemented in Python (greedy-means++,vanilla ​-means++,better-means++,breathing-means) are all based on thescikit-learnlibrary, which makes a comparison among them relatively meaningful.
+The following observations can be made for CPU time usage of these
+algorithms:
+
+The fastest of these algorithms wasvanilla ​-means++. It was about 23% faster than the baseline algorithm,greedy-means++, which, however, had a much better solution quality.
+
+Better-means++required about 9.5 times as much CPU time as the baseline algorithm.
+
+Breathing-meansrequired about 5.6 times as much CPU time as the baseline algorithm).
+
+The only algorithm implemented in Fortran,Hartigan-Wong, was the fastest overall (about 40% faster thangreedy-means++). It is called from within R, but the implementation language is Fortran.
+
+Among the two algorithms implemented in C,genetic algorithmwas on average over 30 times faster thanrandom swap, which was by far the most compute-heavy algorithm of all we investigated.
+
+SECTION: 5.4Effects of Multiple Runs and RunningBreathing-MeansOnly Once
+
+Multiple runsis a technique to enhance algorithmic outcomes by running it several times and choosing the best result (Section3.2.13). Table5shows the average improvements from ten runs of all algorithms, over the baseline.
+Using the same data as Table2(100 runs per problem-algorithm combo), results are grouped into ten clusters of ten, selecting the best from each. Percentage SSE difference from the baseline is calculated and averaged. Positive values in thegreedy-means++column represent the improvement from ten runs.
+
+Table6shows the SSE difference between single run and best-of-ten runs. The minimal improvements from multiple runs ofbreathing-meanssuggest that it can be effectively compared to other algorithms’ best-of-ten results, even when executed only once. Table7confirms thatbreathing-meansis overall superior, averaging across all problem groups.
+
+CPU time for this scenario (one run ofbreathing-means, ten runs for others) is computed by multiplying Table4’s first column by ten and dividing thebreathing-meanspercentage by ten (see Table8).Breathing-meansis the quickest, requiring justof the CPU time needed for ten runs ofgreedy-means++.
+
+SECTION: 5.5Effect of Varying the Breathing Depth Parameter
+
+The breathing depth parameter(default value: 5) serves as a means of balancing solution quality and computational resource demands. Higher values oftypically result in improved solutions, albeit at the expense of greater computation time, and vice versa. Figure9illustrates the average error improvement relative to the baseline algorithm across all test problems for varying values of. Concurrently, Figure10presents the corresponding computation time relative to the baseline algorithm. For instance, replacing the defaultwithimproved the average solution quality by 0.9% for our test problems, but quadrupled the CPU time required.
+
+SECTION: 6Conclusion
+
+We introduced the novelbreathing-meansalgorithm which dynamically changes the sizeof the codebook to improve solutions found by theGeneralized Lloyd Algorithm. We empirically comparedbreathing-means(initialized bygreedy-means++) to the baselinegreedy-means++(followed by theGeneralized Lloyd Algorithm) and five other algorithms across diverse test problems. Our approach consistently outperformed all other methods in terms of solution quality, with only a few exceptions where it slightly lagged behindrandom swaporgenetic algorithm. It also was the only approach able to find near-optimal solutions across all problems in the ”Known Optimum” problem group.
+
+Whilerandom swapandgenetic algorithmdid outperform the baseline for most problems, they were dramatically inferior to the baseline in several cases, making them less suitable for unknown data.
+The comparison betweengreedy-means++andvanilla ​-means++underlined the improved solution quality offered by the former, validating its use as the present default-meansalgorithm inscikit-learn.
+
+Hartigan-Wong, the default algorithm in R’s stats package, consistently underperformed, suggesting its use should be limited to situations where low computational cost is a priority.
+
+Notably,breathing-meansmaintained its superior performance even when other algorithms were run ten times and it was only run once. In this scenario, it continued to deliver significantly better solutions thangreedy-means++while being nearly twice as fast.
+
+Based on these findings, we recommend usingbreathing-meansovergreedy-means++for improved solution quality and speed.
+
+SECTION: References
+
+SECTION: ASolution Quality Details
+
+This section presents tables depicting solution quality per problem for all studied algorithms. The average SSE () for the baseline algorithm,greedy-means++, is shown with a grey background. The percentages for non-baseline algorithms represent mean relative SSE improvement over the baseline, with negative values indicating worse performance. The color scheme corresponds to Figure8. The best results in each row are boxed, including ties.
+
+SECTION: BCPU Time Details
+
+In this section, tables for each problem group illustrate the CPU time usage per problem for all investigated algorithms. The average CPU time in seconds for the baseline algorithm,greedy-means++, is displayed with a blue background. Percentage values for non-baseline algorithms represent theCPU time relative to the baseline algorithmfor each specific-meansproblem. Values below 100% (faster than the baseline) are on green backgrounds, while values above 100% (slower than the baseline) are on red backgrounds.

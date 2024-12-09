@@ -1,0 +1,422 @@
+SECTION: Global Censored Quantile Random Forest
+
+In recent years, censored quantile regression has enjoyed an increasing popularity for survival analysis while many existing works rely on linearity assumptions.
+In this work, we propose a Global Censored Quantile Random Forest (GCQRF) for predicting a conditional quantile process on data subject to right censoring, a forest-based flexible, competitive method able to capture complex nonlinear relationships.
+Taking into account the randomness in trees and connecting the proposed method to a randomized incomplete infinite degree U-process (IDUP),
+we quantify the prediction process’ variation without assuming an infinite forest and establish its weak convergence. Moreover, feature importance ranking measures based on out-of-sample predictive accuracy are proposed. We demonstrate the superior predictive accuracy of the proposed method over a number of existing alternatives and illustrate the use of the proposed importance ranking measures on both simulated and real data.
+
+Keywords: U-process, Random Forest, Censored Quantile Regression, Feature Importance
+
+SECTION: 1Introduction
+
+Survival analysis offers widely-applied, instrumental tools for studying time to events such as death of patients from certain diseases, occurrence of bankruptcy or default, failure of machine components and so on. Such data often exhibits severe skewness and can be incomplete due to censoring or truncation, making the mean time-to-event less insightful or even unidentifiable. In addition, many traditional methods, Cox regression models for example, rely heavily on the proportional hazard assumption that, regardless of the features values, the relative hazard of two subjects remains constant over time, which is hard to justify for real complex applications.
+
+Quantile regression provides a robust, promising alternative to overcome these difficulties and grants the flexibility of focusing on a specific part of the conditional distribution or the entire one. More importantly, it can unravel the heterogeneous effects of features of interest across the entire distribution, offering more valuable and thorough understanding of the problem of interest. Many methods have been proposed to adjust for censoring, including(Peng and Huang,2008; Wang and Wang,2009, among others), but often impose a linearity assumption, either globally over a range of probability levels or locally at some probability levels, and utilizes explicit penalization to accommodate high dimensional problems(Zheng et al.,2018). A less restrictive nonparametric approach is the single index model(Christou and Akritas,2019), which instead assumes the conditional quantile is connected to the linear model through a smooth link function to be estimated by, for example, kernel methods.
+
+Recent advances of machine learning have expanded the toolkit with more flexible and competitive alternatives. Random forest(Breiman,2001), an ensemble ofrandomizedtrees, is one such model with a well-established record of success across various scientific domains(Fernández-Delgado et al.,2014).
+By aggregating randomized trees grown on bootstrap samples each of which partitions the feature space recursively among a set of directions selected at random and fits a simple model in each resulting region,
+random forests are flexible enough to model nonlinear complex relationships and adopt naturally to not only high dimensional feature space but also high dimensional responses.
+
+Although random forest is originally proposed for regression and classification problems, such flexibility and exceptional predictive power
+inevitably leads to extensions to other areas including survival analysis and quantile regression. In particular,Li and Bradic (2020)proposed Censored Quantile Regression Forest (CQRF) by designing a weighted estimating equation to adjust for censoring and estimate conditional quantiles where the weights are generated adaptively from a random forest. However, the random forest utilized in CQRF treats all observed time-to-event as the true values and does not take censoring into consideration.Zhu et al. (2022)proposed Hybrid Censored Quantile Regression Forest which assumes the conditional quantile is a linear model on a set of low dimensional features but the coefficients are modified by another set of, possibly high dimensional, features and estimated based on adaptive weights from a random forest. However, the growing of trees relies on a working linear model, violation of which can result in suboptimal splits. What’s more, both forest-based approaches targeted at estimating quantiles locally at a prespecified quantile level.
+
+In this paper, without making any parametric or linear assumptions, we follow closely to Breiman’s random forest and propose Global Censored Quantile Random Forest (GCQRF) for predicting the conditional quantile processgloballyover a range of quantile levels on right censored data. As considered in recent theoretical works on random forests(Scornet et al.,2015; Mentch and Hooker,2016; Wager and Athey,2018; Peng et al.,2022, among others), subsamples rather than bootstrap samples are utilized for growing trees to avoid duplicated observations. More details of the method will be discussed in section2.
+
+Enjoying advantages of both random forests and quantile regression, our proposed procedure adjusts for censoring while growing trees and is promising with high predictive power, flexible to model complex, nonlinear relationship between response and features of interest, rich of implicit regularization to deal with both high-quality and noisy data, and ready to use for high dimensional settings.
+In addition, our procedure targets on the conditional quantiles, rather than conditional mean, of time-to-event and thus is more robust to skewed data and outliers.
+Moreover, predictions and interpretations at two different but close probability levels can exhibit considerable variability due to the limited sample size of real data, despite of lack of scientific evidence of favoring one over the other. Considering this, our objective is to estimate conditional quantiles globally over an interval of quantile levels instead of at a specific value so as to understand the entire conditional quantile process over an interval rather than a particular conditional quantile and to provide a more stable, reliable and complete analysis.
+
+Theoretically, we formulate random forests with process-type predictions as randomized incomplete infinite-degree U-processes (IDUPs), quantify the variance of randomized incomplete IDUPs and establish the corresponding functional central limit theorem (FCLT). To the best of our knowledge, our result is the first one to quantify the variance of random forests with process-type predictions while taking the random-feature-subsetting into consideration explicitly without assuming the forest consists of trees growing on all possible subsamples.
+Similar results on the original random forests date back toMentch and Hooker (2016)which first made the connection between random forests and U-statistics and established the asymptotic normality of random forests for real-valued response.Peng et al. (2022)further relaxed conditions for asymptotic normality and provided Berry-Essen bounds to characterize the rate of convergence. Results inMentch and Hooker (2016)andPeng et al. (2022)focused on the variation of random forest predictions around the expected tree predictions without quantifying the bias or showing consistency. Whether such unbiasedness is beneficial can be application-dependent, especially when the accuracy is the primary target.
+
+Additional assumptions or specifications are generally needed to establish the consistency of random forests.Scornet et al. (2015)derived the first consistency result on Breiman’s original random forest with the assumption that data is generated from an additive model.Wager and Athey (2018)required specific settings of tree structure, including honesty,-regularity and random-splitting, to guarantee consistency and dominance of the variance of random forests over squared bias and established asymptotic unbiasedness and normality. Interested readers are referred toWager and Athey (2018)for details of these specifications. Following the perspective of viewing random forests as adaptive nearest neighbor estimators(Hothorn et al.,2004; Meinshausen,2006),Athey et al. (2019)generalized the results inWager and Athey (2018)and proposed the generalized random forest framework to estimate parameters in the Euclidean space that can be identified by estimating equations, including but not limited to the conditional mean and the conditional quantiles. Thanks toWager and Athey (2018)andAthey et al. (2019), there have been a growing literature to develop tree-based methods for various problem settings(Li and Bradic,2020; Cho et al.,2022a,b, among others).
+
+However, there are two limitations in the asymptotic results inWager and Athey (2018)and those with similar settings. First, the tree under consideration is one with the randomness from feature subsetting marginalized out, and thus can be considered as afixedkernel. However, recent work(Mentch and Zhou,2020)suggests the random-feature-subsetting play a key role in the success of random forests by providing an implicit regularization effect so that random forests are adaptive to data of various quality. Moreover, this implicit regularization effect is not limited to trees but also applicable to linear models, ensembles of which can, surprisingly, outperform explicitly regularized procedures such as lasso even when the data is generated from a sparse linear model. Thus, it is beneficial to take the randomness into account for both theoretical and practical purposes.
+Moreover, the random forest under consideration is a nearly infinite one in the sense that it consists of all trees grown on all possible subsamples. However, with subsample size depending on the training size, the number of all possible subsamples grows dramatically and it quickly becomes computationally infeasible to grow such infinite forests. Practically, only a randomly selected set of subsamples are utilized for growing the forest, leading to the limiting variance larger than, possibly dominating, the variance in the infinite case. Thus, it is crucial to take this finiteness into account.
+
+Our work seeks to fill in the gap that existing theoretical studies for asymptotic Gaussianty of random forests are not applicable to random forests with infinite-dimensional process-type predictions. A related work towards this direction isHeilig and Nolan (2001)which studied the uniform weak law of large number (UWLLN) and functional central limit theorem (FCLT) of U-processes of fixed kernels with degrees growing with, but results inHeilig and Nolan (2001)are not directly applicable for randomized trees or when not all subsamples are used for growing the forest. Our results follow and extend those inPeng et al. (2022)and establish the weak convergence of a randomized incomplete IDUP under regularity conditions. As inMentch and Hooker (2016)andPeng and Huang (2008), we focus on the convergence around the mean tree prediction and do not impose additional requirements to guarantee consistency. Research along this direction is left as future work.
+
+The rest of the paper is organized as follows. In section2, we present the details of the proposed GCQRF. With preliminaries on the connections of GCQRFs and randomized incomplete IDUPs as well as extended H-decomposition of U-processes of randomized kernels discussed in section3, weak convergence of randomized IDUPs are established in Sec4. We propose feature importance ranking measures with respect to conditional quantiles of pre-specified quantile levels in section5. Section6is devoted to numerical analysis on predictive accuracy and feature importance ranking measures of GCQRFs with both simulated and real data. We conclude with additional discussions in section7.
+
+SECTION: 2Global Censored Quantile Random Forest
+
+Suppose we have a random samplei.i.d. followingwith featuresand the response of interest. For right censored data,whereis the observed response andis the censoring indicator withthe true underlying response andthe censoring. Without loss of generality, we assume,, andare all real-valued.
+
+Given a new observation at, our GCQRF aims to predict the associated conditional quantile process
+
+and follows closely to the original random forest for classification and regression. More specifically, drawsubsamples, each of sizerandomly selected without replacement, and grow a tree on each by recursively partitioning the feature space with each split perpendicular to some axis (feature)amongmtryfeatures selected uniformly at random at some cutting position so as to optimize some criterion. In each region, also called node,, estimate the conditional quantile process based on observations in the node. Repeat this until the number of nodes reaches a prespecified valuemaxnodes, or the number of uncensored observations in each terminal node, called leaf, is less than a prespecified valuenodesize. In addition, a split will not be considered if the number of unique uncensored observations in either child node is less than a prespecified valuenodesizeMin.
+
+It remains to specify the splitting criterion and estimations in each node. We propose a splitting rule based on a modified version of the loss function for quantile regression for censored data proposed inLi and Peng (2017). More specifically, we consider the integrated quantile loss (I-QLoss) defined by
+
+where,, is the estimated conditional quantile process and
+
+is the quantile loss atwith,anda deterministic prespecified constant less than the upper bound of’s support. For brevity, we simplifyandbyandin the rest of this article when there is no ambiguity. Inas well as notations below depending on the probability intervalof interest, we omit this the dependence for readability.
+
+Given a nodecontaining censored observations, QLoss atis estimated by
+
+whereis short for,is the predicted-th quantile in node,is the number of observations in,,andis the Nelson-Aalen estimator using observations in nodefor. On the other hand, in case of a node without any censored observations, estimate QLoss by
+
+The I-QLoss overis then estimated by
+
+Given a parent nodeto be split, letanddenote the left and right child node respectively, and we propose to find the optimal split among randomly selected candidate features that maximizes
+
+What is left is how to estimatefor any node. To achieve this, we first construct a Nelson-Aalen estimatorfor the survival distribution ofbased on observations in. Let. For, take. For, takeas the largest observation inor the largest uncensored observation inor extrapolating the estimated Nelson-Aalen estimator with exponential distribution and inverting it to get the estimated quantiles.
+
+As in the original regression tree, the-th tree prediction,,, at any pointis the predictionwhereis the node thatfalls in, and the forest prediction is the average oftrees’ predictions
+
+In practice, we find the predicted conditional quantiles on a fine gridand the predicted quantile process is a step function with jumps at.
+
+Following closely to the Algorithm 1 inBiau and Scornet (2016), Algorithm1provides a summary for GCQRFs with stopping rule based onnodesize. To control the tree size bymaxnodeson top ofnodesize, simply replace the condition in the while loop by comparing the size oftomaxnodes.
+
+It is noticeable that the proposed GCQRF can also work on complete data without any censoring. In contrast to existing forests for quantile regression includingMeinshausen (2006)using the CART criterion andAthey et al. (2019)utilizing multiclass classification rule on relabeled responses, the proposed splitting rule minimizes the sum of I-QLoss in the two children nodes with respect to the standard quantile loss.
+
+SECTION: 3Preliminaries
+
+Mentch and Hooker (2016)connected random forests to an incomplete infinity degree U-statistic (IDUS) of randomized kernels, and established the asymptotic normality for random forest predictions.Peng et al. (2022)further extended U statistic and the Hoeffding-decomposition (H-decomposition) to a more generalized notion which put complete or incomplete U statistics of fixed or randomized kernels under the same umbrella and established more relaxed conditions for the asymptotic normality of random forests and a Berry-Essen bound to provide a more refined characterization of the rate of convergence.
+
+In this section, we will first demonstrate that GCQRF can be similarly viewed as a variant of infinity degree U-process (IDUP) which will be shown to converge weakly to a Gaussian process in the next section, and then extend the generalized H-decomposition of U-statistic to the case of U-process.
+
+SECTION: 3.1Global Censored Quantile Random Forests as Randomized Incomplete Infinite Degree U-Processes
+
+Letbe a class of permutation-symmetric kernels of degreeindexed by. Letbe the mean of the kernel.
+Denotethe set of all ordered-tuples fromandthe set of unordered ones. For each, denotea subsample ofof size.
+
+Define
+
+which, for each, is a U-statistic of degreewith kernel,
+andbe the corresponding U process. For simplicity, we dropinsince this is reflected in the degree of the kernel.
+
+First let us consider afixedtree grown on a subsamplewithout any additional randomness whose prediction of-th quantile atis denoted bywith. This kind of tree can be achieved by considering all available features at each split. Another example is anpseudo averagetree defined as the expectation of a randomized tree over the randomness(Wager and Athey,2018).
+
+Grow an ensemble oftrees on all the possiblesubsamples of sizeand take the average of their predictions at, leading to the subbagged predictions at
+
+Since tree predictions are invariant to the order of observations in a subsample, for each,is in the form of a U-statistic with the tree being a kernel of degree. Thenis a U-process of degreeindexed by.
+
+Notice that the subsample sizein (1) is a fixed value, which limits how deep a tree can be grown. To make the model more flexible for potentially improved performance, letgrow with, giving rise to
+
+The resulting processis an IDUP(Heilig and Nolan,2001).
+
+Sincegrows fast with, it quickly becomes computational infeasible if allsubsamples are considered. One way of overcoming this is to consider a bootstrap ofsubsamples randomly selected with replacement from allpossible ones(Mentch and Hooker,2016; Chen and Kato,2019), which is also the bootstrapping scheme considered in our proposed GCQRF in Algorithm1. With a little abuse of notation, letwhere, for,denotes the number of times,, is selected. This leads to theincompleteIDUP
+
+An alternative way of reducing computational cost is to select the subsamples based on, a vector of i.i.d. Bernoulli random variables withthe probability thatis selected(Chen and Kato,2019; Peng et al.,2022). The total number of subsample selected is equal towhere. When, the incomplete IDUP bootstrapped in this way can be written as
+
+When, i.e.,, it reduces to the complete IDUP.
+
+Recall that trees in the proposed GCQRF are randomized such that only a subset of features are randomly selected at each split as candidates and such selection is independent of the samples used to grow a tree and is independent across trees. Denotingandthe-th tree, our proposed GCQRF as in Algorithm1is a randomized incomplete IDUP grown onsubsamples randomly selected with replacement from allpossible subsamples and its-th quantile prediction atis defined by
+
+Though not implemented in Algorithm1, GCQRF can be alternatively grown based onand the prediction is then
+
+When each unique subsamples of sizeis selected once, then it becomes a randomized complete IDUP
+
+In the following, we omit the dependence onwhen there is no ambiguity.
+
+SECTION: 3.2Extended Hoeffiding Decomposition of Randomized U-Processes
+
+A useful and widely applied technique in the U-statistic or U-process literature is Hoeffiding decomposition (H-decomposition) where the components are themselves U-statistics or U-processes and, more importantly, uncorrelated with variance of decreasing order(Lee,1990; Heilig and Nolan,2001). Recall thatis the degree of the kernel and, in the rest of this subsection, can be either fixed or grow with.
+
+Peng et al. (2022)extended the H-decomposition of U-statistic of fixed kernels to the case of randomized kernels, which can naturally be extended to U-processes. Forand for each, define the conditional kernel by
+
+where the expectation is with respect toand, and define the projected kernel by
+
+Forand, define
+
+The extended H-decomposition of a randomized U-processis given by
+
+In particular the first order term is given by
+
+a sum of i.i.d processes. Without the additional randomness, it reduces to the traditional H-decomposition. FollowingHeilig (1997), we call a kernel degenerate if it is of mean-zero.
+
+SECTION: 4Theoretical Studies
+
+SECTION: 4.1Asymptotics of Randomized Complete IDUPs
+
+In this section, we extend results inHeilig and Nolan (2001)by accommodating randomized kernels and incompleteness and allowing that the convergence rate depends on the kernel and is not necessarily, and study the asymptotic properties of randomized complete or incomplete IDUPs of a generic kernel under regularity conditions, which can be applied more broadly beyond tree-based methods.
+
+Through out this section, we assume the tree kernels, the space of uniformly bounded real functions with index. As inHeilig and Nolan (2001), all arguments in this section and related proofs apply directly when the supremum is taken over a countable class of events and can be generalized to uncountable classes following discussions on measurability issues inPollard (1984).
+
+For randomized complete IDUP defined in (7) or randomized incomplete IDUPs defined in (5) or (6), the additional randomness,, are i.i.d., and independent of the original training sampleas well as the selection of subsamples according to
+
+Weak convergence of a randomized complete IDUP can be established when the first order termin the extended H-decomposition converges weakly and dominates the remainders.
+With Assumption1, results inHeilig and Nolan (2001)for controlling the the remainders in the H-decomposition of a complete IDUP of fixed kernel can be generalized to the case of randomized kernels. Details can be found in the supplement material. The order of the remainders depend extensively on the complexity and envelope of the projected kernels, but can be well controlled when the kernelis uniformly bounded and Euclidean. A wide range of kernels are indeed Euclidean, including trees in the GCQRF and the VC class.
+
+For a classwith pseudometric, for each, the covering numberis the smallest integerfor which there exist pointssuch thatfor every.
+
+Letbe the envelop of the class.is Euclideanfor the envelopif there exist constantsandsuch that for alland all measures, the covering numberwhere.
+
+The randomized kernelis Euclideanwith constantsandfor some envelope.
+
+Weak convergence of the first order termcan be established by appealing to empirical process theory on function classes changing with(Pollard,1990).Heilig and Nolan (2001)considered the case whenconverges for eachand thus the converge rate is. However, this can fail for kernels such as the nonadaptive trees where the tree structure and tree predictions depend on two disjoint training set(Wager and Athey,2018; Peng et al.,2022). Assumption3and4below are utilized to accommodate such nonadaptive treees and better characterize the convergence rate. In addition, Assumption5guarantees a well-behaved envelope of the first order projected kernel.
+
+Define
+
+There existsfor some constants.t.converges uniformly tofor.
+
+There existss.t.converges uniformly tofor.
+
+Lastly, Assumption6on the subsampling rateguarantees thatconverges at a rate dominating the remainders. For nonadaptive trees,forwould be sufficient.
+
+Assume.
+
+Define
+
+Putting these together leads to the weak convergence of the randomized complete IDUPs.
+
+Assume the indexof interest lies inwith bounded. Denoteandas defined in (11). Assumewhereis an envelope of. Suppose that Assumptions1-6hold. Then
+
+a mean-zero Gaussian process uniformly continuous with respect towith covariance.
+
+The proof of Theorem1can be found in the supplement material. Before establishing asymptotic results for randomized incomplete IDUPs, let us pause and compare the theorem above of randomized kernels to those inHeilig and Nolan (2001)for complete IDUPs of fixed kernels. It is noticeable that the limiting distribution of a randomized complete IDUP has the same form as that of some fixed kernel. To be more precise, the limiting distribution of a randomized complete IDUP is the same as that of a complete IDUP of some fixed kernel as long as the first order projected kernels of the randomized kernel and the fixed one are the same. This is as expected from the extended H-decomposition and the fact that we consider thecompleteIDUP under the situation when the first order projection dominates. On the other hand, the additional randomness has a more substantial influence in theincompletecase as shown in the next subsection.
+
+SECTION: 4.2Asymptotics of Randomized Incomplete IDUPs
+
+In practice, the computational cost grows dramatically withand, making it infeasible to grow trees on allpossible subsamples. To ease this burden, consider growing trees on a subset of subsamples, leading to randomizedincompleteIDUP. As discussed in Sec3.1, we consider two different schemes for selecting subsamples(Mentch and Hooker,2016; Chen and Kato,2019; Peng et al.,2022).
+
+First consider bootstrap with replacement where the randomized incomplete IDUPs are defined by
+
+where,, is the number of times that the subsample,, is selected and. Then the approximation error of a randomized incomplete IDUP to a complete one is given by
+
+The weak convergence ofcan be established by continuous mapping theorem whenandconverges jointly with proper standardization.
+
+As with the complete case, define
+
+and we assume that the variance of the tree kernel is of similar order acrossso thatcan be standardized by.
+
+There existss.t.converges weakly toforandfor some constant.
+
+Moreover, the behavior of the finite-dimensional marginals of the limiting process can be well-controlled by the following assumption.
+
+Supposeis uniformly bounded for, alland all.
+
+Second, consider the randomized incomplete IDUPdefined in (6) with respect to. Similarly, the approximation error of a randomized incomplete IDUP to a complete one is given by
+
+and the weak convergence ofcan be established in the same way under the same set of assumptions above.
+
+Define
+
+and letdenote a mean-zero Gaussian process with covariance.
+
+Assume the indexwith bounded. Denote. Assumewhereis an envelope of. Suppose that Assumptions1-8hold.
+
+Supposeis an randomized incomplete IDUP defined by (5). LetThen
+
+a mean-zero Guassian process with covariance given bywhereandare defined above andandin (12) and (13) respectively.
+
+Supposeis an randomized incomplete IDUP defined by (6). Then the same results as in the first part hold by replacingwith.
+
+The proof of Theorem2is deferred to the supplement material. Along the proof, we have the following corollary on the independence of the limiting processes of the randomized complete IDUP and the approximation error of the randomized incomplete IDUP to the complete one when the number of selected subsamples is much smaller than the total number of possible subsamples.
+
+Suppose conditions in Theorem2are met. Whenor, the limiting processesandare independent.
+
+The effect of the additional randomness is more clearly unraveled in Theorem2. When the number of selected subsamples is large in the sense thator, then the rate of convergence is dominated byand. In another word, the randomized incomplete IDUP is close to a complete one and the limiting process is determined by that of the randomized complete IDUP. In practice, it will be more realistic to haveor. In such circumstance, to quantify the variation of the prediction, we should take into account both the covarianceof the first order projected kernel and the covarianceof the randomized tree kernel where the expectation is not only over the training databut also over the additional randomness. In the extreme scenario whenoris small such that, then the approximation error of a randomized incomplete IDUP to the complete counterpart dominates and the covariance is solely determined by.
+
+SECTION: 5Feature Importance
+
+While black-box machine learning tools, such as random forests, excel in prediction accuracy, they encounter challenges in interpretation, a crucial aspect for decision making and resource allocation. Recently, researchers have turned to out-of-sample prediction performance as a surrogate measure to assess the conditional importance of individual features or groups of features in relation to the target response, given the rest features.
+
+In a general methodology, two models are established: one incorporating all features and another with the effects of the features under investigation muted and the rest the same as in the first model. Feature importance is then ranked based on change in out-of-sample prediction performance. As elucidated byHooker et al. (2021), the impact of features of interest can be muted through techniques such as removal, permutation, or resampling from the estimated conditional distribution given the remaining features. In contrast to removal or permutation, the estimating-and-resampling approach is more resilient against erroneously identifying noise features as significant, but it can be time-consuming, particularly with a large feature dimension. An alternative approximation involves replacing features of interest with knockoff variables(Candes et al.,2018), which remain independent of the response given the original features while preserving between-feature relationships
+
+It is essential to note that certain approaches, like the permutation test proposed by Breiman(Breiman,2001), involve constructingonly one modelwith all features and, subsequently, evaluating the performance ofthismodel on a dataset where features of interest are permuted unconditionally, rather than evaluating the performance of a new modelrefittedto the permuted dataset. Approaches like this are more appropriate for assessing the feature importance to the constructed, fixed model rather than the relationship between the features and the response. When the latter is the focus, despite of the low computational cost, the change of predictive performance measured in this way is subject to the ability to extrapolate of the model under consideration, leading to potentially biased interpretation.
+Here, we advocate for the reconstruction approach when the target is not at a fixed model. More detailed discussions and other alternative remedies can be found inHooker et al. (2021).
+
+Moreover, both models should be tuned as carefully as possible so as to be considered as the models optimizing the predictive performance(Williamson et al.,2021). Otherwise, noise features can be falsely identified as important due to their implicit regularization effect(Mentch and Zhou,2022). While a hold-out test set or cross validation is commonly exploited for tuning, random forests come with a ready-to-use metric called out-of-bag (OOB) error. Specifically, with subsampling or bootstrapping, only a proportion of training observations are used for each tree and those left out are called OOB observations. For each observation, the OOB prediction atis obtained by averaging the predictions of trees whereis considered as OOB. The corresponding error rate is then referred to as the OOB error. This can be calculated during training without incurring significant additional computational cost and performs similarly to using a test set of the same size as the training one(Breiman,2001; Hastie et al.,2009).
+
+Considering these, we propose to measure feature importance as follows.
+First grow a tuned GCQRF with all features available and obtain the OOB I-QLoss denoted by. Next, for a feature of interest, grow another separately tuned GCQRF with this feature dropped, permuted or replaced by its knockoff counterpart and calculate its OOB I-QLoss.
+The largeris, the more important this feature is conditional on the rest. When the dimension of features under investigation is large, it is more efficient to group them based on domain knowledge.
+Alternatively, crossing fitting(Williamson et al.,2021)can be utilized to stabilize the feature importance measure as illustrated in Algorithm2.
+
+When the target is to assess feature importance for predicting the conditional mean with performance measured by squared error,Hooker et al. (2021)showed that the three approaches above for muting effects of features targeted at the same quantity. As shown in the Proportion1, this is also true for feature importance for predicting conditional quantiles in case of no censoring when performance can be measured based on the standard I-QLoss.
+
+Suppose. Letwhere. For each,
+
+whereis the-th conditional quantile ofgiven. Whenis removed, permuted or resampled from the conditional distribution, the conditional feature importance ofgivenis then given by
+
+SECTION: 6Numerical Analysis
+
+In this section, we carry out numerical analysis inRto compare the predictive accuracy of GCQRF to existing alternatives and illustrate the proposed conditional feature importance measure on both simulated and real data.
+
+SECTION: 6.1Simulated Data
+
+We begin by describing the data generating process for comparing predictive performance. Consider the true response given by
+
+where,,,and,andare independent.
+Define the signal-to-noise ratio (SNR) of this model by
+
+The larger the SNR, the higher the quality of the data in the sense that the more variation of the response can be explained by the available features.
+Given a pre-specified value of SNR, the noise levelis determined by
+
+We consider 10 values of SNRs ranging from 0.05 to 6, equally spaced on thescale. This allows us to exam the performance of the proposed method over data of different qualities.
+
+For each SNR, we analyze data where the true response is generated either from linear models or nonlinear models by specifying the forms of. More specifically, we consider 3 different forms ofas follows.
+
+Linear: The first one is a linear model studied inHastie et al. (2020). In particular,where,withand the firstterms inequal to 1 and the rest equal to 0, corresponding to thebeta.type= 2 setting inHastie et al. (2020).
+
+Nonlinear: Next, consider a nonlinear model studied inScornet (2017)given by
+
+where,, with firstsignal features.
+
+Additionally, we employ two versions ofto differentiate whether the features involve only location-shift effects, such as in the accelerated failure time (AFT) model, or not.
+
+Homogeneous setting (HOMO):. In this case, the variance ofis constant and the true conditional quantiles ofare given by
+
+whereis the-th quantile ofand all features entail location-shift effects.
+
+Heterogeneous setting (HETE):where, independent of. Then the variance ofdepends on theand the true conditional quantiles ofare given by
+
+whereis the-th quantile of.
+
+We consider censoring variablewhose distribution depends on:ifandotherwise. Hereare simulated such that the resulting censoring rate is within 1% of a targeted censoring rate. In the following, we consider censoring rate = 30%.
+
+The training data is in the form ofwith the following 2 problem settings considered.
+
+Low:,
+
+High:,
+
+Recall thatis the dimension of. Together with, there are in totalfeatures in each setting. All in all, for each SNR, we consider 8 settings as summarized in Table1.
+
+We compare the performance of proposed GCQRF to the following alternative methods. The first two methods provide estimates of the cumulative hazard function, and quantiles are estimated by inverting these estimates.
+
+Nelson-Aalen (N-A) estimator: N-A estimator does not consider any features available and is used as the baseline for comparison.
+
+Random survival forest (rsf)(Ishwaran et al.,2008): implemented in the packagerandomForestSRCwith log rank test statistic used as the splitting criterion
+
+Peng-Huang (PH) model(Peng and Huang,2008): a censored quantile regression model with linear assumptions implemented inRpackagequantreg.
+
+PH-oracle: the same as PH except that only the true signal features are included.
+
+Generalized random forest (grf)(Athey et al.,2019): the quantile forest implemented in the packagegrf. Internal nodes are split using a multiclass classification rule based on gradient-based relabeled responses. More details can be found in Section 5 ofAthey et al. (2019). With the observed response, grf does not adjust for censoring.
+
+Quantile regression forest (qrf)(Meinshausen,2006): compared to grf, the CART criterion is used as the splitting rule. This is also implemented in the packagegrfwith no adjustment for censoring.
+
+grf-oracle and qrf-oracle: the respective oracle versions of grf and qrf where the true responseis supplied. This is not applicable in practice and only serves as a reference for comparison.
+
+Censored quantile regression forest (crf)(Li and Bradic,2020): based on a forest ignoring censoring, crf estimates conditional quantiles by employing post-forest-construction adjustment for censoring. We implement this using codes in the packagecERFand call the method crf-qrf or crf-grf depending on the forest used. Notice that crf is a local method for one specificwhile our target is to exam the overall predictive accuracy over an interval of, so a sequence of forests are constructed over a grid of.
+
+In addition, we also include the true conditional quantiles (TrueQ) from the data generating process as a reference.
+
+Performance is evaluated on an independent test set of the same size as the training one.
+With known true conditional quantiles in the simulations, we can compare model performance based on the mean squared error on conditional quantiles (QMSE). Define QMSE for a givenby
+
+To summarize the performance over an interval of, we consider the integrated QMSE (I-QMSE)
+
+which is approximated over a grid. Here we considerandwith increment 0.05.
+
+When true quantiles are unknown, we can use I-QLoss
+
+discussed in Section2to evaluate the performance of methods other than grf-oracle and qrf-oracle where, with a prespecifiedless than the upper bound of,,andis the estimation of the conditional survival function of censoringfrom a rsf tuned with respect to C-index. For grf-oracle and qrf-oracle where the true responseis available, the performance can be evaluated by the standard I-QLoss
+
+which is the I-QLoss with respect to the standard quantile loss. In another word, grf-oracle and qrf-oracle are oracle in the sense that no censoring adjustment is needed for either prediction or performance evaluation.
+For notation brevity and focusing on the methods under comparison, we have only included the dependence of loss functionsandonand omitted their dependence on other quantities such as the true conditional quantilesand the quantile levels of interest.
+
+For each methodunder investigation, we define the relative I-QMSE by
+
+and relative I-QLoss by
+
+where the denominators are the I-QMSE and I-QLoss of the Nelson-Aalen estimator respectively.
+
+Recent studies provide evidence that tuning is important for random forests(Scornet,2017; Probst et al.,2019; Mentch and Zhou,2020; Zhou and Mentch,2023). Thus, we tune all forest-based methods with respect to OOB I-QLoss over the following tuning space.
+
+mtryas a proportion of: 0.1, 0.3, 0.5, 0.7, 0.9.
+
+Subsampling rateas a proportion of the training size: 0.3, 0.5, 0.7, 0.9.
+
+nodesize=wheretakes 5 values equally spaced betweenand.
+
+For models implemented using thegrfpackage, we also tune the parameterhonestyoverTRUEorFALSE. WhenhonestyisTRUE, a tree is grown on part of the selected subsample with rest used for prediction. Otherwise, the entire subsample is used for both purposes. In our simulation, an equal-size splitting is considered whenhonestyisTRUE. To reduce the cost of tuning, all forests are tuned with the number of trees equal to 100. Once the parameters above are tuned, each forest is grown with the number of trees set to the default value, namely, 500 for rsf and GCQRF and 2000 for the rest whose implementations depend on thegrfpackage.
+
+Figure1shows the average test relative I-QMSE versus SNR for several settings. The full results witherror bars are deferred to the supplement material.
+The lower the relative I-QMSE, the better the performance.
+Overall, the proposed GCQRF is promising and competitive for a wide range of settings.
+
+Results for the Nonlinear HOMO Low setting are shown in the upper left figure in Figure1. At low SNRs from 0.05 to 0.14, the test relative I-QMSEs of all methods are above 1, implying that N-A estimator which does not consider any features available outperforms all other methods under consideration.
+For SNRs between 0.25 and 6, the proposed GCQRF exhibits promising and competitive performance with the test relative I-QMSE of GCQRF less than those of the rest methods under consideration except grf-oracle and qrf-oracle which make use of the true underlying response and are not applicable in practice.
+When censoring is ignored, grf and qrf have the highest test relative I-QMSE and thus perform the worst among all forest-based methods.
+Comparing crf-qrf and crf-grf to qrf and grf respectively, the post-forest-growing censoring adjustment in crf lowers the error of the corresponding forest ignoring censoring. However, this adjustment is not as effective as GCQRF where censoring is adjusted while the forest is being grown. In addition, crf targets at estimating a particular quantile and thus has to be grown multiple times when the interest is to estimate the quantile process, while only one forest is necessary for GCQRF.
+rsf is outperformed by GCQRF at all SNRs above 0.14. With the log rank statistic used for splitting criterion, rsf searches for the best split to distinguish the survival distributions of the two resulting nodes but may not be sensitive enough to changes in quantiles.
+
+In comparing results in this Nonlinear HOMO Low setting to the Linear HOMO Low setting, forest-based approaches are more robust to the underlying data generating process compared with the linear methods PH and PH-oracle. In the Nonlinear scenario, PH and PH-oracle yield higher test relative I-QMSEs compared to forest-based methods. On the other hand, when the linear assumption is satisfied, PH and PH-oracle improve dramatically as the SNR increases, yielding lower test relative I-QMSEs than forest-based approaches at medium to high SNRs. Among the forests other than grf-oracle and qrf-oracle, GCQRF remains to be the best in this Linear scenario.
+
+Comparing the upper left and lower left figures in Figure1, results for the Nonlinear HETE Low setting are similar to those for the Nonlinear HOMO Low setting discussed above. In particular, the proposed GCQRF has lower test relative I-QMSE than other methods except grf-oracle and qrf-oracle.
+
+Lower right figure in Figure1shows the result for the Nonlinear HOMO High setting. With the additional high dimensional noise features, test relative I-QMSEs of all methods increase to different extensions and stronger signals are required to outperform the N-A estimator while GCQRF, grf-oracle and qrf-oracle are more robust with smaller increase in the test I-QMSE compared with rsf and crfs. Other than grf-oracle and qrf-oracle, GCQRF has lower test relative I-QMSE and outperforms the rest methods for SNRs larger than 0.25.
+
+Figure2shows the results for the same four settings above but with respect to test relative I-QLoss. Results are similar to those with I-QMSE. When signals are strong enough for GCQRF to outperform N-A estimator, GCQRF performs similar to or better than other forest-based approaches except for the oracle ones. PH and PH-oracle perform best when linear assumptions are satisfied and the SNR is large enough.
+
+Next, we carry out simulations to illustrate the proposed conditional feature importance measure. Consider the following two models similar to the linear model studied in Section6.1.1.
+
+Homogeneous (HOMO) error
+
+Heterogeneous (HETE) error
+
+where
+
+and,,andare independent. Same as in Section6, (i) the censoringdepends on:ifandotherwise where,,,are simulated such that the censoring rate is around 30%, and (ii) the data is in the form of.
+
+For these simple models, we can derive a simplified expression for the true conditional quantiles and thus the targeted conditional feature importance. Though not applicable in practice, we can also measure the conditional feature importance by change in I-QMSE in these simulations.
+
+Generally speaking,andentail location-shift effect for both (16) of HOMO error and (17) of HETE error. The conditional importance ofgivenanddepends on the magnitudes ofand the conditional variance ofgiven. Thus, for the same, the conditional importance ofwould be smaller in the case whenis correlated withthan in the case whenis independent of. Intuitively, the effect ofis partially captured bywhen they are correlated.
+
+The two models (16) and (17) mainly differ in the effect of. In the HOMO case,also has a location-shift effect, which is closely related to a mixture of normal distributions that are the same in spread but different in center. In contrast,shifts the scaling in the HETE case, and its effect on the conditional quantiles is tied to another mixture of normal distributions which, instead, are the same in center but different in spread.
+
+To be more concrete, take
+
+andwith, for,forexcept that. We considerfor the independent case andfor the correlated case. In addition, we consideror.
+
+With these values, the true conditional feature importance ranking based on increase in I-QMSE for each feature is plotted in Figure3(a)forand in Figure3(b)for. In both subfigures , the left and right columns correspond to the independent case and correlated case respectively, and the top and bottom rows correspond to data generated from the model with homogeneous error and with heterogeneous error respectively.
+
+We then carry out simulations with training sizeto illustrate the proposed feature importance ranking with 3-fold cross fitting. Simulations are repeated 100 times with the same tuning procedure as in Section6.1.1and the average rankings based on increase in I-QMSE are plotted in Figure4(a)forand in Figure4(b)for. The larger the rank, the more important the feature. In each figure, the colors corresponds to different ways muting the effect of each feature of interest: dropping (green), permuting (green) and replacing with knockoff counterparts (blue).
+
+For, all 3 ways of muting effects can correctly rank the conditional importance of each feature in the independent HOMO case and independent HETE. However, the accuracy is less satisfying in the correlated case. Only estimated rankings based on replacements with knockoffs roughly follow the true rankings. For dropping and permuting, they correctly identify the most important one () and the least important one (), but don’t rank the rest features correctly. In particular, they don’t capture the drop in conditional importance ofandrelative todue to correlation. Results forare similar.
+
+Fortunately, the proposed feature importance measure improves with training size. Rerun simulations above withand the results are plotted in Figure4(c)forand in Figure4(d)for. In this case, estimated ranks of all features with any of the 3 ways of muting effects are the same as the true ranks in Figure3(a)and Figure3(b)except thatis ranked lower than the truth in the Correlated HETE case for.
+
+In practice, the performance can not be measured by I-QMSE but by I-QLoss instead. As plotted in the supplement material, conclusions based on I-QLoss are identical to those above based on I-QMSE.
+
+Overall, simulations above suggest the proposed importance ranking measure should be promising in practice. As long as the sample size is moderately large, the proposed measure can capture the drop in conditional importance due to correlation and rank features entailing location-shift effects correctly. For features entailing scaling-shift effect, the proposed measure can still capture part of this effect but the resulting ranks may sometimes, for some quantile levels, lower than expected, especially relative to those entailing location-shift effect. We leave further investigations along this line as future work.
+
+SECTION: 6.2Real Data
+
+Relationships between the response and features can be more complex for real data. Here we consider theBoston Housingdata which has been widely utilized in literature as a benchmark for evaluating methods. It containsobservations and12 features such as average number of rooms per dwelling (rm), proportion of lower status of the population (lstat), pupil-teacher ratio by town (ptratio), index of accessibility to radial highways (rad), full-value property-tax rate per $10,000 (tax), per capita crime rate by town (crim), weighted distances to five Boston employment centers (dis) and so on, and can be used to predict either the nitric oxides concentration or the median value of owner-occupied homes with the latter the focus in our analysis.
+More detailed descriptions can be found athttps://www.cs.toronto.edu/~delve/data/boston/bostonDetail.html.
+
+Censoring is manually generated based on the categorical variablerad. For each level ofrad, censoring is generated from a uniform distribution whose support is simulated such that the overall censoring rate of the entire data is around 25%. With the true response known, we can compare performance based on the standard I-QLoss
+with grf-oracle and qrf-oracle included as references for forest-based approaches.
+On top of the original dataset, we add 50 and 500 noise variables generated fromwithand call the resulting datasetsBoston MDandBoston HDrespectively. For these two datasets, we also consider PH-red, namely PH on the original 12 features only, as a reference.
+
+To compare the predictive accuracy of GCQRF to alternative methods, for each dataset, randomly split it into two parts, 70% for training and 30% for testing. Parameters are tuned in the same way as with simulated data. The experiment is repeated 100 times and the boxplots of test standard I-QLoss with respect to the Nelson-Aalen estimator for a-grid ofare shown in Figure5. The smaller the test standard I-QLoss, the higher the generalization accuracy for predicting conditional quantiles and the better the performance. Overall, consistent with results on the simulated data, GCQRF demonstrates competitive performance with high generalization accuracy and robustness to noise features.
+
+For all three dataset, grf-oracle and qrf-oracle perform the best, as expected since no censoring adjustment is needed for these two. Other than the two oracle methods, GCQRF and rsf outperform the rest. Comparing GCQRF to rsf, rsf is slightly better than GCQRF while GCQRF is more robust than rsf as more noise features are added.
+
+Next, we measure the conditional feature importance ranking of each feature with the proposed Algorithm2on the originalBostondata. The three different ways of modifying features, namely dropping, permuting and replacing with knockoffs, are all considered. 3-fold cross-fitting is utilized for stabilization. In addition, considering the randomness in growing GCQRFs, permuting features and resampling from knockoffs, we repeat the experiment 100 times. The average ranks based on increase in I-QLoss are plotted in Figure6, the left one forand the right one for.
+
+For, the first five most importance features by GCQRF are
+
+Dropping:rm,lstat,ptratio,tax,dis,
+
+Permuting:rm,lstat,ptratio,tax,dis,
+
+Knockoffs:rm,lstat,ptratio,rad,dis.
+
+Notice that the first three and the fifth most importance features arerm,lstat,ptratioanddisrespectively, the same for dropping, permuting and replacing with knockoffs. The fourth most important one isradby the knockoff approach but istaxby dropping and permuting. In short, average number of rooms per dwelling (rm), proportion of lower status of the population (lstat), pupil-teacher ratio by town (ptratio) captures additional important information not reflected from the rest features on quantiles around the median of the median value of owner-occupied homes.
+
+For, ranks by GCQRF are mostly similar to those for,
+except that
+
+crimhas a much higher rank, the fifth most important one, for the lower quantilesfor all of dropping, permuting and replacing with knockoffs. Thus, the crime rate is estimated to play a more important role for lower quantile levels than for quantiles around the median.
+
+With the knockoff approach,lstatis ranked the fourth place, similar toptratioandradand lower thanrm. In contrast,lstatis still ranked the second most important by dropping and permuting.
+
+This illustrates the heterogeneity of features effects on different quantiles of the median home value. In particular, the crime rate is more influential on low-valued home than on middle-valued one.
+
+SECTION: 7Discussions
+
+This work proposed a novel random-forest-based approach for predicting conditional quantile processes for data potentially subject to right censoring. Our approach is flexible enough to work with nonlinear complex data, applicable for both low and high dimensional features, and rich of implicit regularization so as to adapt to data of various quality. Moreover, we seek to unravel a thorough and reliable understanding on the time-to-event by focusing on the conditional quantile process over an interval of quantiles levels rather than locally at some value. What’s more, we propose a prediction-accuracy-based measure for ranking the importance of features, providing valuable insights for the relationship between features and the response under investigation. Our numerical analysis indicates superior predictive accuracy of the proposed method over existing ones across various settings. One drawback of the proposed model is that it is required to re-estimate quantiles for each possible split, and therefore requires more computational power than the classical regression and classification random forests. A potential future work is to reduce the computational cost while maintaining the accuracy.
+
+Theoretically, we reformulate the proposed GCQRF as a randomized incomplete IDUP and establish the corresponding weak convergence results by incorporating both randomized kernels and incomplete subsample selection. Our results suggest that the randomness of the tree kernel and of the selection of an incomplete subset of subsamples can result in substantially increased limiting variance, even dominating that in the complete case, and should be taken into account for better characterizing the variation of the predicted process.
+These findings are in line with those inPeng et al. (2022)for real-valued predictions.
+A related interesting future work is to consistently estimate the variance function of the predicted process.
+
+It is noticeable that our asymptotic analysis focuses on the variation of randomized IDUPs around the mean process of the kernel. The consistency of the tree and the forest can be established by requiring additional specifications on the tree structure, which have not been implemented in the proposed model, and is left as future work. In practice, such additional requirements may be seen as some sort of bias-variance trade-off. However, when predictive accuracy is the ultimate target, as in the case of accuracy-based variable importance measure, whether these requirements are beneficial is data-dependent.
+
+SECTION: References
