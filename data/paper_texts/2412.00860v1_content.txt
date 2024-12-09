@@ -1,0 +1,241 @@
+SECTION: Deep evolving semi-supervised anomaly detection
+
+The aim of this paper is to formalise the task of continual semi-supervised anomaly detection (CSAD), with the aim of highlighting the importance of such a problem formulation which assumes as close to real-world conditions as possible. After an overview of the relevant definitions of continual semi-supervised learning, its components, anomaly detection extension, and the training protocols; the paper introduces a baseline model of a variational autoencoder (VAE) to work with semi-supervised data along with a continual learning method of deep generative replay with outlier rejection. The results show that such a use of extreme value theory (EVT) applied to anomaly detection can provide promising results even in comparison to an upper baseline of joint training. The results explore the effects of how much labelled and unlabelled data is present, of which class, and where it is located in the data stream. Outlier rejection shows promising initial results where it often surpasses a baseline method of Elastic Weight Consolidation (EWC). A baseline for CSAD is put forward along with the specific dataset setups used for reproducability and testability for other practitioners. Future research directions include other CSAD settings and further research into efficient continual hyperparameter tuning.
+
+SECTION: 1Introduction
+
+A long-standing task within Machine Learning (ML) has been that of anomaly detection (AD), defined as "the problem of finding patterns in data that do not conform to expected behaviour"[1]. Detecting anomalies within a system is a very important problem to solve within multiple different areas, such as fault detection in manufacturing[2], and healthcare[3]. Representative data collection is a particularly difficult task, where finding positive anomalous data may prove difficult or impossible depending on the dataset[4]. This leads to another issue where these anomalies may change over time as the distribution of the data shifts. One way to mitigate this is to use continual learning[4]to account for a dynamically shifting data distribution over time. This allows for new types of anomalies to be identified as the model is continually learning from a constant data stream.
+
+Typically, unsupervised learning is used for anomaly detection. However, in a real-world setting, there are quite often samples that can be labelled by an expert, even if at a high cost. Utilising these labelled samples can improve model performance as seen in experiments run by Ruffet al.[5]. Applying a semi-supervised[6]approach which leverages the small amount of labelled data available with a continual learning approach to an anomaly detection task enables the model to adapt to a continuously shifting data distribution.
+
+Continual semi-supervised learning is a new learning paradigm initially formalised by Shahbazet al.[7]in 2021. This explores the overlap between continual learning[4]and semi-supervised learning[6]. Within a continual learning setting, instead of one dataset, there are instead a number of disjoint datasets where a model only has access to the latest dataset at a given point in time, and cannot access previously seen datasets[4][8]. This creates a paradigm in which the model aims to mitigate catastrophic forgetting[9]in which a model forgets about a previous data distribution or "task" that it has previously learned. There have been numerous different techniques proposed to mitigate catastrophic forgetting within this setting[10],[11].
+
+The typical continual learning setting is that of supervised continual learning, where all of the data is labelled[12]. Within this setting, continual learning is a very well-researched area as demonstrated by the numerous libraries designed specifically for this task[13],[14],[15]. However, when this assumption is tightened and there is instead a mixture of labelled and unlabelled data within these disjoint datasets, the problem becomes CSSL[7], a much less explored area of research. This setup provides a much more realistic setting for anomaly detection where anomalies are often not labelled due to their very nature of not being known. Additionally, it is often infeasible to store all of the training data for a model at one time due to storage limitations[16], thereby making a continual learning method very favourable within this situation.
+
+Continual Semi-supervised Anomaly detection is therefore being formulated within this paper as the overlap between CSSL and AD - combining together their inherent difficulties together for a close to real-world setting of anomaly detection.
+
+SECTION: 2Related Works
+
+SECTION: 2.1Semi-supervised Learning
+
+In semi-supervised learning, a small proportion of labelled data is available alongside a large proportion of unlabelled data. Given a dataset:=, we define, whereas the labelled dataset andas the corresponding labels. The unlabelled dataset is then defined as,where.[6]
+
+This technique leverages the labelled data samples to improve the performance of the model beyond that of an unsupervised model. Some examples of experiments run for deep SSAD can be seen in Ruffet al.[5], confirming that results on MNIST and CIFAR-10 are improved through using labels when present.
+
+According to Oualiet al.[17], there are three main assumptions of semi-supervised learning. TheSmoothness assumptionstates that if inputs within a high density zone are close, so should their output. The opposite holds also. TheCluster assumptionstates that if inputsare in the same cluster, they are likely to be in the same class. Finally, theManifold assumptionstates that high dimensional data lie roughly on a low-dimensional manifold.
+
+Consistency RegularisationConsistency regularisation enforces the cluster assumption in the model. All of the corresponding techniques rely upon the fact that realistic data augmentation applied to unlabelled data should not change the prediction of the model[17]. The aim is to minimise the distance between two outputsanda perturbed version of. Common distance metrics used are mean square error (MSE) and Kullback-Leibler Divergence (KL)[18].
+
+Proxy-label methodsAccording to Oualiet al.[17], proxy label methods use a prediction model to create pseudo-labels for unlabelled data. The techniques used vary by how the pseudo-label is created. In self-training, the model produces the pseudo-labels itself. This is in opposition to multi-view learning where the labels are created by models which are trained on different views of the data.
+
+Generative ModelsGenerative models instead try to estimate the joint distribution across the dataset, including the corresponding labels. In the case of a variational autoencoder, neural networks are used to approximate the distribution of the data. It is vital that all parts of the model are smooth functions such that gradient descent can be performed on the model in order to train a variational autoencoder[19]. To adapt a variational autoencoder, which is typically trained in a supervised or unsupervised manner, an additional classifier is added to the network to optionally classify inputs where the class is missing[19].
+
+Another popular generative method is a general adversarial network. Originally put forward to be trained in an unsupervised manner[20], it consists of a generator and a discriminator where the the goal of each is to generate data to fool the discriminator and to discriminte real from generated data respectively. The resulting model, after adaptation to enable a semi-supervised setting[21], is capable of modelling the joint distribution of the dataset with remarkable accuracy.
+
+SECTION: 2.2Continual Learning
+
+According to Liu[4], the goal of continual learning is to learn a sequence of tasks without access to past data. A model is created with the initial data and tasks. The learner then receives a sequence of experiences which contains a subset of the overall data distribution and tasks. The goal is then to incrementally update the model exploiting information from a time series of unlabelled data points. The target domain itself may change over time, for example in discrete asynchronous steps, e.g. if a new building is constructed in the field of view of a camera[7].
+
+Regularisation Methods
+
+Elastic Weight Consolidation (EWC) was first developed by Kirkpatricket al.[10]. This method selectively constrains the model weights which are most important to a specific task. In the domain-incremental setting, we want a trade-off between plasticity and stability such that the model adapts to the changing data distribution, but does not do so too quickly so as to forget the previously seen data distribution. This is implemented as a baseline method in which to compare other continual learning methods against.
+
+Replay Methods
+
+In replay methods, previously seen examples are stored according within a replay buffer, often limited through size constraints. The methods vary in how they decide which samples to choose to replay in later experiences; a similar choice of which data to label is made in active learning. Some such examples include the CLEAR method[22]which leverages off policy learning behavioural cloning to enhance stability in the stability-plasticity trade-off. One of the main disadvantages of replay methods is that it is often infeasible in real-world conditions to continuously add to a replay buffer due to potential storage limitations of the buffer itself.
+
+Generative Methods
+
+Similarly to how a VAE can be used for semi-supervised learning, it is also an effective generative replay method in continual learning[23],[24][25]. It is possible to conditionally generate data using labels with a VAE (e.g. using MNIST and being able to generate a given digit). However, there are significant drawbacks to this approach: due to the stochastic nature of a VAE, one cannot control the quality of the samples being generated. This is an issue as data is sampled that is not representative of a given class and therefore over time, the class means of the latent space will drift from their original class centres. This will result in lower quality images being replayed over time and eventually lead to lower accuracy and incorrect modelling of the overall posterior. There are several options to mitigate this problem using exemplar rehearsal techniques. Examples of this include the use of core sets[26], uniform sampling[27]and nearest mean classifiers[28]. However, a more elegant solution was recently put forward by Mundtet al.[29], who proposed calculating the inlier and outlier probability of a given point in the latent space and then sampling with rejection.
+
+SECTION: 2.3Anomaly Detection
+
+Semi Supervised Anomaly DetectionAccording to Villa-Perezet al.[30], there are 29 state-of-the-art SSAD algorithms for anomaly detection. Amongst these are methods based on K Nearest Neighbours (KNN), GANs, VAEs, isolation forests and ensemble based methods. The state of the art is currently a Bagging-Random Miner when the algorithms were tested across 95 different datasets and the average AUC taken. This method is an ensemble based method which is domain-specific in masquerade detection.[31]These algorithms include one class SVMS (ocSVM), isolation forests, and KNNs. Other deep generative methods are mentioned in other papers which analyse the effectiveness of semi-supervised anomaly detection such as DeepSAD[30].
+
+Anomaly Detection in Continual LearningThere are many different examples of anomaly detection in a continual learning setting, indicating its importance as a developing area of research[32],[33],[34]. VAEs are used along with EWC and Experience replay as CL methods in[34]as a means of continual anomaly detection. A simple VAE used with MLP in the encoder and decoder layers are effective due to the tabular nature of the data being used. Frikhaet al.(2020) use meta learning to approximate a continual anomaly detection model in their efficient implementation of continual learning. Stoccoet al.(2020) create an entire framework utilising a main system which does online continual anomaly detection, along with a drift detector and monitor which work out which samples are required to store within a buffer. Another method used within continual learning is deep generative replay using a VAE trained on unsupervised normal data[11]. Since the model was only trained on normal data, the reconstruction probability of anomalous samples is then high, making it a good metric to use within generative models with reconstruction components.
+
+SECTION: 2.4Continual Semi-Supervised Learning
+
+Continual semi-supervised learning (CSSL) was first formalised by Shahbazet al.[7]. In their definition of CSSL, an initial labelled training batch is available to first train a model before it is then incrementally updated from an unlabelled data stream. In this instance, one is closer to the real-world instance where there is less labelled data available, and one cannot assume that the labels are all correct. The difficult problems to be solved in semi-supervised learning and continual learning are compounded together into CSSL. Some such problems that need to be solved are those of catastrophic forgetting, plasticity-stability trade-off, class imbalance, especially in the instance of anomaly detection, and label noise.
+
+However, in an alternative definition of CSSL[35], there are a mixture of labelled and unlabelled training data in each experience. This is another option for the formulation of the CSSL problem definition and is one that will be adopted for the rest of this paper. The reason for this is that the formulation in[7]is quite a unique setting for CSSL, whereas the generalised setting in[35]can be applied to more situations.
+
+SECTION: 2.5Techniques
+
+Due to the recent formulation of CSSL, there are few existing research papers within this domain, but the existing techniques will be covered here. As a baseline method put forward by[7], self training uses the model to create pseudo-labels which, if confident enough, are accepted as ground truth labels to enable the model to train in a supervised way - thereby reducing the problem to a continual supervised learning problem. Alternatively, conditional Triple-GANs were used by[35]in order to accept optionally labelled data using a classifier, generator and discriminator to model the joint distribution of the data for use in generative replay. This proved incredibly effective, albeit with few comparisons beside memory buffers which are often seen as relaxing the constraints of continual learning, rather than directly solving the problem.
+
+SECTION: 3Methodology
+
+The aim of this paper is to define CSAD as a research problem which can be formulated as follows.
+
+Given a dataset:=, where eachis a disjoint dataset, or experience, whose union equals the original dataset,. A given experience is defined as follows:
+
+:=, we define, whereas the labelled dataset andas the corresponding labels, where. The unlabelled dataset is then defined as, where.
+
+This sequence of experiences is then passed to a learner in order to correctly classify the labelled and unlabelled data as anomalous or normal, where only the most recent experience is available during training and no access to past data is allowed. The aim is to mitigate catastrophic forgetting in a set-up similar to continual semi-supervised domain incremental learning[7].
+
+Whilst domain-incremental continual learning, semi-supervised learning and anomaly detection have all been researched as separate research areas[7],[36],[4], no paper has yet defined the problem of continual semi-supervised anomaly detection. This is a very relevant problem as it approaches real-world conditions for anomaly detection without ignoring any labelled data that a learner might be able to use as in unsupervised learning. Additionally, with the rise of Big Data, there is often not enough space to store all of the past data in order to train on it at once[16]. Additionally, it is very computationally inefficient to refresh a model at regular intervals as opposed to continually training on the data as a stream[37]. All of these reasons point to the necessity for CSAD within a research and real-world setting.
+
+SECTION: 3.1Semi-supervised Variational Autoencoder
+
+As previously mentioned, Variational Autoencoders (VAEs) are a generative method often used for both semi-supervised anomaly detection and continual anomaly detection[38],[11]. See Figure1for a diagram illustrating how a VAE works on an intuitive level.
+
+Let.
+
+An inputis passed through a neural network with decreasing dimensionality size to produce two vectors, the mean vector,, and the standard deviation,.
+
+We then use a reparameterization trick to sample from these prior isotropic normal distributions into the latent space,.
+
+A classifier is used to classify inputto a particular class. This is then used to regularise the latent space into a clustered multi-variate normal distribution.
+
+It is then possible to sample from the latent spaceas it is a distribution. After taking a sample, this becomes the input to the decoder which is another neural network with the reversed architecture of the encoder. This aims to reproduce the original sample by minimising the difference between the original sample and the output.
+
+In the case where labelled inputsandare passed to the encoder, the process is the same with the omission of step 3 since classification of the inputis not required.
+
+Once the VAE is trained, it is possible to sample from the latent space, z, without needing to process anything through the encoder first, which makes the VAE computationally efficient for novel data generation.
+
+There are therefore three separate parts to the objective and consequently, loss of the VAE. The first is to optimise the encoder to match the latent space to a prior isotropic normal (KL divergence). The next is to optimise the decoder to minimise the reconstruction error of original input,to output(reconstruction loss). Finally, the classifier is to be optimised to to maximise classification accuracy of sampleswhen labels are not present (classifier loss).
+
+The reconstruction loss part of the loss function is the Binary Cross Entropy Loss as suggested for use originally by Kingmaet al.[19]between an input, and its reconstruction.
+
+In each case, variational inference (VI)[39]is performed to calculate the Evidence Lower Bound (ELBO)[40]of a single data point (x,y) as this is often intractable for complex distributions. A more detailed derivation of the loss functions used within a VAE can be found here[41][19].
+
+Given a probabilistic encoder,and classifierwith shared parameters, and probabilistic decoderwith parameters, we can define:
+
+where,
+
+One improvement that was made to the base M2 Model is including a Beta hyperparameter for the KL divergence term in. The updated equation forcan be seen below, where all other parts of the loss function remain unchanged.
+
+This was first suggested by Higginset al.[42]and has been shown to balance latent channel capacity and independence constraints with reconstruction accuracy. Another such potential improvement to the baseline model not implemented involves incorporating Ladder variational autoencoders[43]into the M2 model.
+
+SECTION: 3.2Continual Learning Approach
+
+Generative Replay With Outlier Rejection
+
+The main disadvantage of a VAE for data generation is that due to the very nature of the latent space being a distribution, one cannot control the quality of data generation. Building on the low-cost and efficient generative abilities of the VAE, Mundtet al.[29]came up with the idea to model how much of a statistical inlier or outlier a generated datapoint is in comparison to the class mean in the latent space. After setting an acceptable outlier threshold, it is then possible to sample from the latent space with outlier rejection. This enables representative sampling of generated datapoints to be used as a generative replay method for continual learning.
+
+Mundtet al.[29]propose to regard a sample as a statistical outlier if its distance from the classes latent mean is extreme in comparison to the majority of correctly predicted instances. This is equivalent to a sample falling into a low density zone within the aggregate posterior for the latent space. However, in the case of anomaly detection, where only two classes are present, it is only possible to accurately estimate the latent mean of the normal class. The reason for this is that all of the anomalies may be different - and therefore high-quality replay of each cluster of anomalies becomes impossible for a Weibull distribution to model.
+
+The latent mean distance for the normal class is defined as:
+
+whereis the set of correctly identified normal instances in a given experience andrepresents a choice of distance metric, chosen to be cosine distance for these experiments.
+
+The set of distances to the latent mean are estimated by using a per-class Weibull distribution. The sample outlier probability can then be estimated using the CDF of the Weibull model shown below.
+
+whereis a univariate heavy-tailed Weibull model trained on the normal class.
+
+If this is below a rejection probability which is determined through using a validation set, then the sample is rejected. Since all of this is happening before the sample z is processed through the decoder, it is computationally efficient. Through representative generative replay, only high-quality samples are replayed which help to mitigate catastrophic forgetting.
+
+NaiveThe lower bound for continual learning methods will be naive training in which no continual learning method is implemented and the model trains sequentially on the disjoint datasets without a strategy to mitigate catastrophic forgetting.
+
+Joint TrainingThe upper bound for each experiment will be joint training. This is where the model is trained on the entire dataset at once as is normal in supervised or unsupervised training. This constitutes the upper bound for what is possible for a model as no continual learning method is necessary to mitigate catastrophic forgetting. In this CSSL setting, it is the equivalent of purely SSL.
+
+EWCElastic Weight Consolidation was introduced by Kirkpatricket al.in 2017[10]. This selectively constrains the model weights which are most important to a specific task. In the domain-incremental setting, a trade-off between plasticity and stability is desirable such that the model adapts to the changing data distribution, but does not do so too quickly so as to forget the previously seen data distribution. This is going to be implemented as a baseline method in which to compare other continual learning methods against.
+
+SECTION: 3.3Approach to Anomaly Detection
+
+An and Cho[44]proposed using the reconstruction probability of VAEs as a means of anomaly detection. In their paper, they demonstrate how to calculate the reconstruction probability of a sample, and if it is below a certain threshold, it is deemed to be anomalous. However, the ELBO which is already calculated for the VAE loss, can also be used to approximate the reconstruction probability as in[11], which can prove to give better results under certain circumstances. Due to the ease of implementation, this will be used as a baseline anomaly detection method, acknowledging that more research should be done in this area to potentially improve results within the benchmarks being set out.
+
+Another natural choice for anomaly detection would be the outlier rejection probability[29]. This could be used in a similar way to the reconstruction probability or ELBO which will use the AUC calculated over the test set to find the optimal threshold for these particular metrics which maximises the AUC. This paper does not employ the outlier rejection probability due to the implementation of the probabilistic encoder in line with Kingmaet al.[19]. In this paper, the encoder is conditioned uponsuch that to encode an input,, its labelis required. This is in direct opposition to the assumptions of Mundtet al.[29]that an inputcan be encoded into the latent space without its label. In breaking this assumption, it is not possible to calculate the distance from each latent mean as it is already conditioned on. However, this will be left to future researchers to explore the effects of different approaches to anomaly detection within the scope of SSAD.
+
+SECTION: 4Results
+
+SECTION: 4.1Benchmark Datasets
+
+In order to empirically validate CSAD methods that are being employed, artificial anomaly detection datasets are used in order to allow ablation studies with varying levels of labelled data as well as labelled and unlabelled anomalies within the training dataset.
+
+TheMNISTdataset, accessedhere, is a collection of 70,000 handwritten digits split into 60,000 training and 10,000 test observations. It has 10 classes which represent the numbers from 0 to 9[45].
+
+TheCIFAR-10dataset, accessedhere, is a subset of the tiny images dataset[46]containing 60,000 images of 10 classes split into 50,000 training and 10,000 test observations[47].
+
+TheFashion MNISTdataset, accessedhere, consists of 70,000 clothing articles split into 60,000 training and 10,000 test observations associated with a label from 10 classes[48].
+
+All datasets are flattened, scaled to between 0 and 1, and one hot encoding is applied to the targets. For MNIST and Fashion MNIST, data augmentation using AugMix[49]is applied to the normal labelled data to double the amount of normal labelled training instances available. Since these datasets are all intended for supervised classification in a non-continual setting, there have to be choices made about how the data should be split across different experiences. This depends on five different attributes of the dataset: 1. the overall percentage of labelled normal data in the dataset (); 2. the spread of labelled normal data across experiences (); 3. the percentage of labelled anomalies within an experience (); 4. the percentage of unlabelled anomalies within an experience (); 5. the anomalous classes within an experience ().
+
+Following from this, one class is chosen as the normal class as by Ruffet al.[5]in their extensive experiments on synthetic anomaly detection datasets. All of the other classes are set as anomalous. Once the normal class is chosen, labelled normal data is sampled randomly until the threshold ofis met. Then, for each experience, this labelled normal data is spread according to the parameter. Finally, labelled and unlabelled data are added to each experience in the percentage amounts as specified byand. The classes within an experience are randomly sampled from available classes for that particular experience (e.g. [0,1,2] for experience 1 will sample randomly from the pools of these classes before the anomaly class transformation is applied). The classes are set up in such a way to introduce new anomalous classes over time indicating the domain-incremental data distribution shift which will instigate catastrophic forgetting. The classes present in each experience are an additional parameter which could be further tested through ablation studies, but were outside the scope of this paper. Whilst there are undoubtedly drawbacks of using artificial anomaly detection datasets such as MNIST[45], CIFAR-10[47], and Fashion MNIST[48], the obvious advantage is the ability to create many different artificial subsets on which to test the performance of anomaly detection models in extensive ablation studies.
+
+SECTION: 4.2Experiments
+
+There are 3 different data streams within an experiment, the training, the testing stream, and the validation stream. In order to create the experiences which make up the data streams, the initial training and testing data is used. However, due to the sampling procedure, the training streams may differ in size between experiments due to the addition or withholding of labelled and unlabelled anomalous data.
+
+Training streamFirstly, the anomalous classes are separated from the training data and the remaining data is split into labelled and unlabelled data using a stratified split based on. Then, for an individual experience, labelled normal data is sampled randomly based on. Anomalies are then added into the labelled and unlabelled data to meet the percentage of anomalous data within the respective dataset based onandalong with the available underlying anomalous classes. The result is that there are a number of labelled and unlabelled experiences which make up the training data stream.
+
+Validation streamA stratified split is taken from the labelled data stream to make up the validation stream. This is normally created as 10% of the training stream using a stratified split from the training experiences to keep the distribution of labelled normal data and anomalies.
+
+Testing streamThe testing stream is created by carrying out a stratified split across the testing data to create equally sized experiences which represent the original distribution of data. This split is based on the original distribution of the targets of the data before anomalous and normal class transformations are applied.
+
+SECTION: 4.3Evaluation Metrics
+
+The chosen evaluation metric for experiments is AUC. This is defined by Bradley[50]as the area under the receiver operator curve (ROC) which plots the False positive rate against the True positive rate. The AUC measures how well a model can separate between two classes and as such is the obvious choice within anomaly detection. This is further reinforced through it consistently being the metric of choice within anomaly detection research[51][5][11].
+
+SECTION: 4.4Main Results
+
+The results in the table demonstrate that the Outlier Rejection (OR) method outperforms other continual learning strategies across most datasets, achieving the highest AUC-ROC scores on MNIST (0.690) and Fashion MNIST (0.581). This highlights the effectiveness of OR in these tasks. While OR does not achieve the best score on CIFAR-10, it remains competitive, with a score of 0.546, slightly trailing Joint and Naive methods, which both achieve 0.549. These findings suggest that OR is particularly well-suited for simpler datasets like MNIST and Fashion MNIST, while its performance on more complex datasets like CIFAR-10 is comparable but not superior to other methods.
+
+SECTION: 4.5Ablation Studies
+
+There are four different ablation studies that will be carried out across the different datasets, consisting of a total of 15 different experiments being run. Throughout these ablation studies, please refer to the definitions of,,, andas laid out in1.
+
+1. Varying labelled data percentage
+
+Within this ablation study,is varied within the datasets from 5 to 20% as shown in experiments 1 to 3 which can be found in Appendix2,3, and4. Please note that for all Appendix plots, an additional black and white printable version is made available.
+
+Default values for the other four data-varying parameters can be seen below:
+
+- spread of labelled data is equal across experiences
+
+- percentage of labelled anomalies in an experience is 5 %
+
+- percentage of unlabelled anomalies in each experience 0%
+
+- all classes are present in each experience
+
+2. Varying percentage of labelled data in each experience,
+
+This ablation study variesacross different experiences, looking at varying levels of skew towards the first and last experiences. An example experiment can be seen below, and the remaining experiments can be found in experiments 4 to 7 which can be found in Appendix5,6,7and8.
+
+3. Varying percentage of labelled anomalies in each experience,In Ablation study 3, the percentage of labelled anomalies within each experienceis explored. This is kept fixed across all experiences, and varying the percentage of labelled anomalous data between experiences will be left for future study. This study represents experiments 8 through 11, where individual results for each experiment can be viewed in9,10,11, and12.
+
+The default value foris set to [0.2, 0.2, 0.2, 0.2, 0.2], and the other hyperparamter values remain the same.
+
+4. Varying percentage of unlabelled anomalies in each experience,
+
+In this study, the percentage of unlabelled anomalies will be varied across each experience. This will likely negatively impact the ability of the VAE to reconstruct the normal class as there may be similarity between the normal class and the unlabelled anomalous sample which may therefore form a similar cluster within the latent space. This ablation study can be found within experiments 12 to 15 where experimental setup, along with results can be found in Appendix13,14,15and16.
+
+SECTION: 5Ablation Results
+
+The results for the ablation studies, each run for 10 training epochs with early stopping, are presented below. Please refer to1for definitions of,,, and.
+
+Ablation 1As can be seen in Figure2, for MNIST, the AUC for outlier rejection often outperforms the baseline, Naive, and in most cases outperforms EWC. This indicates that if a VAE is able to learn the normal class sufficiently well during training, it is entirely possible to replay high quality data that is representative of the normal class. All of this is in spite of the fact that the classifier being used for the normal class are simple convolutional layers, which could be greatly improved upon with better architectures.
+
+When varying the percentage of labelled data overall in the dataset, there is an obvious upward trend in performance as theis increased. This indicates that the M2 model is correctly utilising the labelled data in the semi-supervised portion of this training setting. However, There were issues in joint training which meant that it was not in fact the upper bound for all experiments. This is especially apparent in the Fashion MNIST dataset.
+
+However, for a dataset such as CIFAR-10, the AUC is consistently low, even for joint training, indicating that convolutional layers are required in the encoder and decoder as simple dense layers are unlikely to be able to correctly reconstruct CIFAR-10 images. This also explains why outlier rejection consistently performs worse than EWC in this instance as the model can not accurately reproduce high-quality images for generative replay to mitigate catastrophic forgetting. In their paper, Urbanet al.[52]conclude that MLPs cannot rival the accuracy of CNNs when training on CIFAR-10 and CIFAR-100[47]. Whilst a convolutional neural network (CNN) was implemented for the classifier part of the network, it was not implemented in the encoder and decoder due to time constraints in running all of the experiments.
+
+Ablation 2
+
+In Figure5, we can see the results of ablation study 2 which covers experiments 4 through 7. Within this, the distribution of the labelled data across experiences is varied.andrepresent the experiments in which there is 80% of the data at either the first or last experience and 5% otherwise. As expected, we can see that the results perform better with the labelled data in the later experience, especially with the Naive method. The reason for this is that less action is required to mitigate catastrophic forgetting, as seen by the vast improvement of the Naive method in particular, which does nothing to mitigate catastrophic forgetting. However, it is interesting to see that the performance of EWC consistently drops across all datasets - suggesting that the quality of the data in the last experience is not as high as the first. Further experiments would need to be undertaken to confirm this.
+
+In the experiments representingand, the labelled data is exponentially distributed across the experiences. The results again suggest that labelled data being skewed towards the later experiences reduces the impact of continual learning methods. This is seen from the smaller spread of results inin comparison to. However, the quality of the data is again put into question where the Naive method increases in AUC fromtofor Fashion MNIST indicating the data quality in the last experience is higher inthan.
+
+Ablation 3
+
+In Figure9, the first thing of note is thatis largely optimal at 0.2 in the case of MNIST and fashion MNIST. It is initially surprising that there is not a linear trend ofagainst AUC. However, it is likely that 0.2 is the tipping point between not enough labelled anomalies for the classifier to be able to properly distinguish normal from anomalous data and too many labelled anomalies that then violate the cluster assumption of semi-supervised learning[17].
+
+Additionally, for MNIST in particular, outlier rejection is very often the best continual learning method employed. However, when= 0.5, outlier rejection performs poorly across all datasets. This could be because of the overlap between labelled anomalies and labelled normal data in the latent space of the VAE with the addition of labelled anomalous data. According to Mathieuet al.[53], there needs to be a delicate balance of overlap between classes in a latent space for the VAE to create a meaningful representation of the inputs. Therefore, this overlap is not something that can be avoided without the latent space becoming something of a lookup table which then tends towards a replay buffer disguised as generative replay.
+
+Ablation 4
+
+In this ablation study, the percentage of unlabelled anomalies in an experienceis varied. Similarly to ablation study 3, this is varied for all experiences and not between experiences. As seen in Figure13, asincreases, AUC initially increases to a local maxima, and then decreases. The reason behind the decrease is likely due to violation of the cluster assumption of semi-supervised learning. This assumption postulates that similarly clustered inputs are contained within the same class[17]. However, as more unlabelled anomalies are added, it is more likely that some are close to the decision boundary between normal and anomalous. Therefore adding these new points can move the decision boundary by expanding what the VAE reconstructs as anomalous. Since the VAE can then reconstruct some of the anomalous inputs, the ELBO for these then drops, meaning that they are more likely to be regarded as normal.
+
+However, the increase in performance that is observed only occurs up to a point, where model performance is highest when= 0.2. This is likely due to the unlabelled anomalies overlapping with the labelled anomalies leading to better separation between classes due to the limited amount of labelled anomalous data available (= 0.05 in these experiments). Once new anomalous data is introduced that doesn’t fit into an existing labelled cluster, this can then lead to a decline in model performance.
+
+SECTION: 6Conclusion
+
+This work introduces and formalizes the novel problem of Continual Semi-Supervised Anomaly Detection (CSAD), a paradigm that integrates the complexities of semi-supervised learning, continual learning, and anomaly detection. The proposed approach, built upon a Variational Autoencoder (VAE) architecture with outlier rejection, demonstrates its efficacy in addressing the challenges of dynamic, real-world data streams. Key findings reveal the critical role of leveraging labelled data and effective anomaly handling, with our outlier rejection method often outperforming baseline methods such as Elastic Weight Consolidation (EWC) in several benchmark datasets.
+
+Empirical results underscore the sensitivity of CSAD to varying labelled and unlabelled data distributions, highlighting the delicate balance required between labelled anomaly inclusion and the stability of latent space representations. While the proposed method shows promise, limitations such as reduced performance on high-dimensional datasets like CIFAR-10 point to the need for enhanced encoder-decoder architectures, such as convolutional layers for complex image data.
+
+Future research should focus on refining the generative replay process, exploring advanced anomaly detection metrics, and incorporating more diverse datasets to validate broader applicability. Moreover, the extension of the framework to handle multi-modal data and adaptive hyperparameter tuning could significantly enhance its real-world usability. By laying the groundwork for CSAD, this study paves the way for robust anomaly detection solutions in dynamic environments, aligning closer to real-world operational constraints.
+
+SECTION: References

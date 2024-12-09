@@ -1,0 +1,599 @@
+SECTION: Introduction
+
+Introduction
+
+Devices aimed at ensuring our safety (cameras, microphones, drones, etc.) are becoming increasingly widespread. However, we are still not capable of providing effective protection and assistance to citizens. These devices, intended to guarantee our safety, are, in most cases, merely used as deterrents. Currently, remote surveillance allows an operator to monitor multiple locations simultaneously using a camera system placed in public or private spaces. The images obtained from these cameras are transmitted to a series of screens for viewing and analysis, and are then archived or destroyed. This surveillance aims to monitor the safety and security conditions of these locations. Typically, these images are analyzed by human operators. As a result, surveillance is a time-consuming and costly task; furthermore, the effectiveness of such a system depends on the attention and responsiveness of the operator.
+In the coming years, more and more locations will be equipped with these tools. This will increase the workload for the operators already in place and raise the amount of labor needed.
+With the advancement of artificial intelligence in various fields, such as facial recognition, action recognition, and object detection and tracking, it would be more efficient to at least partially automate this analysis, in order to assist the operator in their task or even replace them in some cases.
+This work is a research project carried out as part of a CIFRE agreement between the company Othello111http://www.othello.groupand theLaboratoire d’Intelligence Artificielle et Science des Données(LIASD)222LIASD Page. Its goal is to develop artificial intelligence methods for real-time anomaly detection in video streams and reduce intervention time.
+The contributions of my work are as follows:
+
+A problem that builds on the idea of combining temporal analysis of sequences and spatial analysis of images to improve anomaly detection, with the constraint of quickly deciding which alerts to trigger.
+
+Two datasets, one of images and one of videos; these videos represent anomalies that are relevant to our industrial needs, and the images represent objects that have a potential influence on these anomalies. In the context of this CIFRE contract, these datasets are proprietary.
+
+A state-of-the-art review including all aspects potentially useful for this objective: temporal analysis of sequences, spatial analysis of images (object detection, pose estimation, movement detection), anomaly classification, decision traceability.
+
+A set of tests on part of this state-of-the-art, particularly focusing on reference algorithms for spatial and temporal analysis of video streams, also including various video generators\citeppoirier2022detection.
+
+The proposal of original methods for decision traceability with the contour method\citeppoirier2023visu, for result evaluation (badBox method), and the contribution to the development of the video-generation program we eventually chose.
+
+An architecture combining image analysis to detect potentially suspicious objects or human poses, time series processing to monitor the actions of these objects, and classification to trigger alerts within a reasonable time\citeppoirier2023enhancing.
+
+The proposal of several modes at the level of spatial and temporal analysis (serial mode, parallel mode), for traceability (tracking mode), and in classification (multi-class and binary modes both by type of anomaly and globally).
+
+Numerous tests of these modes to determine which ones are better suited for specific uses of our program.
+
+This thesis is divided into two parts:
+
+PartIintroduces the study’s context, presents the problem, and provides a review of works on anomaly detection in video data and object detection based on artificial intelligence techniques.
+
+PartIIfocuses on the system development, detailing the contributions, experiments carried out, and results obtained.
+
+This thesis concludes with a summary of my work, an overview of its limitations, and suggestions for future perspectives that would be interesting to explore.
+
+SECTION: Part IProblematic and State of the Art
+
+SECTION: Chapter 1Problem Statement
+
+The problem outlined in the general introduction is the detection of events representing anomalies in a video stream. Here, we will begin by describing anomaly detection from a general perspective before specifying the particular conditions of our problem.
+
+Anomaly detection is a research domain encompassing various themes. In data mining, anomaly detection involves identifying elements, events, or observations that deviate from an expected model. Anomalies are also referred to as outliers, novelties, noise, deviations, and exceptions.
+Based on the work of Team Gabru111Dept. of Computer Science and Engineering, Indian Institute of Technology, Kharagpur, West Bengal,https://github.com/cs60050/TeamGabru., depending on the problems addressed, anomaly detection can fall into one of the following categories:
+
+Intrusion:Intrusion detection refers to identifying malicious activities within a network or system.
+
+Fraud:Fraud detection involves identifying criminal activities targeting commercial organizations, such as banks, insurance agencies, etc.
+
+Medical Anomalies:In the healthcare domain, anomaly detection is generally applied to patient records to identify certain pathologies or abnormal conditions.
+
+Industrial Damage:This type of detection aims to identify material damages to prevent potential failures, losses, downtime, or other incidents.
+
+Textual Anomalies:In this context, anomalies are represented by unusual sentences or by abnormal topics, articles, or documents.
+
+Visual Anomalies:Based on images, this detection can address both static images and those derived from videos.
+
+For static images, various regions are observed to ensure no areas are abnormal.
+
+For videos, successive frames are analyzed to detect any unusual changes between frames (motion detection).
+
+Regardless of the domain, there are three main types of anomalies:
+
+Point Anomalies:An individual instance can be considered anomalous relative to the rest of the data.
+
+Contextual Anomalies:A data instance is anomalous in a specific context (but not otherwise), referred to as a contextual anomaly (also known as a conditional anomaly). Each instance is defined using the following two attributes:
+
+Contextual Attributes:These attributes are used to determine the context of the instance. For example, in time-series data, time serves as a contextual attribute defining the position of an instance within the entire sequence.
+
+Behavioral Attributes:These attributes define the non-contextual characteristics of an instance. For instance, in a spatial dataset describing global rainfall, the amount of precipitation at a specific location is a behavioral attribute.
+
+An anomaly can be viewed as an event with a very low probability of occurrence. To address this type of problem, three main methods exist\citepanomaliePDF:
+
+Identifying outliers without prior knowledge of the data. This is essentially clustering, an unsupervised method.
+
+Modeling both normal and abnormal patterns. This approach involves a binary classification task under supervision, requiring labeled data as either normal or abnormal.
+
+Modeling only normality or, in very rare cases, modeling abnormality.
+
+For a comprehensive overview of anomaly detection, refer to the work of\citetchandola2009anomaly, which provides a general introduction to anomaly detection, detailing the main algorithms for each type of data.
+
+The anomalies of interest in this thesis are those with a direct impact on the safety and security of individuals captured in the videos. Specifically, we focus on detecting potentially dangerous incidents in visual data, corresponding to contextual anomalies. Such an anomaly can be seen as an irregular pattern (action, behavior) relative to a given situation.
+The objective is therefore to classify anomalies based on their severity. For example, minor anomalies include actions that violate established societal rules, such as a cyclist riding on the sidewalk, not wearing a helmet, speeding, or jaywalking. Many of these actions are common, and you might even have committed them yourself. In this same category, we can add some so-called harmful but common anomalies, such as shoplifting, vandalism intended to damage property or locations, or an abandoned bag causing a disruption in public transportation.
+On the other hand, there are anomalies that can be classified as major due to their direct impact on the safety of individuals or groups. These include accidents, fires, explosions, terrorist activities, or natural disasters such as cyclones, earthquakes, or tsunamis. Events that can be perceived as anomalies are therefore diverse and varied, with differing consequences.
+This can be summarized by defining two types of behaviors: one that does not require intervention (normal case) and another that requires human intervention (abnormal case).
+With advances in technology, there are now numerous tools for detecting such anomalies (smartphone-embedded cameras, public cameras, or sharing tools via social networks). The challenge lies in developing a model capable of rapidly detecting these incidents from a video and determining whether they require human intervention. Moreover, since these anomalies can have serious consequences, the ideal solution would be to detect them as early as possible.
+
+Due to its complex nature, a video can be analyzed in four different ways:
+
+Analyzing only the audio
+
+Analyzing each frame independently
+
+Analyzing sequences of frames
+
+Analyzing both audio and frames
+
+Since most surveillance videos do not include audio, we chose to exclude audio from our problem, leaving us with two possibilities\citepzhu2020video:
+
+Temporal analysis: Detecting anomalies over time (in a sequence), specifying the start and end frames of the event;
+
+Spatial analysis: Detecting anomalies in space (within a frame), identifying the pixels corresponding to the event.
+
+Our problem fundamentally falls under temporal analysis. However, it is important to note that spatial analysis is also relevant. When analyzing actions that could be categorized as anomalies, we observe that some are linked to specific objects. As humans, we can identify a fire in a scene or video by the presence of smoke or flames, recognize a fight by observing the individuals involved, detect a road accident by spotting vehicles, or assess danger when weapons like knives or firearms are visible.
+This leads to the idea explored in this work: combining spatial analysis, specifically object detection, with temporal analysis. Objects help humans interpret situations (e.g., a car accident cannot occur without cars). Such an approach has already been proposed by\citetdoshi2020continual, combiningYOLOV3 for object detection with Flownet 2 to extract optical flow features. These features are then combined to create a feature vector processed by aKNN.
+In 2023, another approach was proposed by\citetali2023real. Their method, called AVAD (Autoencoder-based Video Anomaly Detection), uses a convolutional autoencoder to detect anomalous frames in a video (temporal anomaly detection) combined withYOLOV5 to identify the objects responsible for the detected anomaly.
+Of course, not all anomalies are tied to a key object, nor are they always apparent. This is often the case in natural disaster contexts, such as cyclones, tsunamis, or earthquakes. In such situations, identifying specific objects, like a tsunami wave or a tornado, can be challenging.
+Conversely, in some circumstances, key objects may be easily identifiable but not pose a danger. For example, in airports, it is common to encounter armed military personnel whose presence ensures security.
+In these cases, we can often assess the level of risk by observing the surrounding objects and, more importantly, the behavior of people in the video. By analyzing individual behavior, we can determine the context and assess whether the situation constitutes an anomaly. For instance, a person with a threatening posture and another with their hands raised, or a crowd panicking, can confirm the presence of an anomaly. Background details can also help identify the anomaly type—for example, camera shaking could indicate strong winds or an earthquake, while large quantities of visible water might suggest a tsunami or a flooded river.
+Both analyses are complementary and use different types of data. Spatial analysis works on static images, while temporal analysis works on videos (image sequences).
+To combine these analyses, two approaches can be considered:
+
+Detecting various objects on-screen and verifying whether they are involved in an anomaly. This involves performing object detection to enrich the data before analyzing the video sequence.
+
+Analyzing the sequence and the objects present in parallel.
+
+Generally, anomaly detection can be measured in two ways:
+
+Regression: Returning a score for each data point indicating the likelihood of it being an anomaly;
+
+Classification: Assigning a normal or abnormal (or more detailed) label to each data point.
+
+Given that we aim to identify the type of anomaly, we will adopt the second technique, which involves labeling each element as normal or abnormal, or even assigning a specific label to each type of anomaly when possible. Regarding the learning approach, we will use supervised learning techniques because, as shown by the work of Team Gabru222Dpt of Computer Science and Engineering, Indian Institute of Technology, Kharagpur, West Bengal,https://github.com/cs60050/TeamGabru., they currently outperform unsupervised techniques in video data contexts.
+
+To distinguish between normal and abnormal actions, neural learning algorithms require training on large amounts of data. These data will have a direct impact on the features learned by the model and its decision-making. Therefore, it is necessary to use a dataset that contains a wide range of scenes representing the cases we wish to address.
+In this section, we will review the different datasets available that are relevant to our problem to assess how well they meet our requirements. We will start with the summary provided by\citetzhu2020video, presented in Table1.1, and complement it with others. These datasets are used for anomaly detection in video surveillance contexts.
+
+Some of these datasets focus solely on traffic issues, such as the Dashcam Accident Dataset (DAD), Car Accident Dataset (CADP), A3D, DOTA Detection of Traffic Anomaly (DADA), which we have excluded. This is because we require a dataset with the widest possible range of anomalies. Among the more diverse datasets, we find UCSD (see Figure4.1) and ShanghaiTech, which address anomalies that we have classified as minor, such as bikes on pedestrian-only paths. These were also excluded from our study. Of greater interest is the UCF Crime dataset.
+
+UCF Crime is currently the benchmark dataset for anomaly detection in videos. It was created by\citetsultani2018real at the University of Florida and contains 1,900 untrimmed videos representing realistic anomalies across 13 categories: abuse, arrests, arson, assault, road accidents, burglary, explosions, fighting, robbery, shootings, shoplifting, stealing, and vandalism, as well as 950 normal videos. The training set consists of 800 normal and 810 abnormal videos. All videos are temporally annotated with timestamps indicating the start and end of each anomaly present in a video. These annotations are provided as a CSV file accompanying the dataset. Moreover, some videos contain multiple anomalies, either of the same type or different types. Additionally, UCF Crime encompasses various lighting conditions, image resolutions, and camera angles.
+Unfortunately, while the training set has a balanced number of videos (normal/abnormal), this balance does not extend to the incidents or their durations. Table1.2illustrates the distribution of videos and anomalies for each category.
+
+1Usable sequences representing either a normal case or an anomaly.
+
+Depending on the class, sequences representing an incident vary greatly, as shown in Tables1.3(for training data) and1.4(for test data), which indicate the duration of episodes representing an anomaly. A gunshot typically lasts only a few seconds, unlike fighting or theft. The longest videos, however, are in the normal class, with durations reaching several minutes or even exceeding an hour. Finally, some abnormal videos do not contain any major anomalies, as is the case for certain videos in the training set of the Arrest or Burglary classes.
+
+In addition to the previously mentioned datasets, Movie Fight333https://www.kaggle.com/datasets/naveenk903/movies-fight-detection-dataset, which contains 200 movie clips divided into two categories (Fight and Non-fight), and Hockey Fight444https://www.kaggle.com/datasets/yassershrief/hockey-fight-vidoes, which contains 1,000 clips of fights occurring during professional hockey games in North America between the 2009–2010 and 2018–2019 NHL seasons, are also worth noting.
+Upon examining these datasets, we observed that Movie Fight does not provide enough videos to effectively train a robust model, while Hockey Fight lacks diversity in its scenes. The clips all occur in similar environments, with identical camera angles and image quality, potentially limiting a model’s ability to adapt to different scenarios.
+As for UCF Crime, although it is currently the benchmark dataset, many studies using it report poor results and recommend creating custom datasets.
+For instance,\citetsernani2021deep developed a public dataset called AIRTLab to test the robustness of violence detection techniques, particularly in handling false positives. It consists of 350 videos split into two categories violent and non violent including scenarios such as hugging, clapping, teasing, etc.\citetvrskova2022new point out in their article that the UCF dataset suffers from insufficient, poorly cleaned, and unbalanced data. Unlike normal videos, which can last several minutes, abnormal videos (anomalies) are only a few seconds long. To address this issue, they created the Abnormal Activities dataset, comprising 1,069 videos divided into 11 classes, each containing approximately 100 videos. These classes include: knife threats, theft, fighting, pollution (videos showing people littering the environment), harassment, vandalism, kidnapping, terrorism, drunkenness, begging (videos featuring people bothering or harassing others by asking for money), and normal videos. These scenes were recorded under different lighting conditions. During the creation of this dataset, the aim was to simulate the placement of security cameras in public spaces such as buildings, parking lots, and natural settings.
+From this exploration, it became clear that no existing dataset met the diversity, representativeness, and volume criteria we sought. However, some of these datasets may complement our dataset for testing purposes.
+To build a dataset addressing our requirements, several solutions are possible:
+
+Collecting New Data
+
+Currently, the steps of collecting, cleaning, and classifying data must be performed manually, as no sufficiently advanced technology automates these processes. Furthermore, certain anomalies occur less frequently, making them harder to find. Due to their severity, some anomalies are censored. Additionally, multiple actions may occur in a single video, with some considered anomalous and others normal. As a result, each video contains either a normal sequence or one or more anomalies interspersed with normal sequences. Consequently, a large volume of videos does not necessarily translate to a large quantity of exploitable scenes.
+
+Using Data Augmentation
+
+Since videos are composed of image sequences, another solution is to apply data augmentation to each frame to artificially increase the dataset’s size. This includes transformations such as brightness changes, mirroring, blurring, zooming, etc., as well as more advanced techniques that sometimes require machine learning models, like degrading or enhancing the video’s resolution or smoothness. However, in the context of anomaly detection, data augmentation poses challenges. Given the small and raw nature of the datasets, artificial transformations may alter the data’s quality and relevance, potentially compromising the analysis results.
+
+Generating Synthetic Data
+
+A final option is the use of generative networks to produce synthetic data. This technique was employed by\citetjacob2019anomaly, who also criticized the lack of datasets with sufficient volume or quality to properly train deep learning models and proposed this solution in his thesis.
+
+Due to budgetary constraints and limited computational resources, we decided not to explore synthetic data generation to address the dataset quantity issue. Synthetic data creation requires substantial computational power, particularly for training generative networks, which is resource-intensive. Consequently, we opted for other approaches, such as collecting new data and using realistic data augmentation techniques to increase the volume and diversity of our dataset.
+Despite these efforts, action recognition remains a challenging task due to cluttered backgrounds, occlusions, lighting variations, and changes in perspective. For a model to accurately discern an action, the dataset must contain videos that are both diverse and varied. The vast redundancy of information complicates the extraction of discriminative features. According to\citetarif20193d, “The success of action recognition problems depends on an appropriate feature extraction process. This extraction is critical for distinguishing variations in a scene.“ Therefore, each of our videos must be meticulously cleaned to enable the model to extract relevant features and subsequently generalize its approach effectively.
+
+Our model should not rely on binary classification but must instead be capable of identifying the specific type of anomaly. This approach will facilitate determining the appropriate individuals to intervene in case of a problem.
+However, this choice requires selecting a representative list of anomalies for training. The model must also have high adaptability to detect anomalies that are not part of this list. It should be able to differentiate between anomalies that could have severe consequences for the individuals involved and those with less significant impact. This prioritization will help ensure safety by optimizing intervention efforts.
+One unresolved question is whether it is better to issue frequent alerts, even at the risk of errors, or to alert only when certain, possibly missing some cases.
+Additionally, it would be valuable to localize the anomaly within the data, making the model more transparent and enabling a human reviewer to verify the detection’s accuracy. However, how can we teach the model to focus on what we expect whether on the foreground or the background ? Since the data processed is vast and complex, significant computational power is required. Moreover, given the rapid succession of images in videos, the redundancy of information should help the model determine relevant features.
+A specific concern relates to the interpretability of results. Machine learning algorithms, particularly neural networks, are widely used to address various challenges. Despite their effectiveness, they are often seen as highly complex and opaque structures (black boxes) that provide solutions without explaining the reasoning behind their decisions. This lack of transparency makes them difficult to debug or improve when performance goals are not met. It also raises ethical and legal concerns. How can we trust AI systems if we cannot explain their choices ? How can we communicate these findings to non-experts if we cannot understand them ourselves ?
+
+The introduction of the General Data Protection Regulation (GDPR) in May 2019, particularly Article 22-1, which states that decisions cannot be based solely on automated processing, and the human need for explicit and transparent information for decision-making, have significantly accelerated research in this area. For these reasons, interpretability and explainability have become critical issues in AI research. As a result, numerous studies are conducted annually, especially on convolutional networks for image analysis ([olah2018the,olah2017feature,bau2020units,zhang2018interpretable]).
+According to the French CNIL, explainability is defined as “the ability to link and make understandable the elements considered by the AI system in producing a result.” This aspect of machine learning aims to help us understand the decision-making mechanisms of a model.
+Thus, as an additional requirement, we include the necessity to visualize the area where the anomaly occurs. This practice is already employed for anomaly detection in images, and we aim to integrate it into video-based anomaly detection.
+Lastly, in this thesis, we aim to perform anomaly detection rather than prediction. Our analysis is conducted retrospectively, once the action has been completed. As a result, the latency time depends on the length of the sequence to be analyzed. Given the potential consequences of certain anomalies, our objective is to provide analysis in the shortest possible time, even if it is not strictly real-time.
+As this thesis is a CIFRE project, it is essential to mention the constraints imposed by the company. The primary constraints are as follows:
+
+Potential alerts must not be missed, even if this leads to an excess of alerts;
+
+The final model must be compatible with both CPUs and GPUs;
+
+The types of anomalies studied must align with categories recognized by the company (e.g., fights, gunshots, etc.).
+
+Our main challenges are as follows:
+
+Building a proprietary dataset that is representative of the various types of anomalies studied.
+The core issue that initiated this challenge lies in the lack of adequate data for our project, as highlighted in the earlier section on datasets. Existing datasets, such as Movie Fight, Hockey Fight, and UCF CRIME, have exposed limitations in terms of volume and diversity, hindering our ability to develop a performant anomaly detection model. Addressing this significant gap, the need for a dataset that comprehensively covers the variety of targeted anomalies becomes imperative.
+
+Labeling the data to create a ground truth clearly delineating the boundary between normal and abnormal behaviors.
+The necessity to provide a reliable and consistent reference for training our model led to this critical challenge. Since the model’s effectiveness depends on its ability to distinguish normal behaviors from anomalies, the precision of this ground truth is of utmost importance for accurate and coherent anomaly identification across diverse scenarios.
+
+Segmenting labeled videos to retain only representative events.
+This challenge stems from the need to focus the model’s attention on the most meaningful events. The large volume of video data creates a dilemma between retaining relevant information and eliminating redundant content. Storage and computational constraints play a significant role in the decision to segment videos, aiming to preserve key moments while avoiding an overload of irrelevant information.
+
+Increasing the quantity of available data and balancing it when necessary.
+Training an effective anomaly detection model, particularly with deep learning techniques, requires a substantial amount of data. However, the available data is often insufficient and imbalanced in terms of anomaly frequency. To achieve desired performance levels, increasing data volume and balancing it to ensure adequate representativeness are essential.
+
+Cleaning the data to filter out noise.
+The challenge of data quality led to this task. Noisy or incorrectly recorded data can impair the model’s ability to discern meaningful patterns. However, removing noise is not without challenges. Balancing the preservation of relevant information with the elimination of unwanted elements is complex, as the quality of cleaned data is critical to ensuring the performance and reliability of the anomaly detection model.
+
+Designing a model capable of performing near real-time analysis by combining spatial and temporal analysis.
+Driven by the necessity for rapid intervention in critical situations, developing a near real-time analysis model became essential. The design of this model was inspired by the aim to emulate human-like behavior, fusing spatial and temporal analysis to capture the way humans perceive their environment, focusing on salient elements and observing their evolution over time.
+
+Visualizing the features used in decision-making.
+New regulations, such as those related to the GDPR, have prompted the need to make model decisions transparent and comprehensible. The challenge of visualizing the features selected by the model arose from the desire to comply with ethical and legal standards while ensuring trust in automated decisions.
+
+In the following sections, we will present a state of the art on anomaly detection (temporal analysis) and object detection (spatial analysis). We will then explain our contributions and responses to these challenges.
+
+SECTION: Chapter 2State of the Art
+
+The field of computer vision encompasses numerous techniques for analyzing visual data that can be used for anomaly detection, such as calculating the trajectory of objects on screen, analyzing color histograms, or performing optical flow. These technologies need to be manually calibrated and generally require adjustments depending on the scene being processed. This is the issue that deep learning technologies aim to solve by automatically extracting relevant features from data to generalize their analysis. Thus, we focused on this type of technology. For more information on standard analysis techniques, we refer to\citetjacob2019anomaly.
+
+Recurrent networks (Recurrent Neronal Network(RNN)) are considered the most suitable neural models for processing time series. They were developed by\citetelman1990finding and\citetjordan1997serial, who each proposed their own version. Unlike feed-forward networks, they include feedback loops between units, which allow them to remember dynamic time series. The most well-known of them,Long Short Term Memory(LSTM), was proposed by\citethochreiter1997long and later improved by\citetgers2000learning with the introduction of a forget gate. The advantage of this type of network is that certain information related to previously viewed data is retained and used in decision-making. Through this mechanism,LSTMnetworks are considered references in time series analysis.LSTMis not the onlyRNNthat has proven effective in this context. Another model,Gated Recurrent Unit(GRU), has a simpler architecture but is equally effective. While anLSTMconsists of a three-gate architecture, with a forget gate, an input gate, and an output gate, theGRUonly has two: a reset gate and an update gate. Figure1.1details these three architectures.
+
+WhileRNNs can effectively handle the temporal aspect of video data, they are not suited for processing the images that make up these videos. This is because images are complex data with crucial information encoded in pixel positions, andRNNs are not designed to consider this spatial structure, making them inappropriate for directly handling images.
+For image processing, the common approach is to use convolutional networks, orConvolutional Neuronal Network(CNN)s. These networks, introduced by\citetlecun1989backpropagation, can extract spatial features from images through operations called convolutions. Among these architectures isVGG19, a model proposed by Karen Simonyan and Andrew Zisserman ([simonyan2014very]) composed of 23 layers grouped into five main blocks, each comprising 2 to 4 convolutional layers followed by a pooling layer (Figure1.2).
+
+Other architectures are also used in image processing. For example, ResNet ([he2016deep]) is a deep network based on the idea of “shortcuts.“ The addition of residual connections helps prevent performance degradation due to additional layers. Inception ([szegedy2015going]) uses inception blocks to extract features at different spatial scales from the same image. InceptionResNet ([szegedy2016inception]) combines the benefits of ResNet and Inception. Xception ([chollet2017xception]) is an improved version of Inception that uses depthwise separable convolutions by applying convolution on each channel of the input followed by spatial convolution. This method significantly reduces computational costs while improving model accuracy. EfficientNet ([tan2019efficientnet]), another example, is a family of convolutional network architectures that optimize the balance between depth, width, and image resolution to maximize accuracy while minimizing computational costs.
+To process video data, these networks have been combined with recurrent networks such asLSTM, resulting in two types of architectures, differing in the level of integration of the two types of models: ConvolutionalLSTM([shi2015convolutional]) (often abbreviated asCNN+LSTM) and ConvLSTM. In the ConvolutionalLSTMarchitecture, each image passes through different convolutional layers to produce a feature vector, which is then processed by theLSTM. The ConvLSTM architecture is anLSTMnetwork where the internal matrix multiplications have been replaced by convolutions.
+Many works use this type of model for video analysis, whether for action recognition ([shi2015convolutional]), anomaly detection ([majd2019motion]), or violent action detection ([vrskova2022new,vrskova2020violent,de2021temporal,jahlan2021mobile]).
+Although less commonly mentioned in the literature, ConvolutionalGRUmodels are generally more effective than ConvolutionalLSTMand are also less computationally intensive ([ravi2021exploring]).
+
+ji20123d developed a model based on 3D convolutions (C3D) for action recognition in video streams. The general idea is to observe each image while taking into account the preceding and following frames to capture the various movements made by objects on screen.
+Unlike ConvolutionalLSTM/GRUapproaches, which reduce each image to a 1D feature vector, 3D convolutions retain information related to depth and, in the case of videos, inter-frame changes. To achieve this, the kernels in each layer move in three directions (x, y, z) to create a 3D activation map (Figure1.3).
+Another difference is that instead of extracting information from each frame individually, as a 2D convolution would, and leaving it to a recurrent network to link them over time,C3Dprocesses packets of successive frames to analyze differences among them and thus capture motion-related information. This technique has shown excellent results in several fields, such as human pose estimation in images or videos, action recognition ([ji20123d,vrskova2022human,tran2015learning]), and medical image segmentation.
+Due to their effectiveness in processing videos, 3D convolutions have also been used for anomaly detection tasks\citepmishra2021hybrid. However, this performance comes with a significant computational load.
+
+Anomaly detection in video surveillance is challenging due to the variety of anomaly types (see ChapterI), which limits the use of supervised techniques. In such cases, unsupervised approaches that do not require labeled data are preferable. Among these approaches, autoencoder models stand out.
+The architecture of an autoencoder consists of two parts: the encoder and the decoder (Figure1.4). Its operation is fairly straightforward: input data are first encoded and then passed through the decoder to be reconstructed (decoded) (Figure1.5). The model’s performance can be measured by comparing the initial data with the reproduced data. In the context of anomaly detection, any abnormal data provided to the model will be difficult to reconstruct, making it relatively easy to identify.
+
+For image processing, the encoder and decoder are typicallyCNNs, which are widely used for visual anomaly detection\citepjacob2019anomaly, ribeiro2018study, an2015variational, chen2018autoencoder, hasan2016learning.
+The compressed representation (the output of the encoder and input to the decoder) usually has a 1D structure, which may lead to a loss of potentially useful information for reconstructing the action in the video.
+Autoencoders have many variants. In the context of video data processing, one variant involves replacing theCNNs with convolutionalLSTMs to combine the benefits ofRNNs with autoencoders, allowing input images to be reconstructed based on previously remembered frames ([rumelhart1986learning,medel2016anomaly,chong2017abnormal,deepak2021residual,wang2018abnormal,luo2017remembering]).
+Despite their effectiveness in the decoding phase, autoencoders reconstruct each frame of the video, which is time- and compute-intensive, limiting their use in real-time applications where responsiveness is essential.
+
+Temporal Convolutional Networks (TCN) are a family of convolutional neural network models designed for time-series modeling (Figure1.6). Unlike traditionalRNNs, which use recurrent connections to capture temporal dependencies,TCNs use temporal convolutions to capture patterns within sequences.
+
+Dilated filters play a crucial role in the ability ofTCNs to capture temporal patterns at different scales. Dilated filters are convolutions where the indices of the values to be considered are spaced by a specific number of steps, known as the dilation rate. This enablesTCNs to capture patterns at various temporal scales while maintaining reasonable computational complexity. Furthermore, dilated filters can be causal or non-causal. Causal dilated filters are useful for recognition tasks where it is important that the model cannot see into the future. Non-causal dilated filters, on the other hand, can be used for classification tasks where the entire sequence is available from the start.\citetlea2017temporal introduced an encoder-decoder architecture usingTCNs for action segmentation and detection in videos. Figure1.7shows how temporal convolutions are used to encode input sequences; then, temporal deconvolutions are used to reconstruct the output sequences. Experimental results suggest thatTCNs are capable of capturing complex temporal patterns, such as the movements comprising an action, while being resistant to temporal variations. This means they can recognize actions even if they do not occur at the exact same time or have different durations in each occurrence.
+
+Transformers are models introduced by\citetvaswani2017attention for textual analysis. These models can be viewed as “sequence-to-sequence“ models, meaning they take a data sequence as input and produce another sequence of the same type as output. LikeRNNs, they are capable of processing sequential data and are commonly used for translation tasks.
+Their architecture (Figure1.8) is inspired by autoencoders and consists of a stack of encoders and decoders (the same number on each side). Each piece of data passes through the various encoders. Once encoded, it is sent to the decoders and goes back up through the different layers. Each decoder input contains both information from the previous decoder and that from the last encoder. A unique feature is that each network block, including each encoder and decoder, has an attention mechanism, which assesses the degree of association or dissociation between different pieces of information.
+
+More recently, in 2020-2021, Google teams proposed an adaptation of transformer networks for processing images or video data ([dosovitskiy2020image,arnab2021vivit]) (Figures1.9,1.10). Thanks to the attention mechanism, these networks are effective in tasks like object detection and image segmentation. These models are calledVision Transformer(ViT).
+In 2021, researchers at Facebook ([caron2021emerging]) proposed a model namedDIstillation with NO label (DINO)based on similar technology. This model usesViTwith self-supervised learning, allowing it to autonomously identify important areas in an image or video. These areas can then be visualized using attention maps (Figure1.11).
+
+For more information on the various types of vision transformers available today, refer to the study by\citetvitGit.
+
+For anomaly detection in video data, some research leverages generative models such asGenerative Adversarial Networks(GAN)([lin2021learning,dimokranitou2017adversarial,schlegl2017unsupervised]). Today, these models are widely used to generate synthetic data (image, video) or to improve the resolution of such data.GANwas proposed by\citetgoodfellow2014generative. It consists of two sub-models: a generative model and a discriminative model (Figure1.12). The generator’s task is to create natural-looking data similar to the original data, while the discriminator’s task is to determine if the data appears natural or has been artificially generated. As training progresses, both models improve through what is called adversarial optimization until the discriminator can no longer distinguish between synthetic (fake) and authentic data. The idea is to train a model on video data so that it can generate synthetic videos and then use the discriminator as a classifier to identify abnormal data specifically, any video containing an anomalous action.
+
+zhu2020video provide a comprehensive discussion on supervised and unsupervised deep learning methods for anomaly detection in surveillance videos. Additionally,\citetactionDetect explore action recognition in video data and mention certain techniques or models that were not covered in our study.
+
+Object detection was first introduced by\citetviola2001rapid. Their initial goal was to detect faces, and to achieve this, they developed a machine learning model known as “boost cascade“ (Figure2.1).
+
+Later, other technologies emerged, such asHistogram of Oriented Gradients (HOG)andDeformable Parts Model (DPM), all relying on manually selected feature extraction techniques, including edges, corners, and gradients in images, coupled with non-neural machine learning algorithms.
+It was not until September 2012 that the field took a major leap forward with the work of\citetkrizhevsky2012imagenet, who won the ImageNet LSVRC-2012 competition with their deep convolutional network, AlexNet, capable of recognizing a large number of objects with an error rate of 15.3%. In addition to winning the ImageNet competition, Alex and his team were the first to use deep learning to perform image classification.
+However, object detection is a more complex problem than image classification because it not only requires recognizing objects but also locating them within the image.
+
+To address the localization problem,\citetgirshick2014rich proposed theRegional Convolutional Neuronal Network(RCNN)model, which is capable of recognizing 80 different types of objects using a new technique that works as follows: fragmenting the image into thousands of regions (sub-images), then performing classification for each of them to detect the objects present (see Figure2.2).
+
+First, the input image is divided into 2000 sub-images called “regions of interest“ using the method known as?Selective Search?\citepuijlings2013selective. This method divides the input image into several parts, and each neighboring part is compared. The parts with similar characteristics in terms of color, texture, or shape are merged to form these regions. Each of these regions is then analyzed byRCNN. First, they pass through a convolutional network to extract key features. Then, these features pass through anSVMand a regression model to identify the objects present in these different regions and design bounding boxes.
+Although this technique is slow, as each image is divided into 2000 regions before being analyzed byRCNN, it remains effective and will be adopted by all subsequent object detection models, including Fast-RCNNand Faster-RCNN, which improve on the base model ([girshick2015fast,ren2015faster]).
+The main improvement of Fast-RCNNis that selective search is no longer performed on the image beforehand but rather on the feature maps using a layer called the?RoIpooling layer?.
+Each image passes through the convolutional layers to form feature maps. These maps are then sent to this new layer to extract regions of interest. Unlike the base model, the number of proposed regions is no longer fixed but varies depending on the input image. Then, aRoIpooling layer is used to resize all the proposed regions so that they can be fed into a fully connected network for classification and detection of bounding boxes for each object.
+Faster-RCNN, on the other hand, replaces this selection method with a specific layer called the “region proposal network“ (RPN), which directly generates regions of interest. This layer uses a sliding window approach to detect regions of interest, allowing it to detect objects at different scales and sizes. The regions of interest are then classified by a fully connected network. This approach is faster and more efficient than the selection methods used in previous versions.
+
+In 2015-2016,\citetredmon2016you published theYOLOalgorithm, a new object detection model that marked a turning point in the field. UnlikeRCNNand other models that treat detection as a special case of classification,YOLOwas designed as a regression task.
+As the name suggests, You Only Look Once.YOLObegins by dividing the image into angrid, then for each of these regions, a random number of anchor boxes are predicted (see Figure2.3). These boxes can have different sizes and positions depending on the types of objects being detected. The downside is that this technique can result in the same object being detected by multiple boxes. To avoid this, aNon-Max Suppression (NMS)calculation is performed to keep only the bounding boxes that maximize the probability of each object detected (see Figure2.4).
+For each bounding box in the list, we retrieve the one with the highest score (confidence rate), then compare it to all other predicted boxes for the same class using theIntersection over Union (IoU)calculation. This calculation measures the degree of similarity/overlap between two boxes. Any boxes with a similarity exceeding the threshold set by the user will be considered as representing the same object and consequently removed. As a result,YOLOis very fast and has become a reference model.
+
+Later,\citetredmon2017yolo9000 introduced a new version ofYOLO, calledYOLO9000 orYOLOV2. This model is capable of recognizing up to 9000 different objects in real-time thanks to a new architecture, Darknet-19. It is a convolutional network composed of 19 convolutional layers and 5 max-pooling layers, primarily using 3x3 filters. In the first layer, there are 32 filters, which are then doubled after each max-pooling layer. This means the number of features extracted increases progressively as the layers are stacked, allowing the network to capture more complex information as it advances through the model. Aside from the architectural change, the innovation here is using anchor boxes defined according to the reference dataset rather than arbitrarily delimiting them. This allows the model to perform better, as generally, an object fits a similar pattern regardless of the context.
+
+[redmon2018yolov3]introduced their latest version,YOLOV3. This new version changes the base architecture once again by integrating a convolutional network composed of 53 layers trained on IMAGENET and called Darknet-53. The activation function has also been modified. It shifts from a softmax activation where classes are treated dependently, with a total of 100% for all probabilities, to a logistic classifier for each class, allowing for multi-class labeling. In addition to this, this version performs three detection steps, making the model more accurate, better at recognizing small objects, and allowing it to adapt better to various image sizes. Despite a slight loss in speed, this new version is more efficient and has become a reference for real-time object detection. The multi-class aspect, which is present in all later versions, is interesting in itself but is not particularly relevant to this thesis.
+
+bochkovskiy2020yolov4, a new team, proposedYOLOV4 as a continuation of the previous version. This version is considered by the original team to be the logical next step in their work. The architecture is now based on a CSPDarknet53 model inspired by DenseNet networks. In DenseNet networks introduced by\citetHuang_2017_CVPR, each layer within a block transmits its output to all following layers within the block, which facilitates error backpropagation (see Figure2.5).
+The CSPDarknet53 network follows a similar principle but uses CSPDenseNet layers that send only a part of the features into a dense block, while adding the rest directly to the output (see Figure2.6). A second notable change is the loss function, now calledComplete Intersection over Union (CIoU), which takesIoUinto account when calculating the error. The final change concerns theNMScalculation, which filters the bounding boxes to avoid detecting the same object multiple times. This calculation has been replaced byDistance Intersection over Union Non-Max Suppression (DIoU NMS), which takes into account the centers of the compared boxes, so that two similar and close objects are not considered as the same object. Unlike the previous method, which deleted predicted bounding boxes and kept only the best, this new technique adjusts the confidence score for each bounding box. Among the additions, there are various data augmentation techniques performed before training the model (see Figure2.7), as well as a DropBlock method used during training, which removes the most representative area of an image to force the network to learn other features it might otherwise have ignored.
+
+Later, in 2021, many variants ofYOLOwere released, each addressing a different issue:
+
+YoloF (You Only Look One-level Feature) is an architecture based on the Resnet model combined with encoders [see Figure2.8].
+
+YOLOP (You Only Look Once for Panoptic Driving Perception) is specialized for autonomous driving (see Figure2.9).
+
+YOLOR (You Only Learn One Representation) uses both explicit knowledge (from its learning) and implicit knowledge. Thanks to the implicit knowledge acquired, this model performs very well for multitask learning, and can therefore be used for other image analysis tasks [see Figure2.10].
+
+YOLOS (You Only Look at One Sequence)\citepfang2021you is a YOLO variant that uses Transformers instead of convolutional networks (see Figure2.11). Transformers are networks that have the advantage of possessing an attention mechanism, allowing them to detect important areas of an image that can be represented using attention maps. Currently, this variant is not optimized. The authors’ goal was simply to show that it is possible to use transformers for object detection.
+
+ge2021yolox introduced YOLOX, a variant ofYOLOV3 that does not use any anchor boxes, resulting in faster and more accurate performance.
+
+A few months after the release ofYOLOV4, version 5 was released111https://github.com/ultralytics/yolov5; however, it has not been subject to any official publication. This version does not implement or invent new techniques; it is simply the PyTorch extension ofYOLOV3 and not a continuation of the original code. Its main goal is to makeYOLOcompatible with macOS and to offer five different versions of the model [see Figure2.12].
+
+Recently, the Chinese company Meituan released MT-YOLOV6222https://github.com/meituan/YOLOv6, an algorithm that is not officially part of theYOLOseries but is heavily inspired by the originalYOLO. It has no relation to version 5, but it surpasses it significantly in terms of accuracy and speed.
+
+[wang2022yolov7]proposed version 7, developed by the authors of version 4, which is based on YOLOR. It is said to be 120% faster thanYOLOV5 and more efficient than all other available architectures, including the previously most performant YOLOR version (see Figure2.13). Figure2.14shows different applications enabled by this version.
+
+More details about the functioning of these models can be found in\citetPulkitSharma1, PulkitSharma2, PulkitSharma3.\citetzou2019object review the evolution of the field over the last twenty years, summarized in Figure2.15.
+
+Techniques that improve explainability in the visual domain fall into two categories:
+
+On one hand, there are model-agnostic technologies, such as LIME (Local Interpretable Model-Agnostic Explanations) proposed by\citetribeiro2016should, and SHAP (SHapley Additive exPlanations) proposed by\citetlundberg2017unified.
+
+On the other hand, there are technologies specific to certain types of models, such as convolutional neural networks, for which we find techniques like convolutional filter visualization ([jiang2021layercam]), saliency maps ([smilkov2017smoothgrad,simonyan2014deep]), activation maps ([selvaraju2017grad,aditya1710grad,wang2020score]), etc.
+
+To visualize these features, there are many available libraries.\citetraghakotkerasvis proposed Keras-vis, a public library that allows the visualization of convolutional neural network features. It allows for the visualization of convolutional filters in each layer, which are the weight matrices that detect patterns in an image. These filters can be visualized as pixel matrices, helping to better understand the patterns each filter is sensitive to.
+Moreover, Keras-vis also allows the visualization of how these filters evolve throughout training. This can be useful to understand how the network learns to extract increasingly complex features over time.
+Finally, the library also enables the visualization of activation maps, which show the regions of an image that were activated by each filter. These maps can help to understand what the network “sees“ in the image at each processing step, which can be useful for diagnosing potential issues with the network’s operation.
+Later,\citetKeract developed the Keract library with similar features. In the same year,\citetgotkowski2020m3d proposed another library that allows the visualization of both 2D and 3D attention maps. The Keras library, developed by\citetchollet2015keras, also includes some of these visualization techniques.
+For a more in-depth study of explainability techniques, refer to\citetmolnar2019.
+
+Throughout this study, various technologies have been identified for anomaly detection, including ConvolutionalRNN, ConvRNN, autoencoders, Transformers,TCN, andGAN. In order to highlight our strategic choices and provide a solid foundation for our approach, a comparison outlining the advantages and disadvantages of each option is presented in Table2.1.
+
+Due to our constraints in computational power, caused by the unavailability of GPU servers, we were forced to rule outGANand Transformers. Additionally, due to our real-time requirements, autoencoders were also excluded. Their need to reconstruct each frame of our videos would have introduced significant delays. Because of their lack of documentation and perceived inefficiency for our specific anomaly detection needs in videos,TCNwere also discarded.
+ After analyzing the available datasets for addressing our problem, we found that the vast majority of them are oriented towards supervised approaches, contrasting normal and anomalous classes. In this regard, ConvolutionalRNN, ConvRNN (which can be combined withGRUorLSTMfor theRNNpart), and 3D convolutions emerged as the most suitable and appropriate choices for our approach.
+ Regarding object detection, several models can be considered, such asRCNN, Fast-RCNN, Faster-RCNN, andYOLO. The specifics of each model are summarized in Table2.1, allowing for an in-depth comparison of their respective characteristics.
+
+However, given the real-time constraint due to the impact that the anomalies we are interested in can have, the fastest models should be prioritized. While Faster-RCNNis quite fast and yields very good results, for real-time problems, models that perform single-step analysis, such asYOLO, are better candidates ([RohithGandhi]). According to\citetdoshi2020continual,YOLOwould be the best algorithm in the group. To quote them: “Compared to other state-of-the-art models like SSD and ResNet,YOLOoffers a higher images-per-second (FPS) rate while achieving better accuracy. For online anomaly detection, speed is a critical factor, and therefore, we currently prefer usingYOLOV7.“ Additionally,YOLOhas seen significant improvements in recent years, especially in terms of accuracy and processing speed.
+With its various versions,YOLOremains the fastest model available today. At the time of finalizing this thesis, version 8 had appeared, which we did not have the opportunity to test.
+
+SECTION: Part IIImplemented System
+
+SECTION: Chapter 3System
+
+In this chapter, we will present our work and contributions. We will begin by introducing the overall architecture of our system, its components, and the datasets created for the training phase. We will then explain how the experiments conducted and the results obtained influenced our choices and approaches. Finally, we will conclude this chapter with a synthesis of our work.
+
+In Section3, we introduced our goal of developing an anomaly detection system capable of identifying risks to individuals by combining spatial analysis performed on images (including object detection) with temporal analysis of video streams.
+Figure2.1illustrates the general principle of our system, which follows two possible workflows. The first workflow, shown in red, adopts a sequential configuration where the temporal component processes the output of the spatial component. The second workflow, shown in green, follows a parallel configuration where each image sequence is processed simultaneously by both components before being classified by combining their detections. Lastly, our system includes an explainability component that highlights the areas of attention leading to the model’s detection. This component can be disabled to enhance processing speed.
+
+In the following sections, we will explain each component of the figure above (the diamonds), before summarizing the overall functioning of the system.
+
+The first element of our system performs a spatial analysis of each image included in the video to be processed. It receives an image as input and outputs it to two different components depending on the chosen operating mode: in parallel mode, it simply transmits the class of the detected objects to the Correction component; in serial mode, it transmits the pre-processed image to the Spatial Feature Extraction component. Depending on the chosen model, this preprocessing may include object detection, image segmentation, or human pose analysis.
+We choseYOLOfor the reasons discussed in the problem statement (processing speed and performance, see section2.1), as well as because this family of models is constantly being researched and improved by the scientific community. In our preliminary tests, we comparedYOLO(at the time, version 3) with Faster-RCNN, the fastest of the other models, and found that they had similar execution times. However, version 7 ofYOLOoutperforms them significantly in speed. In this study, we compared the performance of versions 3, 4, and 7. The details of the tests and results can be found in section7.
+This model is pre-trained on the Pascal-VOC111https://pjreddie.com/projects/pascal-voc-dataset-mirror/and COCO222https://cocodataset.org/#homedatasets, enabling it to recognize 80 types of objects, including: humans, vehicles (truck, bicycle, motorcycle, bus, car, airplanes, train, boats), animals (dog, cat, giraffe…), food (pizza, banana…), and everyday objects (phone, television, chair…). Among all these classes, very few are useful for our problem. Only humans and vehicles can be exploited in cases of accidents or fights. Moreover, crucial objects for our problem, such as knives, guns, or flames, which allow us to detect potential shootings or fires, are not included.
+It was therefore essential to build our own dataset in order to re-trainYOLO, which is described in the next subsection.
+
+Our dataset is proprietary and combines images extracted from videos used for our temporal analysis with images that we have collected and labeled ourselves. Contrary to what one might think, the images used do not necessarily need to be realistic, and it is not mandatory for them to come exclusively from surveillance videos.
+We collected over ten thousand images representing firearms. We initially divided them into two classes: “gun“ for small firearms and “weapons“ for larger ones. However, any weapon represents a potential risk regardless of its size or appearance. Therefore, we ultimately decided to combine them into a single class, which resulted in improved performance for our system.
+We also created a class of images to identify flames, which is important in the case of fires. We had also created a class representing knives, but ultimately decided not to include it in our final dataset. This class contained very different objects, and the action itself was more akin to an assault or a fight.
+Currently, our dataset contains three classes:
+
+Firearms: about 10,000 images,
+
+Flames: more than 2,000 images,
+
+Humans (representing each individual present in our images).
+
+Images in which none of these classes are present have also been added to our dataset for both training and testing.
+This dataset is augmented using the data augmentation techniques included inYOLO, as previously mentioned (figure2.7). We used more than ten different techniques applicable to each of our images, resulting in nearly 150,000 images in total.
+
+For the reasons outlined in section2.1of the state of the art, we chose well-documented, easy-to-implement, and resource-efficient approaches for temporal analysis: ConvolutionalRNNs, ConvRNN, and 3D convolutions. After conducting detailed tests in section6, we ultimately selected an architecture based on ConvolutionalGRU(CGRU), as detailed in figure4.1.
+This processing is performed by two distinct components: a convolution (spatial feature extractor) and aGRU(temporal classifier), which we will examine below.
+
+The second component of our system is dedicated to spatial feature extraction; it receives a video sequence and returns the sequence after highlighting its features. In serial mode, the sequence it receives as input corresponds to the original images modified byYOLO; in parallel mode, it simply receives the input video. The output is then passed to the component that performs temporal feature extraction and (optionally) to the explainability module.
+For spatial feature extraction, we choseVGG19. However, since this convolution is 2D, it is not suitable for processing image sequences. If we apply it directly to our data, we will lose information because all the images in our sequence will need to be merged to fit a 2D format. This is why we included it in a time-distributed layer provided by the Keras library. This layer allows us to apply one or more layers to each time slice of our input.
+In our case, applyingVGGto each image in our sequence helps accumulate features from different images and form the sequence for analysis. This time-distributed layer receives a video sequence as input, extracts each image, and passes it to theVGGnetwork for extracting relevant features. Once these features are extracted for each image, we obtain a new time series output that will be passed to the next component.
+
+The next component consists of two parts: a temporal feature extraction component, applied to the output of the time-distributed layer, and a classification component, which performs the detection of the alert type to be associated with the sequence.
+Temporal feature extraction is carried out by aGRUfollowed by a few fully connected layers and some forget layers to prevent overfitting.
+Each sequence passed by the time-distributed layer goes through the forget gate of ourGRU, which controls how much information should be forgotten. The information retained, deemed relevant, will be sent to the update gate for learning. This gate’s role is to concatenate the new data with that from the previous state and pass them through a sigmoid function to detect the important features.
+After passing through the update gate, the relevant information is then processed by the fully connected layers of our classifier, aMLP, to establish the final detection.
+
+For the reasons outlined in the problem statement (see page4), we decided to create our own video dataset to train ourCGRU. This dataset is independent of the image dataset we created for object learning.
+This dataset is proprietary and follows the model established by UCF Crimes, meaning we oppose anomalies to the normal class. However, since data collection is a time-consuming task, we limited ourselves to three main classes: fights, gunshots, and fires. Additionally, some of these categories were more difficult to collect than others due to the rarity of these events or censorship. Unlike the normal class, where any daily video can be considered representative, anomalies have different frequencies of occurrence, which can affect the amount of data available. To ensure maximum balance, we collected as many videos representing an anomaly as we did normal cases.
+To assess whether our dataset can be considered reliable, we need to check if our system can achieve good performance after training. Therefore, we divided our dataset into binary sub-categories, each time opposing an anomaly to the normal class, allowing us to train models using only certain classes and evaluate the reliability of each one.
+Our dataset, described in tables3.1and3.2, consists of three classes representing a wide selection of videos from surveillance cameras or smartphones. These videos have varying qualities and resolutions, cover different angles of view, and were recorded at different times of the day. Figure4.2shows their distribution by class.
+
+The fourth component of our system is used to combine, when operating in parallel mode, the object detection results with those of the temporal analysis. Its role is to correct the predicted class based on the results of the spatial analysis performed byYOLO.
+To achieve this, we have created a dictionary where each object type learned byYOLOis linked to an anomaly: flames with the “fire“ anomaly and firearms with the “gunshot“ anomaly.
+Once the class has been predicted by ourCGRUmodel, we analyze the objects detected byYOLOto check if it has detected a flame or a firearm with a probability exceeding the set confidence threshold.
+If a flame is detected and theCGRUmodel has predicted the “normal“ class, we change this to the“fire“ class based on the detection probability. In the case where a firearm is detected, we concluded that it only represents a risk when it can be handled by a person. Therefore, we calculate theIoUbetween this firearm and all the persons detected whose score exceeds the set confidence threshold to determine if a person is in contact with the firearm. If this is the case, we correct the predicted class by changing it to the “gunshot“ class.
+
+The European Union defines explainability as the ability to understand and explain how a decision was made by an automated system. In this context, our explainability module aims to justify the decisions made by the components of our anomaly detection system, particularly to facilitate understanding of the decisions made by our temporal analysis model (CGRU), and more specifically, ourVGGconvolution working with images.
+In terms of explainability, it is much easier to interpret the features learned by our convolutions since they are visual, unlike those of ourRNN. At first glance, it seems that none of the visualization libraries specific toCNNare suitable for our type of network, for the reasons detailed below (see figure6.1).
+We have thus drawn inspiration from techniques used to explain image classification. The principle is to visually highlight the part of the image that caused the decision-making process, adapted to video.
+
+In the case of a model using 2D or 3D convolution layers, all layers of the network are directly connected. However, in our architecture, we use a convolution that is accessed through a time distributed layer, which is not directly connected to the other layers of the network, thus blocking the flow of information to the other layers.
+The second issue concerns the third dimension added by the time factor. Unlike models that handle images or 3D objects where we would have a single input and therefore a single output visualization, here we are dealing with videos. Thus, we have multiple images as input but only one visualization as output, representing the entire sequence.
+We therefore performed a visualization for each of our images to understand the processing done by our sub-model. The goal is to visualize the areas on which the model relies to detect an anomaly. For this, we will primarily use saliency maps as well as activation maps.
+To perform this type of visualization, we will propagate information through our network to obtain the final activation. This will allow us to generate saliency maps by calculating the gradient of this activation with respect to our input data, and activation maps by calculating the gradient of this activation with respect to the output of the layer we wish to visualize.
+For the saliency maps, we will need to calculate our gradient from a sequence rather than an image. Fortunately, the result will be the same size as the input data, meaning we will get a list of gradients equal to the size of our sequence. We will then display these gradients to create a saliency map for each image.
+Regarding the activation maps, our only solution will be to use the output of the time distributed layer. As explained earlier, its purpose is to add the time factor to our data by allowing us to perform the same processing for each image in our sequence, in this case by applyingVGG19 to each image. The output of this layer can then be viewed as a list of results, containing an output for each of our images. Our gradient will have the same dimension as the output of this layer. We can then apply each gradient to its corresponding output to obtain our activation map and project it onto the relevant image.
+We have recorded the results of our visualizations in parallel with the visualizations intended for the operator. This approach facilitates debugging and allows us to deactivate the generated visualizations when used in production, speeding up the process. This method also ensures a consistent visualization for each image rather than having changing attention areas, which would disturb people analyzing the videos. This is because convolutional neural networks do not have a fixed attention area, unlike vision transformers. Instead, they scan the images, looking for features, hence attention areas that move.
+
+The operation of our anomaly detection model is presented in figure7.1. It relies on a sophisticated architecture that integrates the two types of analysis mentioned: temporal analysis and spatial analysis. For temporal analysis, we adopted a ConvolutionalGRU(CGRU) approach, which consists of a combination ofVGG19,GRU, and anMLP. This temporal analysis module is capable of processing sequences of 20 consecutive images, which allows capturing temporal evolutions of anomalies in continuous video streams or finite videos. TheCGRUused can be multi-class or binary, depending on the issue being addressed, but it does not operate in multi-label mode, thus simplifying the classification process.
+Regarding spatial analysis, our model leveragesYOLOv7. In sequential mode, the preprocessing applied to the images varies depending on the specificYOLOarchitecture chosen. Preprocessing operations can include tasks such as image segmentation, object detection, or even human pose analysis. In parallel mode, the system identifies the objects present in a sequence of images and then uses this information to perform the final detection. This detection is performed according to a set of rules defined as follows:
+
+Let A be the set of anomalies known by the model.
+
+Let O be the set of key objects known by the model.
+
+.
+
+In summary:
+
+For any detected anomaly, the class is defined as that anomaly.
+
+If no anomaly is detected but a key object known by the model is present in the sequence, then the class is defined as the anomaly associated with that key object.
+
+If the detected key object is a firearm, the system checks if theIoUbetween this firearm and a detected person is greater than 0. If true, it means a person is near the firearm, and the class is defined as “gunshot“. If theIoUis less than or equal to 0, the class is defined as “normal“.
+
+Thus, the system takes into account the presence of anomalies, key objects, and the relationships between them to assign the appropriate class to each detected situation in the image sequence.
+A fundamental feature of our system is its explainability module, which can be used independently of the chosen operational mode. This module allows explaining the decisions made by the various components of our model, especially theCGRU, by highlighting the attention areas that influenced the detections. This functionality is crucial for improving the transparency and understanding of the model’s results, thereby contributing to its usefulness and adoption.
+In summary, our anomaly detection model cleverly combines temporal and spatial analysis to identify abnormal behaviors in either finite videos or continuous streams. By utilizing models such asCGRUandYOLOv7, while offering customization possibilities depending on the specific application needs. In the next section, we will delve into the experiments and results that played a crucial role in our choice and configuration of these models.
+
+Throughout this chapter, we have presented in detail each component of our architecture, whether it is the spatial analysis utilizingYOLOv7 or the temporal analysis viaCGRU, while highlighting the essential role they play in the overall anomaly detection process. Additionally, we have also discussed the datasets used to train each of these models, as well as the preprocessing methods applied to them. Now, we will explore the results of the experiments we conducted, which guided our decision to adopt these models for our setup.
+
+SECTION: Chapter 4Experiments and Results
+
+Since I was unable to access real surveillance cameras during my PhD, all the videos used in the experiments will represent finite information streams (videos downloaded locally). Video data requires significant computational power for processing, and since I did not have access to a GPU server either at my company or research lab, all the experiments presented in this thesis were carried out on a computer equipped with 32 GB of RAM, an Intel Core i9 processor with 16 cores clocked at 2.3 GHz, and an Nvidia GeForce RTX2080 graphics card with 8 GB of dedicated RAM.
+In this chapter, we will discuss the experimental phase during which we combined our two models to evaluate their performance in anomaly detection. We will examine how the results vary depending on whether the mode is chosen in parallel or serial. After that, we will present the experiments carried out in object detection and anomaly detection, which allowed us to determine which models to choose for each of our approaches. Finally, we will conclude this section with a global summary of our work.
+
+In this section, we detail the preparation techniques applied to our data.
+As we saw in SectionLABEL:problematique, a video can contain one or more anomalies bounded by normal sequences. Because of this, we had to split videos containing anomalies to isolate the anomalies and facilitate their analysis. Despite this, managing the data remains a real challenge for this project, particularly due to the large amount of video data to be processed.
+Loading the entire dataset at once is simply not feasible due to the memory limitations of our system. To solve this problem and load our data incrementally into memory, we opted to use a generator111Source code of the generator.
+Our first experiment, therefore, was to compare the effect of different generators. We primarily tested four (see Figure2.1):
+
+With a sliding window to form successive sequences.
+
+With a sliding window and overlap between sequences.
+
+With a dynamic step, collectingimages per video.
+
+With a sliding window and dynamic step.
+
+The generator that gave us the best results was the third. This is because it addresses the two main disadvantages of generators using a sliding window (generators 1, 2, 4). Indeed, models trained with one of these generators have a learning time that depends on the length of the videos: the longer the videos to be processed, the longer the learning time. Their second disadvantage is that the size of the window can be quite difficult to define, as for each video, it must contain the entirety of the action we want the model to learn, otherwise, it could affect its performance.
+Despite its advantages, the third generator still has a significant drawback, also related to the sequence configuration. For each video processed, it will calculate a dynamic step based on the number of FPS of the video and the number of images set for forming our sequences. The problem here is particularly apparent for datasets with actions of different durations, as in this case, the time between images can vary greatly. For short actions, only a few seconds will separate the images forming our sequence, while in long videos, there may be several minutes between each image. Therefore, the shorter the video, the more detailed it will be, compared to a much less detailed long video.
+Due to its ability to generate sequences containing non-successive images, the third generator gives us the possibility, by changing the step, to set the desired detection interval: ranging from detection per sequence to detection per video. This allows us, in the end, to handle both finite videos and continuous video streams.
+Once our generator was selected, we focused on the size of our data. We varied the size of our images; Table4.1shows that the optimal size is.
+
+For the sequence size, we tested sequences from 15 to 30 images, as the minimum duration of our videos is one second, which, according to current standards, corresponds to 30FPS. Table4.2shows that the optimal size is 20 images.
+
+To evaluate the performance of each of our experiments, we developed our own algorithm to specify the desired step when extracting images. This allows us to evaluate our models under the same conditions as during the training phase, i.e., performing detection per video or detection per sequence (to assess its performance on continuous streams). Our ultimate goal is to assist surveillance operators in their task of monitoring continuous streams, so performance related to sequence detection will be prioritized.
+After configuring our sequences, we enhanced our data by applying data augmentation techniques specific to this type of data, such as mirror effects, zooms, and changes in brightness, to enrich our data (see Figure2.2), multiplying it by three while remaining true to realistic scenarios.
+Next, we tested various preprocessing techniques, starting with methods commonly used in the field of computer vision: optical flow calculation, inter-image difference, and mask application (see Figure2.3).
+
+The optical flow does not provide usable results, with accuracy remaining stable (at 50%) throughout the training. The inter-image difference yields slightly more interesting results, which are improved by data augmentation and degraded by the use of a mask. But to our great surprise, we obtained better results when we limited ourselves to data augmentation alone. The results are summarized in Table4.3(except for the first line, all results include data augmentation). Without any preprocessing, the accuracy is poor (and thus the F1-score), while recall is excellent. Data augmentation without further preprocessing gives the best accuracy and a good recall. The inter-image difference degrades the results, with or without a mask.
+
+These results can be explained by the fact that we have many videos filmed with smartphones, mostly by amateurs. In such videos, the camera is usually mobile, and as a result, the background is also moving. Consequently, the inter-image difference forces the model to extract irrelevant features, as shown in Figure2.4. This figure shows the difference between two successive images extracted from a video representing an interview between two boxers before their fight, where it can be seen that the text on the posters in the background stands out more than the people in the foreground.
+
+We then employed more sophisticated preprocessing methods by submitting our data to preprocessing by specialized models. The results generated were then used for anomaly detection.
+Our first idea was to useDINO(see Figure2.5), presented in the1.8section of the state of the art.
+
+After testing DINO on our various datasets, we found that this method requires significant computational time, making it unsuitable for our near-real-time problem.
+However, the results obtained on gunshot videos were encouraging, as evidenced by Tables4.4and4.5. The model is able to extract relevant features for this class of events without requiring prior re-training.
+Unfortunately, this is not the case for fights, as indicated by the learning curve presented in Figure2.6. These results reaffirm our decision to exclude Vision Transformers from our study in favor of methods better suited to our problem.
+
+We also usedYOLOto detect objects and entities in our videos and to estimate the pose of people, with success. This is why we integrated it into the proposed architecture. We detail the results in the next section.
+
+In this section, we will evaluate the performance of our models arranged in series, and show which parameters, techniques, and strategies help improve them. We begin by breaking down the videos by extracting each of their frames and passing them toYOLOto detect the various objects present in the images and integrate the results of this detection (the bounding boxes around the objects). Then, the video sequence is reassembled to be passed toCGRUfor anomaly detection. We compared the performance of this approach with that of theCGRUmodel alone, trained on the same videos. The results can be found in Table4.6.
+
+It can be noted that displaying the bounding boxes around objects has no impact on the performance of our model. This means that the model does not take them into consideration during its training. We further enhanced our preprocessing by using these bounding boxes to create masks that keep only the parts of the image with objects, thereby removing as much of the background as possible (Figure3.1).
+
+For any image where no object is detected, we had two options: either keep the original image or replace it with a black image. Since this preprocessing is crucial for the reliability of our anomaly detection model, we decided to test both possibilities. Based on the results obtained (Tables4.7,4.8,4.9,4.10), it seems that the performance is quite similar; however, we observed several differences. Using a black background seems to improve the perception of the normal class at the expense of other classes (fight, fire), which could be explained by the following hypothesis: in some cases, key objects such as flames or people are present, butYOLOdid not detect them, or the detections did not meet the required reliability and overlap thresholds. As a result, this information was lost due to the black background.
+Confidence and overlap thresholds are important parameters in object detection usingYOLO, as they determine the level of confidence needed to consider an object as detected correctly. These parameters are manually set before each analysis. In our case, the confidence threshold was set at 55
+
+In some cases, our anomalies represent specific actions performed by physical persons, actions that we can recognize by the pose that these people take. With version 7 ofYOLO, pose detection can be performed by tracing the “skeleton“ of each person present on screen, similar to what technologies like OpenPose do (see the blog by\citetHumanPose).
+We then performed pose estimation during preprocessing to see if it could improve anomaly detection related to behaviors. Initially, since not all our anomalies are related to physical people, we restricted our dataset to the Fight and Gunshot classes. Additionally, we also removed the background from the videos to avoid extracting non-significant features [Figure3.2].
+
+Despite good performance as indicated in Tables4.11and4.12, without the background, it is impossible to detect anomalies that are not related to human behavior. In the next step, we reintroduced the background to our images [Figure3.3,4.14] along with all the classes in our dataset to train our model and see if it can detect anomalies such as fires using data with this type of preprocessing [See Table4.13,4.14].
+
+In terms of overall performance, it seems that adding the fire class doesn’t have a significant impact, but a closer look at the results shows otherwise. The confusion matrices reveal a significant decrease in the reliability of detecting the gunshot class, due to the model labeling some gunshots as fires. Finally, we decided to replace our multi-class model with a normal/abnormal model to assess the impact ofYOLO. We trained two new models: one using images without the background and the other keeping it.
+
+Regardless of the preprocessing used, combining the different types of anomalies improves the performance of our models, with the exception that including anomalies unrelated to the posture of the people present, such as fires, degrades performance.
+On the other hand, it can be observed that in multi-class processing cases (tables4.15,4.16, and4.17,4.18), usingYOLOto preprocess our data significantly improves performance.
+
+Next, we tested our models in parallel mode. The idea behind this approach is to use object detection in parallel with temporal analysis and then combine the results to output a detection, reducing false positive and false negative rates.
+Our first experiment was to combine ourCGRUtrained on the “gunshot“ class withYOLOV4 trained to recognize firearms using a simple rule: if the “normal“ class is predicted but a firearm is detected with a confidence score exceeding a certain threshold, then we replace the “normal“ class with the “gunshot“ class. As ourCGRUis trained to detect fires andYOLOV4 is trained to recognize flames, we also combined and compared them following the same idea.
+For each combination, we evaluated their performance on detections made for each sequence of 20 frames in our videos, using a confidence threshold set at 55%.
+
+Although the false negatives remain high, as shown in Table4.19, there is a clear improvement in fire detection, while for the gunshot class, there is no change. At first glance, it seems that ourCGRUandYOLOshare the same features for gunshot detection. These performances appear to depend on the precision ofYOLOas well as the condition set in the correction component (see5).
+We then decided to refine our condition for the gunshot class to reduce incorrect detections. SinceYOLOuses anIoUcalculation to filter detected objects, we chose to do the same and consider that a gunshot anomaly could only occur if theIoUbetween a weapon and a person was greater than zero. This means that the two bounding boxes must touch, overlap, or one must be contained within the other, as shown in Figure4.1.
+
+Starting from the idea that a firearm only poses a risk when it is being used by a person, we trained a new model on a dataset including firearms and some images from the COCO dataset. For person detection, Table4.21shows that this new model outperformsYOLOversion 4. However, for firearm detection, the model trained exclusively on firearms remains the best.
+
+Based on the results in Table4.22, coupling theCGRUwithYOLOby performing anIoUcalculation between detected persons and firearms allows for maintaining good performance on the normal class while improving the gunshot class by approximately 4%.
+In the same vein, we wanted to see if it was possible to reduce false positives once the two models were combined. We conducted a new evaluation of the models while maintaining the previously mentioned conditions to reduce false negatives, but also false positives. For each fire detection, if no flame is detected byYOLO, the sequence is considered normal; similarly, for a gunshot, if no firearm is detected, the sequence is considered normal. After evaluation, we observed a significant reduction in the false positive rate. However, this was accompanied by a decrease in the true positive rate, highlighting a lack of precision inYOLO(Table4.24).
+
+Since the anomalies we focus on can have severe consequences for future events, we decided to retain the model that minimizes the false negative rate, allowing us to miss as few alerts as possible, even at the risk of generating false alarms. These false alarms can easily be identified by a human.
+Moreover, as it is simpler to use a single object detection model for all our anomalies, we also decided to trainYOLOon our three types of objects: persons, firearms, and flames. Finally, to conclude the experimentation with our parallel models, we replaced our multi-class model with a normal/abnormal model to compare the performance of these two architectures.
+
+Since the anomalies we focus on can have severe consequences for future events, we decided to retain the model that minimizes the false negative rate, allowing us to miss as few alerts as possible, even at the risk of generating false alarms. These false alarms can easily be identified by a human.
+Moreover, as it is simpler to use a single object detection model for all our anomalies, we also decided to trainYOLOon our three types of objects: persons, firearms, and flames. Finally, to conclude the experimentation with our parallel models, we replaced our multi-class model with a normal/abnormal model to compare the performance of these two architectures.
+
+This contour visualization also allowed us to identify low-activation areas that are difficult to perceive in the activation map. However, contour visualization has some drawbacks: contour detection is not very precise, and there may be overlapping contours when a major activation zone is surrounded by a minor one. Furthermore, these contours currently do not indicate the intensity of the activations.
+
+The images presented in Figures4.4and4.5perfectly illustrate the advantages and drawbacks of contour visualization. In Figure4.4, the gun is perceived as a low-activation area, hard to spot on the activation map but very clear in the contours. Additionally, a major activation zone surrounded by a minor one can be observed to the left of the image, near the victim. Figure4.5depicts a person striking another. In the activation map on the left, it seems the model recognized the action but predicted it as a normal action instead of a fight. The contour visualization on the right shows that it did not detect the action at all.
+The activation maps also allowed us to observe the influence of other layers (RNN, Dense, Dropout) on the features learned by our convolutional layers due to backpropagation, as well as to detect cases of overfitting. These are visible when the activation zones (colored spots) focus on background elements rather than the essential features of the image (Figure4.9). This insight enabled us to better tune the parameters of these layers, modifying them until they targeted the relevant parts of the images, as shown in Figures4.6,4.7, and4.8.
+
+Using these two techniques, it is also possible to visualize the characteristics of the normal class. This class includes a wide range of actions such as working, walking, exercising, and more. For this class, the movements are generally slow, unlike the anomalies, which are typically abrupt and fast. For a human observer, the normal class is chosen if none of the characteristics corresponding to an anomaly are found. However, this is not the behavior of our model. To detect the normal class, the model must identify characteristics that represent it. Based on these visualizations, including activation maps, convolution filters, and saliency maps [Figures4.10,4.11,4.12], it appears that for our example video, the model relies on the posture and gestures of the individuals in the frame to determine whether or not an anomaly is present.
+
+For our near-real-time problem, we conclude by calculating the execution time of these different operational modes. To facilitate comparisons, we use the same videos. The code currently in use has not been optimized due to time constraints, but this does not hinder the comparison. In the case whereYOLOruns in parallel with ourCGRU, the two models are executed sequentially. They are not yet managed in a multithreaded way. Furthermore, sinceYOLOV7 is faster than version 4 (used in our initial object detection tests), we use YOLOv7 here.
+
+As expected, the serial mode is slower than the parallel mode (Tables4.25,4.26). This is becauseYOLOneeds to prepare each image before the sequence can be analyzed. Consequently, the higher the video’sFPS, the longer the processing time. On the other hand, it can also be observed that our two parallel models are not yet capable of processing videos in real time. Based on the average detection time, it cannot strictly be considered real-time, although the speeds presented in the table are relatively fast.
+For the parallel mode, execution time could be further reduced. In addition to managing both models in multithreaded execution, it is also possible to configure the number of imagesYOLOneeds to analyze for each sequence. The smaller this number, the faster the processing speed. For instance, choosing 1 means every frame will be analyzed, while choosing 2 means every other frame will be analyzed, and so on.
+
+To select our temporal analysis model, we tested several architectures derived from well-established models. This approach not only provides access to pre-trained weights but also ensures that we start with architectures that have already proven effective in other, somewhat related domains. Among the models tested wereC3D, convLSTM, and convolutionalRNNs. For these, we compared the effects ofLSTMagainst those ofGRUand experimented with convolution by selectingCNNs that have performed well on the IMAGENET dataset (VGG19, ResNet, Inception, etc.). See Section6.
+
+We began by testing four variations:
+
+Do not load associated weights.
+
+Load the weights without retraining the model.
+
+Load the weights and retrain all layers.
+
+Load the weights and retrain only a few layers.
+
+According to our initial results shown in Table4.27, transfer learning (variations 3 and 4) provided the best performance. Therefore, we decided to continue our experiments using this approach for all our models.
+
+According to our experiments,C3D-type networks have performance levels comparable to those ofCNN+RNNnetworks. Despite this,CNN+RNNnetworks demonstrated a better F1-score, indicating a better balance between alert rates and false alarms. As a result, we decided to choose this type of architecture. In addition to achieving a better F1-score on our dataset, these networks offer greater modularity in their architecture, being composed of two separate networks aCNNand aRNNthat can be easily replaced by another model of the same category. Subsequently, we tested several architectures for ourCNN, always usingGRUfor theRNNpart.
+For the EfficientNet convolution, we tested several architectures, such as B1, B2, and B7, but none yielded usable results. The performances of the different convolution architectures tested, such as Inception, Inception-ResNet, ResNet,VGG19,VGGPlace325, and Xception, are listed in Table4.28. In this table, we report results only for configurations with some layers retrained.
+
+Table4.29summarizes the best performance of each model; the retrained layer number listed corresponds to the one yielding the best results. This table shows thatVGGis the convolutional network with which we obtained the best F1-score.
+
+After selectingVGG19, we also explored the possibility of removing one convolution to see how it would affect its performance. The results of this experiment are presented in Table4.30, and they clearly show that reducing the number of convolutions is not beneficial.
+
+We then used this architecture as a base to compareLSTMandGRU, as shown in Table4.31, which clearly highlights a distinct advantage forGRU.
+
+Table4.32shows the consequences of choosing the number of fully connected layers needed to train our classifier. In the last row, X represents results that are not usable due to overfitting. The best choice is therefore with three hidden layers.
+
+Finally, we used the results obtained along with the explainability techniques mentioned earlier (section6) to determine the number of neurons required for ourGRUand the dropout rate for our dropout layers.
+
+In this section, we will present our results in anomaly detection. We will first discuss the performance achieved for each of our models. Currently, we have three distinct models for detecting fights, gunshots, and fires. We will evaluate each of them in two aspects: their ability to classify videos (one detection per video) and their ability to detect anomalies in a continuous stream (one detection per sequence). Three tables will be presented for each: one table of metrics and two confusion matrices.
+
+By observing these three tables (4.34,4.33,4.35), we can see that the detection of fights (table4.33) is less effective in continuous streams than fire detection (table4.35). Based solely on performance, gunshot detection (table4.34) is much less effective when dealing with continuous streams. However, if we look at the confusion matrices, we can observe a slight increase in reliability of about 2%. In fact, gunshot detection has the best false positive / false negative ratio.
+Next, we combined all our datasets to form a single multi-class model and compare its performance with each of the specialized models presented earlier. Our new dataset contains four classes (fire, fight, gunshot, normal) with an imbalanced distribution, as shown in figure4.2from the previous chapter.
+
+Despite the fact that there is much more data to process in continuous stream analysis, our model seems to perform quite well and is fairly close to the performance of processing completed videos, as shown in table4.36. To facilitate comparisons of our various models, we evaluated our multi-class model on each portion of our dataset in tables4.37,4.38, and4.39. At first glance, a multi-class model is much more practical to use, but is it as efficient as specialized models ?
+For the Fight class, we observe similar performance for video detection and an improvement for sequence detection (continuous stream), with better detection of the normal class, as shown in tables4.33,4.37. Regarding the other two classes, Fire (tables4.35,4.39) and Gunshot (tables4.34,4.38), we notice a drop in accuracy of about 10 to 15% for the Fire class and up to 20% for the Gunshot class, accompanied by a decrease in F1-Score ranging from 5% to 10%.
+
+Despite its good performance, our multi-class model remains inferior to specialized models due to its occasional confusion between different types of incidents. To address this, we decided to train one final version of our model by grouping all anomalies into a single class to simplify analysis. As a result, the dataset now includes a Normal class representing no issues and an Abnormal class indicating an incident requiring intervention, encompassing fights, gunshots, and fires. To facilitate comparisons, as usual, we evaluated this new model on each section of our dataset.
+
+When comparing these statistics (4.36,4.40), we observe that this new two-class model (normal/abnormal) outperforms our multi-class model. Moreover, it is generally equivalent to or better than our specialized models (tables4.37vs.4.41,4.38vs.4.42,4.39vs.4.43). This suggests that the multi-class model correctly eliminates the normal class but sometimes misclassifies the type of anomaly.
+In scenarios where only one type of anomaly is of interest, a specialized model should be preferred. However, when handling multiple types of anomalies, the choice of model depends on the problem at hand. If we aim to simply detect any type of incident and allow a human to deduce its specific nature, a normal/abnormal model is a better candidate. Conversely, if we need to precisely identify the type of anomaly, we must use a multi-class model. Although it is less effective than the binary model for handling multiple types of anomalies, the multi-class model remains viable for real-world conditions.
+To evaluate the performance of our multi-class model in real-world scenarios, we tested it on a set of ten unedited videos not included in our dataset. The images below are extracted from these videos and illustrate the model’s detections along with their confidence scores, displayed in red in the top-left corner of each image.
+For the “fight“ class, we selected images from anti-health-pass protests that involved violent incidents (figure6.1). For the “fire“ class, we used footage from the Notre-Dame Cathedral fire and a wildfire in the Gironde region in July 2022 (figure6.2). As there were no recent incidents involving gunshots, we tested our model on generic videos retrieved online (figure6.3).
+
+Table4.44indicates the execution speed of our multi-class model on the ten unedited videos described above. Although our code is not optimized, the detection time is generally respectable, ranging between 104 and 744 milliseconds.
+
+In this section, we present our experiments and results in object detection.
+Our first experiment involved training theYOLOV3 andYOLOV4 architectures on a subset of our dataset containing only two classes: “gun” and “weapons,” to compare their performance.
+To achieve this, we developed our own evaluation algorithm. This algorithm starts by loading the ground truth labels associated with the predicted image. Then, it compares the ground truth boxes for each class with all remaining detections for that class, filtering them using theNMSoperation to find the one with the highestIoU. For reference, theNMSoperation filters overlapping bounding boxes for the same object, retaining only those with the highest confidence scores. Once this bounding box is identified, we calculate theIoUto measure the similarity percentage between the detected box and the ground truth box.
+Our algorithm is therefore not efficient, resulting in slow execution. However, during the evaluation phase, processing speed is not a critical issue. We added certain parameters to our system, such as the overlap rate and confidence threshold used in theNMSoperation, as well as the ability to set minimum and maximum thresholds for theIoUand a minimum required size for predicted boxes. Any detection not meeting the parameters set forNMSis considered invalid and excluded from the statistics. Regarding the parameters for calculating theIoU, we introduced a new metric called badBox, representing a correct detection (True Positive) where the bounding box does not meet the specified criteria. These parameters allow us to assess the performance of our model under real-world conditions.
+
+A comparison of Tables4.45and4.46reveals that version 4 ofYOLOoutperforms version 3, even though it is slightly slower (processing times remain acceptable overall). We therefore selected version 4 for subsequent experiments.
+By analyzing our mislabeled files, we discovered thatYOLOV4 occasionally confused the two classes, leading to reduced performance during evaluation. This can be attributed to the high similarity between the images of the two classes. In our context, any firearm, regardless of its type, represents a risk. Consequently, we decided to merge these two classes to prevent performance degradation.
+
+At first glance, the section of Table4.47representing the merged classes appears to show lower performance. However, based on the learning curve generated during training, theMean Average Precision (MAP)is significantly better (Figures7.1,7.2).
+
+After achieving satisfactory results with theYOLOV4 model trained on a single class, we evaluated the model’s performance under anomaly detection conditions. Our initial approach was to define an anomaly as a detected firearm with sufficiently high precision; otherwise, no anomaly would be reported (Figures7.3,4.48).
+Of course, this condition is somewhat subjective, and the performance of our model depends on the situation and its reliability in detecting these objects. Based on the confusion matrix, it appears that usingYOLOtrained to recognize firearms for gunshot detection yields reasonably good performance (Table4.48, Figure7.3). Therefore, we decided to apply the same approach to fire detection by trainingYOLOto recognize flames (Table4.49, Figure7.4).
+
+Our tests allowed us to define a set of models with the following common features: the choice ofYOLOV7 (even though some of our tests were conducted before this version was released and used V4); the use ofGRUandVGG19 convolution for ourCRNN; the decision to merge certain classes in our dataset; and the emphasis on traceability. This leaves room for variations, particularly in terms of sequential or parallel modes and the choice between multi-class or binary configurations.
+Regarding these variations, our study allows us to propose the following recommendations:
+
+If the goal is to identify the type of anomaly that occurred, the best results are achieved usingYOLOV7 and a multi-classCRNNin sequential mode. When anomalies are related to human behaviors, applying pre-processing steps such as pose estimation with background removal can yield excellent results.
+
+For real-time applications where speed is critical, the best reliability/speed trade-off is obtained usingYOLOV7 and ourGRU-basedCRNNin parallel mode, with the following rules:
+
+If an anomaly is detected and a flame is identified, the ongoing event is classified as a fire.
+
+If an anomaly is detected and a person is identified with a nearby weapon, the event is classified as a gunshot.
+
+If the goal is solely to alert about any potential danger, it is preferable to use a binary model (normal/anomalous) instead of a multi-class model. While less precise in identifying the specific type of anomaly, this type of model achieved the best overall performance across all models when combined withYOLO(in either parallel or sequential mode depending on the requirements).
+
+SECTION: 
+
+SECTION: Conclusion
+
+Conclusion
+
+This conclusion will be divided into three parts: the first will be a general summary of my work, the second will discuss its limitations, and the last will outline various perspectives to consider.
+
+Nowadays, many places are equipped with surveillance cameras intended to ensure our safety. All of these cameras cannot be monitored in real-time and are instead used as deterrents, reviewed after events occur. During the live analysis of these images, the monitor is generally responsible for multiple cameras. This surveillance task, therefore, represents a large workload and relies on the monitor’s attention.
+We proposed here a set of models that form an anomaly detection system capable of detecting anomalies in a relatively short time from video footage or continuous streams.
+To address this issue, I explored two fields related to computer vision: action recognition and object detection. My idea was to combine these two techniques to emulate a human-like behavior that would enable us to detect if an anomaly is occurring, determine its type, and locate it within the image and sequence.
+In our research, we observed two main cases leading to anomalies. One is linked to the actions performed by various objects or entities on the screen, and the other is related to particular objects whose mere presence raises suspicion of an anomaly. Our goal is therefore to identify the various objects on the screen and then analyze their behavior to detect any potential anomalies.
+In this doctoral project, we focused on supervised approaches. We thus created two datasets. The first consists of images representing firearms, people, and flames, and the second consists of videos depicting fires, fights, and gunshots.
+The proposed system comprises two models that can be arranged in parallel or in series according to needs. For object detection, we choseYOLOV7 for its performance in terms of processing speed and its ability to address various image processing challenges, including human pose analysis. For anomaly detection, we opted for aConvolutional Recurrent Neuronal Network(CRNN)composed ofVGG19 and aGRU, a model that we trained with a video generator on finite video data, each summarized by a single sequence of images and subsequently tested for video or sequence classification.
+It can perform detection on videos in batch mode or detection on 20-frame sequences in a continuous stream. The presented system is thus capable of providing very good results, reaching up to 90% precision and recall in certain cases. Unfortunately, being a detection system, the anomaly is detected a posteriori. It therefore does not operate in real-time, but its response times are quite fast regardless of the architecture used. In series, we achieve an average refresh rate between 1 and 1.5 seconds, and a rate below 1.2 seconds for parallel mode. This speed could be further improved in parallel mode by configuringYOLOto ignore certain frames in the sequence, for example, by analyzing every other frame instead of all frames, which is clearly a waste of time for continuous streams where inter-frame differences are minimal. Nonetheless, regardless of the mode used (parallel or series), the processing speeds remain well below a monitor’s reaction time.
+
+In this thesis, very few classes were used to train the model. However, thanks to our architecture (CGRU), it is also possible to achieve good results on other types of anomalies, such as car accidents as shown in Figure10.1, provided an appropriate dataset is used.
+
+Despite good performance from our system and acceptable processing times that can still be improved, we have not yet been able to target the area where anomalies occur.
+
+We also noted that in certain specific cases, the conditions set to reduce the false-negative rate were not adequate. We wanted, in parallel mode, to change the label of any sequence labeled as normal if a flame or a person with an apparent weapon was detected. Unfortunately, under certain conditions, these behaviors may be considered normal, as in airports where it is common to encounter armed military personnel, a situation that does not necessarily represent a risk.
+
+Finally, we note that during this doctoral project, we were unable to test our system on footage from surveillance cameras. Our performance metrics were thus based solely on videos from our test set. Furthermore, due to the fact that data collection and cleaning is a lengthy and costly task, we trained our model using only three classes. Each new anomaly we wish to add will therefore require the collection of new videos or even new images, which may be challenging to obtain in certain contexts. Additionally, in cases where our models are used in parallel, it will sometimes be necessary to develop new detection rules.
+
+A first potential improvement involves replacing theIoUcalculation between a person and a firearm in our parallel architecture with aDistance Intersection over Union (DIoU)calculation, which would consider the centers of each bounding box. This change would prevent an alert from being triggered if a weapon is detected but merely carried.
+
+We could also replace manually defined rules in parallel mode with a machine learning model, such as an Isolation Forest specialized in anomaly detection, or anMLPaccompanied by oversampling, for example. These models could take as input the output of ourCGRUandYOLO, offering greater reliability while simplifying the addition of new classes.
+
+An area that was not thoroughly explored in our work is using spatial analysis in parallel to alter the label of certain frames when a suspicious object is detected, rather than altering the label of the entire sequence (which is the case with the current parallel mode).
+
+Other paths to improve our work include using different models or innovative approaches. For example, we could evaluate the performance of aViTmodel, which has its own attention mechanism, in comparison with ourCRNN. It would also be interesting to explore the use of unsupervised neural networks, such as autoencoders orDINO(V1, V2), to avoid the need for data collection and labeling each time new classes are added.
+
+In the current architecture, another idea to test would be to replace theVGGconvolution withYOLOwithin ourCRNN.YOLOis an object detection neural network architecture based on convolutions, which could provide additional information about detected objects and their positions in each frame of the video. This approach could enhance our model’s ability to capture visual features in each moment of the video and potentially improve its performance.
+
+In this thesis, we did not explore image segmentation due to real-time constraints. However, this idea could be interesting to test in anomaly detection cases where processing speed is not crucial. The goal would be to determine if this preprocessing improves the obtained results. To evaluate this approach, we could use theYOLOv7 architecture specialized for this type of processing or other models such as Faster-RCNNalready mentioned in this thesis or evenSegment Anything Mode(SAM), an open-source segmentation model recently proposed by Meta\citepkirillov2023segany.
+
+In terms of explainability, an interesting approach would be to integrate object detection. IntegratingYOLOwith our visualization techniques, such as our activation maps, could help us better understand our model’s decisions and allow us to better represent the area where the detected incident occurred.
+
+Finally, although not all videos contain sound, combining our approach with audio data analysis could, in some cases, identify certain anomalies such as gunshots, explosions, or even car accidents with greater reliability.
+
+SECTION: Glossary
+
+SECTION: Glossary
+
+[heading=bibintoc, keyword=me, title=My publications]\printbibliography[heading=bibintoc, title=Bibliography]

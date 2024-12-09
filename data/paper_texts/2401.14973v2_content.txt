@@ -1,0 +1,697 @@
+SECTION: Discovering group dynamics in coordinated time seriesvia hierarchical recurrent switching-state models
+
+We seek a computationally efficient model for a collection of time series arising from multiple interacting entities (a.k.a. “agents”).
+Recent models of spatiotemporal patterns across individuals fail to incorporate explicit system-level collective behavior that can influence the trajectories of individual entities.
+To address this gap in the literature, we present a new hierarchical switching-state model that can be trained in an unsupervised fashion to simultaneously learn both system-level and individual-level dynamics.
+We employ a latent system-level discrete state Markov chain that provides top-down influence on latent entity-level chains which in turn govern the emission of each observed time series.
+Recurrent feedback from the observations to the latent chains at both entity and system levels allows recent situational context to inform how dynamics unfold at all levels in bottom-up fashion.
+We hypothesize that including both top-down and bottom-up influences on group dynamics will improve interpretability of the learned dynamics and reduce error when forecasting.
+Ourhierarchical switching recurrent dynamical modelcan be learned via closed-form variational coordinate ascent updates to all latent chains that scale linearly in the number of entities. This is asymptotically no more costly than fitting a separate model for each entity. Analysis of both synthetic data and real basketball team movements suggests our lean parametric model can achieve competitive forecasts compared to larger neural network models that require far more computational resources. Further experiments on soldier data as well as a synthetic task with 64 cooperating entities show how our approach can yield interpretable insights about team dynamics over time.
+
+SECTION: 1Introduction
+
+We consider the problem of jointly modeling a collection of multivariate time series arising from individual entities that can influence each other’s behavior over time and might share goals. Each series in the collection describes the evolution of oneentity, sometimes also called an “agent”(Yuan et al.,2021). All entities are observed over the same time period within a shared environment orsystem. Our work is motivated by the need to capture an essential property of such data in many applications: the temporal behaviors of the individual entities arecoordinatedin a systematic but fundamentally latent (i.e., unobserved) manner.
+
+As a motivating example, consider the dynamics of a team sport like basketball(Terner & Franks,2021). To accomplish a team goal, one player might set a “screen”, physically blocking a defender to allow a teammate an open drive to the basket.
+This screen could be preplanned or arise as players act on an in-moment opportunity.
+As another example, consider marching band players that practice moving together in a coordinated fashion across a field. Most movements are planned out by a coach. However, in some cases, situational adjustments are needed: when enough individuals make mistakes in their own trajectories, the coach may decide to rein in all of the players and reset.
+Our experiments directly cover basketball and marching band case studies later in Sec.5.2and Sec.5.3, respectively.
+Similar group dynamics arise in many other domains, such as businesses in a common economic system(van Dijk et al.,2002), animals in a shared habitat(Sun et al.,2021), biological cells sharing copy-number mutations(Babadi et al.,2023), or college students in a collaborative problem-solving session(Odden & Russ,2019).
+
+In all these examples, the dynamics of the individuals are far from independent.
+Instead, the observed trajectories exhibit “top-down” patterns of coordination that are planned in advance or learned from extensive training together. They also exhibit “bottom-up” adaptations of the individuals and the group to evolving situational demands.
+We seek to build a model that can infer how group dynamics evolve over time given only entity-level sensory measurements, while taking into account top-down and bottom-up influences.
+
+While modeling individual time series has seen many recent advances(Linderman et al.,2017; Gu et al.,2022; Farnoosh et al.,2021),
+there remains a need for improved models for coordinated collections of time series.
+To try to model a collection of time series,
+a simple approach could repurpose models for individual time series.
+As a step beyond this, some efforts pursuepersonalizedmodels that allow custom parameters that govern each entity’s dynamics while sharing information between entities via common priors on these parameters(Severson et al.,2020; Linderman et al.,2019; Alaa & van der Schaar,2019), often using mixed effects(Altman,2007; Liu et al.,2011). But personalized models allow each sequence to unfold asynchronously without interaction. In contrast, our goal is to specifically model coordinated behavior within the same time period.
+Others have pursued this goal with complex neural architectures that can jointly model “multi-agent” trajectories(Zhan et al.,2019; Alcorn & Nguyen,2021; Xu et al.,2022). Instead, we focus on parametric methods that are easier to interpret and more likely to provide sample-efficient quality fits in applications with only a few minutes of available data (such as the data described in Sec.5.4).
+
+One potential barrier to modeling coordination across entities is computational complexity. For instance, a model with discrete hidden states which allows interactions among entities has a factorial structure with inference that scalesexponentiallyin the number of entities (see Sec.3).
+In this paper we present a tractable framework for modeling collections of time series that overcomes this barrier. All estimation can be done with cost linear in the number of entities, making our model’s asymptotic runtime complexity no more costly than fitting separate models to each entity.
+
+Thefirst key modeling contributionis an explicit representation of thehierarchicalstructure of group dynamics, modeled via a latent system-level state that exerts “top-down” influence on each individual time series. We use well-known switching-state models(Rabiner,1989)as a building block for both system-level and individual-level dynamics. As shown in Fig.1, our model posits two levels of latent discrete state chains: a system-level chain shared by all entities and an entity-level chain unique to each entity. We assume that the system-level chain is the sole mediator of cross-entity coordination; each entity-level chain is conditionally independent of other entities given the system-level chain. Our model achieves “top-down” coordination via the system-level chain’s influence on entity-level state transition dynamics.
+In turn, an emission model produces each entity’s observed time series given the entity-level chain.
+
+Thesecond key modeling contributionis to allow “bottom-up” adjustments to recent situational demandsat all levelsof the hierarchy. In our assumed generative model in Fig.1, the next system-level state and entity-level state both depend on feedback from per-entity observed data at the previous timestep. In the basketball context, this feedback captures how a basketball player driving to the basket switches to another behavior after reaching their goal. Critically, with our model that situational change in one player can quickly influence the trajectories of other players. We refer to observation-to-latent feedback asrecurrent, followingLinderman et al. (2017). Previously,Linderman et al. (2017)incorporated such recurrent feedback into a model with a flat single-level of switching states. We show how recurrent feedback can inform a two-level hierarchy of system-level and entity-level states, so that entity-level observations can drive system-level transitions in a computationally efficient manner.
+
+Our overall contribution is thus a proposed framework –hierarchical switching recurrent dynamical models– by which our two key modeling ideas provide a natural andcost-effectivesolution to the problem of unsupervised modeling of coordinated time series.
+Unlike other models, our framework allows each entity’s next-step dynamics to be driven by both a system-level discrete state (“top-down” influence) and recurrent feedback from previous observations (“bottom-up” influence). Optional exogenous features (e.g. the ball position in basketball) can also be incorporated.
+We further provide a variational inference algorithm for simultaneously estimating model parameters and approximate posteriors over system-level and entity-level chains.
+Each chain’s posterior maintains the model’s temporal dependency structure while remaining affordable to fit via efficient dynamic programming that incorporates recurrent feedback.
+We conduct experiments on two synthetic datasets as well as two real-world tasks to demonstrate the model’s superior capability in discovering hidden dynamics as well as its competitive forecasts obtained at low computational cost.
+
+SECTION: 2Model Family
+
+Here we present a family ofhierarchical switching recurrent dynamical models(HSRDMs) to describe a collection of time series gathered fromentities that interact over a common time period (discretized into timesteps) and in a common environment orsystem. For each entity, indexed by, we observe a time series of feature vectors.
+
+OurHSRDMrepresents the-th entity via two random variables: the observed featuresabove and a hidden entity-level discrete state sequence.
+We further assume a system-level latent time series of discrete states.
+The complete joint density of all random variables, as diagrammed in Figure1, factorizes as, where
+
+Here,denotes all model parameters, and superscript(1:J)denotes the concatenation over all entities.
+
+The design principle ofHSRDMsis to coordinate the switching-state dynamics of multiple entities so they receive top-down influence from system-level state as well as bottom-up influence via recurrent feedback from entity observations.
+Under the generative model, the next entity-level state depends on the interaction of three sources of information: the next state of the system,
+the current state of the entity,
+and the current entity observation.
+Likewise, the next system state
+depends on the current system state
+and observations fromallentities.
+
+Transition models.
+
+Across levels, common sources of information drive these utilities.
+First, thestate-to-state transitionterm
+selects an appropriate log transition probability vector from matrices,via a one-hot vectorindicating the previous state.
+Second,recurrent feedbackgoverns the next term, via featurization functions for the systemand for entitieswith parameters(known or learned) and weights.
+If optionalexogenous covariatesare available at either the system-level inor entity-level in, they can also drive the transition probabilities. Note that inference (Sec.3) applies not merely to Equation2.2, but to arbitrary instantiations.
+
+Emission model.We generate the next observation for entityvia a state-conditioned autoregression:
+
+Users can select the emission distributionto match the domain of observed features: our later experiments use Gaussians for real-valued vectors and Von-Mises distributions for angles.
+The parameterof the chosendepends on the previous observationand current entity-level state. We focus on lag 1 autoregression here, though extensions that condition on more than just one previous timestep are possible.
+
+Priors.The Appendix describes prior distributionson parameters assumed for the purpose of regularization. We use a “sticky" Dirichlet priorFox et al. (2011)to obtain smoother segmentations at the system level.
+
+Specification.To applyHSRDMto a concrete problem, a user must select the number of system statesand entity statesas well as functional forms of. We assume thatcan be evaluated in.
+
+Special cases.If we remove the top-level system states(or equivalently set), ourHSRDMreduces toLinderman et al. (2017)’s recurrent autoregressive HMM (rAR-HMM).
+If we remove recurrent feedback from the transition model, ourHSRDMbecomes a multi-level autoregressive HMM.
+
+SECTION: 3Inference
+
+Given observed time series, we now explain how to simultaneously estimate parametersand infer approximate posteriors over hidden statesfor the system and hidden statesfor allentities.
+Because all system-level and entity-level states are unobserved, the marginal likelihoodis a natural objective for parameter estimation. However, exact computation of this quantity, by marginalizing over all hidden states, is intractable.
+Givensystem-level states andentity-level states, computingnaively via the sum rule requires a sum overvalues.
+While the forward algorithm(Rabiner,1989)resolves the exponential dependence in time, the exponential dependence in the number of entities persists:operations are required to do forward-backward onHSRDMs. This exponential dependence remains prohibitively costly even in moderate settings; for instance, when, a direct application of the forward algorithm requires around 220 trillion operations.
+
+Instead, we will pursue a structured approximationto the true (intractable) posterior over hidden states.
+Following previous work(Alameda-Pineda et al.,2021; Linderman et al.,2017), we define
+
+intending.
+Each factor retains temporal dependency structure, avoiding the problems of complete mean-field inferenceBarber et al. (2011).
+Using this, we can form a variational lower bound on the marginal log likelihood, defined as.
+
+As shown in the Appendix, computation of this bound scales as, cruciallylinearrather than exponential in the number of entities. This reduces the approximate number of operations required for inference on the earlier moderate example setting offrom 220 trillion to 64 thousand.
+
+To estimateandgiven data, we pursue
+coordinate ascent variational inference (CAVI;Blei et al. (2017)) on theVLBO, known as variational expectation maximizationBeal (2003)whenis approximated with a point mass. Given a suitable initialization, we alternate between specialized update steps to each variational posterior or parameter:
+
+The updates above define the variational E-S step (VES step), variational E-Z step (VEZ step), and M-step, respectively. Here the M-step allows the inclusion of an optional prior on some or all parameters.
+The first two formulas in equation3.2are derived by following the well-known generic variational recipe for optimal updates(Blei et al.,2017). We’ve worked out efficient ways to achieve the optimal update for each step, as described below.
+
+VES step for system-level state posteriors.We can show the VES step reduces to updating the posterior of a surrogate Hidden Markov Model withindependent autoregressive categorical emissions.
+Optimal variational parameters for this posterior can be computed via a dynamic-programming algorithm that extends classic forward-backward for an AR-HMM to handle recurrence.
+The runtime required is.
+
+VEZ step for entity-level state posteriors.We can show that the VEZ update reduces to updating the posterior of separate surrogate Hidden Markov Models for each entitywith autoregressive categorical emissions which recurrently feedback into the transitions.
+Given a fixed system-level factor, we can update the state posterior for entityindependently of all other entities. This means inference islinearin the number of entities, despite the fact that theHSRDMcouples entities via the system-level sequence. The linearity arises even though our assumed mean-field variational family of Equation3.1did not make an outright assumption that.
+Optimal variational parameters for this posterior can again be computed by dynamic programming that extends the forward-backward algorithm. The runtime required to update each entity’s factor is.
+
+M step for transition/emission parameters.Updates to some parameters, particularly for emission model parameters whenhas exponential family structure (such as the Gaussian or Von-Mises AR likelihoods we use throughout experiments), can be done in closed-form. Otherwise, in general, we optimizeby gradient ascent on theVLBOobjective.
+This has the same cost as the computation of theVLBO, with runtime.
+
+Like many variational methods, the alternating update algorithm in equation3.2provides a useful guarantee. Each successive step will improve theVLBOobjective (or if incorporating priors, the modified objectiveVLBO+) until convergence to a local maximum. This improvement assumes any M step that uses gradient ascent relies on a suitable implementation that guarantees a non-decrease in utility.
+
+Full details about each step, as well as recommendations for initialization, are in the Appendix. We also share code built upon JAX for efficient automatic differentiation(Bradbury et al.,2018).
+
+SECTION: 4Related Work
+
+Below we review several threads of the scientific literature in order to situate our work.
+
+Continuous representations of individual sequences.Other efforts focus on latent continuous representations of individual time series. These can produce competitive predictions, but do not share our goal of providing a segmentation at the system and entity level into distinct and interpretable discrete regimes.
+Probabilistic models with continuous latent state representations are often based on classic linear dynamical system (LDS) models(Shumway & Stoffer,1982). Deep generative models like the Deep Markov Model(Krishnan et al.,2017)and DeepState(Rangapuram et al.,2018)extend the LDS approach with more flexible transitions or emissions via neural networks.
+
+Discrete state representations of individual sequences.Our focus is on discrete state representations which provide interpretable segmentations of available data, a line of work that started with classic approaches to entity-level-only sequence models like hidden Markov models (HMM), autoregressive hidden Markov models (AR-HMM) or switching-state linear dynamical systems (SLDS)(Ghahramani & Hinton,2000; Alameda-Pineda et al.,2021). Recent efforts such as DSARF(Farnoosh et al.,2021), SNLDS(Dong et al.,2020)and DS3M(Xu & Chen,2021)have extended such base models to non-linear transitions and emissions via neural networks. All these efforts still represent each time series via one entity-level discrete state sequence.
+
+Discrete states via recurrence on continuous observations.Linderman et al. (2017)add a notion ofrecurrenceto classic AR-HMM and SLDS models, increasing the flexibility in each timestep’s transition distribution by allowing dependence on the previous continuous features, not just the previous discrete states. Later work has extended recurrence ideas in several directions that improve entity-level sequence modeling, such as multi-scale transition dependencies via the tree-structured construction of the TrSLDS(Nassar et al.,2019)or recurrent transition models that can explicitly model state durations via RED-SDS(Ansari et al.,2021).
+To model multiple recordings of worm neural activity,Linderman et al. (2019)pursue recurrent state space models that are described ashierarchicalbecause they encourage similarity between each worm entity’s custom dynamics model via common parameter priors in hierarchical Bayesian fashion.
+Their model assumes only entity-level discrete states.
+
+Multi-level discrete representations.Stanculescu et al. (2014)developed a hierarchical switching linear dynamical system (HSLDS) for modeling the vital sign trajectories of individual infants in an intensive care unit. The root level of their directed graphical model assumes a discrete state sequence (analogous to our) indicating whether disease was present or absent in the individual over time, while lower level discrete states (analogous to our) indicate the occurrence of specific “factors” representing clinical events such as brachycardia or desaturation.
+While their graphical model also contains a multi-level discrete structure, we emphasize three key differences. First, they requirefully-superviseddata for training, where each timestepislabeledwith top-level and factor-level states. In contrast, our structured VI routines to simultaneously estimate parameters and hidden states in theunsupervisedsetting are new. Second, their model does not incorporate recurrent feedback from continuous observations. Finally, they model individual time series not multiple interacting entities.
+
+More recently, hierarchical time series models composed of Recurrent Neural Networks (RNNs) have been proposed for dynamical systems reconstitutionBrenner et al. (2024). Different from our work, this framework is not designed for modeling entity interactions within a single system, but modeling shared properties among multi-domain dynamical systems for time series transfer learning.
+
+Lastly, Hierarchical Hidden Markov Models (HHMMs)(Fine et al.,1998)and their extensions(Bui et al.,2004; Heller et al.,2009)describe a single entity’s observed sequence with multiple levels of hidden states. The chief motivation of the HHMM is to model different temporal length scales of dependency within an individual sequence. While HHMMs have been applied widely to applications like text analysis(Skounakis et al.,2003)or human behavior understanding(Nguyen et al.,2005), to our knowledge HHMMs have not been used to coordinate multiple entities overlapping in time.
+
+Models of teams in sports analytics.Terner & Franks (2021)survey approaches to player-level and team-level models in basketball.Miller & Bornn (2017)apply topic models to tracking data to discover how low-level actions (e.g. run-to-basket) might co-occur among teammates during the same play.Metulini et al. (2018)model the convex hull formed by the court positions of the 5-player team throughout a possession via one system-level hidden Markov model.
+In contrast, our work provides a coordinated two-level segmentation representing the system as well as individuals.
+
+Personalized models.Several switching state models assume each sequence in a collection have unique or personalized parameters, such custom transition probabilities or emission distributions(Severson et al.,2020; Alaa & van der Schaar,2019; Fox et al.,2014). In this style of work, entity time series may be collected asynchronously, and entities are related by shared priors on their parameters.
+In contrast, we focus on entities that are synchronous in the same environment, and relate entities directly via a system-level discrete chain that modifies entity-level state transitions.
+
+Models of coordinated entities.Several recent methods do jointly model multiple interacting entities or “agents”, often using sophisticated neural architectures.Zhan et al. (2019)develop a variational RNN where trajectories are coordinated in short time intervals via entity-specific latent variables called “macro-intents”.Yuan et al. (2021)develop the AgentFormer, a transformer-inspired stochastic multi-agent trajectory prediction model.Alcorn & Nguyen (2021)develop baller2vec++, a transformer specifically designed to capture correlations among basketball player trajectories.Xu et al. (2022)introduce GroupNet to capture pairwise and group-wise interactions.
+Unlike these approaches, ours builds upon switching-state models withclosed-formposterior inference, producesdiscretesegmentations. Our approach may also be more sample efficient for applications with only a few minutes of data, as in Sec.5.4.
+
+Models that learn interaction graphs.Some works(Kipf et al.,2018; Sanchez-Gonzalez et al.,2020)seek to learn an interaction graph from many entity-level time series. In such a graph, nodes correspond to entities and edge existence implies a direct, pairwise interaction between entities. For some applications, discovering the subset of possible pairwise interactions that actually influence data is an interesting goal. In our chosen applications (e.g. basketball player movements), domain expertise indicates the graph is fully-connected. Moreover, when the graph is fully connected, interaction graph approaches burdensomely require runtimes that are quadratic in the number of entities. In contrast, our approach models system-level dynamics explicitly with a more affordable runtime cost that is linear in.
+
+SECTION: 5Experiments
+
+We now demonstrate our model’s utility across several experiments. As we aim to highlight our model across two tasks - multi-step-ahead forecasting and interpretability of system dynamics - we show one of each on synthetic and real datasets. With respect to each task, we compare our model’s performance to task-specific competitive baselines. We also compare to ablations that remove either the top-down influence of system-level hidden states or bottom-up recurrent feedback from observations. Overall, we see that our compact and efficient HSRDM is able to outperform alternatives with respect to discovering hidden system dynamics and maintain similar or better prediction performance than computationally intensive neural network methods.
+
+SECTION: 5.1FigureEight: Synthetic task of forecasting coordinated 2D trajectories
+
+To illustrate the potential of ourHSRDMfor the purpose ofhigh-quality forecastingof several coordinated entities, we study a synthetic dataset we callFigureEight.
+In the true generative process (detailed in App.D.2),
+each entity switches between clockwise motion around a top loop and counter-clockwise motion around a bottom loop. The overall observed entity-level 2D spatial trajectory over time approximates the shape of an “8” as in Fig.2.
+Each entity has two true states, one for each loop, with a specific Gaussian vector autoregression process for each.
+Transition between these loop states depends on both top-down and bottom-up signals in the data-generating process.
+For top-down, a binary system-level state sets which loop is favored for all entities at the moment.
+For bottom-up, switches between loop states are only probable when the entity’s current position is near the origin, where the loops intersect.
+Though coordinated, entity trajectories are not perfectly synchronized, varying due to individual rotation speeds and initial positions.
+
+We generate data for 3 entities over 400 total timesteps. For training, we provide complete data for the first two entities (times 1-400) and partial data for the last entity (times 1-280). The prediction task of interest isentity-specific partial forecasting:
+estimate the remaining trajectory of entityfor times 281-400 (120 time steps), given partial information (timesteps 1-280) for that entity and full information (1-400) for other entities.
+The true trajectory for this heldout window is illustrated in Fig.2: we see a smooth transition over time from the top loop to the bottom loop of the "8". We wish to compare our method to competitors at estimating this heldout trajectory.
+
+Baseline selection.To show the benefits of modeling system-level dynamics, we compare to baseline methods that can produce high-quality forecasts with discrete latent variables, yet only model entity-level (not system-level) dynamics and can do partial forecasts. First, we select thedeep switching autoregressive factorization model(DSARF;(Farnoosh et al.,2021)). This model represents recent state-of-the-art forecasting performance and uses
+deep neural networks to flexibly define transition and emission structures yet still can produce discrete segmentations.
+Second, we compare to arecurrent autoregressive hidden Markov model(rAR-HMM;(Linderman et al.,2017)). This is an ablation of our method that removes our system-entity hierarchy.
+This experiment requirespartial forecastingof one entity at times 281-400 given context from other entities. Some neural net baselines likeAgentformerandGroupNetconsidered in later experiments do not easily handle such partial forecasting in released code, so we exclude them here on this task.
+
+Entity-to-system strategy.Since DSARF and rAR-HMM baselines each only model entity-level dynamics, for each one we try three differententity-to-system strategiesto convert any entity-only model to handle a system of entities.
+First, completeIndependencefits a separate model to each entity’s data only, with no information flow between entities.
+Next, completePoolingfits a single model ontotal sequences, treating each sequencefrom each entityas ani.i.d.observation.
+Finally,Concatentationmodels a multivariate time series of expanded dimensionconstructed by stacking up all entity-specific feature vectorsat each time.
+
+Method configuration.For theHSRDM, we setsystem states andentity states.
+For emission model, we pick a Gaussian autoregressive to match the true process.
+We do not use any system-level recurrenceas the true data generating process does not have this feedback. We set entity-level recurrenceto a radial basis function indicating distance from the origin. While we do not expect thisto improve training fit, we do expect it to improve forecasting, as it captures a key aspect of the true process: that switches between loops are only probable near the origin.
+
+For all baselines (DSARFandrAR-HMM), we set the number of entity states atto match the intended ground truth. TherAR-HMMuses the same emission model and entity-level recurrenceas ourHSRDM.
+
+Hyperparameter tuning.Optimal hyperparameters for each model and entity-to-system strategy are determined independently.
+ForDSARF, we tune its number of spatial factors and the lags indicating how the next timestep depends on the past.
+We don’t tune any specific hyperparameters of ourHSRDMor its ablation therAR-HMM.
+
+Training.For each tested method (where method means a model and (if needed) entity-to-system strategy), at each hyperparameter setting we train via 5 separate trials with different random seeds implying distinct initializations of parameters. This helps avoid local optima common to models with latent discrete state.DSARFis intentionally allowed more trials (10) to be sure we stress fair evaluation to external baselines.
+AllDSARFmodels were trained with 500 epochs and a learning rate of. TheHSRDMand its ablations are trained with 10 CAVI iterations. All models took similar amounts of training time on this small-sized dataset:minute per run.
+Reproducible details for all methods (including specific hyperparameters selected) are in the Appendix and released code.
+
+Forecasting.To forecast, from each trial’s fit model we draw 5 samples of the heldout trajectoryfor target entityover the time period of interest. We keep the “best” sample, meaning the sample with lowest mean squared error (MSE) compared to the true (withheld) trajectory.
+Each method can be represented by the trial and hyperparameter setting with lowest best-sample MSE, or via summary statistics across samples, trials, and hyperparameters.
+
+Results: Quantitative error.For each method, we report the best-sample MSE in Fig.2(bottom left).
+OurHSRDMoutperforms others by a wide margin, scoring a best-sample MSE less than 0.003 compared to the next-best value of 0.05 and values of 0.31 - 1.75 among others.
+To indicate reliability across forecast samples, we further report the average sample MSE from the trial that produces the best sample (with standard errors to indicate variation). This average is useful to distinguish between a trial that consistently produces quality forecasts from a trial that “gets lucky.” While therAR-HMMIndependentmodel achieves a relatively low best MSE, the average MSE across all 5 samples from that trial is much worse than our method (2.08 vs. 0.105).
+
+To understand whether average-sample MSE is consistent across trials, we also report the median across trials of the average-sample MSE. For ourHSRDM, the median-over-trials MSE is quite low (0.01), indicating that theHSRDMis typically reliable, producing lower MSE values across trials than alternatives. TheHSRDM’s best-sample trial happened to also yield one of the worst samples, which is why that trial’s average-sample MSE is higher than the median. Comparing the best column to the median column, all methods show wide gaps indicating variation in quality across trials and the need to avoid local optima by considering many random initializations.
+
+Results: Visual quality.Fig.2also shows the best sampled trajectory from each method.
+The forecast from our proposedHSRDMlooks quite similar to the true trajectory. In contrast, every competitor struggles to reproduce the truth.
+The closest competitor method is therAR-HMMwith the Independent entity-to-system strategy. The main difference lies in that model’s decision to form a larger outer circle trajectory for the bottom loop.
+
+SECTION: 5.2NBA Basketball: Real task of forecasting 2D player trajectories
+
+We next aim to evaluate theHSRDM’s forecasting capabilities on real movements of professional basketball team. Specifically, we model the 5 players of the NBA’s Cleveland Cavaliers (CLE), together with their 5 opponents, across multiple games in an open-access dataset(Linou,2016)of player positions over time recorded from CLE’s 2015-2016 championship season.
+To better evaluate the ability to model specific entities, we focused exclusively on 29 games involving one of CLE’s four most common starting lineups. We randomly assigned these games to training (20 games), validation (4 games), and test (5 games) sets.
+
+We split each game into non-overlapping basketballevent segments, typically lasting 20 seconds to 3 minutes. Event segments contain periods of uninterrupted play (e.g. shot blockrebound offenseshot made) from the raw data, ending when there is an abrupt break in player motion or a sampling interval longer than the nominal sampling rate. Each event segment gives 2D court positions over time for all 10 players, and is modeled as ani.i.d.sequence from our proposedHSRDMor competitor models. We standardized the court so that CLE’s offense always faces the same direction (left), and downsampled the data to 5 Hz.
+
+Baseline selection.We compare the forecasting performance of theHSRDMto multiple competitors.
+To exemplify neural network methods that can predict trajectories of groups directly, we selectGroupNetXu et al. (2022)andAgentformerYuan et al. (2021).
+We select these models deliberately for this task, taking into accountDSARF’s poor prediction performance on even our synthetic task, as well asGroupNetandAgentformer’s leading reputations for high-quality forecasting of multiple entitiesXu et al. (2022); Yuan et al. (2021).
+
+We further consider two ablations of our method. First, removing system-level states yields an independentrAR-HMMLinderman et al. (2017)for each player. Second, we remove recurrent feedback.
+As inYeh et al. (2019), we also try a simple but often competitivefixed velocitybaseline.
+
+Model configuration.The ground truth number of states is unknown; we pickentity states andsystem states.
+For ourHSRDMand its ablations, our emissions distribution is a Gaussian vector autoregression with entity-state-dependent parameters (see Sec.E).
+System-level recurrencereportsallplayer locationsto the system-level transition function, allowing future latent states to depend on player locations. FollowingLinderman et al. (2017), our entity-level recurrence functionreports an individual player’s locationand out-of-bounds indicators to that player’s entity-level transition function, allowing each player’s next state probability to vary over the 2D court. We use a sticky prior for system-level state transitions withand(see Sec.E.2for details).
+
+Hyperparameters.Optimal hyperparameters for each model and strategy are determined independently. ForGroupNet, we used the hyperparameters recommended byXu et al. (2022)from their own modeling of basketball. ForAgentformer, we following recommended architecture and training settings fromYuan et al. (2021), with adjustments to learning rates and number of epochs to ensure efficient convergence on our data (see App.E).
+We don’t tune any hyperparameters of ourHSRDMor its ablations, which inherit hyperparameters where applicable.
+
+Training time.We highlight that ourHSRDMis more computationally efficient for this task. Training anHSRDMon a 2023 Macbook with Apple M2 Pro chip ontraining games took 2, 15, and 45 minutes, respectively. TrainingAgentformeron an Intel Xeon Gold 6226R CPU took 1.5, 6, and 13 hours, respectively. That is,Agentformerwas 17-45 times slower to train.GroupNetsimilarly trains more slowly; on a 2023 Macbook,HSRDMtrained about 120x more quickly thanGroupNet.
+
+Model size.Our compactHSRDMhas 9,930 parameters. In contrast,GroupNethas over 3.2 million parameters (320x larger) andAgentformerhas over 6.5 million (650x larger).
+
+Evaluation procedure.We randomly select a 6 second forecasting window within each of the 75 test set events. Preceding observations in the event are taken as context, and postceding observations are discarded. We sample 20 forecasts from each method for the 5 starting players on the Cavaliers. We report the mean distance in feet from forecasts to ground truth, with the mean taken over all events, samples, players, timesteps, and dimensions. We perform paired t-tests on the per-event differences in mean distances between our model vs competitors, usingBenjamini & Hochberg (1995)’s correction for multiple comparisons over positively correlated tests. All tests were performed at the .05 significance level for two-sided tests.
+
+Results: Quantitative Error.Tab.1(a)reports the mean distance in feet from forecasts to ground truth for each method. Methods whose forecasting error are significantly better (worse) thanHSRDMaccording to the hypothesis tests are marked with a green check (red x). The standard error of the difference in means is given in parentheses. Our first key finding is thatHSRDMprovides better forecasts than ablations, supporting the utility of incorporating multi-level recurrent feedback and top-level system states into switching autoregressive models of collective behavior. Second,HSRDMprovides far better forecasts thanAgentformeror the fixed velocity baseline.GroupNetdoes provide the best overall forecasts in terms of error alone. Yet we consider our results “competitive” in that on a basketball court measuring 94x50 feet, ourforecasts are on average only one foot further off in terms of error while using a simple interpretable model that is roughly 320x smaller and 120x faster to train.
+
+Results: Qualitative forecasts.Fig.3shows sampled forecasts from our model and baselines. As a first key finding,HSRDMforecasts are qualitatively more similar toGroupNetthan the forecasts of other baselines. Second, system-level switches appear to help coordinate entities; players move in more coherent directions underHSRDMthan the no system state ablation. Third, our multi-level recurrent feedback supportslocation-dependentstate transitions; players are more likely to move to feasiblein-boundslocations underHSRDMthan without recurrence.
+
+Results: Statistical comparisons.To corroborate the above conclusions from visual inspection, we examine two statistics on the entire test set:Directional Variation, which measures incoherent movements by a basketball team via the variance across players of the movement direction on the unit circle between the first and last timesteps in the forecasting window, and% In Bounds, the mean percentage of each forecast that is in bounds. We report these statistics for theHSRDMand its ablations in Tab.1(b). Methods significantly different from theHSRDMbaseline according to hypothesis testing are marked with a red “x.” These results corroborate the intended purpose of each of our modeling contributions. Removing the system-level states significantly increases the directional variation across players, indicating lack of top-down coordination. Removing recurrence significantly reduces the percentage of forecasts that remain in bounds. (Removing system states also significantly reduces the in bounds percentage, although to a lesser extent. We suggest that greater coordination in the player movement also helps keep the players in bounds.)
+
+SECTION: 5.3MarchingBand: Synthetic task of interpreting marching band routines
+
+Beyond forecasting, we now evaluate theHSRDM’s capabilities to discover useful and interpretable discrete system dynamics in systems with many () entities. To do this, we introduce a synthetic dataset,MarchingBand, consisting of individual marching band players (“entities”) moving across a 2D field in a coordinated routine to visually form a sequence of letters. Each observation is a positionof playerat a timewithin the unit square centered at (0.5, 0.5) representing the field.
+
+By design, player movement unfolds over time governed by bothtop-downandbottom-upsignals. The team’s goal is to spell out the word "LAUGH". An overall discrete system state sends the top-down signal of which particular letter, one of "L", "A", "U", "G", or "H", the players form on the field via their coordinated movements. Each entity has an assigned vertical position on the field (when viewed from above), and moves horizontally back and forth to “fill in” the shape of the current letter. Example frames are shown in Fig.4. Each state is stable for 200 timesteps before transitioning in order to the next state.
+
+Each entity’s position over time on the unit square usually follows the current letter’s top-down prescribed movement pattern perturbed by small-scale i.i.d. zero-mean Gaussian noise. When reaching a field boundary, typically the player is reflected back in bounds. However, with some small chance, an entity will continue out-of-bounds (OOB,). When enough players go OOB, this bottom-up signal triggers the current system state immediately to a special “come together and reset” state, denoted "C". For clarity, note that this reset state does not spell the letter "C", but imposes that all entities
+cluster around the center of the field.
+When in state “C”, all players move to the center for the next 50 timesteps, then return to repeat the most recent letter before continuing on to remaining letters.
+
+Altogether, we build a dataset ofindependently sampled sequences of "LAUGH" each withmarching band players. Each sequence contains a different number of time-steps, ranging from 1000 to 1100, depending on how many reset states "C" occur.
+To trigger state “C”, use a threshold of 11 players OOB as this generates a moderate number of 6 cluster states widely distributed across the sequences. Our released code includes the ability to generate other instances ofMarchingBanddata as a testbed for future research.
+
+Research Goal.We seek to understand whether our proposed model or competitors can discover the overall discrete system-level dynamics, as measured by the quality of discrete segmentation. Note that the true data-generating process, while similar to theHSRDMin using top-down and bottom-up signals, is not strictly anHSRDMgenerative model because each state has fixed duration. Thus, all methods are somewhat misspecified here.
+
+Baseline selection.We focus on methods that can produce an estimated discrete segmentation at the system-level. Using this criteria, our primary external competitor isDSARF(Farnoosh et al.,2021).
+NeitherGroupNetnorAgentformeris capable of producing a segmentation or helping its users interpret discrete system states.
+
+Additionally, we compare to two ablations of our method: removing the system-level state (leaving anrAR-HMM) and removing the recurrent feedback (leaving a multi-level HMM). For bothDSARFandrAR-HMM, we obtain system-level segmentations in two steps. First, we use theIndependentstrategy from Sec.5.1to obtain entity-level segmentations. Next, for each timestep we concatenate the one-hot indicator vectors of each entity to form a longer vector of size. These per-time learned features are then clustered via k-means to obtain a system-level segmentation. Using the this concatenated construction, k-means cost function should favor clustering timesteps where many entity states match at the individual level.
+
+Model configuration.For all methods, we fairly provide knowledge of the true number of system states,. Otherwise, evaluation of discovered system states becomes complicated.
+Models with system states (HSRDMand its recurrent ablation) havesystem states andentity states. Models with only entity-level states (DSARFandrAR-HMM) are fit withentity states, imagining one state per letter, followed by k-means to discover 6 system-level states. ForHSRDM, we set system-level recurrenceto count the number of entities out of bounds.
+ForHSRDMandrAR-HMM, we set entity-level recurrenceto the identity function.
+The emission model is set to a Gaussian Autoregressive.
+
+Hyperparameter tuning.ForDSARF, we again select the number of spatial factors and the lags, via grid search (see AppendixF.2). Ultimately, we select 25 spatial factors and the set of lags, suggesting long-range dependency is useful to compensate for lack of recurrence.
+For ourHSRDMand ablations, no specific hyperparameter search was done.
+Methods were trained with similar epochs/iterations as theFigureEightdata, with reasonable convergence verified by trace plots.
+To avoid local optima, for each method we take the best trial (in terms of segmentation accuracy) of 5 possible seeds controlling initialization.
+
+Results: segmentation quality.Fig.4allows visual comparison of the ground truth system-level segmentation and the estimated segmentations from various methods.
+Estimated states are aligned to truth by minimizing classification accuracy (Hamming distance of one-hot indicators) via the Munkres algorithmMunkres (1957).
+The visualized segmentations depict each model’s best classification accuracy over multiple training trials with different random initializations.DSARFwas given 10 chances and all others 5 in an attempt to provideDSARFwith a more-than-fair chance.
+As reported in Tab.2, ourHSRDMobtainsaccuracy overall, with clear recover of each of the 6 states in visuals. In contrast, other methods struggle, deliveringaccuracy and notably worse segmentations in Fig.4. Even with respect to median accuracy across trials (also in Tab.2), theHSRDMoutperforms its competitors. Inspecting  Fig.4, theHSRDMrecovers each true state most of the time, while the no recurrence ablation, which achieves higher segementation accuracy than other competitors, still completely misses capturing the “U” system-level state across examples. This experiment highlights theHSRDMas a natural model to recover hidden system dynamics when many individuals influence collective behavior.
+
+SECTION: 5.4Soldier Training: Real task of interpreting risk mitigation strategies
+
+For our final experiment, we model a training exercise of a squad of active-duty soldiers in a NATO-affiliated army. Our goal is to demonstrate theHSRDM’s capability to reveal useful and interpretable group dynamics in a real application.
+
+In this training exercise, the squad’s task is to maintain visual security of their entire perimeter while simulated enemy fire comes primarily from the south. Focus on the south creates a potential blindside to the north. If this blindside is left unchecked for a sufficiently long time, this leaves the squad vulnerable to a blindside attack.
+The squad was instructed that mitigating overall risk with visual security as a key sub-task among several overall goals. As a way to mitigate risk, the squad should plan to have at least one soldier briefly turn their head to the north to regain visibility and reduce vulnerability to a blindside attack. Strong performance at this sub-task requires coordination across all soldiers in the squad. The aim is to utilize theHSRDMto interpret the soldiers’ risk mitigation strategy with respect to checking their blindside as they complete the overall task.
+
+The data consists of univariate time series of heading direction anglesrecorded at 130 Hz from each soldier’s helmet inertial measurement unit (IMU), downsampled to 6.5 Hz to reduce autocorrelations. We have one 12 minute recording of one squad of 8 soldiers. Raw data from the first minute of contact is illustrated in Fig.5. Due to privacy concerns, data is not shareable.
+
+This study was approved by the U.S. Army Combat Capabilities Development Command Armaments Center Institutional Review Board and the Army Human Research Protections Office (Protocol #18-003).
+
+Model configuration.OurHSRDMcaptures the risk mitigation strategies of the group by setting the system-level recurrence functionto the normalized elapsed time since any one of thesoldiers looked within the north quadrant of the circle. No entity-level recurrencewas included.
+Soldier headings must remain on the unit circle throughout time, so we use aVon Mises autoregressionas the emission modelfor the-th state of the-th soldier:
+
+The Von Mises distributionBanerjee et al. (2005); Fisher & Lee (1994), denoted, is a exponential family distribution over angles on the unit circle, governed by meanand concentration.
+Here,is an autoregressive coefficient,is a drift term, andis a concentration for entityin state.
+
+We set the number of entity- and system-l level states toand, based on a quick exploratory analysis. We use a sticky Dirichlet prior for system-level transitions, as in EquationB.2, withand, so that the prior would put most of its probability mass on self-transition probabilities between .90 and .99.
+
+Training.We applied the CAVI inference method from Sec.3, using 10 iterations.
+
+Results.Fig.5visualizes several key results. Inspection of the inferred system-level states, entity-level states, and learned transition probabilities suggests that the model learns a special risk mitigation strategy for Soldier 6. More specifically, the model learns that there is a turn north state (blue) for Soldier 6 that is particularly probable when the entire squad reaches the red state of high elapsed time since any blindside check.
+
+SECTION: 6Discussion & Conclusion
+
+We have introduced a cost-efficient family of models for capturing the dynamics of individual entities evolving in coordinated fashion within a shared environment over the same time period. These models admit efficient structured variational inference in which coordinate ascent can alternate between E-step dynamic programming routines similar to classic forward-backward recursions to infer hidden state posteriors at both system- and entity-levels and M-step updates to transition and emission parameters that also use closed-form updates when possible. Across several datasets, we have shown our approach represents a natural way to capture both top-down system-to-entity and bottom-up entity-to-system coordination while keeping costs linear in the number of entities.
+
+Limitations.Several coordinate ascent steps in any per-entityrAR-HMMwith Gaussian emissions scale quadratically in, so scaling beyond a few dozen features presents a challenge.
+Furthermore, the parametric forms of both transitions and emissions in our model allow tractability but clearly limit expressivity compared to deep probabilistic models that integrate non-linear neural nets(Krishnan et al.,2017).
+Scaling to many more entities would require extensions of our structured VI to process minibatches of entities(Hoffman et al.,2013). Scaling to much longer sequences might require processing randomly sampled windows(Foti et al.,2014).
+
+Future directions.For some applied tasks, it may be promising to extend our two-level system-entity hierarchy to even more levels (e.g. to represent nested structures of platoons, squads, and individual soldiers all pursing the same mission). Additionally, we could extend fromrARHMMsto switching linear dynamical systems by adding an additional latent continuous variable sequence between discretesand observationsin the graphical model. Lastly, we can add selective and adaptive recurrence functions for modeling entity interactions where current observations influence the type of signal that would be useful feedback for the hidden states.
+
+SECTION: Acknowledgments
+
+This research was sponsored by the U.S. Army DEVCOM Soldier Center, and was accomplished under Cooperative Agreement Number W911QY-19-2-0003. The views and conclusions contained in this document are those of the authors and should not be interpreted as representing the official policies, either expressed or implied, of the U.S. Army DEVCOM Soldier Center, or the U.S. Government. The U. S. Government is authorized to reproduce and distribute reprints for Government purposes notwithstanding any copyright notation hereon.
+
+SECTION: References
+
+SECTION: Code
+
+Source code for running our proposedHSRDMand reproducing experiments in this paper can be found athttps://github.com/tufts-ml/team-dynamics-time-series/
+
+SECTION: Appendix AARHMM Method Details
+
+As detailed below in Sec.A.1, a recurrent autoregressive Hidden Markov Model (rAR-HMM) generalizes a standard Hidden Markov Model by adding autoregressive and recurrent edges to the probabilistic graphical model. AlthoughrAR-HMMmodels have been previously proposed in the literatureLinderman et al. (2017), we do not know of any explicit proposition (or justification) describing how to perform posterior state inference for these models. The literature provides such a proposition for (non-recurrent) autoregressive Hidden Markov Model (ARHMMs; e.g., seeHamilton (2020)), but not forrARHMMs. Hence, we provide the missing propositions with proofs here; see Props.A.2.1andA.2.2. We believe that these explicit propositions can be useful when composing recurrence into more complicated constructions. Indeed, we use them throughout the supplement in order to derive inference for ourHSRDMs; for example, see the VES step in Sec.B.2or the VEZ step in Sec.B.3. In fact, we also utilize the proofs of these propositions when describing how to perform inference withHSRDMswhen the dataset is partitioned into multiple examples; see Sec.B.7.
+
+SECTION: A.1Model
+
+The complete data likelihood for a-order recurrent AR-HMM (rAR-HMM) is given by Radon-Nikodỳm density
+
+whereare the observations,are the discrete latent states, andare the parameters. TherAR-HMMgeneralizes the standard HMMRabiner (1989), which contains neither autoregressive emissions (blue) nor recurrent feedback (red) from emissions to states. The-orderrAR-HMMgives a-order autoregressive HMM (ARHMM) in the special case where
+
+See Fig.A.1for a probabilistic graphical model representation in the special case of first-order recurrence () and autoregression ().
+
+(On generalizing aHMMwith autoregressive emissions and recurrent state transitions.) Let us highlight how arAR-HMMmodel generalizes a conventionalHMM:
+
+Recurrence: A lookback window ofprevious observationscan influence thetransitionsstructure for the current state.
+
+Autoregression: A lookback window ofprevious observationscan influence theemissionsstructure for the current observation.
+
+Note in particular that each node (observationor state) can havemanyparents among previous observation variables, but onlyoneparent among state variables(namely, the closest in time from the present or past).††What if we wanted to relax the specification so that the emissions could depend on a finite numberof previous states? This situation can be handled by simply redefining the states in terms of tuples, such thattakes onpossible values, one for each sequence in the look-back window(Hamilton,2010, pp.8).This assumption will be important when deriving the smoother in Sec.A.2.
+
+SECTION: A.2State Estimation
+
+Here we discuss state estimation for therAR-HMM. We begin with some notation.
+
+Given a sequence of observations up to some time, we can define the conditional probability of the stateat a target timevia the probability vector. The-th element of this vector is given by. That is,
+
+Using this notation, we can define three common inferential tasks:
+
+Filtering.Infer the current state given observations
+
+Smoothing.Infer a past state given observations, where.
+
+Prediction.Predict a future state given observations,, where.
+
+Now we can give Props.A.2.1andA.2.2, which parallel
+the presentation of the Kalman filter and smoother in the context of state space modelsShumway et al. (2000); Hamilton (2020). In particular, we will present the forward algorithm in terms of ameasurement update(which uses the observationto transforminto) and atime update(which transformsinto, without requiring an observation). These propositions show thatfilteringandsmoothingcan be done using the same recursions as used in a classical HMMHamilton (1994), except that the variable interpretations differ for both the emissions step and transition step. In the statements and proofs below, we continue to use the same color scheme as was used in EquationA.1and Fig.A.1, whereby blue designates autoregressive edges and red designates recurrence edges in the graphical model. These colors highlight differences from classic HMMs, which lack both types of edges.
+
+(Filtering a Recurrent Autoregressive HMM.)Filtered probabilitiesfor a Recurrent Autoregressive Hidden Markov Model can be obtained by recursively updating some initializationby
+
+Measurement update.
+
+Time update.
+
+where hereis thevector whose-th element is the emissions density,represents thetransition matrix whose-th element is,represents avector of 1s, and the symboldenotes element-by-element multiplication.
+
+a
+
+Measurement update.
+
+Time update.
+
+∎
+
+(Initializing the filtering algorithm in Prop.A.2.1.)
+Inspired byHamilton (1994, pp.693), we provide some suggestions for initializing the filtering algorithm of PropA.2.1. In particular, we can setto
+
+Any reasonable probability vector, such as the uniform distribution.
+
+The maximum likelihood estimate.
+
+The steady state transition probabilities, if they exist.
+
+(Smoothing a Recurrent Autoregressive Hidden Markov Model.)Smoothed probabilitiesfor a Hidden Markov Model can be obtained by the recursion
+
+where the formula is initialized by(obtained from the filtering algorithm of Prop.A.2.1) and is then iterated backwards for, in a step analogous to the backward pass of the classic forward-backward recursions for plain HMMs(Rabiner,1989).
+Here,represents thetransition matrix whose-th element is, the symboldenotes element-wise multiplication, and the symboldenotes element-wise division.
+
+We proceed in steps:
+
+Step 1We show. That is, the current statedepends on future observationsonly through the next state.
+
+Step 1aWe show.
+
+In the last line, the two canceled terms are equal by FPOBN (the Fundamental Property of Bayes Networks).††The Fundamental Property of Bayes Networks is:A node is independent of its non-descendants given its parents.In particular, sinceis a non-descendent of, it is independent ofgiven its parentsand.
+
+Step 1bWe show.
+By the same argument as in step 1a (splitting up the sequence, conditional density, chain rule), but replacing
+
+the proposition holds if
+
+that is if we get the same cancelation. And we see
+
+ConclusionThe claim follows from Steps 1a and 1b by an induction argument.
+
+We show that.
+We have
+
+Step 3.We prove the proposition.
+
+∎
+
+As we saw in Step 1, the derivation of the smoother in Prop.A.2.2relies on the fact that while each node (observation or state) can havemanyobservation parents, it can have onlyonestate parent (namely, the closest in time from the present or past).
+
+The filtering (PropA.2.1) and smoothing (PropA.2.2) formulae reveal that state estimation forrAR-HMMcan be handled for :
+
+any orderof recurrence and/or autoregression††In fact, the proof reveals that the order can increase with timestep, opening the door to constructions involving exponential weighted moving averages.
+
+any functional formof emissions and transitions
+
+Furthermore, although it was not explicitly represented here, the same formulae hold when there are
+
+Modulation of transitions and emissions byexogenous covariates.††A sequence of vectorsis considered to be a sequence of exogenous covariates if eachcontains no information aboutthat is not contained in(Hamilton,1994, pp.692).
+
+SECTION: Appendix BHRSDM Method Details
+
+We now review modeling and inference details for our proposedHSRDM, in the following sections
+
+SECTION: B.1Priors on model parameters
+
+The symboldenotes all model parameters for ourHSRDM. Using the structure of our model in Equation2.1, we can expandinto constituent components:,
+whereare the parameters that govern the system-level discrete state transitions,govern the entity-level discrete state transitions,govern the entity-level emissions, andgovern the initial distribution for states and regimes.
+
+We define a prior overwhose factorization structure reflects this decomposition:
+
+As we see in Sec.B.4, this choice of prior simplifies the M-step.
+
+Prior on system-level state transition parameters.For the system-level transition probability matrix, amatrix whose entries are all non-negative and rows sum to one, we assume a sticky Dirichlet prior(Fox et al.,2011)to encourage self-transitions so that in typical samples, one system state would persist for long segments. Concretely, for each row we set
+
+where allentries have a symmetric base value1.0, and the added valuethat impacts the self-transition entry (the-th entry of the matrix) is set to 10.0. We then set the log transition probabilityto the element-wise log of.
+
+Prior on entity-level state transition parameters.In our experiments, we used a non-informative prior,. The use of a sticky Dirichlet prior, as was used with the system-level transition parameters, could be expected to produce smoother entity-level state segmentations. Currently, the entity-level segmentations are choppier than those at the system-level (e.g., compare the bottom-left and top-right subplots of Fig.5).
+
+Prior on emissions.In our experiments, we used a non-informative prior,.
+
+Prior on initial states and observations. For initial states at both system and entity level, we use a symmetric Dirichlet with large concentration so that all states have reasonable probability a-priori. This avoids the pathology of ML estimation that locks into only one state as a possible initial state early in inference due to poor initialization.
+
+SECTION: B.2Updating the posterior over system-level states
+
+In this section, we discuss the update to the posterior over system-level states; that is, the variational E-S step of Equation3.2. We find
+
+This can be considered as the posterior of an input-output Hidden Markov Model withindependent autoregressive categorical emissions. The evaluation of the transition function is, whereis the dimension of the system-level covariates, and where we have assumed that the evaluation of the system-level recurrence functiontakesoperations, as it would if. The evaluation of the emissions function is, whereis the dimension of the entity-level covariates, and where we have assumed that the evaluation of the entity-level recurrence functiontakesoperations, as it would if. Thus, by Props.A.2.1andA.2.2, filtering and smoothing can be computed withruntime complexity, under mild assumptions on the recurrence functions. As a result, so can the computation of the unary and adjacent pairwise marginals necessary for the VES and M steps.
+
+SECTION: B.3Updating the posterior over entity-level states
+
+In this section, we discuss the update to the posterior over entity-level states; that is, the variational E-Z step of Equation3.2. We obtain
+
+where we have definedto denote all timesteps after accounting for the zero-indexing. This variational factor can be considered as posterior ofconditionally independent Hidden Markov Models with autoregressive categorical emissions which recurrently feedback into the transitions. As per Sec.B.2, the transition function can be evaluated withruntime complexity, whereis the dimension of the entity-level covariates, and where we have assumed that the evaluation of the entity-level recurrence functiontakesoperations, as it would if. The evaluation of the emissions function is, assuming that the emissions distribution has a density that can be evaluated withoperations at each timestep. Thus, by Props.A.2.1andA.2.2, filtering and smoothing can be computed withruntime complexity, under mild assumptions on the entity-level recurrence function and the emissions distribution. As a result, so can the computation of the unary and adjacent pairwise marginals necessary for the VEZ and M steps.
+
+SECTION: B.4Updating the parameters
+
+The M-step updates the transition parameters and emission parametersof ourHSRDMgiven recent estimates of state-level posteriorand entity-level posteriors.
+
+This update requires solving the following optimization problem
+
+Based on the structure of the model in Equation2.1, we can decompose this into separate optimization problems over the different model piecesby assuming an appropriately factorized prior, as was done in EquationB.1.
+
+To be concrete, for aHSRDMwith transitions given by Equation2.2and Gaussian vector autoregressive (Gaussian VAR) emissions
+
+as used in Secs.5.1and5.2we have
+
+Using this grouping of the parameters along with the complete data likelihood specification of Equation2.1and the prior assumption in EquationB.1, we can decompose the objective as
+
+We can then complete the optimization by separately performing M-steps for each of the subcomponents of. For example, to optimize the parameters governing the entity-level discrete state transitionsfor each entity, we only need to optimize
+
+In particular, we do not require the variational posterior over the full entity-level discrete state sequence, but merely the pairwise marginals, obtainable from the VEZ step in Equation3.2. Similarly, we do not require the variational posterior over the full system-level discrete state sequence, but merely the unary marginals, obtainable from the VES step in Equation3.2.
+
+The other components ofare optimized similarly. In general, the optimization can be performed by gradient descent (e.g. using JAX for automatic differentiation(Bradbury et al.,2018)), although it can be useful to bring in closed-form solutions for the M substeps in certain special cases. For instance, when Gaussian VAR emissions are used as in EquationB.6, the entity emission parameterscan be estimated with closed-form updates using the sample weightsavailable from the VEZ-step.
+
+SECTION: B.5Variational lower bound
+
+A lower bound on the marginal log likelihood, is given by
+
+The energy termis identical to the relevant term in the objective function for the M-step given in EquationB.5. Based on the structure of the model assumed in Equation2.1, the energy term decomposes into separate pieces for initialization, system transitions, entity transitions, and emissions. For example, see EquationB.7for the piece relevant to entity transitions.
+
+Now we consider computation of the entropyin EquationB.8. Since the variational factorsandgiven respectively by the VES step in Sec.B.2and the VEZ step in Sec.B.3both have the form ofrARHMMs, we can compute the entropy, using for each individual term the entropy for HMMs provided in Eq. 12 ofHughes et al. (2015).
+
+SECTION: B.6Smart initialization
+
+We can construct a “smart" (or data-informed) initialization of aHSRDMvia the following two-stage procedure:
+
+We fitbottom-levelrARHMMs, one for each of theentities. In particular, the emissions for each bottom-levelrAR-HMMare the emissions of the fullHSRDMgiven in Equation2.3, and the transitions are the entity-level transitions given in Equation2.2b.
+
+We fit onetop-levelARHMM. Here, theemissions are the entity-level transitions given in Equation2.2b. The transitions are the system-level transitions given in Equation2.2a. The observations are taken to be the most-likely entity-level states as inferred by the bottom-levelrARHMMs.
+
+Below we give details on these initializations. In particular, both the bottom-level and top-level modelsthemselvesneed initializations. We use the termpre-initializationto refer to the initializations of those models.
+
+Here we fitbottom-levelrARHMMs, one for each of theentities, independently. In particular, the emissions for each bottom-levelrAR-HMMare the emissions of the fullHSRDMgiven in Equation2.3, and the transitions are the entity-level transitions given in Equation2.2b.
+
+Thebottom-levelrARHMMsthemselvesneed good (data-informed) initializations. As an example, we describe the pre-initialization procedure in the particular case of Gaussian VAR emissions, as given in EquationB.6. In particular, we focus on a strategy for pre-initializing these emission parameters, since the higher-level parameters in the model can be learned via the two-stage initialization procedure.
+
+In particular, for each,
+
+We assign the observationsto one ofstates by applying the-means algorithm to either the observations themselves or to their velocities (discrete derivatives), depending upon user specification. We use the former choice in the FigureEight data, and the latter choice for basketball data.
+
+We then initialize the parameters by running separate vector autoregressions within each of theclusters. In particular, for each state,
+
+We find state-specific observation matrixand biasesby applying a (multi-outcome) linear regression to predictfrom thewheneverbelongs to the-th cluster.
+
+We estimate the regime-specific covariance matricesfrom the residuals of the above vector autoregresssion.
+
+We initialize the entity-level transition parametersto represent a sticky transition probability matrix. This implies that we initializefor all.
+
+After pre-initialization, we estimate theindependentrARHMMsby using the expectation maximization algorithm. Posterior state inference (i.e. the E-step) for this procedure is justified in Sec.LABEL:sec:appendix_ARHMM. Note that the posterior state inference for these bottom-levelrARHMMscan be obtained by reusing the VEZ step of EquationB.4by setting the number of system states to.
+
+Here we fit atop-levelARHMM. In particular, the emissions for theARHMMare the entity-level transitions of theHSRDMgiven in Equation2.2b, and the transitions of theARHMMare the system-level transitions given in Equation2.2a. We can perform posterior state inference for the top-levelARHMMby reusing the VES step of EquationB.3with inputs being the posterior state beliefs onfrom the bottom-levelrARHMMs.
+
+SECTION: B.7Multiple Examples
+
+In some datasets, we may observe the sameentities over several distinct intervals of synchronous interaction. We call each separate interval of contiguous interaction an “example”. For example, the raw basketball dataset from Sec.5.2is organized as a collection of separate plays, where each play is one separate example. Between the end of one play and the beginning of the next, the players might have changed positions entirely, perhaps even having gone to the locker room and back for halftime.
+
+Letbe the number of examples.
+Each example, indexed by, starts at some reference timeand hastotal timesteps, covering the time sequence.
+We’ll model each per-example observation sequenceas an iid observation from ourHSRDMmodel.
+
+To efficiently represent such data, we can stack the observed sequences for each example on top of one another. This yields a total observation sequencethat covers all timesteps across all examples, defining.
+This representation doesn’t waste any storage on unobserved intervals between examples, easily accommodates examples of arbitrarily different lengths, and integrates well with modern vectorized array libraries in our Python implementation.
+As before in the single example case, our computational representation ofis as a 3-d array with dimensionality.
+
+For properly handling this compact representation, bookkeeping is needed to track where one example sequence ends and another begins. We thus track the ending indices of each example in this stacked representation:, where, and whereis the last valid timestep observed in the-th example for.
+
+By inspecting the inference updates gives above, including the filtering and smoothing updates forrAR-HMM(see Props.A.2.1andA.2.2), we find that we can handle this situation as follows:
+
+E-steps (VEZ or VES): Whenever we get to a cross-example boundary, we replace the usual transition function with an initial state distribution. More concretely, the transition function for the VES step in EquationB.3is modified so that any timestepthat represents the start of a new example sequence (that is, satisfies) is replaced with, and the transition function for the VEZ step in EquationB.4at such timesteps is replaced with. Similarly, the emissions functions at such timesteps are replaced with the initial emissions. This maneuver can be justified by noting that for any timestepdesignating the onset of a new example, the initial state distributions play the role ofand the initial emissions play the role ofin Props.A.2.1andA.2.2.
+
+M-steps: Due to the model structure, the objective functionfor the M-step can be expressed as a sum over timestep-specific quanities; for example, see EquationB.7. Thus, in the case of multiple examples, we simply adjust the set of timesteps over which we sum in the objective functions relative to each M substep. We update the entity emissions parametersby altering the objective to sum over timesteps thataren’tat the beginning of an example (so we sum over timestepswhere). We update the system state parametersand entity state parametersby altering the objectives to sum only over timesteps that haven’t straddled an example transition boundary. That is, we want to ignore any pair of timestepswhere, so we again sum only over timestepswhere. Finally, we update the initialization parametersby altering the objective to sum over all timesteps thatareat the beginning of an example.
+
+SECTION: Appendix CForecasting Methodology Details
+
+Here we detail how we assess model fit (Sec.C.1) and compute forecasts (Sec.C.2). The primary difference between fitting and forecasting is that only the former has access to observations from evaluated entities over a time interval of interest. Hence, a good fit is more easily attained. A good forecast requires predictions of the discrete latent state dynamics without access to future observations, whereas fitting can use the future observations to infer the discrete latent state dynamics. However, model fit is still useful to investigate; for instance, it can be useful to determine if piecewise linear dynamics (including the choice of, the number of per-entity states) provide a good model for a given dataset.
+
+SECTION: C.1Model fit
+
+To compute the fit of the model to, the-th entity’s observed time series over some slice of integer-valued timepoints, we initialize
+
+The resulting sequencegives the variational posterior mean for the-th entity’s observed time series over timepoints.
+
+SECTION: C.2Partial forecasting
+
+By partial forecasting, we mean predicting, the observed time series from someto-be-forecasted entities(with indices) over some forecasting horizon of integer-valued timepoints, given observationsfrom thecontextual entitiesover that same forecasting horizon, as well as observations from all entities over earlier time slices.
+
+To instantiate partial forecasting, we must first adjust inference, and then perform a forward simulation.
+
+Inference adjustment.The VEZ step (Sec.B.3) is adjusted so that the variational factors on the entity-level states over the forecasting horizonare computed only for the contextual entities. Likewise, the VES step (Sec.B.2) is adjusted so that the variational factor on the system-level states over the forecasting horizonis computed from the observationsand estimated entity-level statesonly from the contextual entities. As a result, the M-step on the system-level parametersautomatically exclude information from the to-be-forecasted entitiesover the forecasting horizon.
+
+Forward simulation.Using the adjusted inference procedure from Step 1, we can use the Viterbi algorithm (or some other procedure) to obtain estimated system-statesthat do not depend on information from the to-be-forecasted entitiesover the forecasting horizon. We then make forecasts by forward simulating. In particular, for timein, we sample
+
+for all to-be-forecasted entities.
+
+Note in particular that the dependence of EquationC.2uponallows our predictions about to-be-forecasted entitiesto depend upon observations from the contextual entitiesover the forecasting horizon.
+
+SECTION: Appendix DFigureEight : Experiment Details, Settings and Results
+
+SECTION: D.1Data generating process
+
+(FigureEight.) Consider a model where we directly observe continuous observations, and where eachlives in the plane (i.e.). We form “Figure Eights" by having the observed dynamics rotate around an “upper circle"with unit radius and centerand a “lower circle"with unit radius and center. Entities tend to persistently rotate around one of these circles; however, when the observation approaches the intersection of the two circles, recurrent feedback can shift the entity’s dynamics into a new state (the other circle). These shifts occur only when the system-level state has changed; these shifts are not predictable from the entity-level time series alone.
+In particular, we have
+
+System-level state transitions.We take the number of system states to be. We set the system state chainthrough a deterministic processwhich alternates states every 100 timesteps. We emphasize that in thetruedata-generating process, there is no recurrent feedback from observationsto system states.
+
+Entity-level state transitions.We set entity-specific baseline transition preferences to be highly sticky,, whereis close to 1.0 (concretely,).
+By design, these preferences can be overridden when an entity travels near the origin.
+We choose the recurrence transformationto be the radial basis function, which returns a large value when the observationis close to the origin.
+Similarly, we set the weight vector for these recurrent features to nudge observations near the origin to the system-preferred state.
+We setso entryif the entity-level stateis preferred by the system-level state, andotherwise, with. Concretely, We setand.
+
+Emissions.To construct the entity-level emission distributions for each state (indexed by), we chooseto be a rotation matrix with anglefor all entity-level states, whereis the entity-specific periodicity anddetermines the rotation direction. We may use a rotation matrixto rotate the observation around a center, by constructing dynamics of the form; therefore, to construct circle centers that are specific to entity-level states using EquationD.1c, we setfor all entitiesand all entity-level states.
+We set each of the observation noise covariance matricesto be diagonal, with diagonal entries equal to 0.0001.
+
+We simulate data from theFigureEightmodel (Example1), where there areentities, each withobservations, where the periodicities for each entity are given by.
+
+SECTION: D.2Models and Hyperparameter Tuning
+
+We fit ourHSRDMwith transitions given in Equation2.2and Gaussian vector autoregressive emissions as in EquationB.6. We set. We set the entity-level recurrenceto a Gaussian radial basis function and no system-level recurrence. We use a sticky Dirichlet prior on system-level transition parameters (and). For ’smart’ initialization, the bottom-half of the model is trained for 5 iterations while the top-half is trained for 20 iterations. For the K-Means algorithm, the random state is set to seed 120. The model is then trained for 10 CAVI iterations with 50 iterations per M-Step. We don’t tune any specific hyperparameters of our HSRDM. The model is run across 5 independent initializations (initialization seeds 120-124). Five forecasting samples are generated per trial (sample seeds 120-124). The optimal MSE across all initialization trials and forecasting samples is recorded. The average MSE for the trial containing the best sample is taken across all samples to demonstrate diversity in sample generation.
+
+A collection ofrAR-HMMmodels can be fit as a special case of aHSRDMmodel where the number of system states is taken to be. We train three rAR-HMM models with separate strategies: (“Indep.”, “Pool”, and “Concat.”). For ’smart’ initialization, the bottom-half of the models are trained for 5 iterations while the top-halves are trained for 20 iterations. For the K-Means algorithm, the random state is set to seed 120. The models are then trained for 10 CAVI iterations with 50 iterations per M-Step. We don’t tune any specific hyperparameters of the rAR-HMM. The models are run across 5 independent initializations (seeds 120-124). Five forecasting samples are generated per trial (sample seeds 120-124). The optimal MSE across all initialization trials and forecasting samples is recorded for each model. The average MSE for the trial containing the best sample is taken across all samples from that trial to demonstrate diversity in sample generation.
+
+We train the Deep Switching Autoregressive Factorization modelFarnoosh et al. (2021)with several different parameters. We train with several different choices of lags () and spatial factors (), where the number of discrete states () is fixed to match our data-generation. For each strategy (“Indep.”, “Pool”, and “Concat.”), we conduct a grid search across combinations ofand, specifically forand. The hyperparameters that produce the optimal MSE value are selected for further experimentation. DSARFIndep.is optimal with spacial factorsand lags:; DSARFPoolis optimal with; and DSARFConcat.is optimal with.
+
+Once hyperparameters are selected, each model (and strategy) is trained with 500 epochs and a learning rate of 0.01, across 10 independent random seeds (seeds 120-129) representing different initializations and forecasts. Two seeds produce clear outlier results (one inIndep.and one inConcat.) from very poor initializations and were excluded from the average results in Fig.LABEL:fig:figure8_forecasts, as they would have drastically shifted the mean (in a direction that demonstrates worse perofrmance for the model). Post training for each model, we use the learned parameters to draw long-term forecasts.
+
+SECTION: Appendix EBasketball : Experiment Details, Settings and Results
+
+SECTION: E.1Dataset
+
+We obtain NBA basketball player location data for 636 games within the 2015-2016 NBA season from a publicly available repo(Linou,2016). Each sample provides the quarter of the game, number of seconds left in quarter, time on shot clock, (x,y,z) location of ball, and the (x,y) locations and IDs for the 10 players on the court. The court is represented as the rectanglein the space of squared feet.
+
+We focus on modeling the dynamics in games involving the Cleveland Cavaliers (CLE), the 2015-2016 NBA champions. In particular, out of 40 available games containing CLE, we investigate the 31 games containing one of the four most common starting lineups: 1.K. Irving - L. James - K. Love - J. Smith - T. Thompson; 2.K. Irving - L. James - K. Love - T. Mozgov - J. Smith; 3.L. James - K. Love - T. Mozgov - J. Smith - M. Williams; 4.M. Dellavedova - L. James - K. Love - T. Mozgov - J. Smith. Two games had data errors (lack of tracking or event data), which left a total ofgames for analysis.
+
+The raw data is sampled at 25 Hz. FollowingAlcorn & Nguyen (2021), we downsample to 5 Hz.
+
+The raw basketball dataset is represented in terms of separateplays(e.g.shot block, rebound offense, shot made).
+FollowingAlcorn & Nguyen (2021), we preprocess the dataset so that these plays are non-overlapping in duration.
+We also remove plays that do not contain one of CLE’s four most common starting lineups. For the purpose of unsupervised time series modeling, we then convert the plays into coarser-grained observational units.
+Although plays are useful for the classification task pursued byAlcorn & Nguyen (2021), play boundaries needn’t correspond to abrupt transitions in player locations. For example, the player coordinates are essentially continuous throughoutshot block -> rebound offense -> shot madesequence mentioned above. Hence, we concatenate consecutive plays from the raw dataset until there is an abrupt break in player motion and/or a sampling interval longer than the nominal sampling rate. These observational units are calledeventsin the main body of the paper (Sec.5.2). Functionally, these observational units serve asexamples(Sec.B.7). That is, when training models, each example is treated as ani.i.d.sample from the assumed model. For the remainder of the Appendix, we refer to these observational units as examples.
+
+By construction, examples have a longer timescale than the plays in the original dataset. Examples typically last between 20 seconds and 3 minutes. For comparison, arebound offenseplay takes a fraction of a second.
+
+At the implementational level, we infer an example boundary whenever at least one condition below is met in a sequence of observations:
+
+The wall clock difference between timesteps is larger than 1.2 times the nominal sampling rate.
+
+The player’s step size on the court (given by the discrete derivative between two timesteps) is abnormally large with respect to either the court’s length or width, where abnormally large is defined as having an absolute z-score larger than 4.0.
+
+The location of a team’s own basket changes at half time. This can switch can alter the dynamics on the court. We would like to control for the direction of movement towards the offensive and defensive baskets, as well as for player handedness. To control for this, we assume that the focal team (CLE)’s scoring basket is always on the left side of the court. When it is not, we rotate the court 180 degrees around the center of the basketball court. (Equivalently, we negate both the x and y coordinates with respect to the center of the court.) Since the basketball court has a width of 94 feet and a length of 50 feet, its center is located atwhen orienting the width horizontally. We prefer this normalization strategy to the random rotations strategy ofAlcorn & Nguyen (2021), because the normalization strategy allows us to learn different dynamics for offense (movement to the left) and defense (movement to the right).
+
+Each sample from our dataset gives the coordinates on the court of 10 players. Here we describe how we map the players to entity indices. Recall that we only model the plays that consist of starters from a focal team, CLE. We assign indices 0-4 to represent CLE starters, and indices 5-9 to represent opponents.
+
+Index assignment for CLE is relatively straightforward. Although we model plays from thegames involving four different starting lineups, we can consistently interpret the indices as0: Lebron James, 1: Kevin Love, 2: J.R. Smith, 3: Starting Center, 4: Starting Guard. Depending on the game, the starting center was either T. Mazgov or T. Thompson. Similarly, the starting guard was either K. Irving, M. Williams, or M. Dellavedova.
+
+Index assignment for the opponents is more involved. The opponent teams can vary from game to game, and even a fixed team substitutes players throughout a game. There are numerous mechanisms for assigning indices in the face of suchplayer substitutionsRaabe et al. (2023). Although role-based representations are popular (e.g. seeFelsen et al. (2018)orZhan et al. (2019)) because they capture invariants lost within identity-based representationsLucey et al. (2013), we used a simple heuristic whereby we assign indices 5-9 based on the the player’s typical positions. The typical positions can be scraped from Wikipedia. We let the model discover dynamically shifting roles for the players via its hierarchical discrete state representation.
+
+One complication in assigning indices from these position labels is that the provided labels commonly blend together multiple positions (e.g. ‘Shooting guard / small forward’ or ‘Center / power forward’). Should the second player be labeled as a center or a forward? What if there are multiple centers? How do we discriminate between two forwards? To solve such problems, we proceed as follows, operating on a play-by-play basis
+
+Assign players to coarse position groups.We first assign players to coarse position groups (forward, guard, center). We assume that each play has 2 forwards, 1 center, and 2 guards. We use indices 5-6 to represent the forwards, index 7 to represent the center, and indices 8-9 to represent the guards. As noted above, a given player can be multiply classified into a coarse position group; however, a reasonable assignment for a player can be made by considering the position labels for the other players who are on the court at the same time. To do this, we form, abinary matrix whose rows are players on the team and whose columns represent the coarse position groups. An entry in the matrix is set to True if the player is classified into that position group. We start with the rarest position group (i.e. the column inwith the smallest column sum) and assign players to that position group, starting with players who have the least classifications (i.e. the players whose rows inhave the smallest row sum). Ties are broken randomly. We continue until we have satisfied the specified assignments (2 forwards, 1 center, and 2 guards). If it is not possible to make such coarse assignments, we discard the play from the dataset.
+
+Order players within the coarse position groups.This step only needs to be performed for forwards and guards, since there is only 1 ordering of the single center. We define an arbitrary ordering of forward positions by
+
+and guard positions by
+
+For each players assigned to a position group in, we order the players in terms of their location of their position on the above lists. Ties are broken randomly.
+
+To assist with initialization and learning of parameters, we normalize the player locations on the court from the rectanglein units of feet to the unit square.
+
+SECTION: E.2Models and Hyperparameter Tuning
+
+Here we modelbasketball player trajectories on the court with anHSRDMwith Gaussian vector autoregressive emissions; that is, we use
+
+wheregives player’s location on the normalized basketball court at timestep.
+
+Our system-level recurrencereportsallplayer locationsto the system-level transition function, allowing the probability of latent game states to depend on player locations.
+Inspired byLinderman et al. (2017), our entity-level recurrence function, whereis the-th coordinate ofandis the indicator function, reports an individual player’s location(and out-of-bounds indicators) to that player’s entity-level transition function, allowing each player’s probability of remaining in autoregressive regimes to vary in likelihood over the court.
+
+We set the number of system and entity states to beandbased on informal experimentation with the training set; we leave formal setting of these values based on the validation set to future work. For the sticky Dirichlet prior on system-level transitions, as given in EquationB.2, we setandso that the prior would put most of its probability mass on self-transition probabilities between .90 and .99.
+
+We initialize the model using the smart initialization strategy of Sec.B.6. We pre-initialize the entity emissions parametersby applying the-means algorithm to each player’s discrete derivatives (so long as consecutive timesteps do not span an example boundary).
+We pre-initialize the entity state parametersby settingto be the log of a sticky symmetric transition probability matrix with a self-transition probability of 0.90, and by drawing the entries ofi.i.d from a standard normal.
+We pre-initialize the system state parametersby settingto be the log of a sticky symmetric transition probability matrix with a self-transition probability of 0.95, and by drawing the entries ofi.i.d from a standard normal. We pre-initialize the initialization parametersby taking the initial distribution to be uniform over system states, uniform over entity states for each entity, and standard normal over initial observations for each entity and each entity state.
+We execute the two-stage initialization process via 5 iterations of expectation-maximization for thebottom-halfrARHMMs, followed by 20 iterations for the top-halfARHMM.
+
+We run our CAVI algorithm for 2 iterations, as informal experimentation with the training set suggested this was sufficient for approximate ELBO stabilization.
+
+By ablating the top-level discrete "game" states (i.e., the system-level switches) in theHSRDM, we obtain independentrARHMMsLinderman et al. (2017), one for each of theplayers. More specifically, by removing the system transitions in EquationE.1from the model, the entity transitions simplify as, because the entity transition parameters simplify asand. As a result, thebottom-levelrARHMMsare decoupled. Implementationally, this procedure is equivalent to anHSRDMwithsystem states. Initialization and training is otherwise performed identically as withHSRDM.
+
+By ablating the multi-level recurrence from theHSRDM, we obtain ahierarchical switching dynamical model(HSDM). This can be accomplished by settingin EquationE.1andin EquationE.2.
+Initialization and training is otherwise performed identically as withHSRDM.
+
+AgentFormerYuan et al. (2021)is a multi-agent (i.e. multi-entity) variant of a transformer model whose forecasts depend upon both temporal and social (i.e. across-entity) relationships. Unless otherwise noted, we followYuan et al. (2021)in determining the training hyperparameters. In particular, our prediction model consists of 2 stacks of identical layers for the encoder and decoder with a dropout rate of 0.1. The dimensions of keys, queries and timestamps for the agentformer are set to 16, while the hidden dimension of the feedforward layer is set to 32. The number of heads for the multi-head agent aware attention is 8 and all MLPs in the model have a hidden dimension of (512, 256). The latent code dimension of the CVAE is set to 32, and the agent connectivity threshold is set to 100. Because the basketball training datasets have many more examples than the pedestrian trajectory prediction experiments inYuan et al. (2021)(which only have 8 examples), we train the agentformer model and the DLow trajectory sampler for 20 epochs each (rather than 100) to keep the computational load manageable. We therefore apply the Adam optimizer with learning rate ofrather thanto accommodate the reduced number of epochs. Also, to match the specifications of the evaluation strategy from Sec.E.3, we set the number of future prediction frames during training to 30, and the number of diverse trajectories sampled by the trajectory sampler to 20. We ensure convergence by tracking the mean-squared error.
+
+SECTION: E.3Evaluation strategy
+
+We divide thetotal games
+into 20 games to form a candidate training set, 4 games to form a validation set (for setting hyperparameters), and 5 games to form a test set. Of the first 20 games within our candidate training set, we construct small (1 game), medium (5 games), and large (20 games) training sets. The small, medium, and large training sets contained 20, 215, and 676 examples, respectively.
+
+The test set containedexamples overall. However, we required that each example be at least 10 seconds long (i.e. 50 timesteps) to be included in the evaluation run. This exclusion criterion leftexamples.
+For each such example, we uniformly select a timepointto demarcate where the context window ends.
+We setseconds (i.e. 20 timesteps) andseconds (i.e. 30 timesteps).
+The firstseconds are shown to the trained model as context, and forecasts are made within the forecasting window ofseconds.
+
+For a fixed example, forecasting sample, player, and forecasting method, we summarize the error in a forecasted trajectory bymean forecasting error(MFE)
+
+whereis the true observation on exampleat timefor playeron court dimension, andis the forecasted observation by forecasting sampleusing forecasting method. Sogives the average distance over the forecasting window between the forecasted trajectory and the true trajectory.
+
+To quantify the performance of a forecasting methods, we can define a model’sexample-wisemean forecasting error as
+
+Taking the mean ofand its standard error lets us quantify a model’s typical squared forecasting error on an example, as well as our uncertainty, with
+
+Although in Sec.E.1, we described normalization of basketball coordinates to the unit square for the purpose of model initialization and training, when evaluating models, we convert the forecasts and ground truth back to unnormalized coordinates, so thatMFEhas units of feet. That is, we represent observationsand forecastson the basketball court (of sizefeet). Thuscan be interpreted as a model’s typical amount of error in feet on the court at a typical timepoint in the forecasting window (but of course forecasting error tends to be lower at timepoints closer tothan farther from).
+
+SECTION: Appendix FMarching Band : Experiment Details, Settings, and Results
+
+SECTION: F.1Data generating process
+
+We introduceMarchingBand, a synthetic dataset consisting of individual marching band players (“entities”) moving across a 2D field in a coordinated routine to visually form a sequence of letters. Each observation is a position, with the unit square centered at (0.5, 0.5) representing the field. Each entity’s position over time on the unit square follows the current letter’s prescribed movement pattern perturbed by small-scale iid zero-mean Gaussian noise. Each state is stable for 200 timesteps before transitioning in order to the next state. When reaching a field boundary, typically the player is reflected back in bounds. However, with some small chance, an entity will continue out-of-bounds (OOB,). When enough players become OOB (up to a user-controlled threshold), this bottom-up signal triggers the current system state immediately to a special “come together and reset” state, denoted "C". During the next 50 timesteps, all players move to the center, then return to repeat the most recent letter before continuing on to remaining letters. Note that the true data-generating process does not come from anHSRDMgenerative model.
+
+For our experiments, we set, the OOB threshold to be 11, and the letter sequence to spell "LAUGH". We useindependent examples for fitting, where each sequence is of a different length according to the number of "C" states triggered. We observe corresponding time lengths for each sequence:. The total timeacross all sequences is, where end-times for each example are provided to the model as.
+
+SECTION: F.2Models and Hyperparameter Tuning
+
+For all methods, we fairly provide knowledge of the true number of system states,. Models with system states (HSRDMand its recurrent ablation) setand haveentity states. We set system-level recurrenceto count the number of entities out of bounds and the entity-level recurrenceto the identity function. The emission model is set to a Gaussian Autoregressive. All system and entity states are initially set to uniform distributions, and we use a sticky Dirichlet prior on system-level transition parameters (and). For ’smart’ initialization, the bottom-half and top-half of the model are only trained for a single iteration, such that little to no initialization is used for this experiment. The K-Means algorithm is set to a random state with a seed 120. The model is then trained for 10 CAVI iterations with 50 iterations per M-Step. We don’t tune any specific hyperparameters. The model is run across 5 independent initializations (with recurrence: seeds 120-123, 126 and without recurrence: seeds 120-124). Seeds (such as 124 for the HSRDM with recurrence) that do not lead toanyeffective optimization (NAN values) are discarded and an alternative seed is attempted. This procedure is the same for all competitor models, which also tend to produce ineffective training due to randomly poor initializations. The best system-state classification accuracy across all trials is recorded for the models.
+
+A collection ofrAR-HMMmodels can be fit as a special case of aHSRDMmodel where the number of system states is taken to be. The number of entity states is taken to bewith a uniform prior over possible states. For ’smart’ initialization, the bottom-half and top-half of the model are only trained for a single iteration, such that little to no initialization is used for this experiment. The K-Means algorithm is set to a random state with a seed 120. The model is then trained for 10 CAVI iterations with 50 iterations per M-Step. We don’t tune any specific hyperparameters of the rAR-HMM. The model is trained across 5 independent initializations (seeds 120-122 and 124-126). The resulting most likely states for each entity at each timepoint are clustered with a K-Means algorithm (random state seed = 120), and are compared with the ground truth system-level accuracy for each initialization. The best classification accuracy is recorded.
+
+We train the Deep Switching Autoregressive Factorization modelFarnoosh et al. (2021)with several different parameters. We train with several different choices of lags () and spatial factors (), where the number of discrete states () is fixed to match our data-generation. We use the ‘Concat.”) strategy, and conduct a grid search across combinations ofand, specifically forand. These numbers for search were selected based on prior work in Ref.Farnoosh et al. (2021), such that our values match the hyperparameters used for datasets with a similar size. Also, the selections are based on the knowledge that our dataset changes discrete states around everytime-steps. The hyperparameters that produce the optimal system classification accuracy are selected for further experimentation, which we observe to be:and.
+
+Once hyperparameters are selected, each model is trained with 200 epochs (as indicated to be sufficient in the hyperparameter search) and a learning rate of 0.01, across 10 independent random initializations (seeds 120-129). The resulting most likely states for each entity at each timepoint are clustered with a K-Means algorithm (random state seed = 120), and are compared with the ground truth system-level accuracy for each initialization. The best classification accuracy is recorded.
+
+SECTION: Appendix GSoldiers : Experiment Details, Settings, and Results
+
+For the visual security experiment, based on a quick exploratory analysis, we setand. For the sticky Dirichlet prior on system-level transitions, as given in EquationB.2, we setand, so that the prior would put most of its probability mass on self-transition probabilities between .90 and .99.

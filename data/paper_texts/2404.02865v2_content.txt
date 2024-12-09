@@ -1,0 +1,212 @@
+SECTION: TSA on AutoPilot: Self-tuning Self-supervised Time Series Anomaly Detection
+
+Time series anomaly detection (TSAD) finds many applications such as monitoring environmental sensors, industry KPIs, patient biomarkers, etc. A two-fold challenge for TSAD is a versatile and unsupervised model that can detect variousdifferent typesof time series anomalies (spikes, discontinuities,
+trend shifts, etc.)without any labeled data.
+Self-supervised models in particular tackle unsupervised TSAD by transforming the input via various augmentations to create pseudo anomalies for training. However, their performance is sensitive to the choice of augmentation, which is hard to choose in practice, while
+there exists no effort in the literature on data augmentation tuning for TSAD without labels. Our work aims to fill this gap. We introduceTSAPforTSA “on autoPilot”, which can(self-)tuneaugmentation hyperparameters end-to-end. It stands on two key components: a differentiable augmentation architecture and an unsupervised validation loss to effectively assess the alignment between augmentation type and anomaly type.
+Case studies showTSAP’s ability to select the augmentation type and associated hyperparameters.
+
+SECTION: 1Introduction
+
+Anomaly detection (AD) is a critical task in various domains such as cybersecurity, healthcare, and finance.
+AD is especially important in time series to ensure system safety and reliability.
+Thus, there exists a large body of work on time series AD as presented in various surveys[1,2].
+Recent advances in self-supervised learning (SSL) have significantly impacted AD by surpassing traditional unsupervised (or one-class) learning approaches. SSL’s key advantage lies in its ability to self-generate labeled samples, orpseudoanomalies, enabling a more focused exploration of a plausible subspace rather than an exhaustive, impractical search of the entire space.
+Central to SSL-based AD are data augmentation functions, which create such pseudo labels. These are then used for the (self-)supervised training of an anomaly detector, such as by predicting whether the input is augmented or not[3], which augmentation function is used[4], or through contrastive learning[5].
+The success of these approaches highly depends on how well the augmented data mimics the true anomalies[6].
+
+In this paper we introduceTSAP, a novel approach for SSL-based time series anomaly detection (TSAD) “on autoPilot” equipped with end-to-end augmentation hyperparameter tuning. Tuning both discrete and continuous hyperparameters of augmentation enablesTSAPto be an anomaly detector that is most suitable for a given task.
+We summarize our main contributions as follows:
+
+Problem:Our work is the first attempt to tune both discrete and continuous hyperparameters of data augmentation in SSL-based TSAD, without labels at training time.
+
+New TSAD Method:We proposeTSAP111Code and datasets available at:https://github.com/B-Deforce/TSA-on-autoPilot., which accommodates various time series anomaly types and enables automatic tuning of related hyperparameters (e.g., magnitude, duration) with a differentiable validation loss quantifying alignment between augmented and unlabeled test data.
+
+Effectiveness:By carefully selecting augmentation type and its (continuous) hyperparameters,TSAPoutperforms existing unsupervised and self-supervised approaches, including the SOTA NeuTraL-AD[7]which also employs learnable augmentations.
+
+SECTION: 2TSAP: Time Series Anomalies on AutoPilot
+
+There are two notable challenges that need to be addressed for automatic selection of both discrete and continuous hyperparameters for SSL-based TSAD:
+
+Differentiable Augmentation:Developing an augmentation function that is differentiable with respect to its hyperparameters, enabling gradient-based optimization.
+
+Comparable Validation Loss:Formulating a validation loss that quantifies alignment betweenandwhile being comparableacrossdifferent hyperparameter initializations.
+
+To addressC1andC2, we center our framework around two main ideas. First,TSAPemploys a differentiable augmentation module implemented as an Encoder-Decoder neural network,, parameterized by. This module approximates the anomaly-generating mechanism, conditioned on,, whererepresents the domain of all possible hyperparameter values (e.g., magnitude, duration, …). Importantly, this module is pre-trained independently, establishing it as anofflinecomponent of the framework. Second, at test timeonline,TSAPiteratively refines the detector’s parametersas well as augmentation hyperparameters, through alternating detection and alignment phases. Alignment is performed on part of the unlabeled, referred to as. Based on this, we proposeTSAP, a self-tuning self-supervised TSAD framework illustrated in Fig.1.
+
+SECTION: 2.1Differentiable Augmentation Module
+
+We carefully consider accommodating six types of anomalies that are common in real-world time series; namely, trend, extremum, amplitude, mean shift, frequency shift, and platform.
+We provide a detailed description with visual examples of the anomalies in Appx.A. Each type of anomaly has three hyperparameters; including its starting position (location), duration (length), and severity (level). Extremum captures a spike and only has two hyperparameters as its duration is always.
+Based on, the anomaly generation schemecreates an augmented dataset, whereis the vector of augmentation hyperparameters that are uniformly randomly sampled from the hyperparameter domain.
+
+To build an augmentation modelfor time series, we use a convolutional neural network (CNN) to encode the
+input time seriesinto the feature map.
+We then encode the augmentation hyperparametersinto, which has the same shape as, with a multilayer perceptron (MLP).
+Since the feature mapgenerated by the CNN encoder keeps the positional information of the original time series, addingtoensures that only the part with the desiredlocationandlengthinis manipulated.
+To ensure that the feature mapsandare in the same embedding space, they share the same decoder to reconstruct back to the time seriesand.
+As such, the loss function ofis based on the reconstruction of bothand:
+
+wheredenotes the output offor the sameas sampled by(see Fig.1left).
+
+SECTION: 2.2Self-Tuning Module
+
+Central toTSAPis the self-tuning module, which operates by iteratively refining the detector’s parameters,, and the augmentation hyperparameters,. The process is structured into two phases: detection and alignment (see Fig.1right).
+The overall algorithm is given in Algo.1.
+
+This phase is focused on estimating
+the parametersof the detector(comprising of an encoderand a discriminator)
+by minimizing the cross-entropy loss.
+This aims to classify between the normal samplesand the augmented pseudo anomaliesby their embeddingsand, whereanddenote the embeddings of the training data and augmented data, given the currentfixedat iteration.
+Note that the parametersofare frozen throughout this phase.
+
+Subsequently, the alignment phase adjuststo optimize the unsupervised differentiable validation loss, computed based on the embeddings from the now-updated.’s objective is to measure the degree of alignment betweenandin the embedding space, as expressed by the Wasserstein distance in Eq. (2), Appx.B.1.
+Note that the embeddings are normalized to ensure scale invariance before being passed to. This avoids the trivial solution of achieving alignment by setting all embeddings to[8]. As the embeddingsinare obtained through the updated, the optimization needs to track the change incaused by the update of. As such,TSAPemploys a second-order optimization process, similar to[8].
+
+While Algo.1describes continuous hyperparameter tuning, the discrete hyperparameter (i.e. augmentation/anomaly type) selection is done through grid search as the number of anomaly types is finite. Hence, we initializeTSAPfor different augmentation types and compareacross types to select the one that yields the best alignment. The idea is that the wrong augmentation type will have poor alignment, while one that reflects the true anomalies inwill result in better alignment, granted proper tuning of the continuous hyperparameters through Algo.1.
+
+SECTION: 3Experiments
+
+We evaluateTSAPon six distinct TSAD tasks. Four of these are conducted in acontrolledenvironment, using the 2017 ECG PhysioNet Challenge dataset[9]. The remaining two arenaturalanomalies, derived from the CMU Motion Capture (MoCap) dataset. In the former, the anomaly types are manually injected inbased on the types discussed in Sec.2.1. For the latter, the anomaly types inare unknown and it is the goal ofTSAPto find the type that yields best alignment betweenand(part of), expressed by. See Appx.Cfor further details.
+
+Table1shows the detection results for these six TSAD tasks.TSAPranks the best overallin bothand AUROC, showing that detector, trained through the alternating mechanism ofTSAP, is able to generalize to unseen, unlabeled anomalies in.While competing methods perform well on certain tasks, they lack consistency across all TSAD tasks.LOF, for instance, thrives on PhysioNet A and B due to its abrupt, manually injected anomalies, but fails on MoCap, where anomalies emerge more gradually as activities transition naturally. SR-CNN and ARIMA show similar behavior. See Appx.B.2–B.3for model/baseline configuration details.
+
+Reconstruction-based methods like EncDec-LSTM and USAD struggle on PhysioNet due to high variability among inliers, yet excel on MoCap, which exhibits consistent, near-periodic patterns.
+NeuTraL-AD, despite its augmentation-based approach, struggles with PhysioNet’s real-world ECG signal variability, suggesting its augmentation functions lack robustness in noisy conditions. We remark that onlyTSAPprovides robust and consistent performance across all TSAD tasks.
+
+Key toTSAP’s consistent performance isthrough whichTSAPautomatically learns the augmentation hyperparameters. Onceis determined, the task reduces to a supervised learning problem. Next, we show thatTSAPnot onlyeffectively tunes the continuous augmentation hyperparameters, but also thatguides theaccurate selection of the discrete hyperparameter (i.e. anomaly type). Consider PhysioNet A, where we aim to tune the continuous hyperparameter, i.e.level, of the Platform anomalies present in. That is, thelevelinis fixed and tuning aims to estimate its value usingTSAPwhile the other hyperparameters (location, length) are randomized. Fig.3(top) showsTSAP’s estimation process for different initializations of. We observe that the initialization forleads to the true(left). Simultaneously,drops substantially onceTSAPhas arrived at the true(center). This is also reflected in the performance ofonwhich soars upon estimation of the true(right). Conversely, the initialization forleads to a high, indicating poor alignment betweenand. Indeed, the performance ofonnow suffers from poor alignment. For PhysioNet B, we estimate bothlevelandlengthwhilelocationis randomized. Fig.3(bottom) demonstratesTSAP’s ability to accurately estimate thelevelandlength.
+Further, Fig.3(top) showcasesTSAP’s ability to perform discrete hyperparameter selection. Here,TSAPhas been initialized and trained with three anomaly types (Mean shift, Platform, Trend) on PhysioNet C (true anomaly type: Trend).indicates a misalignment between the Platform and Trend types (left), also reflected in the AUROC ofon(center). Note how the Mean shift anomaly type has a lowat the end of the training epochs, reflected in the high AUROC on. This shows that the true underlying anomaly type is not necessarily the only type that yields high alignment, and in turn a high-performing detector.
+In MoCap datasets, where anomaly types are a priori unknown,TSAPis initialized with different augmentation types (Frequency and Platform) to perform discrete hyperparameter selection. Fig.3(bottom) highlights its effectiveness asclearly prefers one type over the other. Indeed, the natural anomalies defined by jumping signals in MoCap A have close resemblance to platform anomalies. See Appx.Dfor additional results and ablation studies.
+
+SECTION: 4Conclusion
+
+We introducedTSAPfor self-supervised time series anomaly detection, which is the first attempt that automatically (self-)tunes the augmentation hyperparameters on time series data in an unsupervised manner through a differentiable augmentation model and an unsupervised validation loss to help align augmented and test data. While being the first self-tuning SSL solution to TSAD, our work opens avenues for an expanded catalog of anomaly types and extensions to multivariate time series data.
+
+SECTION: Acknowledgments
+
+Funding: This work was supported by the Research Foundation - Flanders (FWO) [grant number G0C6721N] and [grant number V436123N].
+
+SECTION: References
+
+Supplemental Materials
+
+SECTION: Appendix ATypes of Time Series Anomalies
+
+The anomaly generation schemeaccommodates six types of time series anomalies as discussed in Sec.2.1. Based on, the goal foris then to learn to inject anomalies into inliers, conditional on the discrete hyperparameter, anomaly type, along with their corresponding hyperparameters as described below. A visual overview of the anomaly types is provided in Fig.4.
+
+Platform:Starting at timestamplocation, the values of a durationlengthin the time series areequal toa constant valuelevel.
+
+Mean shift:Starting at timestamplocation, a constant valuelevelisadded tothe values of a durationlengthin the time series.
+
+Amplitude:Starting at timestamplocation, a constant valuelevelismultiplied withthe values of a durationlengthin the time series.
+
+Trend:Starting at timestamplocation, aseries of valuesis added tothe durationlength, whereis thelevelandis the timestamp in that duration.
+
+Extremum (a.k.a. Spike):A large (either positive or negative) valuelevelisassigned toa single timestamplocationin the time series.
+
+Frequency shift:Starting at phaselocation, the frequency of the duration withlengthphases isincreased bya constant valuelevel.
+
+SECTION: Appendix BModel Configurations
+
+SECTION: B.1Validation Loss
+
+We measure the degree of alignment betweenandin the embedding space using the Wasserstein distance[10]as described in Sec.2.2. The Wasserstein distance is a distance measure between probability distributions, of orderbetween any two marginal distributionsand, given by:
+
+whereis the set of all joint distributions (or couplings) with marginalsand, respectively.
+That is,satisfies two conditions:and.
+However, computingdirectly is often computationally challenging. Thus, we employ the Sinkhorn algorithm to feasibly apply the Wasserstein distance in the machine learning context, which provides an efficient approach to approximate it via entropy regularization[11].
+
+SECTION: B.2TSAPconfiguration
+
+The Encoderϕinand Encoderθinare constructed using 1D CNN blocks[12](transposed 1D CNN for Decoderϕ) for efficient temporal feature extraction. We carefully choose the number of epochsto allow sufficient time for the convergence of, with empirical evidence suggesting thattypically suffices. For the number of inner-loops, we opt for, aligned with[8], such thathas adequate time to learn effective discriminative embeddings forand. Table2provides a comprehensive overview of the configuration details for the different components ofTSAP.
+
+SECTION: B.3Baseline configurations
+
+We compareTSAPwith a selection of established baselines, including traditional and deep learning-based methods with demonstrated efficacy in TSAD[13]. The traditional methods consist of different modeling approaches; namely, One-Class Support Vector Machines (OC-SVM)[14];
+Local Outlier Factor (LOF)[15];
+(ARIMA)[16];
+Isolation Forest (IF)[17];
+and the Matrix Profile (MP)[18].
+On the deep learning side, we benchmark against the Encoder-Decoder LSTM (EncDec-LSTM)[19]; the Spectral Residual Convolutional Neural Network (SR-CNN)[20]; the Unsupervised Anomaly Detection (USAD) for TSAD[21];
+and a recent time series foundation model (TimeGPT)[22].
+Lastly, we include a state-of-the-art competing method which learns augmentations in the embedding space, called Neural Transformation Learning for (TS)AD (NeuTraL-AD)[7].
+This diverse set of baselines allows for a comprehensive analysis across different approaches within the TSAD domain.
+The details for the baseline configurations are provided below.
+All models were trained on a single NVIDIA Tesla P100 GPU.
+
+OC-SVM: We use author-recommended hyperparameters[23].
+
+LOF: We use author-recommended hyperparameters[15].
+
+IF: We use author-recommended hyperparameters[17].
+
+ARIMA: We use AutoARIMA to select hyperparameters[16].
+
+MP: We use author-recommendations to set the window size[18]
+
+EncDec-LSTM: Similar to the original authors[19], we downsample our time series to obtain time series of length approx. equal to 200. For the remaining hyperparameters, we use the original authors’ recommendations.
+
+SR-CNN: We use author-recommended hyperparameters[20].
+
+USAD: Similar to the original authors[21], we downsample our time series to obtain time series of length approx. equal to 200. For the remaining hyperparameters, we use the original authors’ recommendations.
+
+NeuTraL-AD: We use author-recommended hyperparameters[7]. We tune augmentation type separately for each dataset usinglabeledvalidation data.
+
+TimeGPT: We tune the confidence interval[22]for each dataset usinglabeledvalidation data.
+
+SECTION: Appendix CExperimental Setup
+
+SECTION: C.1Dataset Details
+
+The 2017 PhysioNet Challenge dataset[9]comprises a diverse array of real-world 1-lead 300 Hz ECG recordings. We use ECG recordings, each 9 seconds in length withtime-steps and standardized to have a zero mean and standard deviation of one. Injected anomalies represent 10% of the data.
+We include a total of seven controlled TSAD tasks based on the PhysioNet data as shown in Table3, with PhysioNet A-D discussed in Sec.3and the remainder in Appx.D. For example in PhysioNet A and B, given the anomaly type (Platform), the task is to infer or tune, respectively, the hyperparameter(s)levelonly and bothlevelandlength, while anomaly location is random (hence not tuned). For PhysioNet C and D, the respective tuning tasks are the same but for a different anomaly type (Trend). Finally, Table4(top) shows the hyperparameter spaces used to trainin PhysioNet. The hyperparameterslocationandlengthare normalized by. Noting that the extremum anomaly always occurs on a single timestamp in the time series, thuslengthis always.
+
+The CMU Motion Capture (MoCap) dataset222http://mocap.cs.cmu.edu/includes signal data from various sensors on subjects’ bodies as they perform different activities (walking, jumping, or running).
+As we focus on a univariate setting, only the sensor signal on the left femur is used.
+We consider the walking signal as normal data, and the signals of jumping and running as anomalies.
+To generate normal signals, we stitch the walking signals by identifying the start and end points of each gait phase and add random noise; whereas to generate anomalous ones, we stitch walking or running signals at a random location in the normal signal.
+We further add random noises to augment the normal samples in the dataset.
+Each signal is normalized betweenandand truncated to length.
+This yields two distinct TSAD tasks as shown in Table3.
+For each, constructed anomalies represent 10% of the data.
+Different from PhysioNet A–G where we only tune the continuous hyperparameter(s) for the given (discrete) anomaly type, for MoCap A and B, we aim to tuneboththe unknown anomaly type that corresponds to Jump and Run behavior, respectively, as well as the (continuous) hyperparameterlevelwhilelocationandlengthtake random values. Finally, Table4(bottom) shows the hyperparameter spaces used to trainin MoCap.
+The hyperparameterslocationandlengthof platform anomaly are normalized by.
+The hyperparameterslocationandlengthof frequency anomaly denote the starting gait phase and the length of gait phases, respectively.
+
+SECTION: C.2Evaluation Metrics
+
+Our method calculates anomaly scores on an entire sequence level, similar to[7]. This is a different set-up compared to novelty detection in time series which typically operates on a point level. Detection on a sequence level can be especially important to spot long-term patterns (e.g. Trend anomalies). As such, we use thescore and the Area Under the Receiver Operating Characteristic Curve (AUROC) as key performance metrics to quantify detection capability of anomalous sequences. All results are reported on the unseen.
+We determine the optimalscore, by enumerating all possible thresholds, given by the anomaly scores for a given segment. We then compute the corresponding precision and recall for each threshold and select those that yield the highest. As such, AUROC provides a balanced view whereasshows the optimal scenario. Both metrics range from 0 to 1, with higher values indicating superior performance.
+
+SECTION: Appendix DAdditional Results
+
+In this section, we present additional results for continuous (D.1) and discrete (D.2) augmentation hyperparameter tuning, as well as several ablation studies (D.3).
+
+SECTION: D.1Continuous Augmentation Hyperparameter Tuning
+
+In addition to the results on continuous hyperparameter tuning for PhysioNet A and B (see Fig.3), we demonstrateTSAP’s efficacy in tuning the continuous hyperparameters on five additional TSAD tasks. These include PhysioNet C and D, which feature Trend anomalies, as well as PhysioNet E and F, showcasing Mean shift anomalies, and PhysioNet G, containing Extremum anomalies (cf. Table3).
+
+The tuning process of the continuous hyperparameters for theTrend anomaliesin PhysioNet C and D is shown in Fig.5. We observe several initializations forthat arrive closely to the truelevelfor PhysioNet C, as well as to the truelevelandlengthfor PhysioNet D. In turn, those initializations yield a detectorwith high performance on. Note how, for PhysioNet C,is low across the board. This is likely due to the fact that a Trend anomaly with a subtle slope, has similar characteristics to inliers (see e.g. Fig.3bottom left). Yet,TSAPeffectively assigns a higher validation loss to the initializations that lead to misaligned cases. This shows the effectiveness of our method even in cases where anomalies are subtle.
+
+Similarly to Trend anomalies,Mean shift anomaliesare inherently subtle, especially when thelevelis close to zero. We show in Fig.6howTSAPproperly tunes the continuous hyperparameters forlevelandlengthin PhysioNet E and F for several initializations.
+
+Lastly, Fig.7showcasesTSAP’s ability to tune thelevelof the spike in theExtremum anomalieswhile the location is randomized. Note that Extremum anomalies have nolengthby definition. The ECG recordings in PhysioNet contain many natural spikes. As such, validation loss is low by default. Nonetheless,TSAPsuccessfully tunes two out of four initializations and reflects – though subtly – this difference in the validation loss. This again leads to a well-tunedthat performs strongly on.
+
+SECTION: D.2Discrete Augmentation Hyperparameter Tuning
+
+We showcasedTSAP’s ability to tune the discrete hyperparameter, anomaly type, in Fig.3for controlled and natural TSAD tasks. Given the direct applicability and significance of discrete hyperparameter tuning in real-world contexts, we present extended results for discrete hyperparameter tuning.
+
+Fig.8shows thediscrete hyperparameter tuning for the unknown anomaly typein MoCap B.TSAPwas initialized twice: first withpre-trained for injecting Frequency shift anomalies, and second withpre-trained for injecting Platform anomalies. The validation loss (left) indicates a strong alignment betweenand the unlabeledwhenTSAPis initialized with Frequency shift anomalies. This is also reflected in’s performance on(center). Visually, we can indeed confirm that Frequency shift anomalies (right – red) appear to be more similar to the running pattern (right – black) as opposed to Platform anomalies (right – purple).
+
+SECTION: D.3Ablation Studies
+
+We present four ablation studies on the controlled PhysioNet data to support various design strategies ofTSAP: validation loss, self-tuning, second-order optimization, and embedding normalization.
+
+In Fig.9(top), we illustrate thelevelestimation for PhysioNet C under the condition where our Wasserstein-basedis substituted with a point-wise metric, as used in[8]. This comparison shows that a point-wise validation loss tends to favor solutions where thelevelof the Trend anomaly approximates zero, essentially neutralizing the anomaly. Although this might produce high alignment, it leads to poorperformance in(right). This shows that thedistributional characteristics captured by ourare a key contributing factorto the success ofTSAP.
+
+In Fig.9(bottom), the self-tuning module is disabled for PhysioNet C, wherelevelis instead randomized (along withlocation, andlength).
+We observe substantially higher, indicating poor alignment. In turn,struggles to detect the unlabeled anomalies in, showing theutility ofTSAP’s systematic hyperparameter (self-)tuning over random choice.
+
+Fig.10(top) shows thelevel-estimation and performance ofon PhysioNet C when the second-order optimization is disabled. Note how the estimation process becomes highly unstable when second-order optimization is disabled. In turn, performance ofonsuffers severely.
+
+We show thelevel-estimation and performance ofon PhysioNet C when the normalization of the embeddingsobtained throughis disabled in Fig.10(bottom). Whileinitialized ateventually leads to the correctlevel, the estimation process is highly volatile compared to when normalization is enabled as shown in Fig.5(top).

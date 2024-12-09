@@ -285,10 +285,10 @@ def process_multiple_search_terms(
 if __name__ == "__main__":
     # Example usage
     search_terms = [
-        'ti:"K-means"',
-        'ti:"LSTM"',
-        'ti:"Random Forest"',
-        'ti:"XGBoost"',
+        'ti:"RNN"',
+        'ti:"SVM"',
+        'ti:"time series"',
+        'ti:"anomaly detection"',
     ]
     
     results = process_multiple_search_terms(
