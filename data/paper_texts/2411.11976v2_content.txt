@@ -1,0 +1,187 @@
+SECTION: Coverage-Constrained Human-AI Cooperation with Multiple Experts
+
+Human-AI cooperative classification (HAI-CC) approaches aim to develop hybrid intelligent systems that enhance decision-making in various high-stakes real-world scenarios by leveraging both human expertise and AI capabilities. Current HAI-CC methods primarily focus on learning-to-defer (L2D), where decisions are deferred to human experts, and learning-to-complement (L2C), where AI and human experts make predictions cooperatively. However, a notable research gap remains in effectively exploring both L2D and L2C under diverse expert knowledge to improve decision-making, particularly when constrained by the cooperation cost required to achieve a target probability for AI-only selection (i.e., coverage). In this paper, we address this research gap by proposing theCoverage-constrainedLearning toDefer andComplement with Specific Experts (CL2DC) method. CL2DC makes final decisions through either AI prediction alone or by deferring to or complementing a specific expert, depending on the input data. Furthermore, we propose a coverage-constrained optimisation to control the cooperation cost, ensuring it approximates a target probability for AI-only selection. This approach enables an effective assessment of system performance within a specified budget. Also, CL2DC is designed to address scenarios where training sets contain multiple noisy-label annotations without any clean-label references. Comprehensive evaluations on both synthetic and real-world datasets demonstrate that CL2DC achieves superior performance compared to state-of-the-art HAI-CC methods.
+
+SECTION: 1Introduction
+
+Machine learning models are becoming increasingly critical in real-world scenarios due to their high efficiency and accuracy. However, in high-stakes situations like risk assessment[24], content moderation[43], breast cancer classification[26], and the detection of inaccurate or deceptive content produced by large language models[19,83,7,55,20], human experts often provide more reliable and safer predictions compared to AI models.
+To address the trade-off between human expertise and AI capabilities,human-AI cooperative classification(HAI-CC) methods have been developed[62,18,70]. These HAI-CC approaches enhance not only the accuracy, interpretability, and usability of AI models but also improve user efficiency and decision consistency over manual processes, significantly reducing human error[18,70].
+
+HAI-CC approaches[18]aim to develop ahybrid intelligentsystem that maximises accuracy while minimising the cooperation costs withlearning-to-defer(L2D) andlearning-to-complement(L2C) strategies. In L2D[52], HAI-CC strategically decides when to classify with the AI model or defer to human experts, while L2C[86]combines the predictions of AI and human experts.
+
+When facing with challenging or high-stakes decisions, single-expert HAI-CC (SEHAI-CC) systems allow the system to defer to or complement with a fixed expert[57,63,59,52,76,54,86,13,14,49,74,12].
+However, given the diverse range of expertise of different professionals, relying solely on a single expert for decisions across all input cases is impractical and potentially suboptimal. To address this, multiple-expert HAI-CC (MEHAI-CC) methods have been proposed to explore strategies for either complementing or deferring decisions to one or several experts simultaneously[28,77,47,78,94,95,50,72,35,1], effectively leveraging diverse expert knowledge for more robust decision-making.
+Nevertheless, a remarkable gap in such MEHAI-CC approaches is that they rarely address L2D and L2C concomitantly, and even when they do consider both tasks in a single approach[95], they effectively disregard diverse expert knowledge by randomly selecting experts for the cooperative classification.
+
+Another crucial issue in HAI-CC methods is the trade-off between accuracy and cooperation cost as it reflects the system’s efficiency and effectiveness. Existing HAI-CC methods often analyse such trade-off through accuracy-coverage curves to evaluate performance at different coverage levels[57,54,95]. Coverage is defined as thepercentage of examples classified by the AI model alone, where 100% coverage indicates that all classifications are performed by the AI, and 0% coverage means that all classifications are handled exclusively by experts.
+HAI-CC methods[54,57]are typically trained with optimisation functions that aim to balance accuracy and cooperation cost. However, in practice, the training process is brittle; small adjustments to the hyper-parameter controlling accuracy and cooperation cost often result in coverage values collapsing to either 0% or 100%[95,94].
+Importantly, this hyper-parameter does not set a specific coverage value but rather allows for only a rough adjustment of cost influence within the optimisation, making it challenging to achieve a precise coverage target.
+As a result, existing HAI-CC methods[54,57]often employpost-hoctechnique to construct accuracy - coverage curves by sorting deferral scores and adjusting the prediction threshold to obtain the accuracy at the expected coverage.
+This post-hoc approach is impractical, as it requires access to all testing samples before making predictions and lacks the ability to set and evaluate workload control during training.
+In addition, using the post-hoc approach to analyse the coverage - accuracy of a model trained in one coverage setting is unreliable. For example,Fig.1illustrates that models of the same method, but trained under different levels of coverage constraints, yield different curves using the post-hoc method (e.g., theorangeandgreencurves). Hence, reporting the result by simply selecting the best performing method does not represent a reliable assessment of the approach.
+Therefore, further research is needed to develop a principled mechanism for managing workload distribution in HAI-CC methods.
+
+In this paper, we propose the novelCoverage-constrainedLearning toDefer andComplement with Specific Experts (CL2DC) method.
+CL2DC integrates the strengths of L2D and L2C, particularly in training scenarios with multiple noisy-label annotations, enabling the system to either make final decisions autonomously or cooperate with a specific expert.
+CL2DC not only determines when to defer to or complement with experts but also assesses the specific expertise of each expert, selecting the most suitable one for the decision-making process. We also introduce an innovative coverage constraint penalty in the loss function to effectively control coverage levels. This penalty enables a robust training process that reliably achieves the target coverage, allowing for a consistent and meaningful analysis of various methods using coverage-accuracy curves.
+Our main contributions are summarised as follows:
+
+We propose the CL2DC that integrates L2D and L2C strategies, enabling deferral to or complementation with specific experts in the presence of multiple noisy-label annotations.
+
+We introduce an innovative coverage constraint into our training process, targeting specific coverage values to effectively manage the trade-off between coverage and accuracy in HAI-CC.
+
+We evaluate our CL2DC method against state-of-the-art (SOTA) HAI-CC methods[78,85,14,8,95]using real-world and synthetic multi-rater noisy label benchmarks, such as CIFAR-100[82,6], Galaxy Zoo[4], HAM10000[75], NIH-ChestXray[45,80], MiceBone[66,67,68], and Chaoyang[96]. Results show that CL2DC consistently outperforms previous HAI-CC methods with higher accuracy for equivalent coverage values for all benchmarks.
+
+SECTION: 2Related work
+
+SECTION: 2.1Human-AI Cooperative Classification
+
+HAI-CC approaches[18]seek to develop ahybrid intelligentsystem to maximise the cooperative accuracy beyond what either AI models or human experts can achieve independently, while simultaneously minimising the cooperation costs throughlearning-to-defer(L2D) andlearning-to-complement(L2C) strategies.
+
+Learning to Defer (L2D)is an extension ofrejection learning[17], which aims to learn a classifier and a rejector to decide in which case the decision should be deferred to a human expert to make the final prediction[44,35,57,46]. Existing L2D approaches focus on the development of different surrogate loss functions to be consistent with the Bayes-optimal classifier[57,11,63,59,52,76,54,13,8,71,41,53,12].Wei et al.[85]explore the dependence between AI and human experts and propose a dependent Bayes optimality formulation for the L2D problem. However, these methods overlook practical settings in which there is a wide diversity of multiple human experts. Given such an issue, recent research in L2D shifts towards the multiple-expert setting[77,46,78,35,3,48,29,72,38,50,94,1].
+For example,Verma et al.[78]proposed a L2D method to defer the decision to one of multiple experts.Mao et al.[50]addressed both instance-dependent and label-dependent costs and proposed a novel regression surrogate loss function. Nevertheless, current research in L2D does not consider options that aggregate the predictions of human experts and AI model to make a joint decision.
+
+Learning to Complement (L2C)methods aim to optimise the cooperation between human experts and the AI model by combining their predictions[86,70,34,40,5,28,35,74,14,95,94].Liu et al.[40]leverage perceptual differences through post-hoc teaming, showing that human - machine collaboration can be more accurate than machine - machine collaboration.
+Recently,Charusaie et al.[14]introduce a method that determines whether the AI model or a human expert should predict independently, or if they should collaborate on a joint prediction – this is effectively a combined L2D and L2C approach, but it is limited to single expert setting.Hemmer et al.[28]introduce a model featuring an ensemble prediction involving both AI and human predictions, yet it does not optimise the cooperation cost.Zhang et al.[95]propose a combine L2D-L2C approach that integrates AI predictions with multiple random human experts, but overlooking the expert specificity.
+
+SECTION: 2.2Learning with Noisy Labels
+
+The vast majority of HAI-CC methods assume that the ground-truthcleanannotations are available in the training set. The vast majority of HAI-CC methods assume that the ground-truth clean annotations are available in the training set. However, such assumption is not warranted in practice, particularly in applications like medical imaging, where a definitivecleanlabel may not be available due to the absence of final pathology. Therefore, we can only access expert opinions, which means multiple noisy annotations per training sample. Only recently, several HAI-CC systems have been designed to handle noisy-label problems. Here, we provide a short review of learning with noisy labels (LNL) methods that can be used in the HAI-CC context[69,10].
+
+LNL approaches have explored many techniques, including: robust loss functions[92,22],
+co-teaching[33,27],
+label cleaning[90,31],
+semi-supervised learning (SSL)[39,60],
+iterative label correction[16,2],
+meta-learning[65,93,91,89], diffusion models[15], and
+graphical models[21].
+Among the top-performing LNL methods, we have
+ProMix[79]that introduces an optimisation based on a matched high-confidence selection technique. Another notable LNL approach is DEFT[84]that utilises the robust alignment of textual and visual features, pre-trained on millions of auxiliary image-text pairs, to sieve out noisy labels.
+Despite achieving remarkable results, LNL with a single noisy label per sample suffers from the identifiability issue[42], meaning that a robust training may require multiple noisy labels per samples.
+Methods that can deal with multiple noisy labels per sample are generally known as multi-rater learning (MRL) approaches.
+
+MRL aims to train a robust classifier with multiple noisy labels from multiple human annotators, which can be divided into inter- and intra-annotator approaches. The inter-annotator methods focus on characterising the variabilities between annotators[64,25,51,32], while the intra-annotator approaches focus on estimating the variability of each annotator[36,73,87,9].
+Recently, UnionNet[81]has been developed to integrate all labelling information from multiple annotators as a union and maximise the likelihood of this union through a parametric transition matrix.
+Annot-Mix[30]extend mixup and estimates each annotator’s performance during the training process.
+CROWDLAB[23]is a state-of-the-art (SOTA) MRL method that produces consensus labels using a combination of multiple noisy labels and the predictions by an external classifier.
+
+SECTION: 3Methodology
+
+Letbe the noisy-label multi-rater training set of size, wheredenotes an input image of sizewithchannels, anddenotes the noisy annotations ofhuman experts for the input image, withbeing the number of classes.
+
+Our proposed method contains three components, an AI classifier, a gating model, and a complementary module, which form an adaptive decision system that leverages AI strengths while maintaining human oversight, ensuring a balance between performance and trustworthiness in complex decision environments.
+More specifically, we have: 1) anAI classifier, parametrised by, wheredenotes the-dimensional probability simplex; 2) agating model, parameterised by, which produces a categorical distribution reflecting the probability of selecting the prediction made by the AI model alone (i.e.,), or deferring the decision to one of thehuman experts (i.e.,denote the probability of selecting expert 1 through expert), or performing a complementary classification between the AI model and one human expert (i.e.,represent the probability of selecting AI + expert 1, through AI + expert); and 3) acomplementary module, parametrised by, that aggregates the predictions made by the AI model and a selected human expert to produce a final prediction if the gating model decides to complement AI with one human expert. These components can be visualised inFig.2.
+
+In standard HAI-CC, ground truth labels are often required for training, while in our setting, ground truth labels are unavailable.
+Following LECODU[95], which also assumes that ground truth labels are unavailable, we use the SOTA MRL method CROWDLAB[23]to produce theconsensuslabels to be used as the ground truth in our training.
+CROWDLAB takes the training images and experts’ annotations, together with the AI classifier’s predictionsto produce a consensus labelassociated with a quality (or confidence) score.
+Formally, the pseudo clean data set produced by CROWDLAB can be written as follows:
+
+Our aim is to learn the parameters of the AI model, the gating model and the complementary module to produce an accurate final prediction, while satisfying the coverage constraint with the following optimisation:
+
+whereis the probability of selecting AI alone produced by the gating model, andis a ()-dimensional vector defined as:
+
+withdenoting the cross-entropy loss.
+
+Intuitively, the optimisation inEq.2minimises the weighted-average loss across all available deferral options, with the weights representing the probability produced by the gating model, while the constraint enforces the average probability of selecting the AI classifier alone to be above a certain threshold, representing the target coverage. The lower bounded constraint is used inEq.2due to the standard assumption in HAI-CC, where human experts generally perform better than the AI classifier. Thus, without imposing such a constraint, the trained gating model will most likely defer to or complement with a human expert without selecting the AI classifier to make the decision alone. In other words,if there is no constraint.
+
+To optimise the constrained objective inEq.2, we use thepenalty method[58, Chapter 17]. In particular, the penalty function of the constraint inEq.2is defined by
+
+which approximates to zero when the constraint is satisfied and becomes positive as the constraint is violated. The loss function inEq.2can then be rewritten into a penalty program as follows:
+
+whereindexes the training iteration,, and,
+withbeing a hyper-parameter. Hence,for all training iterations, meaning the training process initially prioritizes minimizing classification loss and gradually shifts its focus toward achieving the target coverage.
+
+The training and testing procedures of CL2DC are summarised inAlgorithms1and2in the supplementary material. We also depict the inference flow of CL2DC inFig.2.
+
+SECTION: 4Experiments
+
+We evaluate the performance of the proposed method on a variety of datasets including ones with synthetic experts (e.g., CIFAR-100[37,6], HAM10000[75]and Galaxy Zoo[4]) and real-world ones with labels provided by human experts (e.g., Chaoyang[96], MiceBone[66,67,68]and NIH-ChestXray[45,80]).
+
+SECTION: 4.1Implementation Details
+
+For CIFAR-100, we follow the setting of[29]to generate synthetic labels representing synthetic experts. We generate 3 experts, each one labelling correctly on 6 or 7 different super-classes, while making 50% labelling mistakes on the remaining 13 or 14 superclasses using asymmetric label noise, where labels can be randomly flipped to other classes within the same super-class. For HAM10000 and Galaxy-zoo, we follow the setting in[78]to simulate two experts based on two super-classes, each following an asymmetric label noise, similarly to CIFAR-100.
+
+For real-world datasets, we utilise the annotations made by real-world human experts. In Chaoyang dataset, there are 3 human experts with accuracies 91%, 88% and 99%, and we build 2 setups: 1) using the two pathologists with accuracies 88% and 91%, forming the setup “Chaoyang2u”; and 2) using all 3 pathologists, forming the setup “Chaoyang3u”. In MiceBone dataset, we use 8 out of 79 annotators who label the whole dataset to represent the experts with accuracies varying from 84% to 86%. In NIH-ChestXray dataset, each image is annotated by 3 experts who label four radiographic findings. Following[54,28], we focus on the classification of airspace opacity (NIH-AO) because of the balanced prevalence of this finding. The prediction accuracies of the 3 experts in the NIH-AO dataset are approximately 89%, 94%, 80% both in training and testing. Please refer toAppendicesBandCin the supplementary material for more details on the datasets, architecture and training parameters.
+
+The evaluation is based on the prediction accuracy as a function of coverage measured on the testing sets. Coverage denotes the percentage of samples classified by the AI model alone, withcoverage representing the classification performed exclusively by the AI model, whilecoverage denoting a classification exclusively done by experts. All results are computed from the mean result from 3 runs using the checkpoint obtained at the last training epoch.
+
+We assess our method in both the single and multiple expert human-AI cooperation classification (SEHAI-CC and MEHAI-CC) settings.
+For the SEHAI-CC setting, we consider several SOTA methods, such as Asymmetric SoftMax (A-SM)[8], Dependent Cross-Entropy (DCE)[85], and defer-and-fusion (DaF)[14]as baselines. For a fair comparison, we randomly sample a single annotation for each image as a way to simulate a single expert from the human annotators to train those SEHAI-CC methods.
+For the MEHAI-CC settings, we consider the learning to defer to multiple experts (MultiL2D)[78]and learning to complement and to defer to multiple experts (LECODU)[95].
+For a fair comparison, all classification for the {SE,ME}HAI-CC methods have the same backbone, and all hyper-parameters are set as previously reported in[54,95,78].
+To maintain fairness in the accuracy - coverage comparisons, we include the coverage constraint inEq.2into all {SE,ME}HAI-CC methods. In particular, we set the hyper-parameter, which controls the coverage lower bound, to {0, 0.2, 0.4, 0.6, 0.8} so we can train all methods and plot their corresponding performance using the coverage - accuracy curves.
+
+SECTION: 4.2Results
+
+We report theaccuracy-coverage curvesof the HAI-CC strategies and our proposed method across various datasets inFig.3. These curves illustrate the trade-off between accuracy and cooperation cost as coverage varies from 0% to 100%, where 0% coverage indicates complete reliance on human experts, and 100% coverage implies classification solely by the AI model.
+Additionally, we provide a concise quantitative analysis ofFig.3results inTable1, which shows thearea under the accuracy-coverage curve(AUACC), where higher AUACC values denote superior accuracy-coverage trade-offs.
+
+Our method outperforms all competing HAI-CC methods at every coverage level in all benchmarks. Compared with MEHAI-CC methods, the accuracy of SEHAI-CC methods is limited by the lack of specific expert labelling. Consequently, MEHAI-CC methods generally surpass SEHAI-CC approaches, particularly at lower coverage values. However, even in this scenario they still do not match the performance of our method.
+
+In synthetic datasets (i.e., CIFAR-100, Galaxy-zoo and HAM10000), we focus on the setting that different experts have relatively high accuracy on specific categories , as explained inAppendixBof the supplementary material. CL2DC excels by effectively identifying and cooperating with specific experts for their relevant tasks, thereby optimizing decision-making.
+In the CIFAR-100 dataset, LECODU achieves higher accuracy than SEHAI-CC at low and intermediate coverage levels but it shows lower accuracy than our approach. The performance of MultiL2D is comparable to SEHAI-CC, except at 0% coverage, when MultiL2D is better than SEHAI-CC methods because MultiL2D can successfully identify the best labeller, as opposed to SEHAI-CC methods that pick one of the labellers randomly.
+In the Galaxy-zoo dataset, other MEHAI-CC methods (i.e., LECODU and MultiL2D) show lower accuracy than ours, but they become relatively competitive at higher coverage levels, which underscores our method’s superior adaptability and efficiency in optimising human-AI cooperation. Compared with them, our method excels by effectively identifying and collaborating with specific experts for their relevant tasks, thereby optimising decision-making.
+
+In real-world scenarios (i.e., Chaoyang, Micebone, and NIH-AO), our method consistently outperforms other strategies.
+Notably, in Chaoyang, where one of the pathologists has an accuracy close to 100%, our method adeptly selects this most accurate pathologist, surpassing the performance of LECODU, which randomly selects an expert rather than specifying the optimal one. Although the performance of MultiL2D is competitive in Chaoyang, it is worse than our method in the Micebone and NIH-AO datasets.
+
+Table2shows a few examples of the inference of CL2DC at a coverage rate of 40% on test images of Galaxyzoo. Each example includes the test image, the human-provided labels (), AI model prediction (), complementary module prediction, prediction probability vector by the gating model (), final prediction of CL2DC, and ground truth (GT) label. Notably, when the AI model or the human experts make individual mistakes, the final prediction tends to be correct, highlighting system robustness. When the AI model is correct,tends to have a high probability suggesting that the AI model can be trusted.
+When the L2D options are selected, that usually happens with very high probability for one of the options inand quite low value for, suggesting a complete lack of trust in the AI model. On the other hand, when one of the L2C options are selected, notice that bothand one of the options inshow high values, indicating that the AI model can be partially trusted.
+
+SECTION: 4.3Ablation studies
+
+InFig.4(a), we study the hyper-parameterfromEq.5on the accuracy-coverage performance of CL2DC in CIFAR-100. The graphs illustrate a clear trend: when, the accuracy is distinctively low at lower coverage values because of the relatively high weight for the constraint defined inEq.4, but when we decrease,
+there is an improvement in accuracy for almost all coverage values.
+
+Next, we investigate the effect of altering the number and quality of experts in the experimental setting. Focusing on the “Chaoyang2u” setup, the outcomes, displayed inFig.4(b)andTable1, show that our solution outperforms other HAI-CC methods more distinctly when compared with the original results inFig.3(d)that use all three pathologists for the “Chaoyang3u” setup.
+
+We then study the influence L2D and L2C in our CL2DC method on Galaxyzoo and Micebone datasets inFig.4(d)andFig.4(e).
+InFig.4(d), CL2DC w/o L2D outperforms CL2DC w/o L2C at large coverage values, which means that when the expert’s accuracy is high, L2C can leverage the accurate expert’s prediction, while mitigating the influence of weak experts by combining their predictions with the AI model prediction.
+CL2DC outperforms CL2DC w/o L2C and CL2DC w/o L2D at all coverage values, showing the advantage of integrating both L2D and L2D into HAI-CC.
+InFig.4(e), CL2DC w/o L2C performs better than CL2DC w/o L2D, when coverage is larger than 0.6. At a large coverage, L2C may combine a weak expert especially when the expert pool contains a large number of experts who have relatively low accuracies (from 84% to 86%). In general, CL2DC tends to work better than CL2DC w/o L2C and CL2DC w/o L2D for most coverage values by leveraging advantages of L2D and L2C.
+
+We also study the scalability of CL2DC when increasing the number of experts on CIFAR-100.
+We generate other seven synthetic experts, who have similar accuracy rates as described inAppendixB, i.e., each expert performs correctly on random 6/7 super-classes, while making 50% mistakes via instance-dependent noise on the remaining super-classes.Fig.4(c)shows the accuracy-coverage curves with our methods, where the number of available experts increases from 2 to 6. InFig.4(f), we evaluate the AUACC as the number of available experts increases. A significant improvement is observed when the number of experts increases from 2 to 3. This is because, in our setting, the first three expert high-accuracy sets of super-classes cover all super-classes, whereas the first two sets cover only about two-thirds of the super-classes. Consequently, it is unsurprising that the AUACC tends to converge as the number of experts continues to increase, indicating that additional redundant experts do not contribute to integrating more effective information or improving predictions.
+
+SECTION: 5Conclusion
+
+In this paper, we propose the novel Coverage-constrained Learning to Defer and Complement with Specific Experts (CL2DC) method.
+CL2DC integrates the strengths of learning-to-defer and learning-to-complement, particularly in training scenarios with multiple noisy-label annotations, enabling the system to either make final decisions autonomously or cooperate with a specific expert. We also introduce and integrate coverage-constraint through an innovative penalty method into the loss function to control the coverage. This penalty allows us to run a robust training procedure where the target coverage can be reached, which consequently enables a reliable analysis of different methods through the coverage - accuracy curves. Comprehensive evaluations across real-world and synthetic multiple noisy label datasets demonstrate CL2DC’s superior accuracy to SOTA HAI-CC methods.
+
+The proposed CL2DC has a limitation with the selection of multiple human experts. In a real-world decision-making system, multiple specific experts may be engaged in the decision process (e.g., clinical diagnosis). In future work, we will develop a new hybrid intelligent system to select a sequence of specific human experts to make decision collaboratively. Another potential issue of CL2DC is the fact that we need roughly balanced training sets to avoid overfitting to majority classes. We plan to address this problem by leveraging learning methods that are robust to imbalanced distributions.
+
+SECTION: References
+
+SECTION: Appendix ATraining and testing algorithms
+
+We provide the detailed algorithms used in the training and testing of CL2DC inAlgorithms1and2, respectively.
+
+SECTION: Appendix BDatasets
+
+CIFAR-100[37,6]has 50k training images and 10k testing images, with each image belonging to one of 100 classes categorised into 20 super-classes. We follow the instance-dependent label noise[88]to generate synthetic labels representing a synthetic expert. In particular, each expert performs correctly on 6 or 7 different super-classes, while making 50% labelling mistakes on the remaining 13 or 14 super-classes using asymmetric label noise, where labels can be randomly flipped to other classes within the same super-class. In the experiments, we evaluate ours and competing methods using three synthetic experts. In addition, because about 10% of testing images in CIFAR-100[37]are duplicated or almost identical to the ones in the training set, in our training and testing, we use ciFAIR-100[6], which replaces those duplicated images by different images belonging to the same class.
+
+HAM10000[75]has about 10k training and 1,500 testing dermatoscopic images categorised into seven types of human skin lesions. These seven categories can be grouped further into two super-classes:benignandmalignant. We follow the setting presented in Multi-L2D[78]to simulate two experts based on these two super-classes, each following an asymmetric label noise, similarly to CIFAR-100.
+In particular, the accuracy of the two experts is around 90%, where the first expert makes 5% and 15% of labelling mistakes on super-classesmalignantandbenign, respectively, while the second expert only makes 15% and 5% of labelling mistakes on the super-classesmalignantandbenign, respectively.
+
+Galaxy Zoo[4]consists of 60k images of galaxies and the corresponding answers from hundreds of thousands of volunteers to classify their shapes.
+We follow the setup in Multi-L2D[78]that uses the response to the first question"Is the object a smooth galaxy or a galaxy with features/disk?"as the ground truth labels of a binary classification to simulate two synthetic experts. In particular, the first expert makes 5% and 15% of labelling mistakes onsmooth galaxyandgalaxy with features/disk, respectively, while the second expert makes 15% and 5% of labelling mistakes ongalaxy with features/diskandsmooth galaxy, respectively.
+
+Chaoyang[96]comprises 6,160 colon slide patches categorised into four classes:normal, serrated, adenocarcinoma, and adenoma, where each patch hasthree noisy labels annotated by three pathologists. In the original Chaoyang dataset setup, the training set has patches with multi-rater noisy labels, while the testing set only contains patches that all experts agree on a single label. We have restructured the dataset to ensure that 1)both training and testing sets contain multiple noisy labels; 2)experts have similar performance in training and testing sets; and 3)patches from the same slide do not appear in both the training and testing sets. This setting results in a partition of 4,533 patches for training and 1,627 patches for testing, and the accuracy of the three experts are 91%, 88%, 99%, assuming that the majority vote forms the ground truth annotation.
+
+MiceBone[66,67,68]has 7,240 second-harmonic generation microscopy images, with each image being annotated by one to five professional annotators, where the annotation consists of one of three possible classes:similar collagen fiber orientation, dissimilar collagen fiber orientation, and not of interest due to noise or background. Only 8 out of 79 annotators label the whole dataset. We, therefore, use these 8 annotators to represent the experts in our experiment. Using the majority vote as the ground truth, the accuracy of those 8 experts are from 84% to 86%. As the dataset is divided into 5 folds, we use the first 4 folds as the training set, and the remaining fold as the test set.
+
+NIH-ChestXray[45,80]contains an average of 3 manual labels per image for four radiographic findings on 4,374 chest X-ray images[45]from the ChestXray8 dataset[80]. We focus on the classification of airspace opacity (NIH-AO) because only this finding’s prevalence is close to 50%, without heavy class-imbalance problem. Following[54,28], a total of 2,412 images is for training and 1,962 images are for testing. The prediction accuracy of the 3 experts in the NIH-AO dataset is approximately 89%, 94%, 80% both in training and testing.
+
+SECTION: Appendix CImplementation Details
+
+SECTION: C.1Architecture
+
+All methods are implemented in PyTorch[61]and run on Nvidia RTX A6000. For experiments performed on CIFAR-100 dataset, we employ ProMix[79]to train the AI model formed by two PreAct-ResNet-18 as the LNL AI models.
+For Chaoyang, we use a ResNet-34 for the AI model, and for other datasets, we train the AI model with a ResNet-18 using a regular CE loss minimisation with a ground truth label formed by the majority-voting of experts. The gating model uses the same trained backbones as the ones used for the AI model. The complementary module is represented by a two-layer multi-layer perceptron (MLP), where each hidden layer has 512 nodes activated by Rectified Linear Units (ReLU). On CIFAR-100 the AI model achieves 73.42% accuracy on the testing set. The AI models on Chaoyang, NIH-AO, Micebone, HAM10000, and Galaxy-zoo datasets achieve 72.65%, 85.37%, 78.12%, 78.06%, and 85.24%, respectively.
+
+SECTION: C.2Training
+
+For each dataset, the proposed human-AI system is trained for 200 epochs using SGD with a momentum of 0.9 and a weight decay of. The batch size used is 256 for all datasets. The initial learning rate is set at 0.01 and decayed through a cosine annealing.
+For training the whole HAI-CC method, the ground truth labels are set as the consensus labels obtained via CROWDLAB.
+For testing, the ground truth label is either available from the dataset (e.g., CIFAR-100, HAM10000, Galaxy-zoo) or from majority voting (e.g., MiceBone, Chaoyang, NIH-ChestXray).

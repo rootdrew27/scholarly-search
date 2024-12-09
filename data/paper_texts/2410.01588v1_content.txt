@@ -1,0 +1,419 @@
+SECTION: DynFrs: An Efficient Framework for Machine Unlearning in Random Forest
+
+Random Forests are widely recognized for establishing efficacy in classification and regression tasks, standing out in various domains such as medical diagnosis, finance, and personalized recommendations. These domains, however, are inherently sensitive to privacy concerns, as personal and confidential data are involved. With increasing demand forthe right to be forgotten, particularly under regulations such as GDPR and CCPA, the ability to perform machine unlearning has become crucial for Random Forests. However, insufficient attention was paid to this topic, and existing approaches face difficulties in being applied to real-world scenarios. Addressing this gap, we propose theDynFrsframework designed to enable efficient machine unlearning in Random Forests while preserving predictive accuracy.DynFrsleverages subsampling methodand a lazy tag strategylzy, and is still adaptable to any Random Forest variant. In essence,ensures that each sample in the training set occurs only in a proportion of trees so that the impact of deleting samples is limited, andlzydelays the reconstruction of a tree node until necessary, thereby avoiding unnecessary modifications on tree structures. In experiments, applyingDynFrson Extremely Randomized Trees yields substantial improvements, achieving orders of magnitude faster unlearning performance and better predictive accuracy than existing machine unlearning methods for Random Forests.
+
+SECTION: 1Introduction
+
+Machine unlearning is an emerging paradigm of removing specific training samples from a trained model as if they had never been included in the training set(Cao and Yang,2015).
+This concept emerged as a response to growing concerns over personal data security, especially in light of regulations such as the General Data Protection Regulation (GDPR) and the California Consumer Privacy Act (CCPA).
+These legislations demand data holders to erase all traces of private users’ data upon request, safeguardingthe right to be forgotten.
+However, unlearning a single data point in most machine learning models is more complicated than deleting it from the database because the influence of any training samples is embedded across countless parameters and decision boundaries within the model.
+Retraining the model from scratch on the reduced dataset can achieve the desired objective, but is computationally expensive, making it impractical for real-world applications.
+Thus, the ability of models to efficiently “unlearn” training samples has become increasingly crucial for ensuring compliance with privacy regulations while maintaining predictive accuracy.
+
+Over the past few years, several approaches to machine unlearning have been proposed, particularly focusing on models such as neural networks(Mehta et al.,2022; Cheng et al.,2023), support vector machines(Cauwenberghs and Poggio,2000), and-nearest neighbors(Schelter et al.,2023).
+However, despite the progress made in these areas, machine unlearning in Random Forests (RFs) has received insufficient attention.
+Random Forests, due to their ensemble nature and the unique tree structure, present unique challenges for unlearning that cannot be addressed by techniques developed for neural networks(Bourtoule et al.,2021)and methods dealing with loss functions and gradient(Qiao et al.,2024)which RFs lack.
+This gap is significant, given that RFs are widely used in critical, privacy-sensitive fields such as medical record analysis(Alam et al.,2019), financial market prediction(Basak et al.,2019), and recommendation systems(Zhang and Min,2016)for its effectiveness in classification and regression.
+
+To this end, we study an efficient machine unlearning framework dubbedDynFrsfor RFs.
+One of its components, thesubsampling technique, limits the impact of each data sample to a small portion of trees while maintaining similar or better predictive accuracy through the ensemble.DynFrsresolves three kinds of requests on RFs: to predict the result of the query, to remove samples (machine unlearning), and to add samples to the model.
+The highly interpretable data structure of Decision Trees allows us to make the following two key observations on optimizing online (require instant response) RF (un)learning.
+(1) Requests that logically modify the tree structure (e.g., sample addition and removal) can be partitioned, coalesced, and lazily applied up to a later querying request.
+(2) Although fully applying a modifying request on a tree might have to retrain an entire subtree, a querying request after those modifications can only observe the updates on a single tree path in the said subtree.
+Therefore, we can amortize the full update cost on a subtree into multiple later queries that observe the relevant portion (see Fig.1).
+
+To this effect, we propose the lazy tag mechanismlzyfor fine-grain tracking of pending updates on tree nodes to implement those optimizations, which provides a low latency online (un)learning RF interface that automatically and implicitly finds the optimal internal batching strategy within nodes.
+
+We summarize the key contributions of this work in the following:
+
+Subsampling: We propose a subsampling methodthat guarantees atimes (where) training speedup and an expectedtimes unlearning speedup compared to naïve retraining approach. Empirical results show thatbrings improvements to predictive performance for many datasets.
+
+Lazy Tag: We introduce the lazy tag strategylzythat avoid subtree retraining for unlearning in RFs. The lazy tag interacts with modification and querying requests to obtain the best internal batching strategy for each tree node when handling online real-time requests.
+
+Experimental Evaluation:DynFrsyields atotimes speedup relative to the naïve retraining approach and is orders of magnitude faster than existing methods in sequential unlearning and multiple times faster in batch unlearning. In the online mixed data stream settings,DynFrsachieves an averagedms latency for modification requests andms latency for querying requests on a large-scale dataset.
+
+SECTION: 2Related Works
+
+Machine unlearning concerns the complicated task of removing specific training sample from a well-trained model(Cao and Yang,2015). Retraining the model from scratch ensures the complete removal of the sample’s impact, but it is computationally expensive and impractical, especially when the removal request occurs frequently.
+Studies have explored unlearning methods for support vector machines(Cauwenberghs and Poggio,2000), and-nearest neighbor(Schelter et al.,2023).
+Lately, SISA(Bourtoule et al.,2021)has emerged as a universal unlearning approach for neural networks. SISA partitions the training set into multiple subsets and trains a model for each subset (sharding), and the prediction comes from the aggregated result from all models.
+Then, the unlearning is accomplished by retraining the model on the subset containing the requested sample, and a slicing technique is applied in each shard for further improvements.
+However, as stated in the paper, SISA meets difficulties when applying slicing to tree-based models.
+
+Schelter et al. (2021)introduced the first unlearning model for RFs based on Extremely Randomized Trees (ERTs), and used a robustness quantification factor to search for robust splits, with which the structure of the tree node will not change under a fixed amount of unlearning requests, while for non-robust splits, a subtree variant is maintained for switching during the unlearning process.
+However, HedgeCut only supports removal of a small fraction () of the entire dataset.Brophy and Lowd (2021)introduced DaRE, an RF variant similar to ERTs, using random splits and caching to enhance unlearning efficiency. Random splits in the upper tree layers help preserve the structure, though they would decrease predictive accuracy.
+DaRE further caches the split statistics, resulting in less subtree retraining. Although DaRE and HedgeCut provide a certain speedup for unlearning, they are incapable of batch unlearning (unlearn multiple samples simultaneously in one request).
+
+Laterly, unlearning frameworks like OnlineBoosting(Lin et al.,2023)and DeltaBoosting(Wu et al.,2023)are proposed, specifically designed for GBDTs, which differ significantly from RFs in training mechanisms.
+OnlineBoosting adjusts trees by using incremental calculation updates in split gains and derivatives, offering faster batch unlearning than DaRE and HedgeCut.
+However, it remains an approximate method that cannot fully eliminate the influence of deleted data, and its high computational cost for unlearning individual instances limits its practical use in real-world applications. In the literature,Sun et al. (2023)attempted to lazily unlearn samples from RFs, but their approach still requires subtree retraining and suffers from several limitations in both clarity and design.
+
+Different from others, our proposedDynFrsexcels in sequential and batch unlearning settings and supports learning new samples after training.
+
+SECTION: 3Background
+
+Our proposed framework is designed for classification and regression tasks. Letrepresent the underlying sample space. The goal is to find a hypothesisthat captures certain properties of the unknownbased on observed samples. We denote each sample by, whereis a-dimensional vector describing features of the sample andrepresents the corresponding label or value. Denoteas the set of observed samples, consisting ofindependent and identically distributed (i.i.d.) samplesfordrawn from, where. For clarity, we call the-th entry ofattribute.
+
+SECTION: 3.1Exact Machine Unlearning
+
+The objective of machine unlearning for a specific learning algorithmis to efficiently forget certain samples. An additional constraint is that the unlearning algorithm must be equivalent to applyingto the original dataset excluding the sample to be removed.
+
+Formally, let the algorithmmaps a training setto a hypothesis. We then defineas an unlearning algorithm, whereproduces the modified hypothesis with the impact ofremoved. The algorithmis termed anexactunlearning algorithm if the hypothesesandfollow the same distribution. That is,
+
+SECTION: 3.2Random Forest
+
+Prior to discussing Random Forests, it is essential to first introduce its base learner, theDecision tree (DT), a well-known tree-structured supervised learning method.
+It is proven that finding the optimal DT is NP-Hard(Hyafil and Rivest,1976; Demirović et al.,2022); thus, studying hierarchical approaches is prevalent in the literature.
+In essence, the tree originates from a root containing all training samples and grows recursively by splitting a leaf node into new leaves until a predefined stopping criterion is met.
+Typically, DTs take the form of binary trees where
+each node branches into two by splitting(the set of samples obsessed by the node) into two disjoint sets. Letandbe the left and right child of node, and callthe best split ofthat splits it. Then, the split partitionsinto
+
+The best splitis found among all possible splitsby optimizing an empirical criterionsuch as the Gini indexBreiman et al. (1984), or the Shannon entropyQuinlan (1993):
+
+where.
+The prediction for samplestarts with the root and recursively goes down to a child until a leaf is reached, and the traversal proceeds to the left child ifand to the right otherwise.
+
+Random forest (RF)is an ensemble of independent DTs, where each tree is constructed with an element of randomness to enhance predictive performance. This randomness reduces the variance of the forest’s predictions and thus lowers prediction error(Breiman,2001). One method involves selecting the best splitamongrandomly selected attributes rather than allattributes.
+Additionally, subsampling methods such as bootstrap(Breiman et al.,1984), or-out-of-bootstrap(Genuer et al.,2017), are used to introduce more randomness.
+Bootstrap creates a training setfor each treeby drawingi.i.d. samples from the original datasetwith replacement. A variant called-out-of-bootstrap randomly picksdifferent samples fromto form.
+These subsampling methods increase the diversity among trees, enhancing the robustness and generalizability of the model.
+However, all existing RF unlearning methods do not adopt subsampling, andBrophy and Lowd (2021)claims this exclusion does not affect the model’s predictive accuracy.
+
+SECTION: 3.3Extremely Randomized Tree
+
+Extremely randomized trees (ERTs)(Geurts et al.,2006)is a variant of the Decision Trees, but ERTs embrace randomness when finding the best split.
+For a tree node, both ERT and DT find the best splits onrandomly selected attributes, but for each attribute, (), ERT considers onlycandidates, whereare uniformly sampled from range.
+Then, the best splitis set as the candidates with optimal empirical criterion score (wherecould be eitheror):
+
+Compared to DTs considering allpossible splits, ERTs consider onlycandidates while maintaining similar predictive accuracy.
+This shrink in candidate size makes ERT less sensitive to sample removal, and thus makes ERT outstanding for efficient machine unlearning.
+
+SECTION: 4Methods
+
+In this section, we introduce theDynFrsframework, which is structured into three components — the subsampling method, the lazy tag strategylzy, and the base learner ERT.allocates fewer training samples to each tree (i.e.,) with the aim to minimize the work brought to each tree during both training and unlearning phrase while preserving par predictive accuracy.
+The lazy tag strategylzytakes advantage of tree structure by caching and batching reconstruction needs within nodes and avoiding redundant work, and thus enables an efficient auto tree structure modification and suitingDynFrsfor online fixed data streams.
+ERTs require fewer adjustments towards sample addition/deletion, making them the appropriate base learners for the framework.
+In a nutshell,DynFrsoptimize machine unlearning in tree-based methods from three perspectives — across trees (), across requests (lzy), and within trees (ERT).
+
+SECTION: 4.1Training Samples Subsampling
+
+Introducing divergence among DTs in the forest is crucial for enhancing predictive performance, as proven byBreiman (2001).
+Developing novel subsampling methods can further enhance this effect.
+Recall thatrepresents the training set, anddenotes the training set for the-th tree.
+Empirical results (Section5.2) indicate that having a reduced training set (i.e.,) does not degrade predictive performance and may even improve accuracy as more randomness is involved.
+In the following, we demonstrate thatleverages smallerand considerably shortens training and unlearning time.
+
+One observation is that if sampledoes not occurs in tree(i.e.,), then treeis unaffected when unlearning.
+Therefore, it is natural to constrain the occurrence of each samplein the forest.
+To achieve this,performs subsampling on trees instead of training samples, as it is how other methods did.
+The algorithm starts with iterating through all training samples, and for each sample,different trees (say they arewith) are randomly and independently drawn from alltrees (Algorithm1: line 5), whereis determined by the proportion factor() satisfying.
+Then,appendsto all of the drawn tree’s own training set () (Algorithm1: line 6-8).
+When all sample allocations finish, The algorithm terminates in.
+Intuitively,ensures that each sample occurs in exactlytrees in the forest, and thus reduces the impact of each sample from alltrees to merelytrees.
+
+Further calculation confirms thatprovides an expectedunlearning speedup toward naïvely retraining.
+When unlearning an arbitrary sample with, w.l.o.g (tree order does not matter), assume it occurs in the firsttrees.
+Calculation begins with finding the sum of all affected tree’s training set sizes:
+
+As for each sample,assures that, giving,
+
+For the naïve retraining method, the corresponding sum of affected sample sizeisas all trees and all samples are affected.
+As the retraining time complexity is linear toand(AppendixA.2, Theorem2), the expected computational speedup provided byis, whenand the naïve method adopt the same retraining method.
+
+The above analysis also concludes that training a Random Forest withwill result in atimes boost.
+In practice, we will empirically show (in Section5.2) that by takingor, the resulting model would have a similar or even higher accuracy in binary classification, which benefits unlearning with aorboost, and make trainingorfaster.
+
+SECTION: 4.2Lazy Tag Strategy
+
+There are two observations on the differences between tree-based methods and neural network based methods that makelzypossible.
+(1) During the unlearning phase, the portion of the model that is affected by the deleted sample is known (Fig.1left, blue path, and deleted nodes).
+(2) During the inference phase, only a small portion of the whole model determines the prediction of the model (Fig.1middle, orange path).
+Along with another universal observation “(3) Adjustments to the model is unnecessary until a querying request arises”, we are able to develop thelzylazy tag strategy that minimizes adjustments to tree structure when facing a mixture of sample addition/deletion and querying requests.
+
+Intuitively, A tree nodecan remain unchanged if adding/deleting a sample does not change its best split.
+Then, the sample addition/deletion request would affect only one of the’s children since the best split partitionsinto two disjoint parts.
+Following this process recursively, the request will go deeper in the tree until a leaf is reached or a change in best split occurs.
+Unfortunately, if the change in best split occurs in node, we need to retrain the whole subtree rooted byto meet the criterion for exact unlearning.
+Therefore, a sample addition/deletion request affects only a path and a subtree of the whole tree, which is observation (1).
+
+As retraining a subtree is time-consuming, we place a tag on, denoting it needs a reconstruction (Algorithm2: line: 8-9).
+When another sample addition/deletion request reaches the taggedlater, it just simply ends here (Algorithm2: line 7) since the will-be-happening reconstruction would cover this request as retraining is the most effective unlearning method.
+But when a querying request meets a tag, we need to lead it to a leaf so that a prediction can be made (observation (3)).
+As we do not retrain the subtree, recall that observation (2) states that the query only observes a path in the tree, so the minimum effect to fulfill this query is to reconstruct the tree path that connectsand a leaf, instead of the entire subtree.
+To make this happen, we find the best split ofand grow the left and right child.
+Then, we clear the tag onsince it has been split and push down the tags to both of its children, indicating further splitting on them is needed (Algorithm2: line 26-27).
+As depicted in Fig.1right side, the desired path reveals when the recursive pushing-down process reaches a leaf.
+
+To summarize, within a node, only queries activate node reconstruction, and between two queries that visit this node,lzyautomatically batch all reconstructions into one and saves plenty of computational efforts.
+From the tree’s perspective,lzyreplaces the subtree retraining by amortizing it into path constructions in queries so that the latency for responding to a request is reduced. Unlike’s reducing work across trees and believing in ensemble,lzyrelies on tree structures, dismantling requests into smaller parts and digesting them through time.
+
+SECTION: 4.3Unlearning in Extremely Randomized Trees
+
+Despiteandlzymaking no assumption on the forest’s base learner, we opt for Extremely Randomized Trees (ERTs) with the aim of achieving the best performance in machine unlearning.
+Different from Decision Trees, ERTs are more robust to changes in training samples while remaining competitive in predictive performance.
+This robustness ensures the wholeDynFrsframework undergoes fewer changes in the tree’s perspective when unlearning.
+
+In essence, each ERT node finds the best split among(usually around 20) candidates on one attribute instead of all possible splits (possibly more than) so that the best split has a higher chance to remain unchanged when a sample addition/deletion occurs in that node.
+Additionally, It takes a time complexity offor ERTs to detect whether the change in best split occurs if all candidate’s split statistics are stored during the training phase, which is much more efficient than thedetection for Decision Trees.
+To be specific, for each ERT node, we store a subset of attributes, and for each interested attribute,different thresholdsis randomly generated and stored.
+Therefore, a total ofcandidatesdetermine the best split of the node.
+Furthermore, the split statistics of each candidateare also kept, which consists of its empirical criterion score, the number of samples less than the threshold, and the number of positive samples less than the threshold.
+When a sample addition/deletion occurs, each candidate’s split statistics can be updated in, and we assign the one with optimal empirical criterion score as the node’s best split.
+
+However, one special case is that a resampling onis needed, when a change in range ofoccurs. ERT nodefind the candidates of attributeby generating i.i.d. samples following a uniform distribution on, whereandis defined similarly. Therefore, we keep track ofandand resample candidates’ threshold when the rangechanges due to sample addition/deletion.
+
+SECTION: 4.4Theoretical Results
+
+Due to the page limit, all detailed proofs of the following theorems are provided in AppendixA.2.
+
+We first demonstrate thatDynFrs’s approach to sample addition and deletion suits the definition of exact (un)learning (Section3.1), validating the unlearning efficacy ofDynFrs:
+
+Sample deletion and addition for theDynFrsframework are exact.
+
+Next, we establish the theoretical bound for time efficiency ofDynFrsacross different aspects.
+Conventionally, for an ERT nodeand a certain attribute, finding the best split of attributerequires a time complexity of. In this work, we propose a more efficientalgorithm (see AppendixA.2, Lemma1) to find the desired split utilizing data structure that performsrange addition, andrange query. Sincein most cases, and usually, this new algorithm is advantageous in both theoretical bounds and practical performance.
+
+ForDynFrswithtrees, each having a maximum depth, and consideringattributes per node, the time complexity for training on a training set withis derived as:
+
+TrainingDynFrsyields a time complexity of.
+
+Thanks tothat significantly reduces the workload for each tree andlzythat avoids subtree retraining,DynFrsachieves an outstanding time complexity for sample addition/deletion and an efficient one for querying. For clarity, we defineas the sum of sample sizeof all nodes.t.is met by request, and a change in range occurs, andbe the number of attributes whose range has changed. Further, denoteas the sum of sample sizeof all nodes.t.is met by the request, and is tagged. Based on observations described in Section4.2, we claim the following:
+
+Modification (sample addition or deletion) inDynFrsyields a time complexity ofif no attribute range changes occur whileotherwise.
+
+Query inDynFrsyields a time complexity ofif no lazy tag is met, whileotherwise.
+
+SECTION: 5Experiments
+
+In this section, we empirically evaluate theDynFrsframework on the predictive performance, machine unlearning efficiency, and response latency in the online mixed data stream setting.
+
+SECTION: 5.1Implementation
+
+Due to the page limit, this part is moved to AppendixA.3.
+
+We use DaRE(Brophy and Lowd,2021), HedgeCut(Schelter et al.,2021), and OnlineBoosting(Lin et al.,2023)as baseline models. Although OnlineBoosting employs a different learning algorithm, it is included due to its superior performance in batch unlearning. Additionally, we included the Random Forest implementation from scikit-learn to provide an additional comparison of predictive performance. For all baseline models, we adhere to the instructions provided in the original papers and use the same parameter settings. More details regarding the baselines are in AppendixA.4.
+
+We testDynFrson 9 binary classification datasets that vary in size, positive sample proportion, and attribute types. The technical details of these data sets can be found in Table1. For better predictive performance, we apply one-hot encoding for categorical attributes (attributes whose values are discrete classes, such as country, occupation, etc.). Further details regarding datasets are offered in the AppendixA.5.
+
+For predictive performance, we evaluate all the models with accuracy (number of correct predictions divided by the number of tests) if the dataset has less thanpositive samples or AUC-ROC (the area under receiver operating characteristic curve) otherwise.
+
+To evaluate models’ unlearning efficiency, we followBrophy and Lowd (2021)and use the termbooststanding for the speedup relative to the naïve retraining approach (i.e., the number of samples unlearned when naïvely retraining unlearns 1 sample). Each model’s naïve retraining procedure is implemented in the same programming language as the model itself. Additionally, we report the time elapsed during the unlearning process for direct comparison.
+
+SECTION: 5.2Predictive Performance
+
+We evaluate the predictive performance ofDynFrsin comparison with 4 other models in 9 datasets. The detailed results are listed in Table2.
+In 6 out of 9 datasets,outperforms all other models in terms of predictive performance, while OnlineBoosting shows an advantage in the Vaccine and Bank dataset, and scikit-learn Random Forest comes first in Purchase and NoShow.
+These results show thatsometimes improves the forest’s predictive performance.
+Looking closely at, we observe that its accuracy is similar to that of DaRE and the scikit-learn Random Forest.
+All the hyperparameters used inDynFrsare listed in the AppendixA.8.
+
+The effects ofare assessed on the two most commonly used datasets (Adult and Diabetes) in RF classification.
+From Fig.3, an acute drop in predictive accuracy is obvious when.
+For the Adult dataset,DynFrs’s predictive accuracy peaks at, while a similar tendency is observed for the Diabetes dataset with the peak at.
+However, to avoid tuning on, we suggest choosingto optimize accuracy andto improve unlearning efficiency.
+
+To determine whetherachieves exact unlearning (Section3.1), we compare it with a retrain-from-scratch model with various sample removal proportions.
+Specifically, Letdenote the set of samples requested for removal, and we compare the predictive performance of an unlearned model — trained on complete training setand subsequently unlearning all samples in— with the retrained model, which is trained directly on.
+Note that both models adopt the same training algorithm.
+As depicted in Fig.3, the performance of both models is nearly identical across different removal proportions (i.e.,).
+This close alignment suggests that, empirically, the unlearned model and the retrained model follow the same distribution (Equation1).
+
+SECTION: 5.3Sequential Unlearning
+
+In this section, we evaluate the efficiency ofDynFrsin sequential unlearning settings, where models process unlearning requests individually.
+In experiments, models are fed with a sequence of unlearning requests until the time elapsed exceeds the time naïve retraining model unlearns one sample.
+To ensure thatDynFrsdoes not gain an unfair advantage by merely tagging nodes without modifying tree structures, we disablelzyand use a Random Forest withoutas the naïve retraining method forDynFrs.
+As shown in Fig.4,DynFrsconsistently outperforms DaRE, the state-of-the-art method in sequential unlearning for RFs, across all datasets, in bothandsettings, and achieved atospeedup relative to DaRE.
+Furthermore,DynFrsdemonstrates a more stable performance compared to DaRE who exhibits large error bars in Higgs.
+
+HedgeCut is excluded from the plot as it is unable to unlearn more thanof the training set, making boost calculation often impossible.
+OnlineBoosting is also omitted due to poor performance, achieving boosts of less than 10.
+This inefficiency stems from its slow unlearning efficiency of individual instances (see Fig.6upper-left plot).
+AppendixA.6contains more experiment results.
+
+SECTION: 5.4Batch Unlearning
+
+We measure each model’s batch unlearning performance based on execution time (DynFrs’s runtime includes retraining of all the tagged subtree), where one request contains multiple samples to be unlearned.
+The results indicate thatDynFrssignificantly outperforms other models across all datasets and batch sizes (see AppendixA.6for complete results).
+In the lower-left and lower-right plots of Fig.6, DaRE demonstrates excessive time requirements for unlearningandof samples in the large-scale datasets Synthetic and Higgs, primarily due to its inefficiency when dealing large batches.
+In contrast, OnlineBoosting achieves competitive performance on these datasets, butDynFrscompletes the same requests in half the time.
+Furthermore, OnlineBoosting shows the poorest performance in single-instance unlearning (Fig.6upper-left), and this inability limits its effectiveness in sequential unlearning.
+Overall, Fig.6demonstrates thatDynFrsis the only model that excels in both sequential and batch unlearning contexts.
+
+Further investigation of each model’s behavior across different unlearning batch sizes is presented in Fig.6.
+Both DaRE andDynFrsw/olzyexhibit linear trends in the plot, indicating their lack of specialization for batch unlearning.
+Meanwhile, the curve of OnlineBoosting maintains a stationary performance for batch sizes up tobut experiences a rapid increase in runtime beyond this threshold.
+Notably, the curve forDynFrsstays below those of all other models, demonstrating its advantage across all batch sizes in dataset Higgs.
+Additionally,DynFrsis the only model whose runtime converges for large batches, attributed to the presence oflzy.
+
+SECTION: 5.5Online Mixed Data Stream
+
+In this section, we introduce the online mixed data stream setting, which satisfies:
+(1) there are 3 types of requests: sample addition, sample deletion, and querying;
+(2) requests arrive in a mixed sequence, with no prior knowledge of future requests until the current one is processed;
+(3) the amount of addition and deletion requests are roughly balanced, allowing unchanged model’s hyperparameters;
+(4) the goal is to minimize the latency in responding to each request.
+Currently, no other tree-based models butDynFrscan handle sample addition/deletion and query simultaneously.
+
+Due to the page limit, this part is moved to AppendixA.7.
+
+SECTION: 6Conclusion
+
+In this work, we introducedDynFrs, a framework that supports efficient machine unlearning in Random Forests.
+Our results show thatDynFrsis 4-6 orders of magnitude faster than the naïve retraining model and 2-3 orders of magnitude faster than the state-of-the-art Random Forest unlearning approach DaRE(Brophy and Lowd,2021).DynFrsalso outperforms OnlineBoosting(Lin et al.,2023)in batch unlearning. In the context of online data streams,DynFrsdemonstrated strong performance, with an average latency of 0.12 ms on sample addition/deletion in the large-scale dataset Higgs.
+This efficiency is due to the combined effects of the subsampling method, the lazy tag strategylzy, and the robustness of Extremely Randomized Trees, bringing Random Forests closer to real-world applicability in dynamic data environments.
+
+For future works, we will investigate more strategies that take advantage of the tree structure and accelerate Random Forest in the greatest extent for real-world application.
+
+SECTION: 7Reproducibility Statement
+
+Code: We provide pseudocode to help understand this work. All our code is publicly available at:https://anonymous.4open.science/r/DynFrs-2603.
+
+Datasets: All datasets are either included in the repo, or a description for how to download and preprocess the dataset is provided. All datasets are public and raise no ethical concerns.
+
+Hyperparameters: All parameters of our proposed framework is provided in AppendixA.8, Table9.
+
+Environment: Details of our experimental setups are provided in AppendixA.3.
+
+Random Seed: we use C++’s mt19937 module with a random device for all random behavior, with the random seed determined by the system time.
+
+SECTION: References
+
+SECTION: Appendix AAppendix
+
+SECTION: A.1Pseudocode
+
+SECTION: A.2Proofs
+
+Sample deletion and addition for theDynFrsframework are exact.
+
+We prove that the subsampling methodmaintains the exactness ofDynFrs.
+Let random variabledenotes whetheroccurs in.
+In, each sampleis distributed todistinct trees, with the selection of these trees being independent of other samplesfor.
+Thus,is independent fromfor.
+However,are dependent on each other, constrainted by,,, and we say they follow a joint distribution.
+
+Now, letdenotes the training sets for each tree generated by applyingto the modified training set, and let.
+Then, when deleting sample(i.e.,), we haveandfor, and(becauseis removed) and.
+Notably,depends onandonly, but not on training samples.
+This shows that simply settingensures thatwith sample removed maintains the same distribution as applyingon the modified training set.
+
+Similarily, when adding(i.e.,),andfollow the same distributionfor.
+Whileis generated fromfor addition, it is equivalent tofor following the same distribution.
+Therefore,with sample added maintains the same distribution as applyingon the modified training set.
+
+Next, we prove that the addition and deletion operations are exact within a specificDynFrstree. When no change in range of attribute() occurs, the candidate splits are sampled from the same uniform distribution makingDynFrsand the retraining method are identical in distribution node’s split candidates.
+However, when a change in range occurs,DynFrsresamples all candidate splits and makes them stay in the same uniform distribution as those in the retraining method.
+Consequently,DynFrsadjusts itself to remain in the same distribution with the retraining method.
+Thus, sample addition and deletion inDynFrsare exact.
+
+∎
+
+For a certain Extremely Randomized Tree node, and a specific attribute, the time complexity of finding the best split of attributeis, assuming that.
+
+Conventionally, for each tree nodeand an attribute, we uniformly samplesthresholdsfrom.
+Then, we try to splitwith each threshold and look for split statistics that are: (1) the number of samples in the left or right child (i.e.,and), and (2) the number of positive samples in left or right child (and), which are the requirements for calculating the empirical criterion scores.
+
+One approach, as used by prior works, first sort all samplesbyin ascending order, and then sort thresholdsin ascending order. These sortings has a time complexity ofand, respectively. After that, a similar technique used in the merge sort algorithm is used to find the desired split statistics in.
+
+To get rid of the costly sorting on, we sortand then iterate through all samples and calculate the changes each sample brings to candidates’ split statistics. For convenience, let
+
+which are crucial split statistics for calculating the empirical criterion score.
+We start with settingandas all zeros.
+Then, for a sample, it will cause an increment infor somesatisfyingand.
+Given thatare sorted, all, () satisfy, whilefor all.can be easily found by binary search in, then addingtois the only thing left.
+Use a loop for range addition is clearly, but insteading of finding, we keep track of, where.
+So incrementcan be replace by, which is.
+When all samples are processed, we constructfrom, where prefix sumshelp solve it in.
+
+For every sample, we need to findin(Algorithm3: line 10), and perform increment inin(Algorithm3: line 11), which results in a time complexity ofin this part (Algorithm3: line 9-14).
+Meanwhile, the prefix sum is executed after all samples are processed (Algorithm3: line 15-18), and its execution time is bounded by.
+Luckily,can be calculated in a similar manner, and with bothandready, we can obtain the empirical criterion score for each candidate split (Algorithm3: line 21-28), and this has a time complexity ofassuming calculating criterion scores to be.
+
+Since, the termdominates in time complexity, with the binary search (Algorithm3: line 10) being the threshold.
+It is noteworthy that adopting exponential search to findcan result in an expectedtime complexity sinceare uniformly distributed.
+However, binary search outperforms exponential search in practice, so we conclude with a time complexity offor finding the best split of attributein nodewhen.
+
+∎
+
+Given, the proportion of trees each sample is assigned to,, the number of trees in the forest,, the maximum depth of each tree,, the number of candidate attributes,, the number of candidate splits for each attribute (usually), and, size of the training set, we now prove the following:
+
+TrainingDynFrsyields a time complexity of.
+
+For certain tree and a specific node, we find the best split amongrandomly selected attributes, and we call(Algorithm3)times for each.
+From Lemma1, finding the best split for the nodehas a time complexity of.
+Then, summingover all tree nodeson that tree, we have, since the root of the tree contains aboutsamples, and each layer has at most the same amount of samples as the root (layer 0).
+Therefore, the time complexity for training oneDynFrstree can be bounded by.
+Since there areindependent trees in the forest, the time complexity for training aDynFrsforest is.
+
+∎
+
+Modification (sample deletion or addition) inDynFrsyields a time complexity ofif no attribute range changes occurs whileotherwise (wheredenotes the number of attributes affected, anddenotes the sum of sample size among all affected nodes met by this modification request).
+
+When no attribute range change occurs on each tree, the modification request traverses a path from the root to a leaf with at mostnodes.
+For each node, we need to recalculate all the empirical criterion scores for all candidate splits.
+Sinceguarantees that onlytrees are affected by the modification requests, at mostnodes need the recalculation.
+So, the time complexity for one modification request yields.
+
+When an attribute range occurs on, it is necessary to callforand the affected attribute.
+Given that the affected nodes’ sample sizes sum up to, and for each affected node, we need to resample at mostattributes, and then Lemma1entails that the time complexity for completing all resampling is an additional.
+
+∎
+
+Query inDynFrsyields a time complexity ofif no lazy tag is met, whileotherwise (wheredenotes the sum of sample size among all nodes with lazy tag and met by this query).
+
+On each tree, the query starts with the root and ends at a leaf node, traversing a tree path with at mostnodes, and the query onDynFrsaggregates the results of alltrees, therefore querying without bumping into a lazy tag yields a time complexity of.
+
+However, if the query reaches on a tagged node, we need to perform a split on it, and by the proof of Theorem2and Lemma1, finding the best split of nodecalls function)times and results in a time complexity of.
+Asdenotes the sum of sample sizes of all nodes with lazy tags met by the query, handling these lazy tags requires an additional time complexity of.
+
+∎
+
+SECTION: A.3Implementation
+
+All of the experiments are conducted on a machine with AMD EPYC 9754 128-core CPU and 512 GB RAM in a Linux environment (Ubuntu 22.04.4 LTS), and all codes ofDynFrsare written in C++ and compiled with the g++ 11.4.0 compiler and the -O3 optimization flag enabled. To guarantee fair comparison, all tests are run on a single thread and are repeated 5 times with the mean and standard deviation reported.
+
+DynFrsis tuned using 5-fold cross-validation for each dataset, and the following hyperparameters are tuned using a grid search: Number of trees in the forest, maximum depth of each tree, and the number of sampled splits.
+
+SECTION: A.4Baselines
+
+HedgeCut and OnlineBoosting can not process real continuous input. Thus, all numerical attributes are discretized into 16 bins, as suggested in their works[Schelter et al.,2021, Lin et al.,2023].
+Both of them are not capable of processing samples with sparse attributes, so one-hot encoding is disabled for them.
+Additionally, it is impossible to train Hedgecut on datasets Synthetic and Higgs in our setting due to its implementation issue, as its complexity degenerates tosometimes and consumes more than 256 GB RAM during training.
+
+SECTION: A.5Datasets
+
+Sakar and Kastro [2018], Dua and Graff [2019]is primarily used to predict online shopping intentions, i.e., users’ determination to complete a transaction. The dataset was collected from an online bookstore built on an osCommerce platform.
+
+Bull et al. [2016], DrivenData [2019]comes from data-mining competition in DrivenData. It contains 26,707 survey responses, which were collected between October 2009 and June 2010. The survey asked 36 behavioral and personal questions. We aim to determine whether a person received a seasonal flu vaccine.
+
+Becker and Kohavi [1996], Dua and Graff [2019]is extracted from the 1994 Census database by Barry Becker, and is used for predicting whether someone’s income level is more than 50,000 dollars per year or not.
+
+Moro et al. [2014], Dua and Graff [2019]is related to direct marketing campaigns of a Portuguese banking institution dated from May 2008 to November 2010. The goal is to predict if the client will subscribe to a term deposit based on phone surveys.
+
+Kaggle [2018]is provided by Ulianova, and contains 70,000 patient records about cardiovascular diseases, with the label denoting the presence of heart disease.
+
+Strack et al. [2014], Dua and Graff [2019]encompasses a decade (1999-2008) of clinical diabetes records from 130 hospitals across the U.S., covering laboratory results, medications, and hospital stays. The goal is to predict whether a patient will be readmitted within 30 days of discharge.
+
+Kaggle [2016]focuses on the patient’s appointment information, such as date, number of SMS sent, and alcoholism, aiming to predict whether the patient will show up after making an appointment.
+
+Baldi et al. [2014], Dua and Graff [2019]consists ofsignals characterized by 22 kinematic properties measured by detectors in a particle accelerator and 7 derived attributes. The goal is to distinguish between a background signal and a Higgs boson signal.
+
+SECTION: A.6Results
+
+In this section, Table3presents the training time for each model, with OnlineBoosting being the fastest in most datasets whileDynFrsranks first among Random Forest based methods. Table4,5,6, and7despicts the runtime for model simultaneously unlearning 1, 10, 100 instances orandof all samples, whereDynFrsconsistently outperforms all others in all settings and all datasets.
+
+SECTION: A.7Online Mixed Data Stream
+
+To simulate a large-scale database, we use the Higgs dataset, the largest in our study.
+We trainDynFrsonsamples and feed it with mixed data streams with different proportions of modification requests.
+Scenario 1 is the vanilla single-thread setting, while scenarios 2, 3, and 4 employ 25 threads using OpenMP.DynFrsachieves an averaged latency of less than 0.15 ms for modification requests (Table8column # add and # del) and significantly outperforms DaRE, which requires 180 ms to unlearn a single instance on average.
+Query latency drops from 1.2 ms to 0.07 ms as the number of modification requests declines, as fewer lazy tags are introduced to trees.
+
+These results are striking: while it takes over an hour to train a vanilla Random Forest on Higgs,DynFrsmaintains exceptionally low latency that is measured ins, even in the single-threaded setting.
+This makesDynFrshighly suited for real-world scenarios, especially when querying constitutes a large proportion of requests (Table8Scenario 4).
+
+SECTION: A.8Hyperparameters
+
+All hyperparameters ofDynFrsare listed in Table9. Specially, we set the minimum split size of each node to befor all datasets.

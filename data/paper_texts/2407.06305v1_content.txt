@@ -1,0 +1,218 @@
+SECTION: SweepNet: Unsupervised Learning Shape Abstraction via Neural Sweepers
+
+Shape abstraction is an important task for simplifying complex geometric structures while retaining essential features. Sweep surfaces, commonly found in human-made objects, aid in this process by effectively capturing and representing object geometry, thereby facilitating abstraction. In this paper, we introduceSweepNet, a novel approach to shape abstraction through sweep surfaces. We propose an effective parameterization for sweep surfaces, utilizing superellipses for profile representation and B-spline curves for the axis. This compact representation, requiring as few as 14 float numbers, facilitates intuitive and interactive editing while preserving shape details effectively. Additionally, by introducing a differentiable neural sweeper and an encoder-decoder architecture, we demonstrate the ability to predict sweep surface representations without supervision. We show the superiority of our model through several quantitative and qualitative experiments throughout the paper. Our code is available athttps://mingrui-zhao.github.io/SweepNet/.
+
+SECTION: 1Introduction
+
+Sweep surfaces play an important role in computer graphics and computer vision, serving as fundamental constructs for modelling and analyzing complex shapes and structures. Sweep surfaces are extensively utilized for generating intricate geometric forms by sweeping a cross-sectional profile along a defined path. This enables the creation of diverse objects ranging from simple curves to intricate architectural designs, and more.
+On the other hand, shape abstraction is also an important problem in computer vision and graphics that involves representing complex geometric structures or objects in a simplified form while preserving essential characteristics for analysis or visualization purposes. Sweep surfaces can serve as a powerful tool for shape abstraction due to their ability to efficiently capture and represent the geometry of objects or structures due to their generality and ubiquity in the objects existing around us. By utilizing sweep surfaces, 3D shapes can be abstracted into more manageable representations, facilitating tasks such as shape recognition, and manipulation in various domains including computer graphics, or computer-aided design.
+
+Current approaches to shape abstractions can be categorized by the type of constituent primitives. Popular choices include cuboid[63,74,55,82], superquadrics[40,77,34,71,52,33], parametric surfaces[54,75], convex shapes[8,13], neural parts[39,26,23], sketch-and-extrude[30,46,64], and a combination of simple primitives[28,20,53,45,25,32]. However, each representation undergoes unique advantages and limitations. For instance, parametric primitives like cuboids and superquadrics offer ease of modification through parameter adjustments, facilitating interactivity. However, their simplicity often leads to less compact and expressive abstractions. Conversely, neural primitives showcase superior expressiveness by capturing complex shapes more accurately but suffer from reduced manipulability post-creation, which limits user control.
+
+Shape abstraction via sweep surfaces can strike a balance between compactness and preserving details (see Fig.1).
+However, learning shape abstraction via sweep surfaces is challenging, primarily due to the limitations of accurate representation and the complexities involved in their parametrization. Existing methods of determining sweep surfaces are formulated as optimization problems[51]concerning sweep profile, sweep axis, and sweep motion, which makes it hard to integrate within a larger problem or a deep neural network. When integrated into computational methods, this introduces a nested optimization challenge, and within a learning framework, it results in a non-differentiable component.
+
+In this paper, we first provide a simple parameterization for sweep surfaces that can be learned via a differentiable network. We employ superellipses for the profile representation due to its simplicity to learn and diversity in shape (see Fig.3). For the axis, we use B-spline curves, in conjunction with basic polynomials to control sweep dynamics. Consequently, in our representation, a sweep surface can be represented with as few as 14 float numbers. Moreover, the complexity of these primitives can be easily scaled by expanding the parameter space. We then show how we can utilize this representation to learn shape abstractions for a given 3D object. Our approach involves an encoder-decoder architecture and a differentiable neural sweeper, enabling the model to predict the sweep surface representationswithout any supervision. By jointly optimizing representation faithfulness, sweeping rationality, and primitive parsimony, our model delivers high-quality abstractions of the target shape (Fig.2and Fig.1). Therefore, our contributions are as follows:
+
+We provide the first deep learning model equipped with a differentiable sweeper specifically designed for shape abstraction through sweep surfaces.
+
+Our method introduces a new and compact parameterization of sweep surfaces, enabling intuitive and interactive editing.
+
+We demonstrate the advantages of our sweep surfaces over traditional parametric primitives in representing curvy-featuring objects, showcasing its superiority in achieving concise and expressive shape abstractions.
+
+SECTION: 2Related Work
+
+Swept Volumes.Swept volume[58,67,1,47,79,5,51]refers to the total volume displaced by a moving object as it travels through a particular path or trajectory.
+The key challenges of constructing swept volumes involve not only constructing ruled surface patches for each edge and face but also trimming their mutual intersections to remove components not contributing to the final surface.
+Sèllan et al.[51]introduce spacetime numerical continuation for swept volume construction, offering enhanced generality and robustness with asymptotic complexity one order lower than prevailing industry standards.
+However, the construction process of swept volumes is typically non-differentiable, precluding its integration into our network. To address this challenge, we propose Neural Sweeper, a neural network designed to approximate implicit fields for swept volumes using profile and axis information as input. We leverage the methodology outlined in[51]for data preparation, wherein ground-truth mesh data of swept volumes is generated to calculate the occupancy field for training our neural network.
+
+Neural Implicit Fields.OccNet[35], IM-Net[9], and DeepSDF[37]concurrently
+introduced the coordinate-based neural implicit representation.
+These early works only model global shape features, yielding over-smooth results which lack geometric details.
+The next wave in this direction has focused on conditioning implicit neural representations on local features stored in
+voxel[11,24,41,6,60], image grids[48,73,29]or surface points[4,18,69,22]to more effectively recover geometric or topological details and to scale to scene reconstruction, or at the patch level[16,62,78,68]to improve generalizability across object categories.
+We utilize POCO[4]as the backbone network of our neural sweeper, which takes as input the point cloud of the sweep surface to predict its implicit field.
+
+Primitive Detection and Fitting.Traditional methods[31,50,3,44,36,14]for primitive detection involve RANSAC[15]and Hough Transform[21].
+The work of Zou et al.[82]and Tulsiani et al[63]are among the earliest works that employ neural networks for primitive fitting, using cuboids as the only primitives.
+SPFN[28]and ParSeNet[54]consider unions of primitive patches to fit given 3D objects typically represented by point clouds.
+Constructive solid geometry (CSG) is a classical CAD representation which models a 3D shape as a recursive assembly of solid primitives using operations including union, intersection, and difference.
+Many recent works of primitive fitting are built on CSG trees, such as
+CSGNet[53],
+UCSG-NET[25],
+BSP-Net[8],
+CSG-Stump[45],
+CAPRI-Net[77],
+and D2CSG[76].
+Inspired by the user-level construction sequence of CAD models[70],
+Point2Cyl[64]and SECAD-Net[30]utilize sketch-and-extrude operations which enable the construction of 3D solid shapes from 2D sketches, which can ease the process of primitive fitting.
+We introduce a customized sketch-and-extrude process to create our sweep surfaces, with a superellipse as the 2D profile, a B-splinecurveas the sweeping axis (direction) and a scaling function re-scaling the profile along the sweeping axis.
+
+Shape Abstraction.Shape abstraction aims to fit 3D objects usingsimpleandcompactgeometric primitives.
+Computational approaches[2,42,19,56,27,10,65,33,71,34]directly optimize the parameters of primitives to fit a given shape. The primitives are typically superquadrics due to its extensive shape vocabulary including
+cuboids, ellipsoids, cylinders, octohedra, and many
+shapes in between.
+However, computational approaches typically rely on dense inputs (point clouds or SDFs) and require a closed-form equation for the implicit function of the primitives.
+Learning-based approaches[63,57,74,20,52,38,40,17,66]are versatile
+in dealing with different input sources, such as point clouds, voxel grids, or even RGB images.
+Since the implicit function of sweep surfaces has no closed-form equations, we learn a neural implicit field for them to approximate the function.
+
+SECTION: 3Method
+
+This section presents an unsupervised model that parses 3D shapes using parametric sweep surfaces. We call our modelSweepNetwhose overall pipeline is outlined inFig.2. It encodes the input voxel shape using a 3D convolutional network to extract features, which are then enhanced through a three-layer MLP to produce a latent representation,. This representation feeds into a dual MLP head: one predicting parameters for multiple sweep surfaces (sweep surface head) and another selecting a subset of these primitives (selection head) for parsimonious shape assembly. During this process, the prediction of the sweeping axes is guided by the medial axis[59]of the input voxel shape. For each sweep surface, we select a series of points along its sweeping axis as well as a number of profile slices for examination. These profile slices are created by projecting the 2D profile onto the 3D sweeping curve, utilizing the curve’s coordinate frame for transformation. The resulting point cloud is a compilation of points from both the sweeping axis and these transformed loops. This gathered data is then processed by the neural sweeper to predict the occupancy field of the sweep surface. The final assembled shape is presented by the union of the selected sweep surface occupancies. At inference time, the predicted primitive parameters are used directly to produce the final sweep surfaces using standard but non-differentiable sweepers, bypassing the neural sweeper, for efficient primitive production, and the parsed shape is compactly described by their parameters in the size of only tens of floats.
+
+SECTION: 3.1Sweep Surface Primitive
+
+A sweep surface is defined by a 2D profile, a 3D sweeping axis, and a functioncontrolling the profile’s scale along the axis. Here, we target for a parameterizable, compact and expressive representation for all three components.
+A 2D profile is defined as a finite closed loop with no self-intersections. Existing works attempted implicit fields[30], neural sketches[64]and rational Bézier polygons[46]to represent such profiles. Implicit fields can well represent complex profiles, however, they are carried through a neural network and hence offer limited editability post-creation. The rational Bezier polygon is parameterizable and offers good expressiveness. However, it needs additional constraints in formulation to maintain the non-self-intersection property, requires critical coefficients, and is sometimes impossible, to represent certain regular shapes such as rectangles. Alternatively, we choose superellipse to parameterize the 2D profile, formulated as
+
+whereis the polar angle,are the Cartesian superellipse contour coordinates,represents the major and minor axis andstands for the curvature degree. A superellipse is parameter-compact with as few as 3 parameters, naturally preserves self-intersection, and offers a flexible representation from rectangular to star shapes. It offer a straightforward way to model essential shapes such as squares and circles, striking a balance between parameter simplicity and representation versatility
+
+For the 3D sweeping axis, our methodology employs a third-order B-spline characterized bycontrol points, ensuring a flexible yet precise control over the shape’s curvature. The spline is parametrized over a clamped knot vector, guaranteeing that the B-spline’s trajectory starts atand concludes at. The spline curvature is modulated by the intermediate control points positions. In scenarios where these control points align collinearly, the sweep axis simplifies to a straight line, accommodating the fundamental sketch-and-extrude cases.
+
+To address the inherent rotation ambiguity of the profile during sweeping, we adopt the parallel transport frames to regularise the sweeping motion.Fig.4(a), (b) show two sweep surfaces produced with the same profile and axis but with different sweeping motions. The convention of the sweep motion is aligning the profile normal (z-axis) with the sweeping trajectory tangent, which still leaves theaxis of the profile indeterminate. The parallel transport coordinate frame establishes consistent local coordinate frames along the B-spline curve, eliminating the ambiguity in profile orientations. This method is particularly effective in maintaining consistent and deterministic sweeping motion, while being robust against extreme curvature scenarios, such as inflection points. As a result, the translation and rotation of the profile are uniquely derived along the sweeping motion, enhancing the model’s precision and reliability.
+
+The last component, scaling function, dynamically adjusts the profile scale along the sweep. Defined asfor a sweeping axis, it ensures the profile is appropriately scaled at each point. To achieve a smooth and continuous sweep,needs to be strictlycontinuous. We choose degreepolynomials with a fixed constant term to formulate a scaling function, offering both effective scaling behaviour and a compact parametrization. Collectively, a sweep surface primitive is uniquely defined by:
+
+Figure3showcases sweep surfaces with various profiles, sweeping axes, and in different combinations with the scaling function.
+
+SECTION: 3.2Neural Sweeper
+
+The integration of sweep surface primitives into a learning framework is complicated by the lack of a differentiable method to generate these primitives from their defining parameters. Traditional approaches for creating sweep surfaces involve densely sampling profile frames along the sweeping axis. This sampling is followed by one of two methods: connecting adjacent profile points to construct an explicit swept volume mesh[12]or employing numerical continuation to compute an implicit swept volume field as the profile traverses the sweeping axis[51]. Unfortunately, both methods present integration challenges within a learning context due to their non-differentiable nature. Moreover, a direct analytical approach, involving dense sampling and occupancy interpolation between profile frames, incurs significant computational costs and is susceptible to aliasing effects, particularly with sharply curved profiles. An example is provided inFig.4(e), where the sweep surface produced from interpolation shows visible coarse granularity and sharp creases at high curvature regions.
+
+In response to these challenges, we introduce the concept of a neural sweeper, a differentiable surrogate for sweep surface generation. This approach begins with the use of a differentiable sampler to collect sweep surface key points. The key points are collected by sampling points along the sweeping axis, and 3D profile slices by sparsely transforming the 2D profile into 3D space based on curve coordinate frames (Fig.4(d)). These sampled points are then processed by the neural sweeper to compute the corresponding implicit field. For model training, we generated a dataset comprising sweep surface samples with varied parameters, and applied the existing point-cloud-to-implicit-field model, POCO[4], as the backbone model. Once the model is trained, we freeze the neural sweeper and plug it intoSweepNetto facilitate subsequent outer scope training sessions. The selected architecture of the neural sweeper must support smooth gradient flow across interfaces with other components. We observed that the use of a discretized feature grid and stochastic sampling can impede gradient flow, potentially obstructing the training process of the larger framework. However, the POCO model is particularly advantageous in this context, capable of capturing detailed implicit shape features while maintaining compatibility with back-propagation techniques, thereby serving as an effective submodule within our proposed methodology.
+
+SECTION: 3.3Training and Inference
+
+SweepNetimplements a two-phase training strategy: initially, the neural sweeper is trained, followed by the comprehensive training ofSweepNetitself. The training of the neural sweeper utilizes Binary Cross-Entropy loss to evaluate the accuracy of the predicted occupancy fields for sweep surfaces. TrainingSweepNetmodel involves a blend of reconstruction loss, axis loss, overlap loss, and parsimony loss to optimize shape parsing.
+
+Withsweep surfaces predicted, the neural sweeper generates occupancy fields. From these,SweepNetselects a subset of primitives(where) to construct the final shape. Testing pointsspread throughout the 3D space are used to calculate the reconstruction loss, which is the mean squared error between the ground truth occupancy field and the assembled occupancy field. The latter is derived using the Boltzmann operator with a sharpness parameter:
+
+Furthermore, to ensure a parsimonious representation,SweepNetminimizes the use of primitives through both overlap loss and parsimony loss. The overlap loss penalizes excessive overlapping among sweep surface primitives beyond a threshold:
+
+The parsimony loss, encouraging minimal primitive usage, is represented as a sublinear function of the count of selected primitives:
+
+Axis loss is introduced to guide the prediction of sweeping axes, aligning them closely with the object’s medial axis. This is crucial as unsupervised learning of sweep axes is inherently ambiguous due to the multitude of possible profile-axis combinations that can generate the same object. The learning is regularized by ensuring the predicted sweeping axes encompass the object’s medial axis, quantified by the chamfer distance between the medial axis pointsand the points sampled from selected sweeping axis:
+
+The overallSweepNetloss function is defined as:
+
+Before the training starts, the sweep surface primitives are initialized regarding the medial axis for a warm start. At inference time, we use off-the-shelf sweepers[51]to create explicit sweep surface primitives from the predicted parameters, bypassing the neural sweeper to improve speed and accuracy. Empirically, we set,,,,and. More details about the hyper-parameter setting and training practice can be found in the supplemental material.
+
+SECTION: 4Results
+
+In this section, we begin by offering comprehensive insights into our datasets and implementation methodologies. Subsequently, we present both quantitative metrics and qualitative observations of our method compared to alternative approaches. We also provide ablation studies to justify our design choices. More results and ablations will be provided in the supplementary material.
+
+SECTION: 4.1Dataset and Implementation Details
+
+We conduct experiments over two datasets, a customGC-Objectdataset containing 50 models sourced from prior works[81,49]and internet; and quadrupeds dataset[63,72]with 124 animal shapes. The data are preprocessed following the scheme of CAPRI-NET[77].
+
+We showcase the parametric lightness and sweep-versatility properties of sweep surfaces. To this end, we compare SweepNet with several baseline models: two primitive-fitting shape abstraction methods using superquadrics (SQ)[40]and cuboids (Cuboid)[74], one network using sketch-and-extrude primitives with neural profiles (SECAD-Net)[30], one network using sketch-and-extrude primitives with CSG operations (ExtrudeNet)[46]and one network using geons with CSG operations (UCSG)[25]. In addition, we provide insight on SweepNet with point cloud input modality by switching the encoder to DGCNN[43]module, denoted as, showcasing the flexibility of our pipeline.
+
+Our intention with this comparison is to demonstrate that, within a comparable training period, SweepNet produces superior results with minimal training iterations. Sweep surfaces exhibit greater expressiveness and versatility when dealing with curvy objects compared to conventional parametric and sketch-and-extrude primitives. This highlights the necessity of introducing sweep surfaces as a new primitive for shape abstraction
+
+Since our model works on a per-shape basis, we empirically adapt the training scheme for the baseline models to accommodate single-shape fitting. We prioritize using the default setups for each baseline model. If they do not converge well within this setup, we increase the training iterations and/or enhance supervision signals, capped at a maximum of 10 minutes per shape training cost on an NVIDIA RTX4090 GPU.
+
+For SQ, we train the model on each input shape for 4,000 iterations. For Cuboid, we train the model on each input shape for 10,000 iterations. For SECAD-Net, we pretrain the model on the entire dataset for 1,000 epochs, followed by fine-tuning on each model for another 2,000 iterations before inference. ExtrudeNet and UCSG require longer training epochs to learn CSG operations. For ExtrudeNet, we replace the voxel input with a point cloud of 32,764 points and provide 100,000 occupancy points for supervision (3.05our input). ExtrudeNet is trained for 60,000 iterations, and UCSG is trained for 40,000 iterations. For SweepNet, we train the model on each input shape for 2,000 iterations without any pre-training. All models are trained with a maximum of eight primitives.
+
+SECTION: 4.2Quantitative Comparisons
+
+We present quantitative measurements obtained for Chamfer-Distance (CD), Volumetric Intersection over Union (IoU), and F-score with an accuracy threshold of 0.05 (F1)[61].
+
+The detailed quantitative results are presented in Table1for the GC-Object dataset and in Table2for quadrupeds. Across all three metrics provided for the GC-Object dataset, our method outperforms others. In the quadrupeds dataset, our method demonstrates superior performance in all metrics compared to other methods, except for IoU against SQ[40], where our method falls slightly short.
+
+SECTION: 4.3Qualitative Comparisons
+
+The qualitative results are demonstrated inFig.10, it can be seen that sweep surfaces, with appropriate scaling, have superior expressiveness. Sweep elements like curvy-linear limbs can be compactly represented by sweep surfaces using a single primitive, whereas other baseline primitives require multiple components for approximation. By leveraging the sweeping axis from straight lines to curves, sweep surfaces faithfully represent tubular parts such as ant legs which are challenging for sketch-and-extrude. Additionally, the scaling function enhances the versatility of sweep surfaces, effectively capturing shapes such as the gradually thinning gecko tail and the cone shape in the icecream.
+
+SECTION: 4.4Ablation Studies
+
+We conducted an extensive ablation study on our total loss designs, deactivating each loss component one at a time. In each experimental setting, we trained our model for a fixed iteration of 1,000 and simultaneously assessed the convergence speed. The qualitative outcomes are depicted inFig.5.
+
+As illustrated inFig.5, employing the full loss incorporating all four components yields results that closely mirror the input. Whenis disabled, there is a noticeable increase in the utilization of primitives to compensate for fine-scale details. Similarly, omitting the overlap lossleads to the emergence of undesired overlaps, particularly evident in the body of the dog. Furthermore, excluding the axis lossresults in a loss of fidelity in preserving the curvy shape of the dog, yielding a more cumbersome appearance. These observations underscore the significance of each component within our loss framework. Additional results can be found in the supplementary material.
+
+We additionally assess the impact of the parametric complexity of sweep surfaces by increasing the number of control points from 3 to 4. A qualitative example is demonstrated inFig.6. With both options, the model can make a reasonable abstraction of the input shape.
+Although our standard configuration utilizes 3 control points for our B-spline axis, our method also performs effectively with 4 control points. This indicates the relative robustness of our method against variations in the number of axis control points.
+
+Lastly, we conduct a sensitivity test on the medial axis. The medial axis is a crucial component in SweepNet, leading to a faster and more rational fitting of sweep surfaces. Despite the reliance of SweepNet on this skeletal prior, our method exhibits a certain degree of robustness against noisy medial axes. We showcase two examples inFigure7. In the first example, we inject Gaussian noise with a standard deviation of 0.01 to the extracted gecko medial axis. In the second example, the extracted medial axis of the octopus is incomplete, missing the head. In both cases, SweepNet can compensate for the faulty part and produce reasonable abstracted results.
+
+SECTION: 4.5Editablity
+
+In this section, we illustrate the flexibility of parametric sweep surfaces through post-creation editing. We present a case study inFig.8, where the faucet valve is rotated 90 degrees clockwise by editing the associated primitive parameters. This is achieved by applying an affine transformation to the sweeping axis control point coordinates, demanding a change to only 9 float numbers. We provide additional edit examples in the supplementary material.
+
+SECTION: 5Conclusion, Limitations, and Future Work
+
+Our method faces some limitations and future directions can be explored. The current model falls short in representing high-porosity or overly thin objects with solid sweep surfaces. Moreover, shape abstraction tends to struggle when dealing with complex models containing numerous intricate details (refer to Fig.9). Our method performs optimally when the provided model includes sweep elements. If the model lacks such elements, our method may not achieve the most favourable outcome. Hence, an intriguing area for exploration lies in integrating neural sweepers with other types of primitives within more complex systems (e.g., CSG techniques) to capture geometric intricacies while maintaining compactness. Also, currentlySweepNetfits to each model individually, which can encounter local optimums at different initialization, future research can be done to extend this work for a generalizable shape abstraction model.
+
+In this paper, we presentedSweepNet, a method designed for shape abstraction through the utilization of sweep surfaces. Our approach introduces a novel and compact parameterization that facilitates intuitive editing and effectively retains shape details. The integration of neural sweepers introduces a new way to incorporate challenging primitives into shape abstraction tasks. Neural sweepers can be seamlessly plugged and played in other deep learning networks for sweep surface production or tailored to tackle other complex geometric primitives, providing a versatile tool for advancing shape abstraction techniques. Collectively, our model showcases its ability to accurately predict shape abstractions via sweep surfaces without the need for supervision. We have also demonstrated the superiority of our approach over conventional methods in shape abstraction targeting on curvy-feature objects. In conclusion, SweepNet is a step further in 3D shape abstraction, combining the strengths of sweep surfaces with efficient parameterization and dynamic scaling. While there are limitations to address, the potential for future enhancements is vast.
+
+SECTION: Acknowledgement
+
+We thank Cody Reading for the insightful discussions and Ruiqi Wang for the help with figure preparations.
+
+SECTION: References
+
+SweepNet Supplementary Material
+
+Mingrui Zhao Yizhi Wang Fenggen Yu Changqing ZouAli Mahdavi-Amiri
+
+SECTION: Appendix 0.ANeural Sweeper Training
+
+SECTION: 0.A.1Data Preparation
+
+To fully train our neural sweeper, we create a dataset of sweep surfaces with a variety of parameters using the technique introduced by Sèllan et al.[51].Fig.1showcases some randomly selected samples in the dataset.
+Specifically, the parameters of a sweep surface data sample are set as follows:
+
+As mentioned in our main paper, the sweeping axis is a B-spline curve. Control points for the sweeping axis are randomly generated within the range, whereis the number of control points. Since the input shapes to SweepNet (our main network) are normalized within the unit cube, this range selection ensures that the sweeping axis remains within the confine, preserving the integrity of the sweep surfaces.
+
+Parameters for the superellipse profile, including the major-minor axis and degree, are selected randomly within the rangesand, respectively. This approach prevents the generation of overly small profiles which could potentially hinder the learning process. The degree lower bound is set to beto avoid extreme star-shape profile with diminishing corners.
+
+We adopted quadratic functionwithfor the profile scaling. This setup allows for constant scaling whenandare set to zero. The parametersandare confined within the range, ensuring the scaling velocity remains within a reasonable limit.
+
+SECTION: 0.A.2Point Cloud Sampling
+
+After obtaining the mesh of a sweep surface, we sample a point cloud from it as a training input to our neural sweeper.
+For each sweep surface, we sample (a) 15 profile frames, with each consisting of 50 contour points and (b) 124 points from the sweeping axis. There are altogetherpoints as a point cloud fed to the neural sweeper. Traditionally, a point cloud contains only the points from the object surface. Here we include the points from the sweeping axis as auxiliary information in the network input. The sampling details are as follows:
+
+The axis points are uniformly sampled from the B-spline curve’s parameter space.
+
+The contour points are uniformly sampled using the superellipse formulation withranging fromto.
+
+The profile frames position are uniformly sampled from the spline curve in parameter space. For each profile frame position, a 2D profile is scaled with the scaling function then transformed to the corresponding position with transformation matrix calculated by the parallel-transportation frame.
+
+SECTION: 0.A.3Training Strategy
+
+The training protocol follows the implementation of POCO[4], using an Adam optimizer with a learning rate of. After completing training, the neural sweeper is frozen and cascaded to the swept volume head in SweepNet.
+
+SECTION: Appendix 0.BAdditional Results
+
+More visual results and comparisons are provided in Fig.2.
+The results demonstrate the power of sweep surfaces in representing curved surfaces, and our proposed scaling function further enhances their expressive capabilities.
+
+Fig.3provides additional examples to show how the number of control points affects the abstraction results.
+A sweeping axis with more control points exhibits more curvy features, while our method remains stable in both settings.
+
+Despite curvy-feature objects, we provide additional qualitative results of SweepNet on Thingi10K[80]and ShapeNet[7]datasets. These datasets contain many CAD-like shapes where the sweep elements are not commonly observed. Our method can provide comparable results. We would like to emphasize that no single primitive is perfect for all 3D shapes. Each primitive has its strengths and weaknesses, and the combination of various methods can often provide a more comprehensive solution. SweepNet excels in handling objects with curvy and tubular features but may not be the best fit for CAD-like shapes. Combining SweepNet with other parametric primitives can harness the strengths of each method to achieve better overall performance.
+
+Lastly, we provide qualitative results from SweepNet in representing alphabetical letters and numbers inFigs.9and10.
+
+SECTION: Appendix 0.CLoss function
+
+As detailed in the main paper, we propose four distinct loss functions:,,, and. This section elucidates the rationale behind the design of each loss function and delineates the methodology for tuning their respective weights.
+
+SECTION: 0.C.1Reconstruction Loss Formulation
+
+We used the Boltzmann operator to formulate the reconstruction loss to enable a smoother gradient flow. This operator calculates the occupancy value at a test point by taking the weighted sum of the occupancy values from all present primitives, ensuring that all primitive parameters can be updated during backpropagation. The weight is determined by a biased softmax function controlled by the parameter. Alternatively, the argmax operator could be used to update only the primitive contributing the highest occupancy, but this method empirically slows convergence. The Boltzmann operator provides a smooth approximation of the maximum function, and its sharpness toward the true maximum can be adjusted by tuning the parameter.
+
+SECTION: 0.C.2Loss Tunning Strategy
+
+The primary loss function,, measures the fidelity between the abstracted shape representations and their corresponding GT counterparts. Nevertheless, relying solely onmay result in suboptimal abstraction. This is characterized by a tendency of the model to produce aggregated and cumbersome representations that merely approximate the target shape, without achieving meaningful abstraction. To address this, we introduced the overlap loss,, and the parsimony loss,, to encourage more parsimonious reconstructions by penalizing overlapping primitives and the excessive use of primitives. Empirical observations suggest that the overlap loss also facilitates faster convergence by introducing a repulsive force among primitives.
+
+Furthermore, the axis loss,, guides the selection of sweeping axes towards the medial axis of the target object, which can be directly extracted from the input voxel data.
+Incorporating the medial axis as additional supervision significantly enhances our model’s performance, rapidly narrowing the solution space and establishing a robust prior for the sweeping axis.
+
+When determining the weights assigned to each loss function, we consider the following principles: The reconstruction loss has the dominant weight to ensure a faithful shape representation, followed by the overlap loss to regularize cleanliness. The parsimony loss introduces a trade-off between parsimony and fidelity, so it is set to a comparatively small value to preserve fidelity. The axis loss is mandatory but only serves as a prior. It is set with a decaying weight, with higher importance at the beginning of the training process. The impact of each loss function is shown inFig.4.
+
+SECTION: Appendix 0.DPrimitive Edits
+
+We showcase additional examples of primitive editing fromFigs.5,6and7. The abstracted shapes demonstrate versatile editing capabilities of our method by altering the profile, axis, and scaling functions of the primitives. These examples highlight the advantages of the proposed sweep surface parametrization and its flexibility.

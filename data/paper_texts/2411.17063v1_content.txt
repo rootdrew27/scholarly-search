@@ -1,0 +1,338 @@
+SECTION: Contrastive Graph Condensation: Advancing Data Versatility through Self-Supervised Learning
+
+With the increasing computation of training graph neural networks (GNNs) on large-scale graphs, graph condensation (GC) has emerged as a promising solution to synthesize a compact, substitute graph of the large-scale original graph for efficient GNN training. However, existing GC methods predominantly employ classification as the surrogate task for optimization, thus excessively relying on node labels and constraining their utility in label-sparsity scenarios. More critically, this surrogate task tends to overfit class-specific information within the condensed graph, consequently restricting the generalization capabilities of GC for other downstream tasks. To address these challenges, we introduce Contrastive Graph Condensation (CTGC), which adopts a self-supervised surrogate task to extract critical, causal information from the original graph and enhance the cross-task generalizability of the condensed graph. Specifically, CTGC employs a dual-branch framework to disentangle the generation of the node attributes and graph structures, where a dedicated structural branch is designed to explicitly encode geometric information through nodes’ positional embeddings. By implementing an alternating optimization scheme with contrastive loss terms, CTGC promotes the mutual enhancement of both branches and facilitates high-quality graph generation through the model inversion technique. Extensive experiments demonstrate that CTGC excels in handling various downstream tasks with a limited number of labels, consistently outperforming state-of-the-art GC methods.
+
+SECTION: IIntroduction
+
+Graph neural networks (GNNs)[1,2,3]have been widely employed across complex systems to analyze graph-structured data, including chemical molecules[4], social networks[5,6], and recommender systems[7,8].
+However, the exponential increase in graph data volume presents formidable challenges for training GNNs, particularly in scenarios that necessitate training multiple models, such as neural architecture search[9], continual learning[10], and federated learning[11].
+In addressing these challenges, graph condensation (GC)[12]has emerged as a promising approach.
+It synthesizes a compact yet representative condensed graph that serves as a substitute for the large-scale original graph during model training. By preserving the essential attributes of the original graph, GNNs trained on the condensed graph achieve performance comparable to those trained on the original graph while significantly reducing the training time and broadening their applicability in resource-constrained scenarios.
+
+Due to their efficacy in accelerating model training processes, GC methods have attracted substantial attention and achieved significant progress.
+To synthesize condensed data, GC methods typically leverage a relay model to bridge the original and condensed graphs, deploying theclassificationas thesurrogate taskfor optimization[13].
+Initially, GC methods utilize sophisticated optimization strategies and focus on matching parameters of the classification relay model, including model gradients[12]and training trajectories[14]generated from both graphs.
+Subsequently, advanced studies expand these parameter matching methods to lighter label regression[15]and class-prototype matching[16], further enhancing the efficiency and effectiveness of the condensation process.
+Despite the diversity of existing GC approaches, the optimization processes in these methods consistently center on the classification surrogate task, and a recent study[17]highlights that all these methods converge to the class distribution matching between the original and condensed graphs.
+As a result, this uniform reliance on the classification surrogate task significantly constrains the real-world practicality of GC.
+
+Specifically, the application of the classification surrogate task within GC optimization encounters two primary limitations.
+On the one hand, the efficacy of GC is critically dependent on label availability, with existing methods premised on the assumption of abundant labels[18].
+Unfortunately, this assumption often contradicts real-world scenarios, where labels in large-scale graphs are costly to annotate and scarce[19].
+This label scarcity leads to imprecise class representations, thereby diminishing the effectiveness of GC methods.
+On the other hand, the classification surrogate task in these methods tends to overfit class-specific information within the condensed graph, consequently restricting the capability of the condensed graph to support diverse downstream tasks[20].
+As illustrated in Fig.1, models trained on condensed graphs in the label sparsity setting consistently underperform those trained on the original graph, not only in node classification but also across other downstream tasks.
+In practice, downstream tasks vary significantly across real-world graph systems; for instance, recommendation systems model user-item interactions as link prediction tasks[21,22], while clustering tasks are essential for analyzing item characteristics and user behaviors[23].
+Therefore, it is imperative for GNNs trained on condensed graphs to demonstrate generalizability to a variety of downstream tasks within polytropic environments.
+In a nutshell, the critical problem that arises for GC is: “How can we effectively distill essential knowledge to the condensed graph without the dependency on class labels, and ensure the GNNs trained on condensed graphs maintain generalizability across diverse downstream tasks?”
+
+To tackle this problem, self-supervised learning (SSL)[24,25,26]provides a promising direction, as it inherently enables the learning of more transferable and adaptable representations without label availability, addressing the task-specific bias introduced by the classification surrogate task.
+This effectiveness is illustrated in Fig.1, where the model trained with the self-supervised task outperforms the supervised learning model across the three tasks under the label sparsity issue.
+Despite the potential of SSL to enhance task generalization, developing a self-supervised method for GC remains an open area, which meets three critical objectives:
+(1) the surrogate task should extract the representative yet task-invariant information from the original graph in a self-supervised manner to circumvent task-specific biases introduced by class labels; (2) it should effectively summarize and compress the extracted information to facilitate the generation of a condensed graph; and (3) instead of using pairwise similarity between condensed node attributes[12,16], the condensed graph structure should be independently constructed[20,27]to topologically mimic the original graph, so as to offer stronger supplement predictive signals when training a GNN for diverse tasks.
+Although a recent attempt[28]in graph-level dataset condensation tries to generate condensed graphs from any pre-trained GNN model, this method fails to handle the node-level tasks, and the arbitrary selection of a pre-trained model may not represent the ideal distribution for effective GC, potentially compromising the practical utility of the condensed graph.
+
+In response to these objectives, we propose Contrastive Graph Condensation (CTGC), a self-supervised GC approach designed to efficiently handle diverse downstream tasks. As illustrated in Fig.2, CTGC utilizes a dual-branch framework composed of semantic and structural branches, which are iteratively optimized through a unified contrastive surrogate task. Specifically, the semantic branch processes node attributes according to the graph structure to extract latent semantic information, while the structural branch explicitly encodes geometric information using the eigenvectors of the graph structure.
+These branches are optimized through contrastive losses, encouraging intra-cluster proximity and inter-cluster separability. Moreover, to promote mutual enhancement and alignment between branches, we propose an alternating optimization framework to optimize two branches iteratively with the exchange of cluster assignments.
+Subsequently, the centroid embeddings from the two branches can be utilized to recover the node attributes and topological structures of the condensed graph through the model inversion technique[29,30], respectively.
+Consequently, CTGC eliminates the dependence on class labels in the condensation procedure and enables the independent generation of graph structures, thus facilitating high-quality condensed graphs and improving cross-task generalizability.
+
+The main contributions of this paper are threefold:
+
+New observations and insights.We identify the limitation of the classification surrogate task as a bottleneck for label dependency and task generalization in existing GC. This emphasizes the necessity of designing a self-supervised surrogate task, which significantly broadens potential applications of GC in real-world scenarios.
+
+New methodology.We present CTGC, a self-supervised GC method characterized by a novel dual-branch framework and a contrastive surrogate task. The semantic and structural information are disengaged in two branches, while the contrastive task enables extracting transferrable information for condensation, enhancing the cross-task generalizability of GC.
+
+State-of-the-art performance.Extensive experiments verify that CTGC excels in generating high-quality condensed graphs without label availability, surpassing various state-of-the-art GC methods in performance.
+
+SECTION: IIPreliminaries
+
+In this section, we first revisit the fundamental concepts of GNNs, eigenvalue decomposition, and GC, and then formally define the problem studied.
+
+SECTION: II-AGraph Neural Networks
+
+Consider that we have a large-scale graphconsisting ofnodes.denotes the-dimensional node attribute matrix andis the adjacency matrix.
+We useto denote the one-hot node labels overclasses.
+GNNs learn the embedding for each node by leveraging the graph structure and node attribute as the input.
+Without loss of generality, we use graph convolutional network (GCN)[31]as an example, where the convolution operation in the-th layer is defined as follows:
+
+whereis the node embeddings of the-th layer, and.is the normalized adjacency matrix.represents the adjacency matrix with the self-loop,denotes the degree matrix of, andis the trainable weights.is the rectified linear unit function.
+Afterward, the-th layer embeddingsare predicted by specific prediction heads for different downstream tasks.
+
+SECTION: II-BEigenvalue Decomposition
+
+Given the adjacency matrix, the normalized graph Laplacian is defined as, whereis the identity matrix. The eigenvalue decomposition of graph Laplacian is defined as, wheredenotes the transpose operation.is a diagonal matrix whose diagonal entriesare the eigenvalues of.are the corresponding eigenvectors.
+
+The eigenvalues and eigenvectors encapsulate the geometric information and node positions within the graph topology, providing a comprehensive view of graph structural information. Specifically, the eigenvalues[32]summarize key structural properties, such as connectivity[33], clusterability[34], and diffusion distance[35]. Meanwhile, the eigenvectors inserve aspositional embeddings[36,37], capturing the local structure associated with each node[38].
+
+SECTION: II-CGraph Condensation
+
+Conventional graph condensation methods[12]are primarily developed within a supervised framework, aiming to generate a small condensed graphwith,as well as its label, where. The condensation ratio is denoted as.
+GNNs trained oncan achieve comparable performance to those trained on the much larger.
+To connect the original graphand condensed graph, arelay modelparameterized byis employed in GC for encoding both graphs.
+Concurrently, asurrogate taskis introduced within the condensation process to facilitate the optimization of the relay model and the condensed graph.
+Specifically, the classification task is predominantly employed as the surrogate task in existing GC methods, and the classification losses ofandw.r.t.are defined as:
+
+whereis the cross-entropy loss andis predefined to match the class distribution in.
+Then the objective of GC can be formulated as a bi-level optimization problem:
+
+To solve this objective, the typical GC method[12]proposes to align the model gradients at each training stepgenerated from two graphs. This approach allows the training trajectory on the condensed graph to mimic that of the original training graph, ensuring that models trained on both graphs converge to comparable solutions. The objective is defined as:
+
+wheredenotes the initial parameters of the relay model, which is sampled from the distribution. The expectation onaims to improve the robustness ofto different parameter initialization[39].is the model optimizer and the relay model is updated only on.is the distance measurement to calculate the gradient distances. Suppose the gradientandin Eq. (4) entails alllayers’ model gradient matricesand,is calculated by summing up all layers’ pairwise gradient distances:
+
+whereis the cosine similarity,andare the-th column vector in the gradient matrixandat layer, respectively.
+
+Notice that, to simplify the optimization of the structure of condensed graph, typical GC methods[12,40]entangle the graph structure with the node attributes, parameterizingbyas:
+
+whereis a multi-layer perceptron (MLP), and fed with the concatenation of condensed node featuresand.denotes the sigmoid function.
+
+In addition to gradient matching, various GC methods employ diverse optimization strategies to address the objective in Eq. (3), including distribution matching[16,27], trajectory matching[14]and kernel ridge regression[15].
+While these methods demonstrate the potential to improve GC performance, they all deploy the classification as the surrogate task, which inherently impacts the cross-task generalizability of GC.
+
+SECTION: II-DProblem Formulation
+
+To mitigate the dependency on labels within the GC, we focus on a self-supervised GC framework targeting a large unlabeled graph. Our objective is to generate a small condensed graphwith-dimensional target embeddings, which serve as proxy labels ofto facilitate the pre-training of downstream GNNs. This condensed graphexpedites the model pre-training processes, allowing the pre-trained model to be fine-tuned efficiently for adaptation across various downstream tasks.
+
+SECTION: IIIMethodologies
+
+We hereby present our proposed method, Contrastive Graph Condensation (CTGC), which comprises two stages: relay model training and graph generation, as illustrated in Fig.2.
+Initially, CTGC employs a dual-branch architecture to extract semantic and structural information separately.
+Then we move on to the contrastive surrogate task to optimize the semantic and structural relay models, as well as to develop the centroid embeddings.
+Finally, we generate the graph structure and node attributes using the relay models and centroid embeddings, culminating in the construction of the condensed graph.
+
+SECTION: III-ADual-Branch Architecture
+
+The conventional condensation procedure described in SectionII-Cemploys a single relay model to encode both the graph structure information and the node attributes, with the structure of the condensed graph being generated based on condensed node attributes as Eq. (6).
+Although it simplifies the optimization of graph structure, the entanglement of condensed nodes and structure heavily caps the amount of preserved topological information from the original graph[20,27].
+To mitigate this limitation, we introduce an additional structural branch to generate graph structure from the spectral perspective.
+
+Specifically, two distinct relay models are introduced to encode the original graph:
+
+whereandrepresent the relay models for the semantic and structural branches, respectively.is the GNN model as used in conventional GC methods, whileprocesses the eigenvaluesand eigenvectorsto produce the structural embeddingsfor the original graph. To facilitate scalable encoding, EigenMLP[41]is leveraged as the structural relay modelas follows:
+
+whereis the sign-invariant eigenvectors andrepresents the filtered eigenvalues.
+The implementation of EigenMLP mitigates thesign ambiguityandbasis ambiguity[41]inherent in eigenvector decompositions, where arbitrary sign flips and coordinate rotations of eigenvectors can yield identical graph structures.
+Specifically, the sign-invariant eigenvectors are derived by taking both positive and negative forms of eigenvectors into consideration:
+
+whereandrepresent MLPs to transform the eigenvalues, anddenotes the concatenation operator.are eigenvectors. Additionally,extends the eigenvaluesto their high-dimensional Fourier features to mitigate the bias ambiguity as:
+
+whererepresents the period andis a learnable weight matrix.
+
+Although EigenMLP effectively models the graph structure from a spectral perspective, employing all eigenvectors is impractical due to the inclusion of the dense and large matrix, resulting in significant computational and memory costs for large graphs.
+In practice, eigenvectors associated with the smallest and largest eigenvalues are critical for encapsulating geometric information. Eigenvectors corresponding to smaller eigenvalues emphasize the global community structure[32], while those associated with larger eigenvalues capture local features[37]. These crucial eigenvectors play a pivotal role in graph modeling and are widely utilized in spectral GNNs[42]and graph reduction methods[43,27].
+To mitigate the computational burden of complete eigenvalue decomposition, we follow prior work[27]by using thesmallest andlargest eigenvalues, along with their corresponding eigenvectors, as inputs to the structural branch. The utilized eigenvalues are denoted byand the total number of eigenvalues is set to match the size of the condensed graph for subsequent graph generation, i.e.,.
+
+SECTION: III-BContrastive Surrogate Task
+
+To enable the extraction of versatile information and effectively compress this information for condensed graph generation, we design a contrastive surrogate task based on clustering to train dual-branch relay models in a self-supervised manner.
+Without loss of generality, we use the semantic branch as our illustrative example.
+
+Specifically, given the semantic node embeddings, we utilize the K-means algorithm to group them intoclusters, i.e., and use the average cluster embeddings as their respective centroids, where.
+Accordingly, each nodeis assigned to a cluster, with its cluster label defined as:.
+It is crucial to emphasize that the centroid embeddingsare configured as the learnable parameters, enabling updates during the training of the relay model to refine the representations.
+Consequently, contrastive losses are designed to optimize node distributions by enhancing the cohesion within clusters and the separation among different centroids:
+
+whereis the cosine similarity anddenotes the temperature.is an indicator function evaluating to 1 iff.represents the cluster label of node.
+The relay modeland centroid embeddingsare optimized according to the joint loss:
+
+whereis the weight to balance two losses.
+
+Similarly, the structural relay modeland centroid embeddingscan be optimized using the same contrastive loss.
+
+Branch Alignment.The dual-branch architecture learns node representations with diverse emphasis, conditioned on semantic features and structural similarities, respectively.
+However, separate training of the semantic and structural branches may lead to inconsistencies in cluster assignments, where a node’s positioning relative to the generated clusters may differ. This discrepancy can impede the alignment of condensed node attributes with the graph structure, ultimately resulting in a corrupted condensed graph.
+
+To address this issue, we introduce an alternating optimization framework to align the two branches iteratively, as detailed in Algorithm1. Specifically, in the semantic branch, we fix theand update thewith the cluster labelsinferred by the, allowing the structural information learned byto be distilled into the:
+
+In the structural branch, we fix the, and theis optimized using the cluster labelsinferred by the:
+
+This iterative process can effectively distill the semantic and local structural information into both branches, thereby enhancing node representations and ensuring the consistency of optimization results.
+
+SECTION: III-CGraph Generation
+
+The contrastive surrogate task effectively encodes the semantic and structural information into centroid embeddings.
+This self-supervised task acts as a condensation mechanism, where each centroid embedding aggregates the collective features of all node embeddings within its cluster.
+Consequently, with the alignment of branches, the node attributes and topological structure of the condensed graph can be recovered fromand, respectively.
+
+Specifically, we utilize the model inverse technique[29,30], and first generate the eigenvectorsof the condensed graph according to the relay model,and the utilized eigenvalues of the original graph:
+
+where the second term ensures the natural orthogonality of the generated eigenvectors. Afterwards, the condensed graph is recovered according toand:
+
+The attributes for the condensed graphis derived by optimizing:
+
+Finally, the condensed graphand target embeddingsare employed in training downstream GNN models.
+
+SECTION: III-DFurther Detailed Analysis
+
+Initialization.Despite the contrastive surrogate task enabling the summaries of extracted information, the initial cluster labeling impacts the subsequent optimization results.
+Hence, to enhance the convergence, we follow previous work[44,45]to pre-train the semantic relay model by a simple SSL task and generate the initial cluster labels.
+Specifically,is shuffled by randomly altering the node order, and the modified attributesare then encoded through the incorrect graph structure to obtain augmented embeddings.
+These augmented embeddings are employed to construct a binary classification task alongside, with the relay modelbeing pre-trained to distinguish between them. This process enhances the discriminative capacity of the latent space, thereby providing an effective initialization.
+
+After training, initial cluster labels are derived by applying K-means to, and the semantic relay model is utilized for subsequent optimizations.
+
+Time Complexity.The time complexity of CTGC comprises three main components: training of the semantic branch, structural branch, and computation of graph generalization.
+Firstly, the time complexity for training the semantic relay model in the semantic branch is, wheredenotes the number of layers,is the number of edges, andrepresents the dimensionality of embeddings.
+For the structural branch, the time complexity for training the structural relay model is, whereis the period of polynomial in EigenMLP.
+Additionally, the complexity of decomposing thesmallest or largest eigenvalues of the original graph is.
+The clustering step incurs a complexity of, withdenoting the number of iterations for K-means.
+Lastly, the complexity for graph generalization is.
+
+Therefore, the clustering and eigenvalue decomposition constitute the primary computational burdens in CTGC.
+However, the scalability of CTGC is facilitated by the reduced size of the condensed graph and the integration of well-established acceleration libraries, such as FAISS[46]and Scipy[47].
+
+SECTION: IVExperiments
+
+We design comprehensive experiments to validate the effectiveness of our proposed CTGC and aim to answer the following questions.
+
+Q1: Compared to other graph reduction methods, can CTGC achieve better performance across different downstream tasks?
+
+Q2: How does CTGC perform under different condensation ratios?
+
+Q3: How does the semantic relay model generated by CTGC perform?
+
+Q4: Can the condensed graph generated by CTGC generalize well to different GNN architectures?
+
+Q5: How do the different components, i.e., structural branch, initialization, alternative optimization, constraints, and graph construct method affect CTGC?
+
+Q6: How do the different hyper-parameters affect CTGC?
+
+Q7: What are the characteristics of the condensed graph?
+
+SECTION: IV-AExperimental Settings
+
+Datasets.
+We assess our proposed methods using four real-world datasets in both transductive and inductive settings. These datasets include Cora, Citeseer[31], Ogbn-arxiv[48], and Reddit[49]. The statistics for these datasets are presented in TableI.
+
+Evaluation Protocol. To evaluate the cross-task generalizability of models trained on condensed graphs, we utilize three commonly employed downstream tasks: node classification (NC), link prediction (LP), and node clustering (CL). The performances of these tasks are measured by accuracy, AUC and NMI score, respectively. Following graph self-supervised learning paradigms[50], we freeze the model parameters trained on the condensed graph, thereby converting it into a static feature extractor. Subsequently, dedicated prediction heads for node classification and link prediction are trained using these features. For clustering, the K-means algorithm is directly applied to the node embeddings.
+
+To facilitate rapid adaptation of the prediction heads, we assess the node classification and link prediction tasks under the few-shot scenario, which is consistent with the objective of efficient model training in GC.
+Specifically, the node classification task is evaluated under 3-shot and 5-shot settings111This differs from the graph few-shot learning[51], which does not engage in the episode learning paradigm, but instead characterizes in only providing few labels per class for training., wherein 3 and 5 labels are provided per class for training the prediction head, respectively. Unless otherwise specified, the 3-shot setting is evaluated by default.
+Notably, there isno validation setin CTGC, and the optimal model is determined based on the lowest training loss.
+For the link prediction task, we follow[52]and provide 100 links as the training set for link prediction head training.of the edges are used for validation andfor testing. All remaining edges are solely used for message-passing.
+
+It is crucial to underscore that all validation and test edges are excluded from the original graph used in the condensation process to prevent information leakage.
+
+Baselines.
+We compare our proposed methods with existing graph reduction methods, including coreset, coarsening, and GC methods. Notably, these conventional methods necessitate the node labels during the graph generation process, whereas our method condenses the graph in a self-supervised manner.
+The details of each method are as follows:
+
+Herding[53]. It picks samples that are closest to the cluster center for each class, which is often used in continual learning[10,54].
+
+K-Center[55,56]. It selects the center samples to minimize the largest distance between a sample and its nearest center.
+
+Coarsening[57,58]. It generates the partition matrix to construct the super-nodes and super-edges.
+
+GCond[12]. The first GC method that utilizes the gradient matching to align the model parameters derived from both graphs.
+
+GCDM[40]. An efficient GC method that generates condensed graphs based on distribution matching by optimizing the maximum mean discrepancy between class prototypes.
+
+SimGC[59]. An efficient GC method with the graph generation that introduces the pre-trained model in distribution matching.
+
+GCSR[60]. A trajectory matching-based GC method with the self-expressive condensed graph structure.
+
+GDEM[27]. A generalized GC method by matching the class distributions within subspaces induced by the eigenbasis.
+
+We utilize latent GNN embeddings for node selection in both Herding and K-Center. Importantly, due to the significant dependency of coreset and coarsening methods on the node labels, we initially train a GNN using few-shot labels and subsequently expand the label set by the pseudo labels. For conventional GC methods, the graph is condensed using the few-shot labels.
+
+Hyper-parameters.Following the existing GC works, we employ a two-layer GCN as the semantic relay model, and for evaluation, two-layer GNNs with 256 hidden units are utilized. Unless otherwise specified, GCN is evaluated by default.
+The hyper-parameter configurations for our proposed method are detailed in TableII.
+Here,anddenote the number of epochs allocated for pre-training and training of the relay model, respectively.represents the number of training iterations. The learning rates for pre-training, semantic relay model training, and structural relay model training are denoted by,, and, respectively.is used to balance the losses in Eq. (12).denotes the temperature in the contrastive loss.andare defined asandfor all datasets, respectively.
+
+Computing Infrastructure.The codes are written in Python 3.9 and Pytorch 1.12.1. The operating system is Ubuntu 18.0. The experiments are carried out on a server featuring Intel(R) Xeon(R) Gold 5120 CPUs at 2.20GHz and NVIDIA TITAN RTX GPUs with 24GB GPU memory.
+
+SECTION: IV-BPerformance Evaluation Across Multiple Tasks (Q1&Q2)
+
+Node Classification Task.We assess the node classification capability of CTGC against baseline methods in handling the label sparsity issue. We present both 3-shot and 5-shot evaluation settings, and their results are shown in TableIIIandIV, respectively.
+In these tables, the Whole Dataset (WD) indicates that GNNs are trained on the original graph using few-shot labels, which suffers from substantial computational costs due to the large scale of the original graph.
+
+Our proposed CTGC method consistently outperforms other baselines by a large margin, notably also surpassing WD at substantial compression rates. For instance, given the 3-shot setting, CTGC achieves improvements of 1.8%, 1.5%, and 1.3% over WD at the condensation rate of 0.05%, 0.25%, 0.50% on the Ogbn-arxiv dataset. This performance advantage extends across all other datasets, with the largest improvement observed on Citeseer, where CTGC achieves 65.1%, compared to 57.2% for WD. Similar trends are observed in the 5-shot setting, as shown in TableIV.
+
+In terms of other baselines, their performance varies across different settings, with all of them falling short of the results achieved by WD and our method. For example, Herding exhibits the best performance among the coreset methods, particularly under high condensation ratios. But its best performance only reaches 65.1% on Cora, significantly lower than our result of 69.7%. Moreover, Herding heavily depends on the availability of labels and requires label set expansion through pseudo-labeling.
+These findings further highlight the efficacy of our self-supervised GC paradigm, which preserves critical information in the condensed graph for model pre-training, reducing the dependency on label quantity.
+
+Link Prediction Task.The link prediction model is established by appending a trainable prediction head on top of the frozen pre-trained model derived from reduced graphs under the 3-shot setting.
+In contrast, WD provides a benchmark for comparison, which differs from others in training the GNN model with prediction heads from scratch on the original graph, rather than merely training the prediction heads on top of a pre-trained GNN model. The link prediction performances are evaluated by AUC score, which are shown in TableV.
+
+Compared to the baselines, our method demonstrates significant improvements across different condensation ratios on all four datasets. Notably, it outperforms WD on the Cora and Citeseer datasets, achieving improvements of 2.5% and 3.9% under the highest condensation ratio. On the Ogbn-arxiv and Reddit datasets, our method yields comparable results to WD, while substantially surpassing other baselines. These findings suggest that existing GC methods are highly dependent on node labels and fail to effectively preserve link correlations in the condensed graph. In contrast, by leveraging self-supervised learning, our proposed method generates a more robust relay model that is devoid of node classification bias, resulting in superior link prediction performance.
+
+Clustering Task.Beyond the supervised tasks, we also evaluate our model on the node clustering task. This unsupervised task is undertaken based on the pre-trained model derived from the 3-shot setting without additional training. We remain the consistent setting with all other baselines for a fair comparison. The clustering performances are evaluated by the NMI score, with detailed results in TableVI.
+Overall, our method achieves superior performance over all other baselines, including WD, by a significant margin. The greatest improvement is observed on the Cora dataset, where our method achieves an 11.5% improvement compared to the best baseline (WD). This validates the effectiveness of our method on the clustering task.
+
+Different Condensation Ratios.Across each dataset, we evaluate three different condensation ratios as utilized in GCond. The results in TablesIII-VIdemonstrate that Herding is sensitive to the condensation ratio, with a larger number of nodes in the reduced graph generally yielding better outcomes. In contrast, our proposed method exhibits robustness to the condensation ratio, maintaining superior performance even with smaller condensed graph sizes.
+
+SECTION: IV-CRelay Model Performance (Q3)
+
+In addition to evaluating the performance of models trained on condensed graphs, we also examine the performance of the semantic relay model across various downstream tasks.
+As illustrated in TableVII, the self-supervised learning paradigm significantly enhances model generalization. Notably, on datasets such as Cora, Citeseer, and Ogbn-arxiv, the link prediction performance of the relay model surpasses that of models trained from scratch.
+Furthermore, our innovative clustering-based surrogate task facilitates the effective compression of extracted information during the training procedure of relay models. This is pivotal in generating high-quality condensed graphs, and the performance discrepancy between the relay model and the models trained on the condensed graph is well controlled.
+
+SECTION: IV-DGeneralizability for GNN Architectures (Q4)
+
+An essential property of GC lies in its generalizability across various GNN architectures, allowing the condensed graph to be employed for training diverse GNN architectures. To evaluate the generalizability of our proposed method across different GNN architectures, we train various models on the condensed graph, including GCN, SAGE[61], SGC[62], APPNP[63], and Cheby[64]. The performances for these GC methods on the Cora and Ogbn-arxiv datasets are presented in TablesVIIIandIX, respectively. The results indicate that all tested GNN models are effectively trained using the condensed graphs and achieve comparable performance across different tasks. Specifically, GCN and SGC show superior performance as these models utilize the same convolution kernel as the relay model during the condensation process. Our method consistently delivers the best results across different architectures and downstream tasks, demonstrating the robustness and versatility of our generated condensed graphs.
+
+SECTION: IV-EAblation Study (Q5)
+
+To validate the impact of individual components, CTGC is evaluated by disabling specific components, thereby revealing their distinct contributions to the overall performance. Specifically, we evaluate three types of components: graph generation method, constraint and method modules. The detailed results are shown in TableX.
+
+Graph Generation Method.Contrary to traditional GC methods that construct the condensed graph structure based on node attributes, CTGC utilizes positional embeddings, which are independent of the node attributes of the condensed graph. To compare these graph structure generation methods, we evaluate CTGC by replacing the condensed graph generation with the KNN graph and denote this method as “w KNN”. Specifically, the KNN graph[65]is constructed by directly measuring the similarity of condensed node attributes. In contrast, our proposed method leverages diverse eigenvalues and eigenvectors in graph construction, preserving the spectral properties of the original graph and thus containing stronger generalizability.
+
+Constraint.CTGC is evaluated by disabling the centroid discrimination loss(“w/o”). According to TableX, we can observe thatimproves cluster distribution and node classification performance, confirming that the centroid discrimination loss facilitates the uniform distribution of clustering centroids.
+
+Method Modules.CTGC is assessed in the following configurations:
+
+“w/o INIT”: without relay model initialization;
+
+“w/o ITER”: without iterated optimization of the semantic and structural branches.
+
+“w/o STR”: without the structural branch and generate the graph structure by KNN graph.
+
+The removal of all these method modules leads to noticeable declines in the performance of different tasks, underscoring the necessity in condensation procedure.
+The initialization lays a robust foundation for effective clustering and optimization of the relay model. Iterated optimization enables the structural correlations among positional embeddings to be transferred to the semantic branch, thereby enhancing the relay model and node representations. Notably, the most substantial performance decline occurs when the structural branch is removed. For instance, the node classification and clustering performances decline 3.5% and 3.8% on Reddit dataset, underscoring the necessity of incorporating eigenvectors to explicitly encode structural information.
+
+SECTION: IV-FHyper-parameter Sensitivity Analysis (Q6)
+
+In this section, we examine the impact of hyper-parameters on our proposed method across various downstream tasks.
+The hyper-parametersadjust the weight of the centroid discrimination loss during the training process.dictates the number of iterations for the alternating optimization of the semantic and structural branches. Fig.3shows the node classification and link prediction performance on the Cora dataset.
+
+We select a broad range of values forto accommodate the gradient variations between the centroid discrimination loss and the cluster loss.
+Asincreases, the model tends to achieve a more uniform distribution of centroids, which supports both node classification and link prediction tasks.
+The increment ofgenerally enhances model performance and leads to gradual convergence. However, higher values oflead to greater computational demands, necessitating the selection of an appropriate value to balance performance gains with computational complexity.
+
+SECTION: IV-GStatistics of Condensed Graphs (Q7)
+
+In TableXI, we compare the properties of condensed graphs to those of original graphs.
+Benefiting from self-supervised learning, the condensed graphs generated by our method not only perform better on downstream tasks but also contain fewer nodes and require significantly less storage. For example, the storage required for the condensed graph of the Reddit dataset is 0.6 MB, which is 726smaller than that required by the original graph.
+Additionally, these condensed graphs are denser than the original graphs. Given their considerably smaller scale, this increased density enhances message-passing between nodes, benefiting the performance across diverse downstream tasks.
+
+SECTION: VRelated Work
+
+SECTION: V-AGraph Condensation
+
+Graph condensation[66,67,68]focuses on diminishing the computational demands of GNN training through a data-centric approach. It has found widespread application due to its superior capabilities in graph reduction, which includes accelerating inference[69], facilitating continual learning[70], optimizing hyper-parameter/neural architecture search[71], federated learning[11]and backdoor attacks[72].
+
+Research in this area can be grouped into five main categories based on their objectives: effective GC, generalized GC, efficient GC, fair GC, and robust GC. These categories aim to refine the condensation process from different perspectives: Effective GC strategies focus on maximizing the accuracy of GNNs trained on condensed graphs. Such strategies often include sophisticated optimization techniques to improve results, including trajectory matching[14], kernel ridge regression[13], and graph neural tangent kernels[73]to preserve crucial structural and feature data necessary for optimal GNN performance. Notably, SGDC[28]employs self-supervised learning to boost the quality of condensed graphs, but it limits its focus to graph-level data and the graph classification task.
+
+Generalized GC[74]seeks to enhance the performance of various GNN architectures on condensed graphs. It tackles the challenge of minimizing information loss during the condensation process. For instance, SGDD[20]uses Laplacian energy distribution to examine graph structural properties, assessing the spectral difference between condensed and training graphs. GCEM[27]avoids conventional reliance on relay GNNs and instead directly produces the eigenbasis for the condensed graph, eliminating the spectral bias of relay GNNs.
+
+Efficient GC[16]focuses on the speed of creating condensed graphs and their application in time-critical scenarios. These methods streamline the entire GC process, from graph encoding to optimization and generation, drastically reducing the time needed for condensation. CGC[17]consolidates existing optimization techniques into a distribution matching approach and transforms the optimization process into a clustering task that can be efficiently executed without extensive training.
+
+Fair GC addresses the potential disparities in fairness between models trained on condensed and original graphs[75], aiming to prevent the amplification of biases within condensed graphs and ensure fair model performance.
+
+Lastly, Robust GC[76]targets the integrity of the condensation process by filtering out noise from the original graphs, focusing only on vital, causative information for the condensed graph to ensure effective GNN training. This approach helps to prevent the propagation of noise from the original graphs to the GNNs, thereby preserving the accuracy of model predictions.
+
+SECTION: V-BGraph Self-Supervised Learning
+
+Self-supervised learning (SSL) in graph representation learning[77]has proven to enhance model generalization across different tasks. SSL constructs specific tasks using unlabeled data, allowing models to identify and learn significant patterns in graph data, thereby reducing reliance on labeled data. This approach generally improves model performance in various downstream applications. The essence of SSL lies in designing the surrogate task, with current methods falling into three broad categories: contrastive, generative, and predictive.
+
+Contrastive learning focuses on maximizing the similarity between two jointly sampled positive pairs while minimizing similarity with sampled negative pairs. The scope of these pairs can vary from local[78,79], contextual[36], to global[78], aligning with node-level, subgraph-level, or graph-level information, respectively. Additionally, contrastive learning approaches involve comparing two graph views, either within the same scale or across different scales, dividing these methods into same-scale contrasting[80]and cross-scale contrasting categories[81].
+On the other hand, generative approaches leverage generative models to preserve crucial information from the graph. These methods encode the graph into compact representations[82]and then reconstruct it to retain essential features of the original structure[83]or node attributes[84], focusing on the fidelity of the reconstruction.
+Finally, predictive methods generate informative labels from the graph data itself to serve as self-supervision. These labels are derived from various graph properties such as node degree[36], node labels[85], or the shortest paths[86], thus creating a direct correlation between the data and the labels.
+
+In the SSL context, our proposed CTGC model employs a contrastive SSL approach by encouraging node embeddings to align closely with their cluster center and neighboring nodes, which falls into the categories of local-local and local-context contrastive tasks.
+
+SECTION: VIConclusion
+
+In this paper, we present Contrastive Graph Condensation (CTGC), a novel self-supervised GC approach to efficiently handle diverse downstream tasks. CTGC employs a dual-branch framework to separately extract latent semantic and geometric information. These branches are optimized through a unified self-supervised surrogate task within an alternating optimization framework, facilitating the alignment and mutual enhancement of the two branches. Eventually, the condensed graph is generated using the model inversion technique, which eliminates the dependence on class labels in the GC process and allows for the independent generation of condensed graphs. While CTGC demonstrates promising cross-task generalizability, future research could focus on developing foundation GC methods applicable across various datasets.
+
+SECTION: References

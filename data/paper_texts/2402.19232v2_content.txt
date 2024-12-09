@@ -1,0 +1,475 @@
+SECTION: Trained Random Forests Completely Reveal your Dataset
+
+We introduce an optimization-based reconstruction attack capable of completely or near-completely reconstructing a dataset utilized for training a random forest. Notably, our approach relies solely on information readily available in commonly used libraries such asscikit-learn. To achieve this, we formulate the reconstruction problem as a combinatorial problem under a maximum likelihood objective. We demonstrate that this problem is-hard, though solvable at scale using constraint programming – an approach rooted in constraint propagation and solution-domain reduction. Through an extensive computational investigation, we demonstrate that random forests trained without bootstrap aggregation but with feature randomization are susceptible to a complete reconstruction. This holds true even with a small number of trees. Even with bootstrap aggregation, the majority of the data can also be reconstructed. These findings underscore a critical vulnerability inherent in widely adopted ensemble methods, warranting attention and mitigation. Although the potential for such reconstruction attacks has been discussed in privacy research, our study provides clear empirical evidence of their practicability.
+
+SECTION: 1Introduction
+
+Machine learning (ML) techniques are increasingly used on sensitive data, such as medical records for kidney exchange(Aziz et al.,2021), criminal records(Angwin et al.,2016)or credit history. As this raises significant ethical and societal challenges, the use of such private data is directly regulated by several legal texts, such as the recent European Union General Data Protection Regulation111https://gdpr-info.eu/or the forthcoming AI Act777https://artificialintelligenceact.eu/.
+Privacy has attracted significant attention during the last decades(Liu et al.,2021a)in order to protect sensitive or personal information about individual users while still being able to extract useful patterns from data.
+Moreover, privacy risks may further be exacerbated by the consideration of other ethical desiderata, e.g., when releasing a trained ML model for the sake of transparency.
+
+In this work, we specifically study such privacy concerns in the white-box setting in which a trained random forest (RF) is publicly released. More precisely, we attempt to reconstruct the entire dataset used to train the RF by only using information available by default in widespread libraries such asscikit-learn(Pedregosa et al.,2011), namely the structure of the trees within the forest and the class cardinalities provided within each node.
+
+While reconstruction attacks have been previously studied(Dwork et al.,2017), to the best of our knowledge, no work could consistently reconstruct an entire dataset from a trained RF. While some information can be extracted from single trees regarding the number of examples with specific combinations of features, the path taken by each individual example in each tree is unknown. Consequently, it is challenging to combine the information provided by different trees to effectively narrow down the potential datasets. To achieve this goal, we formalize themaximum-likelihood dataset reconstruction problemand formulate it as a unified Constraint Programming (CP) model over the forest. With this, we can leverage the solution capabilities of modern CP algorithms based on constraint propagation, solution domain reduction, exploration, and backtracking. In an extensive computational campaign, we show that our methodology achieves nearly flawless recovery for RFs trained without bootstrap aggregation but with feature randomization. Even in cases where bootstrap aggregation is employed, our approach successfully recovers the majority of the data. In summary, the main contributions of this study are:
+
+A formalization of themaximum-likelihood dataset reconstruction problemfor random forests
+
+A proof of-hardness for this problem. This is, however, a limited safeguard since the relentless progress of generalist combinatorial optimization algorithms (i.e., based on CP or mixed-integer programming) permits solving many-hard problems at scale nowadays.
+
+The proposal of a CP formulation amenable to an efficient solution using state-of-the-art algorithms.
+
+Extensive computational experiments demonstrating how even a reasonably small number of trees reveal the quasi-totality of the datasets on standard applications. Our source code is openly accessible athttps://github.com/vidalt/DRAFTin the form of a user-friendly Python module named DRAFT(Dataset Reconstruction Attack From Trained ensembles), under a MIT license.
+
+SECTION: 2Technical Background
+
+Letbe a training set in which each exampleis characterized by a vectorofbinary attributes and a class. We letbe a one-hot encoding of the classes, which isif, andotherwise.
+Moreover, in some situations, several binary features are used to one-hot encode a single original numerical or categorical attribute. In such case, precisely one of these binary features is, and the others are. We letbe the list of the different groups (if any) of binary attributes one-hot encoding the same original feature.
+
+The training dataset is used to build a random forestin which each treeis made of a set of internal nodesand a set of leaves.
+Each internal nodecorresponds to a binary condition over the value of a given attribute. If the condition is satisfied, the example being classified descends towards the left childof the node, otherwise it descends towards its right child. Once the example reaches a leaf(terminal node), it is classified according to the class associated with this leaf. Such class corresponds to the majority class among the training examples captured by the leaf. To compute it (and eventually assign class probabilities), each leaf contains the per-class number of training examples it captures. In popular ML libraries such asscikit-learn, such counts are also provided in the internal nodes, as shown in Figure1. Then, for every node, letdenote the number of training examples of classthat went through.
+
+To encourage diversity between the different trees within an RF, several randomization mechanisms are used during training. For instance, when building each individual tree, only a random subset of thefeatures is considered to determine the best split at each node. Note that this mechanism is used in all our experiments, although we do not explicitly leverage it. Bootstrap aggregation (bagging) is another popular and successful mechanism in RF training(Zhou,2012). It consists in buildingseparate training sets, one for each tree, by performing random sampling with replacement from the original training set. In consequence, not all examples of the original dataset are used for training each tree, while some appear multiple times. Algorithmic implementations for learning RFs are available within popular libraries such asscikit-learn. While bagging is not mandatory, it is often used by default, as it lowers variance and enhances generalization.
+Finally, some support or size constraints are often set when training each tree. In particular, it is possible to set a maximum depth constraint ensuring that each tree has depth at most.In our framework, we leverage both the structure of the trees within the forest and the counts provided within each node to conduct a dataset reconstruction attack. We additionally take advantage of the theoretical probability distributions of the number of occurrences of each example within each tree’s training set.
+
+CP is a generic approach to finding feasible or optimal solutions to a wide variety of problems, including-hard ones. The basic principle is to define a set ofdecision variables– each allowed to take values within a given (discrete) domain – andconstraintsthat express relationships between variables. Optionally, anobjective functionmay be provided to be maximized or minimized.
+The types of allowed constraints depend on which specific CP solver is used, but linear and logical/implication constraints are typical examples.CP solvers then combine several techniques (constraint propagation, backtracking, local search) to efficiently explore the search space and find a feasible/optimal solution. An overview of fundamental ideas/techniques in CP can be found inRossi et al. (2008). While solving CP models is theoretically-hard, state-of-the-art solvers can handle very large-scale problems in practice, and the performance of state-of-the-art solvers has dramatically increased.
+
+SECTION: 3Related Works
+
+ML methods often exploit private data during training.
+Consequently, it is crucial to ensure that their outputs – which may be released directly or accessed through a dedicated API – do not leak information regarding their inputs(Dinur & Nissim,2003).Inference attacksagainst ML models(Rigaki & Garcia,2020)precisely aim at exploiting the output of a learning algorithm
+to infer information regarding the training dataset.
+Different attacks can be distinguished, depending on their specific objective. For instance,membership inference attacksaim to infer whether an example was part of a model’s training data or not(Shokri et al.,2017; Carlini et al.,2022).
+In this work, we are interested indataset reconstruction attacks, which aim at reconstructing (entirely or partially) a model’s training dataset(Dwork et al.,2017). The consideredattack modelis as follows. We specifically target RF models, and consider thewhite-box setup, in which the adversary has complete knowledge of the model’s parameters instead of a black-box API access to it(Cristofaro,2020).
+He also knows the domains of the different attributes involved in the data. Importantly, he does not intervene during the training process, but rather gets the trained model afterwards.
+
+Reconstruction Attack.Given a trained RF, find a reconstructed version of its training set – a value for each feature of each example – that is feasible and likely w.r.t. the training process. Ideally, the reconstructed dataset should closely match the actual training data.
+
+Reconstruction attacks are one of the most ambitious inference attacks against ML models, as they directly aim to recover entire parts of the training data. However, instead of attempting to reconstruct the whole training set, most reconstruction attacks only target retrieving part of it. For instance, the first reconstruction attacks (originally proposed against database access mechanisms) only aimed at retrieving one private binary attribute for all the database examples - assuming all other attributes were publicly known(Dinur & Nissim,2003; Dwork et al.,2007,2017). Some other studies only target reconstructing part of one particular example, given some public information about it(Fredrikson et al.,2014,2015).
+Other approaches require additional knowledge, such as intermediate gradients computed during collaborative(Phong et al.,2017)or online(Salem et al.,2020)learning, stationary points reached by gradient descent algorithms(Haim et al.,2022)or information regarding the model’s fairness(Hu & Lan,2020; Aalmoes et al.,2022; Hamman et al.,2022; Ferry et al.,2023).
+
+The most closely related works are those ofGambs et al. (2012)andFerry et al. (2024). More precisely,Gambs et al. (2012)showed that the structure of a single trained decision tree can be leveraged to build a probabilistic dataset encoding the whole set of reconstructions of the training data that are compatible with the provided tree’s structure. This approach was later generalized inFerry et al. (2024)to consider other simple interpretable models. Compared to previous studies, one of the key challenges addressed by our approach is to combine the information provided by several trees to achieve a feasible and accurate reconstruction. This is especially difficult since the number of occurrences (due tobagging) and the path taken by each individual example in each tree is unknown. Consequently, we specifically design our method to handle the random selection of examples within each tree and formulate a maximum log-likelihood objective to guide the search.
+
+SECTION: 4Illustrative Example
+
+We first give an intuition of the reconstruction problem on a small dataset (Table1) withexamples described bybinary attributesand a binary class.
+Figure1provides two decision trees trained on this dataset. Treewas trained without using, while treewas trained without using(though this information is unknown to the reconstruction algorithm). For presentation simplicity, bagging is not used here, and therefore each training example is used a single time in each tree.
+By following the paths from the root to each leaf within(Figure1(a)), one can set the value of some attributes within the reconstructed dataset by leveraging the performed splits and the per-node cardinalities. For instance, following the leftmost path, we can observe that the two examples belonging to classhave valuefor bothand. Such information permits to fix some attributes’ values directly. Similarly, according to, there exists exactly one example of classwith valuefor, and another one with value.
+
+The main issue with such ad-hoc reasoning is that, except in some obvious cases (i.e., whenallexamples of a certain class respect a given splitting condition), splits will permit quantifyinghow manyexamples respect a certain condition without tellingwhichare these examples. Therefore, the biggest challenge of dataset reconstruction is to individually link the examples between the different trees and find a compatible dataset that respects all the cardinality constraints. This challenge is exacerbated by the bagging process, as in this case, the cardinalities within the trees’ nodes may count some examples several times (and ignore some others).
+
+SECTION: 5NP-Hardness Result
+
+In this section, we formally define thedataset reconstruction problem (DRP)and show its-completeness.
+Part of the input data for (DRP) has already been defined before:
+the set of classes, the numberof examples, the numberof binary attributes, and the forest, where eachis a binary tree.
+Also, for each class, treeand each, we are given an amountof examples of classthat are
+classified in nodeof tree.
+
+In addition, we are given as input:
+
+for every, an attribute.
+
+a setof integer values, that represent how many times a sample may appear in a tree
+
+We assume that the data satisfies the following properties:
+
+For each class, treeand each, we have that.
+
+For each tree, we have.
+
+For each tree, we letdenote the set of indices of the boolean attributes that must beTruefor an example to fall into node. Similarly,is the set of indices of the boolean attributes that must beFalsefor an example to fall into(hence). Both represent the splits that are found along the path from the root node of treeto.
+Formally, ifis the root node of the tree, then.
+For every, we can define such sets for its children asand;and
+
+The goal of (DRP) is to findvectors, respective classificationsand node incidences,,such that:
+
+,
+
+,
+
+For all,,, if, thenfor allandfor all.
+
+We note that the last constraint implies that for everyand, at most one variable in the setis nonzero. This is due to the fact that, from the wayandare constructed, all other leavesmust have at least one attributeswitching its requiredTrue/Falsevalue in.
+
+Note that if we set,
+we impose that each example must appear exactly once in every tree, which corresponds to the situation when no bagging is used. If we set,
+we get that each example can appear any number of times in a tree, which corresponds to the situation when bagging is used.
+
+The decision version of (DRP) is-complete.
+
+First, aYEScertificate of (DRP) is any solution. One can verify if it is feasible in polynomial time, so the decision version of.
+
+Next, consider an instance of the-complete problem 3-SAT, given by a setof clauses with three literals each. Each literal is either a variable or its complement, and there arepossible variables.
+We construct an instance of (DRP) with, by specifying the forestandvalues. We let. By assumption on the data, we only need to specifyfor. Also, recall that the left branch ofcorresponds to settingto zero, and the right branch sets it to 1.
+The idea is to construct a perfect binary tree for each.
+This way, the fixed attributesandof each leafof treewill represent one of each possible assignment of the three literals ofto 0 or 1.
+
+Out of the eight possible leaves of tree, seven satisfy the corresponding clause, and one does not. We setfor the leaves that satisfy clauseandotherwise. The goal of our construction is to force the DRP solver to generate an example whose attribute values lead it towards one of the leaves within each tree, i.e., a 3-SAT solution, whenever such a solution exists. To achieve this, we include six additional “dummy” examples for each tree to reach the remaining alternatives with.
+Therefore, our constructed instance hasexamples.
+
+We rely onbinary attributes. The firstattributes will represent the 0/1 assignment of values to literals. The remainingattributes will determine whether one example is used or not in the leaves corresponding to the perfect binary tree of that clause. With that, we add to each tree, a root node where we branch on feature. The right branch of the tree will contain the perfect binary tree described above. The left branch is a single leaf node with, designed to absorb all dummy examples not destined toward that tree.
+
+We finally construct one extra auxiliary tree. All its left branches end up in leaves. Each node on the right branch at depth(including the root node) branches on attribute.
+The left leaf at depth 1 has. The left leaf at depth 2 has.
+All other left leaves have.
+The rightmost leaf has.
+With this, the rightmost leaf imposes that a single example reaches one leaf of every perfect tree (the desired 3-SAT solution). The other nodes of the tree just count the extra examples.
+
+AppendixAproves that (DRP) is feasible if and only if the 3-SAT instance is aYESinstance. It also contains illustrative examples for the construction.
+∎
+
+The optimization version of the problem is to search for the solution that has the largest likelihood,
+called themaximum likelihood dataset reconstruction problem(MLDRP). This problem is-hard since even reconstructing one feasible solution is-complete. The maximum likelihood objective function will be formally introduced in the next section.
+
+SECTION: 6Constraint Programming Approach
+
+As seen in Section4, an inspection of the different trees gives sets of restrictions over feature values that concern a known number of examples of each class. However, it does not tell which example specifically satisfies which condition. Testing feasible combinations by inspection would require extensive trial and error, leading to an intractable process. Instead, we propose to formulate this search problem as a constraint programming (CP) model, permitting the use of efficient out-of-the-shelf solvers for such models. The model we design covers the most general case where bagging is used to train the forest, and includes discretization strategies
+specifically designed to help the solution process. Note that, while we focus on CP, Mixed-Integer Linear Programming (MILP) could also be employed instead. However, having conducted experiments with both techniques, and as demonstrated in AppendixB, CP generally achieved better performance and permitted to handle bagging much more effectively.
+
+For our mathematical formulation, we define three sets of decision variables. The first one assigns training examples to a corresponding class. The second assigns the training examples to the trees’ leaves, and the third connects the attributes’ values to the splits leading to their assigned leaf.
+
+:is 1 if training exampleis considered as part of class, else 0.
+
+:is the number of times
+training exampleis classified by leafwithin treeas class.
+
+:is the value of featurefor examplein the reconstruction.
+
+To define the objective function, we will assume that a training example appears at mosttimes in any tree, since higher values are very unlikely.
+Indeed, bootstrap sampling consists of sampling with replacementexamples from a set oforiginal examples. At each iteration of the bootstrap sampling process, each example has a probability ofof being selected. The probability of an example being selected more than B times can then be computed as:
+
+Ifas in our experiments, the probability of an example appearing more thantimes in a bootstrap sampled training set is roughly. This value remains similar for larger values of(e.g., aroundfor).
+
+With this, we define. Note that if no feasible solution is found using this default value, increasing it and solving the model again is possible. We now define a binary variable to capture how many times an example is used:
+
+:is 1 if training exampleis usedtimes in treeand 0 otherwise
+
+The constraints of our model are as follows.
+
+One-hot encoding:
+
+Each example is assigned to exactly one class:
+
+If an example is not assigned a given class, it cannot be used as that class in any tree:
+
+Each leaf must capture exactly the defined number of examples from each class:
+
+If an example is captured by a leaf, the associated conditions must be enforced on its features:
+
+The number of times a sample is used in a tree is consistent:
+
+We implemented this model using theOR-ToolsCP-SAT solver(Perron & Didier,), which requires extra variables and constraints to be introduced to model some of the above conditions. These details are presented in AppendixC.
+
+Since the above model could have many possible solutions when using bagging, we orient the search towards the solutions (datasets) that are the most likely.
+For a given tree, letbe the probability that a sampleis chosen exactlytimes to train that tree.
+By definingifandotherwise,
+we can calculate the probability that the samples were chosen for the tree according to thevariables asTherefore, considering the whole RF, the probability of a given solution is:
+
+Maximizing this probability is equivalent to maximizing its logarithm; in other words, maximizing:
+
+RFs can be trained using random subsets of features for each split but considering all the examples in each tree. In such situations without bagging, the CP model can be significantly simplified. Variableswill become binary and
+sum up tofor each treeand each example, since each example will be used exactly once in each tree.
+Also, we know in advance how many examples are of each class. Therefore, to match that data, we may fix the variablesin advance.
+Finally,are always fixed since every example is used exactly once in each tree. Thus, the objective function becomes constant, and the problem reduces to the search for a feasible solution.
+
+To streamline the presentation of the methodology and evaluation metric, we provided our model for the particular case of binary attributes. However, extending it to handle other types of attributes is possible with minimal changes, as detailed in AppendixDand implemented within our publicly available repository. In a nutshell,categoricalattributes are typically
+one-hot encoded for tree ensembles and directly handled by our formulation.Ordinalfeatures can be modeled as integer variables and only require a slight generalization of the constraints connecting the attributes’ values to the assignment of the examples to the leaves. Finally,numericalattributes can also be reconstructed: although they take values in a continuous space, the number of splits within the forest is finite, and so is the number of different intervals in which they can lie. Leveraging this observation, we can use ordinal features to model such possible intervals in the reconstruction.
+
+SECTION: 7Experimental Study
+
+Through extensive experimental analyses, we aim to evaluate the effectiveness and accuracy of the proposed reconstruction attack, named DRAFT(Dataset Reconstruction Attack From Trained ensembles).
+We first detail the experimental setup before discussing the results.
+
+SECTION: 7.1Experimental Setup
+
+We rely on three popular datasets for binary classification in our experiments. We discretize each dataset’s numerical attributes and one-hot encode the categorical ones. To keep a reasonably small number of features, we remove some attributes with the smallest support111Our binarized versions of these datasets are available in the supplementary material and will be available on our online repository upon publication..
+First, the COMPAS dataset (analyzed byAngwin et al.2016) gathers records about criminal offenders in the Broward County of Florida collected from 2013 and 2014, with the task being recidivism prediction. Our preprocessed version includesexamples described bybinary attributes.
+Second, the UCI Adult Income dataset(Dua & Graff,2017)contains data regarding the 1994 U.S. census to predict whether a person earns more than $50K/year.
+After preprocessing, our dataset includesexamples andbinary features.
+Finally, we use the Default of Credit Card Client dataset(Yeh & hui Lien,2009), to predict whether a person will default in payment (the next time they use their credit card). Our preprocessed version includesexamples andbinary attributes.
+
+To assess the attack’s success,
+we first compute the Manhattan distance between each reconstructed and original example.
+The resulting distance matrix then instantiates a minimum weight matching in bipartite graphs, also known as linear sum assignment problem, which we solve using theScipy(Virtanen et al.,2020)Python library. Once the datasets are aligned, we then measure the proportion of binary attributes that differ between both.
+
+As mentioned in Section3, reconstruction attacks rarely target reconstructing an entire training set, and none of them apply to our setup (i.e.,leveraging an RF to rebuild its complete training set). We then consider a baseline adversary with the same knowledge as ours (in particular, the number of examples, the different attributesincluding their one-hot encoding) except for the RF itself.
+The adversary then randomly guesses each attribute of each example, remaining consistent with the one-hot encoding information.
+The reconstruction error is finally assessed, as described in the previous paragraph.
+We average such computation overrandom runs and report the average value. By comparing this baseline with the performances of our approach, one can then quantify how much additional information can be extracted from the RF.
+
+To train our target models (i.e.,the RFs from which we attempt to reconstruct the training data), we use the popular implementation provided by thescikit-learnlibrary.
+For each dataset, we learn RFs with varying parameters. More precisely, we use a number of treeswith maximum depth(whereNonestands for no maximum depth constraint).
+For each experiment, we randomly sampleexamples from the entire dataset to form a training set, and use the remaining ones as a test set to verify to what extent the models generalize.
+We repeat the experiment five times using different seeds for the random sampling, and report the average results and their standard deviation across the five runs.
+
+The proposed CP models described in Section6are solved using theOR-ToolsCP-SAT solver(Perron & Didier,)(v9).
+Each model resolution is limited to a maximum of five hours of CPU time usingthreads with up toGB of RAM for each thread. Note, however, that while the CP models handling bagging often reached this time limit, they usually were able to find feasible solutions in a much shorter time.
+All experiments are run on a computing cluster over a set of homogeneous nodes using Intel Platinum 8260 Cascade Lake @ 2.4GHz CPU.
+
+All the material (source code and data sets) needed to reproduce our experiments is accessible athttps://github.com/vidalt/DRAFTunder a MIT license.
+
+SECTION: 7.2Results
+
+The results of our experiments are reported in Figure2for all three datasets, with or without the use of bagging to train the target RFs.
+More precisely, we plot the average reconstruction error as a function of the number of trees, for several values of the trees’ maximum depth. We observe several trends that are consistent across all three datasets. In all cases, as expected, increasing the trees’ depth or the number of trees in the forest decreases the reconstruction error as it provides more information regarding the training data. When bagging is not used to train the RFs, the reconstruction error reachesin all cases for the deepest forests (recall that the default parameters of thescikit-learnlibrary is no maximum depth constraint). This is not the case when using bagging. In such cases, the reconstruction error reaches a threshold and stops improving even for larger forests.
+In AppendixE, we further investigate the effect of bagging on protecting the training data against reconstruction attacks and conduct additional experiments. Our main finding is that this performance drop precisely comes from the difficulty of guessing how many times each example went through each tree: bagging intrinsically provides a form of protection regarding the training data. This is consistent with theoretical results stating that bagging provides (weak) differential privacy guarantees(Liu et al.,2021b).
+
+We report in Tables2and3(respectively for a fixed number of treesand no fixed maximum depth, both corresponding toscikit-learn’s default values) the average run times for the reconstruction model without bagging, along with the number of times (#Runs) the solver was unable to find a feasible solution before timeout. When bagging is used, most runs attain the time limit and return a solution but cannot prove optimality. Run times in this context are not informative, so we only report the number of times the solver did not find any feasible solution before the time limit. Note that the few runs that did not produce a feasible solution are excluded from Figure2.
+We observe from Table2that the formulation without bagging efficiently handles the problems that are under-constrained (shallow trees) or over-constrained (deep trees). Intermediate cases seem to require more computational effort, and in a few cases, the solver did not find a feasible solution.
+When using bagging, the size of the models seems to matter the most, as the solver only failed to find feasible solutions with the deepest forests.
+The same observation holds from Table3, as the only runs for which the solver did not find a feasible solution are those with the largest numbers of trees. When not using bagging, the solution times scale approximately linearly with the number of trees. We report in AppendixFadditional experiments regarding our method’s scalability with respect to the number of training examples. The results demonstrate its ability to reconstruct considerably larger datasets, with the reconstruction error remaining very small. Furthermore, while the size of the CP model’s search space increases exponentially with the number of reconstructed training examples, in practice, reconstruction time increases polynomially (approximately quadratic or sub-quadratic) with.
+
+As discussed in Section3, most works in the reconstruction attacks literature only target reconstructing part of the dataset attributes (generally, a single one), assuming the others are publicly known. In AppendixG, we perform complementary experiments on such partial reconstruction. The results show that our approach successfully leverages knowledge of part of the dataset attributes, which results in lower error rates for the other ones.
+
+SECTION: 8Discussion and Conclusions
+
+This study has shown that the structure of a trained RF can be exploited to reconstruct most (if not all) of its training data. It introduced a new paradigm of attack, leveraging mathematical programming tools to encode the structure of an RF and relying on a general-purpose CP solver to find the most likely reconstructions of the training data.
+Due to the high redundancy of RFs built using off-the-shelf ML libraries with their default parameters, the resulting problem is often strongly constrained, resulting in a high reconstruction rate. While theoretical-completeness theorems indicate that such an attack may not be computationally tractable at scale, the tremendous progress in CP/MILP solvers has made it practical to solve larger and larger problems over time. Therefore, it may just be a question of time until data breaches happen for large datasets.
+
+The fact that the proposed framework is based on mathematical programming techniques opens the door to many promising research perspectives. The approach could be tested on various types of attributes (numerical, categorical) without the need for feature binarization.
+Performance improvements could also be achieved through different problem reformulations or additional valid inequalities. Notably, one could leverage the information gain criterion used to select the splits while building the decision tree to eliminate combinations of attributes’ values leading to different splits.
+
+Our framework can also be used as a building block for other types of inference attacks, such as membership inference or property inference. Furthermore, we considered canonical RFs trained without privacy-preserving techniques, representing most of what popular libraries do by default. Investigating the effectiveness of common privacy-preserving mechanisms, such as the widely used differential privacy(Dwork et al.,2014), would bring additional insights.
+Though this may lead to difficult models, the proposed CP (or MILP) formulations could be extended to infer the noise added by the protection mechanisms on the released per-node counts(Fletcher & Islam,2019; Dinur & Nissim,2003). On the same line, adapting the formulation to work without the knowledge of the per-leaf per-class counts (hence only supposing that each leaf contains at least one example from the predicted class), or considering other gray-box setups, are interesting directions. Finally, another interesting direction is to apply the proposed methodology to other types of ensembles
+and ML models.
+
+SECTION: Impact Statement
+
+ML models are commonly trained using large amounts of data, often including personal or private information. The flourishing literature on inference attacks against ML models showed that models might jeopardize their training data even when accessed in a black-box manner (i.e.,through a prediction API). Furthermore, transparency requirements encourage practitioners to either provide additional explanations for their model’s decisions or to entirely release such models, potentially opening up to new attacks.
+
+In this study, we have demonstrated that the structure of a trained RF can be leveraged to reconstruct most (if not all) of its training data. Importantly, our proposed method only leverages the information provided by popular libraries such asscikit-learn. While NP-harness theorems and scalability issues limit the current applicability of our approach, our results already demonstrate its effectiveness on datasets of practical significance. These findings underscore a critical vulnerability inherent to widely adopted ensemble methods, warranting attention and mitigation. The methods and experiments developed in this study have two main implications: (i) raising awareness against the privacy vulnerabilities of ensemble methods and (ii) providing promising research paths to stress test privacy-preserving mechanisms, aiming to protect such models before releasing them.
+
+SECTION: References
+
+SECTION: Appendix AProof of NP-Hardness (Theorem5.1)
+
+The description of the construction of the instance of (DRP) can be found in the main text. We start by providing an example to clarify the construction.
+
+Consider the following 3-SAT instance withclauses andvariables:
+
+Figure3shows the constructed (DRP) instance arising from it.
+
+Theorem5.1follows from ClaimsA.1andA.2.
+
+If the 3-SAT instance is a YES instance, then (DRP) is feasible.
+
+Suppose that there is an assignment of values to thevariables of 3-SAT so that all clausesare satisfied.
+
+Then for each clause, pick the leafof the perfect binary subtree that corresponds to the assignment of variables in 3-SAT. We setandfor all,. We set the firstattributes ofto match the assignment of thevariables that satisfy 3-SAT. We set the attributesto 1.
+
+For the remaining examples, we set the attributesof examplesto 1, and all other attributes into 0. This is done for all. In addition, we set the remaining attributes to match one of the leaves that havebut don’t correspond to the assignment of variables in 3-SAT and set the correspondingto 1.
+
+This can be easily checked to be feasible for (DRP).
+
+For example, in Figure3, if the 3-SAT assignment is,, then we would have the solution to (DRP) shown in Table4.
+
+∎
+
+If (DRP) is feasible then the 3-SAT instance is a YES instance.
+
+If (DRP) is feasible, then there exists one example which has featuresequal to 1. This comes from the rightmost node of the auxiliary tree.
+
+Without loss of generality, assume that such example is(e.g.,in Table4).
+
+Then in each of the trees,must have gone to the right branch at the root. In this case, we know thatmust fall into one of the leaves of the perfect binary tree that corresponds to a truth assignment that makes the clausesatisfied.
+
+A solution to 3-SAT can then be constructed by looking at the firstcomponents of.
+∎
+
+SECTION: Appendix BMixed-Integer Linear Programming Formulation
+
+We show how the reconstruction problem can be alternatively formulated as a Mixed-Integer Linear Program (MILP), permitting the use of alternative solution algorithms. In a MILP, all variables can be continuous or integers, but all constraints and the (optional) objective function must be linear in the decision variables. This restriction is not imposed in Constraint Programming (CP). Consequently, we mustlinearizesome of the expressions required to model our reconstruction problem using additional variables. We describe the MILP formulation for the scenario where bagging is not used to train the target random forests, before performing some empirical evaluation of its performance.
+
+SECTION: B.1Model Formulation (Without Bagging)
+
+We present here a MILP model for the DRP.
+Our MILP model for reconstructing the training set of a given random forest extends the OCEAN framework(Parmentier & Vidal,2021), which was proposed to generate optimal counterfactual explanations for tree ensembles.
+In a nutshell, OCEAN leverages MILP to encode the structure of the trees within the forest, and aims at finding an example as close as possible from a query examplebut with a different classification. Rather than determining the attributes’ vector of a single example (the generated counterfactual), we aim to reconstruct the features’ vector of all thetraining examples simultaneously.
+
+We now introduce some additional notation. For each tree, we defineas the set of all the depths reached in, and,is the set of internal nodes at depthin.
+As mentioned in Section6, without bagging, one can fix in advance the set of decisions(i.e.,if an exampleis from class).
+Letbe the set of indices of examples belonging to class, andbe the set of nodes within treesplitting on feature.
+W.l.o.g., we assume that the indices inare consecutive.
+
+We first define decision variables that will model the path of each example through each tree:
+
+:takes valueif exampletakes the left path at depthof the tree, andotherwise. The value is free if the path doesn’t go this deep.
+
+:takes valueif examplereaches nodeof the tree,otherwise (note that the integrality is forced by the previous variables)
+
+:is the value of featurefor examplein the reconstruction
+
+First, the following constraints correspond to the one-hot encoding of the features:
+
+We then use the following constraints to model the flow of the examples through the trees:
+
+In a nutshell, because we consider the case without the use of bagging, each example has one associated unit of flow at the root of each tree. This flow is encoded by continuous variables (which are easier to handle for the solver than integer/binary ones). All the flow is then directed through the tree, by going either left or right at each split node, until it reaches a leaf.
+
+We then link these flows to the values taken by the features of the examples through the following constraints:
+
+Finally, we connect these flows to the support of each node within the trees (recall that because we consider the case without bagging,is a prefixed constant, and hence the computation is linear in the decision variables):
+
+Note that we additionally use the following constraints for symmetry breaking in each class:
+
+whereis the last index in.
+
+In the next subsection, we empirically evaluate our proposed MILP model and compare it to the CP formulation introduced in the main paper. Note that extending the proposed MILP to handle bootstrap sampling is possible, but the number of required variables increases prohibitively in order to preserve linearity, limiting the scalability of the approach.
+
+SECTION: B.2Empirical Evaluation
+
+We run the reconstruction experiments on the COMPAS dataset without bagging as described in Section7.1, using our MILP formulation, and compare the results with those obtained using our CP model (which are reported in Section7.2).
+The MILP models are solved using theGurobisolver(Gurobi Optimization, LLC,2023)through its Python binding222https://pypi.org/project/gurobipy/, all the other experimental parameters remaining unchanged.
+
+The results are reported in Figure4, and their run times are compared in Table5.
+Note that the results for the CP model are those presented in Figure2(a), repeated here to ease comparison.
+Comparing the different curves (which correspond to different maximum depth constraints) between Figures4(a)and4(b), we see that both approaches successfully solve the dataset reconstruction problem on COMPAS without the use of bagging to train the target random forests. Intuitively, the two feasibility models encode the same information, and define the same set of feasible reconstructions. Because they use different techniques to represent and explore it, they may end up with different reconstructions, but there is noa priorireason for one to outperform the other systematically, and as observed in our experiments, their reconstruction performances are generally similar.
+
+Nevertheless, Table5highlights significant solution-time differences between the CP and MILP approaches. The solution times of both approaches are of the same order of magnitude for shallow trees. However, as the depth of the trees grows, the solution time increases more quickly with the MILP than with the CP model.
+For instance, on average, the MILP formulation requires over three times more CPU time than the CP one when no maximum depth constraint is set. More importantly, the solution times are considerably less stable when using the MILP, resulting in larger maximum run times. In the most extreme case, the MILP exceeds 75 minutes, contrasting sharply with the CP model’s consistently modest durations, never surpassing three minutes. As discussed in the previous subsection, the MILP is also less prone to be extended to the setup where bagging is used to train the target random forests. These observations led us to rely on the CP model in the main paper.
+
+SECTION: Appendix CImplementation Details for the CP Model
+
+As mentioned in Section6, in order to implement the CP model using theOR-ToolsCP-SAT solver, some other variables and constraints are needed due to the specificities of the solution software. We discuss these technical aspects in this appendix.
+
+First, CP-SAT only allows implication constraints with a literal being the cause of the implication. Therefore, we had to rely on auxiliary binary variables:
+
+For all,,:is 1 if exampleis classified by leafof tree; 0 otherwise.
+
+Second, the relationship between theandalso cannot be enforced directly. It can only be done via another set of auxiliary variables:
+
+represents the number of times exampleis used in tree
+
+To model the relationship betweenand, we add the constraints:
+
+ifthen,
+
+ifthen,
+
+These are explicitly added in CP-SAT using theOnlyEnforceIffunction that allows a linear constraint only to be enforced if a boolean variable isTrue.
+
+With these variables, the constraints that were presented before as
+
+will now be implemented as:
+
+These also can be explicitly added in CP-SAT using theOnlyEnforceIffunction.
+
+To model the correct relationship betweenandvariables, we add the constraints:
+
+For all,:
+
+Now, the constraints
+
+can be implemented in CP-SAT using the constraints
+
+For all,:
+
+These constraints receive the integer variableand the vector of binary variablesand enforce thatif and only if.
+
+SECTION: Appendix DExtending the CP Model to Handle Non-Binary Attributes
+
+The Constraint Programming (CP) model presented in Section6is able to reconstruct binary attributes. While we focused on this case to streamline the presentation of the methodology and evaluation metrics, our framework can be extended to handle other types of attributes, as explained in this appendix section.
+
+Discrete attributes take values in a finite domain. If these values can be ordered, the attribute is coined asordinal, and if they can not (i.e.,if they represent categories), it is calledcategorical. These two types of discrete attributes can be handled by DRAFT as detailed hereafter.
+
+Because the different possible values of a categorical attribute can not be ordered, it wouldn’t make sense to verify whether they are greater or smaller than a given split value, even if the different categories can be represented using different integer values. Indeed, such attributes must usually be one-hot encoded (i.e.,with one separate binary attribute for each possible category, all the created binary attributes summing up to one) and are hence directly and efficiently handled using the formulation described in Section6.
+
+Ordinal attributes can be used directly in tree ensembles (without one-hot encoding) since an order relation permits defining meaningful splits. They can be handled naturally using DRAFT. More precisely, using the CP formulation provided in Section6, the reconstruction variablesassociated to each ordinal attributemust be declared as integers (which are directly supported in Constraint Programming). Furthermore, the constraint enforcing the conditions associated to a branch leading to a leafif an exampleis assigned to that leaf in treemust be slightly generalized. We now defineas the set of attribute-value tuplessuch that attributemust be greater thanfor an example to fall into leaf. Similarly,is now the set of attribute-value tuplessuch that attributemust be smaller or equal tofor an example to fall into. Note that this slight generalization also encompasses the binary attribute case, where the split valueis usually fixed to. The generalized constraint then becomes:
+
+All the other variables and constraints remaining unchanged, the model provided in Section6can effectively be used to reconstruct discrete (categorical or ordinal) features.
+
+Contrary to discrete attributes,numericalones take values in a continuous space. If the underlying mathematical programming framework can encode continuous variables (which is, for instance, the case of Mixed-Integer Linear Programming), then numerical attributes can be handled just like ordinal ones, using the methodology described in the previous paragraph. This is not the case in Constraint Programming, but numerical attributes can still be reconstructed effectively, as discussed hereafter.
+
+While numerical attributes take values in a continuous space, the number of nodes within a decision tree (hence within a random forest) is finite, and so the number of split values regarding any specific attribute is also finite. Then, the number of possible values or intervals for a given reconstructed numerical attribute is also discrete. Indeed, the knowledge acquired from a random forest can indicate that an example’s numerical attribute lies within a given interval (between two split values), but in the general case, it does not indicate which particular value within this interval it should take. We leverage such discretization to reconstruct numerical attributes as follows:
+
+We parse all the trees in the forest and build theorderedlist of all the different split values regarding each numerical feature:
+
+We concatenate this ordered list of split values to the (possibly infinite) lower and upper bounds on the domain of attribute:
+
+Intuitively,defines the possible intervals for attributegiven the splits within the forest.
+
+To build the reconstruction model, we encode each numerical featureas an ordinal (integer) one, taking values in.
+The value of ordinal attributein the reconstruction performed by the CP model (variables) will then be used to retrieve the interval in which numerical featurelies.
+Note that the firstvalues correspond to the different split values for attributewhile theone encodes the situation whereis strictly greater than its largest split value. Note that since the constraints associated to the splits are either “strictly greater than” or “smaller or equal to”, it is not possible to forbid the smallest split value, and so we do not need to insert an additional value before it.
+
+For each split-value tupleassociated to numerical featurein, we create for the corresponding integer featurea split-value tuplesuch thatis the index ofin the ordered list. Using such split-value tuple, attributecan then be handled just like other ordinal features, as aforementioned.
+
+Once the reconstruction is done, we have to connect the value ofto that of the actual (continuous) numerical feature. If for,in the reconstruction performed by the CP model, we set the value of the corresponding reconstructed (continuous) attribute to the mean between theandsplit values (i.e.,to- the difference in indices comes from the fact thatstarts with an additional element, corresponding to the attribute’s lower bound). Note that if the lower and (or) upper bounds ofare infinite, we can choose any arbitrary value compatible with the splits’ information.
+
+SECTION: Appendix EThe Impact of Bagging on Data Protection
+
+Our results (reported in Section7) show that if bagging is not used, then all of the data can be recovered with just a few trees in the RF.
+However, with bagging, the CP model from Section6can recover around 90-95% of the data, even with many trees.
+In this appendix, we present experiments designed to understand why we could not recover 100% of the data with bagging.
+
+One of the complicating aspects of bagging is that the knowledge of how many times a sample has been classified within a given leafof a given treeis lost.
+With this in mind, we posed the following question:
+
+Considering the CP model from Section6, if we know in advance the values
+of(that is, how many times sampleis classified within a given leafof treeas part of class)
+how much reduction can be observed in the reconstruction error?
+
+Note that, if the values ofare given, then the values ofandcan be deducted.
+So the only remaining issue is to determine thevalues and the only constraints that need to be enforced on those are the one-hot encoding constraints and theleaf-consistencyconstraints:
+
+Letbe the (possibly empty) set of leaves of treefor which examplehas been used. While the leaf-consistency constraints fix all attributesinfor, any feature that does not appear in any such sets (call themfree attributes) can be arbitrarily set without changing the likelihood of the solution. And so, the fact that a free attribute is guessed correctly can be attributed to luck and should not be seen as a positive aspect of the CP model.
+
+Formally, the fixed attributes for exampleare
+
+and the free attributes are
+
+Letbe the training set which was used to train the random forest (and which we are trying to recover).
+With this we defineas follows:
+
+can be thought of as the solution that is consistent with thevariables on all fixed attributes and incorrectly guesses the values of all free attributes, so the worst possible solution that is consistent with.
+
+Ourbenchmarkexperiment can now be described as follows:
+
+Run the CP model of Section6withandfor all.
+
+Obtain from the solution of such model the values of thevariables, for all,,,.
+
+Output the set of solutions.
+
+Intuitively, we get the best possible guess for thevariables by solving the maximum likelihood problem when the training set is given. Subsequently, we get the worst possible solution that is consistent with that guess. It is worth noting that the knowledge of the training set is used in an advantageous way only to obtain the best possible guess for thevariables.
+
+The results of the benchmark experiments for the three considered datasets are shown in Figures5(b),5(d)and5(f).
+The results without bagging are also repeated in Figures5(a),5(c)and5(e)(from Figures2(a),2(c)and2(e)) for reference and easy comparison.
+
+The results show that, if one can correctly guess thevariables, one can get much closer to recovering 100% of the data, as in the situation without bagging. Accordingly, the key difficulty in recovering the data is guessing which examples were used in each tree. This corroborates the fact that bagging can help prevent data reconstruction. It also answers the question posed at the beginning of this section. Note that bagging was theoretically shown to intrinsically provide some differential privacy guarantees(Liu et al.,2021b), which is consistent with our findings.
+
+It is also interesting to note that the number of trees needed to recover the data without bagging seems to be lower than in the benchmark runs, except for very shallow trees. This makes sense since, without bagging, every treeprovides some information about every examplevia the sets, while this is not true with bagging.
+
+One can observe another surprising trend when comparing the curves corresponding to shallow trees (e.g.,maximum depth of). Indeed, without bagging, the reconstruction error decreases until a certain value and remains more or less constant, even when increasing the number of trees further. This does not happen in the benchmark runs, and even with very shallow trees, the reconstruction error (which in this experiment is the worst we can expect) converges close to. In fact, a large number of trees trained with bagging seems to provide more information (with the knowledge of the values
+of) than the same number of trees trained without bagging. An explanation for this behavior could lie in the trees’ intrinsic diversity and in the fact that each of them contains more information about some training samples, namely those that appeared several times in their training data.
+
+SECTION: Appendix FAdditional Experiments on Scalability
+
+This appendix section aims to investigate how our reconstruction attack performs in terms of both reconstruction error and time when the sizeof the reconstructed training set varies. We additionally investigate whether or not generalization error affects our reconstruction process. To this end, we re-run our experiments without the use of bagging, for the three datasets andscikit-learn’s default configuration (i.e.,with a fixed number of treesand no fixed maximum depth). The setup is as described in Section7.1, but we vary the size of the sub-sampled training set betweenandexamples and set the reconstruction time limit tohours.
+The results are provided within Tables6,7, and8for the three datasets. More precisely, we report for each training set size, the performances (train and test accuracy) of the trained random forests (averaged over thedifferent random samplings), the reconstruction error, as well as the minimum, maximum, average, and standard deviation of the reconstruction times. As can be seen in the tables, for the UCI Adult Income (respectively, the Default of Credit Card Client) dataset, we report no result for(respectively, for). This is due to a technical limitation in the solver we use in our experiments. More precisely, the Python wrapper ofOR-Toolsis limited in the amount of data it can send to its C++ core. This means that large CP models (above 2GB) can not be solved using this wrapper333This limitation is discussed on the solver’s repository:https://github.com/google/or-tools/issues/3861..
+
+We observe in Tables6,7, and8that the reconstruction error remains very small (or very close to) for all the considered values of, i.e., the success of our attack is not affected by the size of the reconstructed training set. However, reconstruction time consistently increases with. This can be explained by the fact that reconstructing more training examples requires exploring a considerably larger search space. Indeed, increasingleads to a linear increase in the number ofandvariables, but to an exponential increase of the number of possible solutions of the constraint programming model (i.e.,search space size). Fortunately, the solution process of the CP solver, using domain reduction and other strategies, does not require examining all the solutions. Empirically, the growth of reconstruction time as a function ofis not exponential but polynomial —approximately quadratic on the considered datasets according to a power-law regression. Another interesting side effect is that larger training sets often lead to deeper trees: while small datasets can be separated using shallow trees, larger ones often require more splits to be performed. This leads to an increase in the number ofvariables, again increasing the size of the search space. However, this also provides more information regarding the values of the attributes of the reconstructed examples, partly explaining why the reconstruction error remains small, even if the number of possible reconstructions increases significantly.
+
+Another interesting observation is that the generalization error does not affect our reconstruction approach. This was expected: what matters for reconstruction is the information provided by the forest regarding the training data (i.e., the number of samples passing through each branch fulfilling certain split conditions). Even a badly performing random forest can lead to accurate reconstructions if it encodes enough diverse information regarding its training data within the trees (regardless of unseen test data).
+This was already visible in all our experiments, where no correlation could be drawn between a random forest’s generalization error and the success of our reconstruction attack.
+More precisely, we investigated for a possible correlation between the reconstruction error and the generalization error (or train error or test error), but none of these analyses led to any visible trend. Finally, as it stands, having good or bad generalization capabilities does not appear to be a prerequisite for the success of our reconstruction approach.
+
+SECTION: Appendix GAdditional Experiments on Partial Reconstruction
+
+In this appendix section, we perform complementary experiments on partial dataset reconstruction. More precisely, we consider the scenario where part of the training set attributes are known (for each training example).
+This scenario corresponds to the case where some of the attributes are publicly known, and the adversary’s objective is only to retrieve the unknown (private) ones. As discussed in Section3, this setup corresponds to most of the reconstruction attacks found in the literature, where many works only attempt to reconstruct a single private attribute with knowledge of all the remaining ones(Dinur & Nissim,2003; Dwork et al.,2017).
+
+For each of the three datasets considered in our experiments (introduced in Section7.1), we vary the number of known attributes between 0 and. The former case corresponds to the setup studied in Section7(in which the adversary reconstructs the whole dataset), while in the latter case, only one attribute is unknown.
+Between these two situations, our objective is also to characterize whether the knowledge of a number of attributes helps reconstruct the others, and to what extent.
+Note that because binary attributes that are a one-hot encoding of the same original feature are not independent from each other, knowledge of one of them can fix the value of the others, which could bias the reconstruction results. For this reason, we consider each set of binary attributes that one-hot encode the same original feature as a single one. Then, the COMPAS dataset hassuch original features, the UCI Adult Income dataset has, and the Default of Credit Card Client dataset has. For each, we randomly pickoriginal attributes (i.e.,either a binary attribute or a group of binary attributes one-hot encoding the same feature) that we assume are known. For such known attributes, their values for all the training set examples are fixed in the CP model introduced in Section6. In other words, for each known attribute, we assign the corresponding variables() to their true value.
+The solver’s task is then to find the value of the other attributes only.
+
+To evaluate the proposed reconstruction, we first perform the examples’ matching (with the actual training set) as described in Section7.1, using all the attributes. Then, the resulting reconstruction error is measured only on the unknown attributes. Note that performing the matching only using the unknown attributes would (artificially) result in lower reconstruction error rates, but would not make sense, as it would only evaluate whether the correct values for the unknown features are found (and not whether they are assigned to the correct example as indicated by the known attributes).
+For these experiments, we focus onscikit-learn’s default configuration (i.e.,trees and no maximum depth constraint). Moreover, we restrict our attention to the general case where bagging is used, as the (simpler) case without bagging is already successfully handled even without knowledge of any attribute. The experimental parameters are as described in Section7.1, and in particular, each run is averaged over five different random seeds. Finally, as already observed in Section7, in a few experiments, the solver does not find any feasible reconstruction within the given time frame.
+Thus, we removed the experiments for which less than three runs were completed. This occurs in two cases,i.e.,on the Default of Credit Card Client dataset, when the number of fixed attributes is at most.
+
+The reconstruction error (measured on the unknown attributes as aforementioned) is reported in Figure6for all three datasets.
+The results consistently show that knowledge of some attributes helps reconstructing the others. Moreover, the more attributes are known, the lower the error on the remaining (unknown) ones.
+This suggests that considering the scenarios commonly used in the reconstruction literature only improves the results of our attack, as it successfully leverages knowledge of part of the dataset attributes.
+
+It is worth noting that we also performed partial reconstruction experiments (not reported here) in which part of the training set examples (rather than attributes) are known by the attacker. Interestingly, we observed a different trend as knowledge of some examples did not really improve the reconstruction error for the others. A possible explanation for that (related to our findings of SectionE) lies in the Differential Privacy (DP) protection intrinsically offered by bagging(Liu et al.,2021b). Indeed, DP ensures that the trained forest does not depend too strongly on any single example, hence protecting each individual row within the training set. On the contrary, it does not directly protect the training set columns.

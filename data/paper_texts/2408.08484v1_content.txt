@@ -1,0 +1,439 @@
+SECTION: An Unsupervised Learning Framework Combined with Heuristics for the Maximum Minimal Cut Problem
+
+The Maximum Minimal Cut Problem (MMCP), a NP-hard combinatorial optimization (CO) problem, has not received much attention due to the demanding and challenging bi-connectivity constraint. Moreover, as a CO problem, it is also a daunting task for machine learning, especially without labeled instances. To deal with these problems, this work proposes an unsupervised learning framework combined with heuristics for MMCP that can provide valid and high-quality solutions. As far as we know, this is the first work that explores machine learning and heuristics to solve MMCP. The unsupervised solver is inspired by a relaxation-plus-rounding approach, the relaxed solution is parameterized by graph neural networks, and the cost and penalty of MMCP are explicitly written out, which can train the model end-to-end. A crucial observation is that each solution corresponds to at least one spanning tree. Based on this finding, a heuristic solver that implements tree transformations by adding vertices is utilized to repair and improve the solution quality of the unsupervised solver. Alternatively, the graph is simplified while guaranteeing solution consistency, which reduces the running time. We conduct extensive experiments to evaluate our framework and give a specific application. The results demonstrate the superiority of our method against two techniques designed.
+
+SECTION: 1.Introduction
+
+The graph is a fundamental structure used to depict diverse relationships among entities(Ge et al.,2023; Sun et al.,2022), such as social networks, communication networks, biological information, and power grids. Combinatorial optimization (CO) on graphs is a crucial field in computational mathematics, with typical examples including the Max-cut(M.R. and D.S.,1979), Maximum Independent Set (MIS)(E. and E.,1960), and Traveling Salesman Problem (TSP)(F.,1831)applied in various scenarios. The exact solutions for most combinatorial optimization problems are intractable to search, primarily due to their NP-hard nature. Consequently, significant research efforts have been dedicated to solving these tasks by generating approximate solutions(Goemans M. X.,1994; Lin and Kernighan,1973).
+
+TheMax-cutproblem, a classic NP-hard problem in graph theory, has been extensively studied for decades, while theMaximum Minimal Cut(MMC) problem as a variant of the max-cut problem is rarely mentioned. Given a connected graph, the objective of the max-cut problem is to discover a partition method that divides all vertices into two complementary sets, denoted asand, in a way that maximizes the cardinality of edges betweenand. The maximum minimal cut problem (MMCP) adds the requirement that bothandbe connected based on the max-cut problem, also called the largest bond problem(L. et al.,2021). As a well-known fact, a cutofis minimal if and only if both subgraphs induced byandare connected(R.,2017), whereand. Therefore, a minimal cut is regarded as a two-sided connected cut(H. et al.,2019b). Additionally, the Connected Maximum Cut (CMC) problem is a variant of the max-cut problem that only demands the connectivity of. For example, in Figure1,,andare max-cut, maximum minimal cut, and connected maximum cut of, respectively. Note that the notable distinction among the three problems lies in the connectivity of the two subsets after separation.
+
+The Max-cut, as a fundamental problem of CO, can find applications in image segmentation(I. et al.,2018; H. et al.,2019a), network analysis(F.,1996), and statistical physics(F. et al.,1988), etc., while the MMCP rarely applied in real-world scenarios. Recently, we noticed the significant importance of MMCP as a mathematical form of computation in identifying key cross-sections for power grids(Zhu et al.,2021), and we left the specifics for Section5.5. Inspired by this, the MMCP will play an indispensable role in the monitoring and early warning of related complex networks. Over the past decades, researchers have made significant efforts to prove the complexity and design parameterized algorithms for this issue(L. et al.,2021; M.,2017). However, no fast solver for MMCP has been released so far, which is challenging due to the following reasons:
+
+Special Constraint.Unsupervised learning is widely used as a popular paradigm for combinatorial optimization problems(Yao et al.,2019; Amizadeh et al.,2018; Wang and Li,2023)that obtains solutions by minimizing a differentiable loss function, whose successful training hinges on empirically-identified correction terms(Karalias and Loukas,2020; Amizadeh et al.,2019). However, no methods can effectively represent the bi-connectivity constraints of the MMCP in an algebraic form and cannot be trained through back-propagation. Alternatively, it is exceptionally difficult to efficiently decode the relaxed solution of a neural network to a discrete solution that satisfies the constraints(Li et al.,2018), especially without a fully labeled solution.
+
+Lack of Equivalence.We claim that designing solvers for MMCP is often of greater difficulty than traditional CO problems because a general solver cannot be implemented for MMCP due to the lack of closed-form equivalence of solutions. In other words, compressing the solution space to a solution space that satisfies the constraints is a formidable task. No study can equate the solutions of MMCP to the solutions that disregard the constraints. For heuristics, it is more efficient to explore a larger objective value in constraint-satisfying solutions than to judge the legitimacy after obtaining the solutions.
+
+Weak Universality.Connectivity is a feature strongly associated with the graph structure, leading to the large obstacle of solving MMCP uniformly for the graphs with different structures. Regrettably, most existing approaches to address MMCP are based on the assumptions of graph structures, e.g., planar graph and simple 3-connected graph(Ding et al.,2016; M.,2017). Only graphs that satisfy specific structure constraints are considered. Therefore, overcoming the effects of graph structures to construct a unified framework is crucial.
+
+Contributions.To tackle the aforementioned issues and fill the gap, we design a novelunsupervised learning framework combined with heuristics (PIONEER)and provide new ideas for solving the maximum minimal cut problem in this work. In summary, the main contributions of our work are summarized as follows:
+
+Pioneering.We propose PIONEER, to the best of our knowledge, this is the first study on the unsupervised learning and
+heuristics for the MMCP with arbitrary graph structure.
+
+Graph Simplification.We clarify that target cut-edges can only be obtained on bridges or within connected components formed after breaking all bridges (Theorem1), which can simplify the scale of the graph and reduce the running time.
+
+Guaranteed Unsupervised.The cost and penalty of MMCP are explicitly written for the first time. An efficient unsupervised learning pipeline with a performance guarantee is designed to quickly find high-quality solutions that satisfy the constraint (Theorem4).
+
+Solution Forest.We prove that all feasible solutions can be equivalently achieved by disconnecting an edge in one of the spanning trees of the graph, i.e., each solution corresponds to at least one spanning tree (Theorem5).
+
+Novel Heuristics.A novel heuristic approach is proposed to repair and improve the solutions of the unsupervised solver that searches for better solutions by adding or removing vertices to realize a transformation of the spanning tree.
+
+SECTION: 2.Related Work
+
+This section briefly reviews the related work on the maximum minimal cut problem and the combinatorial optimization solvers.
+
+Maximum Minimal Cut Problem (MMCP).Unlike general CO problems, the study of MMCP is still in its infancy. As a NP-hard issue, the optimal solution of MMCP cannot be approximated by a constant factor in polynomial time unless P = NP(G.L. et al.,2019). Based on this point, researchers have developed a wide range of complexity analyses for the MMCP, while there exist rare results about the approximate solvers of the MMCP in general graphs(Ding et al.,2016; R.E.L. et al.,2009). Notably, Flynn et al.(M.,2017)showed that the size of the largest bond is at leastfor any simple 3-connected graph, where.
+Later, Duarte et al.(L. et al.,2021)proved that the MMCP is NP-complete even on planar bipartite graphs and split graphs. Moreover, they gave a-time algorithm for the MMCP from the perspective of the parameterized complexity. Although these methods have achieved breakthroughs in the computational theory of MMCP, they are still limited in the application of the real scene.
+
+Combinatorial Optimization (CO) Solver.Due to the high time complexity of exact algorithms(Pekny and Miller,1990; Rehfeldt and Koch,2019), approximation approaches have become the mainstream for solving CO problems(Gao et al.,2022; Brodowsky et al.,2023). Heuristics are one of the most efficient and effective approaches for solving the CO problem which obtains a sub-optimal solution within a reasonable time(K.,2000; Z. et al.,2022; Zhang et al.,2020). Unfortunately, heuristics are problem-specific and time-consuming. With the blowout of artificial intelligence, the approaches of neural networks for CO emerge as the times require(Xin et al.,2021; Li et al.,2021; Palm et al.,2018). Most neural approaches to CO are supervised, and such methods rely on training large-scale labeled instances(Gasse et al.,2019; Wang et al.,2019). In general, training unlabeled data is more challenging, which leads to two technical routes, i.e. reinforcement learning (RL)(Khalil et al.,2017; Zheng et al.,2021)and unsupervised learning(Khalil et al.,2022; Min et al.,2022). RL is known to be notoriously unstable to train. The works that are more relevant to ours are those unsupervised learning frameworks trained in an end-to-end manner. Wang et al.(Wang and Li,2023)adopt a relaxation-plus-rounding mechanism based on(Karalias and Loukas,2020), which guarantees performance by an entry-wise concave principle. However, the inability to write the loss of MMCP and the particularity of the connectivity prevents the application of the above methods.
+
+SECTION: 3.Preliminaries
+
+In this section, we describe the key concept applied in the paper. Firstly, We give some notations that will be used.
+
+Notation.Letbe a weighted, undirected, connected graph withvertices,edges, and weights, whereand. Unweighted graphs can be regarded as weighted graphs with all edge weights equal to. There are two disjoint connected subgraphsandof,andcan be connected by the edge setwhich has weight. Besides,anddenote relaxed and discrete solutions throughout the paper.
+
+Then, the problem that we are addressing, i.e. the maximum minimal cut problem (MMCP), is formulated.
+
+Problem Formulation.The MMCP is to find a set of edges that divides the connected graph into two connected subgraphs so that the sum of the weight (or cardinality) on the edge set is the largest. The formal definition is given as follows.
+
+Ifandsatisfy: 1)and; 2),and; 3).
+
+Thencan be called a minimal cut of, andis named the cut-set of. Alternatively,andare known as the connected cut. Eachandcorresponds uniquely, where the cut value ofis given by. The maximum minimal cut is the minimal cutwith the largest cut value among allof.
+
+In the above definition, we can consideroras the solution of MMCP, whereis the vertex set form of. We assert that MMCP is more challenging than the Max-cut problem(D.J. and S.M.,1991).
+
+SECTION: 4.Methodology
+
+In this section, the proposed framework, its components, and related theories will be elaborated comprehensively. Moreover, a random algorithm is presented as a baseline.
+
+SECTION: 4.1.Overview
+
+In summary, we achieve acceleration through graph partitioning and the performance-guaranteed unsupervised solver, and further repair and obtain higher-quality solutions by leveraging the heuristic solver. We overview the proposed unsupervised learning framework combined with heuristics (PIONEER) in Figure2.
+
+Given a connected graphas input, the connected components ofcan be formed by removing all bridges of, which does not affect the final solution and also reduces the graph size (see Section4.2). The connected components with a larger number of vertices are solved jointly utilizing the proposed unsupervised solver (see Section4.3) and heuristic solver (see Section4.5), while the solutions of smaller parts are obtained quickly by the exact algorithm. It is worth noting that all the solutions satisfying the constraints correspond to at least one spanning tree of, which is the design source of the proposed heuristic solver (see Section4.4).
+
+Specifically, given, we construct connected subgraphsandwith a large and small number of vertices respectively according to graph partitioning (Theorem1). The solutionofis obtained by the brute force search algorithm whose cut value is.
+
+Following the paradigm of unsupervised learning(Karalias and Loukas,2020; Wang et al.,2022), we adopts a relaxation-plus-rounding
+approach. We optimize the loss functionto generate relaxed solutions, which is followed by a deterministic rounding to transform the solution in discrete space. The issue is whether the discrete solutioncan be achieved with assurance. Our key observation is that such success for MMCP essentially depends on how to explicitly write the loss and valid rounding. Therefore, one of our contributions is to expressly write the cost and constraint for MMCP. Furthermore, we show that the unsupervised solver can produce valid and low-cost solutions (Theorem4) through reasonable rounding (Definition3).
+
+Despite the success of the proposed unsupervised solver on MMCP, an open question is how to repair the illegal solutions and further improve the quality of the solutions. Due to the fragile connectivity of sparse graphs and the strong correlation between connectivity and graph structure, relying only on network learning may not always result in solutions that satisfy the constraint. An important finding is that all feasible solutions correspond to at least one spanning tree of graph(Theorem5). With this conclusion, we utilize the results of the unsupervised solver to construct spanning trees that are treated as the starting point of the heuristic solver for further exploration, and then we have newand. Finally, the optimal solutionwith the largest cut value is selected as the final result, whereanddenote the maximum number of large and small subgraphs, separately.
+
+In the rest of this section, we elaborately state the key theory and components of the proposed PIONEER, in ordergraph partitioning,unsupervised combinatorial solver,solution forest, andheuristic tree transformation. Then, we design arandom tree searchas a baseline.
+
+SECTION: 4.2.Graph Partitioning
+
+Considering that the time complexity of solving MMCP grows exponentially with the graph size, we exploit the theorem presented in this subsection to simplify the graph without affecting the solutions.
+
+The bridge is a special edge in the undirected connected graph, also called cut-edge. The removal of the bridge will increase the number of connected components in the graph. Suppose thatandare the connected components obtained by disconnecting one bridgeof, which satisfies,. In addition,, andare the maximum minimal cut-set of, and, respectively. Then, we have the following theorem.
+
+The maximum minimal cut-setofcan only be obtained on one of the two sides of the bridge or on the bridge, that is,.
+
+The above theorem manifests that the solution of MMCP for a connected graphcan be obtained by separately solving connected subgraphs ofwhich are divided by removing all bridges of. We solve for connected subgraphs based on this graph partitioning instead of the whole graph. Therefore, the entire solving process can be accelerated due to the reduction of the graph scale.
+
+SECTION: 4.3.The Unsupervised Combinatorial Solver
+
+We aim to leverage unsupervised learning for solving MMCP. Generally, combinatorial optimization (CO) problems on graphs admit solutions that are binary vectorsof the set of vertices to denote whether the vertex is selected or not. Thus, a CO problem on graphs is to minimize a costgiven a constraintby solving the following equation.
+
+Learning for MMCP.The learning for MMCP is to learn an algorithm, e.g. a neural network (NN) parameterized byto solve MMCP. Given an undirected weighted graphwithand, whose degree matrix and adjacency matrix are denoted byand, respectively. The complete pipeline of unsupervised solver is given in Figure3.
+
+Inspired by(Wang et al.,2022), we adopt a relaxation-plus-rounding mechanism and add a term to the loss function that penalizes deviations from the constraint. Let a continuous vectoras the relaxed solution obtained by graph neural networks (GNNs). Formally, we define a new loss function for MMCP:
+
+where,or,. Note thatfor weighted graph andfor unweighted graph. Since connectivity is a feature that is strongly correlated with the number of edges,controls the balance between cost and penalty.
+
+Cost Function.To ensure the non-negativity of the loss function, we translate the cost function by minimizing the difference between the maximum valueof the objective and the sum of cut-set weights. Typically, the sum of edge weights or cardinality of the graph is employed as. We define the cost function as follows.
+
+Penalty Function.The connected constrainfor MMCP is then considered. According to the definition of a maximal minimal cut, we devote to dividing the graphinto two cuts by encoding all the vertices asor. Thus, the constraint is satisfied if the graph, with the removal of edges betweenand, has only two connected components; otherwise, it is illegal and should be punished.
+
+We enlighten from the Matrix-Tree theorem(Ghosh and Boyd,2006)in the AppendixA.5and the property of Laplacian matrix, i.e. the number of eigenvalues with valueof Laplacian matrix is equal to the number of connected components of. Consequently, the number of eigenvalues with valueof the Laplace matrixforshould be equal to. Formally, letis ordered eigenvalues of, there isif the solution satisfies the constraint. Note that. Then, the adjacency matrix ofcan be written by the relaxed solution:
+
+whereis the elements of,andare the elements of. The degree matrix can be built by summing the elements of each row in. Therefore, the corresponding eigenvalues of the relaxed solution can be easily obtained.
+
+In addition, for graphs with different sizes, there is a significant difference in the magnitude of the eigenvalues of the Laplace matrix, which is detrimental to learning. Thus, we attempt to find an upper bound of the third small eigenvalue ofbased on Theorem2which guarantees the robustness of the model. The proof of Theorem2is shown in AppendixA.2.
+
+Letandbe Laplacian matrices of graphand its subgraphwith respective ordered eigenvaluesand. Then the following inequality holds:
+
+According to the above theorem, we can regardofas an upper bound ofof alland denoteasas well. Meanwhile, the exponential function is employed to ensure that the learning process is differentiable and the necessary monotonic relation. The following penalty function is defined:
+
+whereis a self-adaptive coefficient for each graph, used to reconcile the differences in the upper bounds of the eigenvalues due to different sizes of graphs, andis a small value, e.g..
+
+Deterministic Rounding.After network training, assuming that the optimized parameterenableto be small, and we expect the relaxed solutioncan be deterministically rounded to a valid discrete solutionby sequential decoding as following forms.
+
+Given a continuous vector, w.o.l.g.,. Set, i.e. roundintoorand fix all the other elements unchanged, then repeat the procedure until all the variables become discrete. If, thenis rounded toto minimize the number ofeigenvalues, which induces a new discrete solution. Then, repeat the procedure until.
+
+Performance Guarantee.We prove the following theorem to show that our unsupervised framework allows generating a feasible and low-cost solutionafter deterministic rounding in theory. We move the proof to AppendixA.3due to the interest of space.
+
+Letand. Suppose that the learned parameterachieves. Then, rounding the relaxed solutionto a discrete solutionsuch that.
+
+The above theorem indicates that the loss will not increase after the deterministic rounding. On this basis, once the parametergets optimized to, there is. Owing toand, we have, s.t.
+
+Constraint-prior Rounding.Furthermore, as that connectivity might pose more challenges for network learning, to address potential infeasible solutions and prioritize the assurance of solution feasibility, we employ an additional constraint-prior rounding, i.e. setfor the illegal solutions after the aforementioned deterministic rounding.
+
+SECTION: 4.4.Solution Forest
+
+A natural idea for addressing CO problems is to initially discover a solution and subsequently verify whether the constraints are met. However, if the solution adhering to the constraints can be reformulated into a directly obtainable equivalent form, it would substantially enhance the efficiency of the search. Consequently, we attempt to convert the Bernoulli solution of the MMCP into another closed form such that all solutions achieved by a given algorithm must satisfy the constraints.
+
+It is well-known that the spanning tree of the graph possesses some interesting properties(Zhang et al.,2006), such as, each edge of the tree is a bridge. Based on this conclusion, we state the following theorem.
+
+Suppose thatis a maximum minimal cut with cut valueof, which can definitely be obtained by disconnecting an edge of a certain spanning treeof.
+
+The theorem above indicates that each feasible solution of MMCP corresponds to at least one spanning tree of. In other words, we can explore legal solutions for the MMCP by transforming the spanning tree, eliminating the need to check for constraint violations, which is the core idea behind the design of our subsequent heuristic solver. Additionally, to facilitate the subsequent description of the heuristic solver, we define a notion of disconnect-vertex as follows.
+
+An optimal solution ofcan be obtained by disconnecting the edgeof spanning tree. Such edge is called disconnected-edge ofand,are named disconnected-vertex of.
+
+SECTION: 4.5.Heuristic Tree Transformation
+
+To further repair and improve the solutions of the unsupervised solver while disregarding the impact of the graph structure, we aim to design a heuristic that achieves the transformation of the spanning tree by adding vertices for the cut to explore better solutions.
+
+Supposeis the maximum minimal cut ofobtained from the spanning treeof, where, w.l.o.g, we assume. Letand. We aim to optimize the existing spanning tree by introducing an appropriaterelated tointo, seeking enhanced solutions. The transformation of the current spanning tree will undergo the following four phases.
+
+Phase I. Selection.
+
+As not all vertices inare suitable to join, the selection ofmust meet the constraint thatis the neighbor of, which ensuresis connectable after each vertex movement. Therefore, different neighbors ofcan be chosen to join, altering the shape of the spanning tree in conjunction with the subsequent phases.
+
+Phase II. Disconnect edge.
+
+Generally speaking, the selected vertexmay also have other neighbors. Therefore, we disconnect the edges connected tointo isolate, making it convenient for the subsequent addition of edges. The specific cases that arise when the edges related toare broken are discussed in AppendixB.2.
+
+Phase III. Add edge.
+
+After disconnecting all feasible edges of, the current graph consists of several connected components centered around. At present, the edge addition involves those ofand its neighbor. For the addition of the edge connected to, we directly linkto incorporateinto. Note that the current connected component containingforms a tree, referred to as. Handling the edge addition forintroduces additional complexity and requires the following processing.
+
+Candidate.The edges that need to be added are not arbitrary, they have to meet certain constraints. (i) The connected edges belong to. (ii) The vertices planned to be connected must belong to. (iii) Only one edge is added to the neighbor of eachin. (iv) There is no self-loop. The vertices that satisfy the above conditions are selected as the candidate set when adding edges.
+
+Addition.After selecting the vertex, we connect it with. However, an unfortunate observation arises that the coupling relationship between different connected components results in high time complexity when adding edges. The main objective of adding edges is to recombine discrete connected components to induce a new spanning tree. To address this issue, we construct the spanning treeusing, providing a new way to achieve the same effect of adding edges in practice. Notably,can be capable of constructing a spanning tree as there is no bridge after graph partitioning.
+
+Montage.It is evident that the current graph consists of two trees, containingand, respectively. We concatenateandwhile preserving the original tree edge ofconnectingand, ensuring that the graph obtained after transformation remains a spanning treeof.
+
+Phase IV. Dislodge vertex.
+
+Note that, for, it is not necessarily the optimal solution for. The optimal solutionofmay potentially be found at other disconnected-edges. Additionally, an observation is that removing some vertices frommight lead to a greater increase in cut value. Hence, we move vertices oftoin turn to explore better solutions. The movement is restricted to the vertices inwho have neighbors in.
+
+It is noteworthy that the idea of transforming spanning trees to search for better solutions can be a general scheme for solving MMCP, which is worth further exploration in the future.
+
+SECTION: 4.6.Random Tree Search
+
+According to Theorem5, we designed a random search algorithm as a baseline based on the conclusion that transforming the shape of the spanning tree can lead to diverse feasible solutions. Drawing inspiration from the Kruskal algorithm(Kleinberg and Tardos,2006)employed in constructing minimum spanning trees, we arrange all edges in ascending order based on their weights. For unweighted graphs, the order of edges is randomized. In each iteration, the edge sequence is randomly shuffled, and subsequently, the spanning treeof the graphis constructed based on the shuffled edge sequence. Following this, a feasible solution foris obtained by disconnecting a single edge from. The feasible solutionwith the maximum cut value is then selected as the optimal solutionfor. The demonstration and the pseudo-code of the algorithm are given in AppendixB.4.
+
+SECTION: 5.Experimental Evaluation
+
+This section discusses our experimental setup and results. As a case study, we provide a specific real-world application of MMCP.
+
+SECTION: 5.1.Experimental Setup
+
+We conduct extensive experiments to evaluate the practical effectiveness of the proposed method. Here we briefly describe the hardware, datasets, baselines, and evaluation metrics.
+
+Implementations.We implement the PIONEER by Python 3.7.11 and PyTorch 1.9.2. All experiments are conducted on an Ubuntu machine with NVIDIA GeForce RTX 3090 (24 GB VRAM) and Intel(R) Xeon(R) Platinum 8260 CPU @ 2.40GHz (256 GB RAM). For the unsupervised solver, the training, validating, and testing datasets use an 8:1:1 dataset split, and each synthetic dataset containsgraphs. In addition, in the interest of fairness, our unsupervised solver and(Karalias and Loukas,2020)share the same neural network structure and parameter setting without the GAT layer. We refer interested readers to(Karalias and Loukas,2020)for more details. Given the significant variations and sparsity observed in real-world datasets, we select the suitablebased on parameter study in AppendixC.2.2. We setfor synthetic graphs, allowing the model to explore the solutions that yield larger objective values. For the random tree search, we report the best result by running the algorithm forrounds. Our code can be available athttps://github.com/luckyseasalt/PIONEER.
+
+Datasets.We assess our methods in a wide variety of experiments, rigorously conducted on synthetic and real-world datasets. Real-world datasets are all unweighted graphs, including, ENZYMES(You et al.,2021), IMDB(Kersting et al.,2016), and REDDIT(Yanardag and Vishwanathan,2015)datasets. Noteworthy, the real-world dataset also includes actual power grids and associated parameters.
+
+Synthetic datasets are constructed withvertices based on the pictures in MNIST(Deng,2012). There arepictures in Mnist which correspond to different one-digit(Deng,2012). The construction of the synthetic datasets is inspired by(Pogančić et al.,2019). Here, we first generate a complete graphas a motherboard. We associated each edge withand each vertex with the picture. Thus, synthetic graphs can be built by a random sequencewhose element denotes whether the corresponding edge inexists. We give an instance in Figure4.
+
+Considering the impact of various graph structures and the requirements of our framework, constraints can be imposed on the random graph generation process to obtain different types of graphs. It should be noted that the unsupervised solver is employed to handle graphs that have undergone graph partitioning. Hence, we focus on the scenario without bridges when creating the dataset. In summary, the synthetic Mnist datasets are classified into two primary types, i.e. isomorphic graphs and heterogeneous graphs with the notation ‘I-36—’ and ‘H-36’, whereis the number of edges. More configurations of all datasets are described in AppendixC.1.
+
+Baselines.As few algorithms can be fully adapted to solve MMCP, we mainly designed the brute force algorithm and the random algorithm, which can individually obtain the exact and approximate solutions. In addition, we adaptively modified the genetic algorithm(Benabbou et al.,2020). We leave more details of these baselines in AppendixB.
+
+Metrics.Consistent with existing studies, all results are measured by widely used metrics. Unfortunately, due to the unavailability of labeled datasets that offer accurate solutions to MMCP, we resort to the value of cut-set and execution time to compare the different approaches. Assume that the solution is, and the edges between the labeled verticesandiswith weight, then the value of the cut-set is. Execution time is measured in sec. per graph (s/g). We record the mean and standard deviation by running the results fortimes.
+
+SECTION: 5.2.Main Results
+
+Table1,2and3report the results on synthetic datasets and real-world datasets, respectively. Note that the results of the brute force algorithm are not included because it is still too time-consuming even when adopting graph partitioning to simplify. All methods are graphically simplified and accelerated by graph partitioning.
+
+In summary, the proposed PIONEER achieves better solutions than the competitors on all datasets and runs quickly. The results show that PIONEER exhibits superior performance in solving MMCP with various graph structures. We discuss the results of each task in more detail below. Note that the best results among the methods are highlighted in bold across all Tables.
+
+Experiments on synthetic datasets.The results of the synthetic tasks are shown in Table1, where PIONEER demonstrates competitive performance across all datasets. It consistently delivers solutions of the highest quality while maintaining a rapid processing speed. Surprisingly, the random tree search method achieves acceptable results within a relatively short time frame, benefiting from Theorem5. However, the performance of the proposed random algorithm weakens as the number of edges increases. This phenomenon is attributed to the significant increase in the number of spanning trees for the graphs with more edges, limiting its ability to find higher-quality solutions. In contrast, PIONEER does not rely on edge sequences for spanning tree construction. Instead, it achieves tree transformation by adding vertices, effectively overcoming this limitation and finding better solutions.
+
+Experiments on real-world datasets.To further demonstrate the superiority of our PIONEER, we perform experiments on real-world datasets. We note that the graphs under consideration exhibit sparsity and the presence of bridges, rendering graph partitioning highly efficacious. Table2reports the statistics of the real-world datasets and the results of graph partitioning. More details on the processing of the dataset are in the AppendixC.2. We categorize graphs containing fewer thanvertices as small graphs and employ a brute force algorithm to precisely determine their values. Otherwise, we employ the PIONEER method to address MMCP.
+
+In Table3, we can see that PIONEER outperforms the baselines across all datasets. Specifically, there is no statistically significant difference in terms of their performance on the IMDB and REDDIT, while PIONEER requires less time. We would like to emphasize that the random algorithm works wonders for certain tree-structured graphs, whereas PIONEER offers a versatile framework that can be applied to various graph structures. It should be noted that PIONEER achieves significantly larger solutions in terms of addressing the MMCP of ENZYMES, which reveals that even in sparse tree-structured graphs, our method can still find superior solutions effortlessly.
+
+SECTION: 5.3.Ablation Study
+
+To validate the effectiveness of the key components in PIONEER, we conduct ablation studies on all aforementioned datasets. Only two critical results are reported here.
+
+w/o Unsupervised solver.We remove the unsupervised solver in our framework and directly construct a random spanning tree as input for the heuristic solver to evaluate the effectiveness of the unsupervised solver. As can be seen in Figure5, the variant without an unsupervised solver can solve with almost the same quality as PIONEER (Avg. 3750.48 vs 3756.20). However, the speed of implementation of the two showed marked differences (Avg. 9.45 s/g vs 5.54 s/g). This is an interesting finding that the unsupervised solver serves as an effective starting point for the heuristic solver, leading to a substantial improvement in search speed.
+
+w/o Heuristic solver.Similarly, we assess the heuristic by directly taking the output of the unsupervised solver as a result. The results are summarized in Table4, showing the heuristic solver plays a crucial role in repairing and enhancing the solutions. Encouragingly, although the unsupervised solver does not yield optimal solutions, its fastest running speed and acceptable solution quality are also impressive. Furthermore, we have observed that unsupervised solvers exhibit surprisingly effective performance in tackling MMCP for dense graphs with fast speed.
+
+SECTION: 5.4.More Results
+
+We conduct more experiments to further analyze the key components and parameters of PIONEER. For detailed information, please refer to AppendixC.2due to space limitations.
+
+Supplemental ablation study.To validate the effectiveness of graph partitioning, rounding, and the upper bound, additional ablation experiments are performed. The results indicate that graph partition can dramatically accelerate execution, the proposed rounding methods improve the ability to generate constraint-satisfying solutions, andenables the model to better learn the bi-connectivity for different graph structures.
+
+Parameter study.Parameter experiments are conducted to study the key parameters, including the balanced control parameterand the self-adaptive coefficient. The results show that suitableandcan enhance the learning process of the unsupervised solver, leading to improved quality and legality of the solutions.
+
+Performance guarantee study.Our method avoids the intricate analysis of loss monotonicity, ensuring Theorem4through deterministic rounding. When the relaxed loss is successfully minimized to a sufficiently small value, the inequalityis satisfied, yielding low-cost and feasible solutions.
+
+Heuristic study.A constraint checking is incorporated into a genetic algorithm to perform a comparative study. The algorithm is provided in AppendixB.5. The results reveal that exploring solutions from spanning trees is significantly superior to the method of obtaining cuts and subsequently determining their legality.
+
+SECTION: 5.5.Case Study
+
+Recall that we mentioned a demand for the power grid motivating this work. Therefore, we utilize the task of cross-section identification in the power grid as a case study. We leave the problem statement and the visualization of solutions in AppendixC.2.5.
+
+We study the performance of PIONEER on the power grid of certain regions. Due to the confidentiality of power grid data, we only give some important details in the AppendixC.1. Additionally, training is not feasible due to the limited dataset containing only three graphs. Therefore, we utilize models trained on the REDDIT dataset, which exhibits relative similarity to the power grid.
+
+As shown in Table5, our method exhibits superior performance across all cases. Notably, PIONEER appears to take more time on Area 1 primarily due to the insufficient training of the unsupervised solver, resulting in the heuristic requiring more time for exploration. In contrast, relying solely on the heuristic solver requires a time ofs/g, indicating that even in this extreme case, the unsupervised solver can still contribute to a speedup for the heuristic.
+
+SECTION: 6.Conclusions and Future Works
+
+In this paper, we propose a novel unsupervised learning framework combined with heuristics named PIONEER for MMCP. In particular, we demonstrate the theoretical foundation of graph simplification and the equivalent form of solutions for MMCP. On these bases, we design an unsupervised framework with mathematical guarantees, which is not only sufficiently rapid in acquiring acceptable solutions independently but also enhances the speed of downstream solvers. We also construct a heuristic solver for further repairing and improving the quality of solutions. Extensive experiments manifest that PIONEER outperforms the baselines in various graph structures with good generalization. In the future, one promising direction is to enhance the ability of the unsupervised solver to handle sparse graphs. Another interesting theme is to explore a more explicit relationship between spanning trees and optimal solutions.
+
+SECTION: References
+
+SECTION: Appendix
+
+In the Appendix, we provide proofs of the proposed theorems, details and pseudo-cod of the algorithms involved, more details of the experiments and more results, broader impact for the maximum minimal cut problem (MMCP), and license for all datasets.
+
+SECTION: Appendix AThe Proof and Related Theorem
+
+SECTION: A.1.Proof of Theorem1
+
+Consider whetheris in the cut-setof. If, such that, that is the maximum minimal cut. Without loss of generality, we letandif. Supposeare on the different sides of, andcannot be connected if. Thus, the cut-setofwill be equal to theofif. Similarly, the case wherecan also be proved.
+∎
+
+SECTION: A.2.Proof of Theorem2
+
+To prove Theorem2, we first introduce the eigenvalue interlacing theorem(Horn and Johnson,2012).
+
+LetandbeHermitian matrices, with their ordered eigenvalues. Then the following inequality holds:
+
+Endowwith the Euclidean inner productwhich is anti-linear in the second coordinate. For, the linear rank one map.
+
+Then, we can draw the following corollary.
+
+Letbe aHermitian matrices with ordered eigenvalues. For nonzero vectorand, let the eigenvalues ofbe. Then the eigenvalues ofandinterlace,
+
+With these preliminaries, we then prove Theorem2.
+
+Letbe a Laplacian matrix of graph, without loss of generality, we remove an edgefromin turn to obtain subgraphsof. We consider the variation of the adjacency matrix from the subgraphtowhen removing one edgefrom.
+
+Letis an nonzero vector with elementand, then. There isbased on the Corollary2. Similarly, all subgraphs ofcan be obtained in this way so that the same conclusions can be reached by just superimposing. Consequently, the eigenvalues of the Laplacian matrices of all subgraphs ofare correspondingly smaller than the eigenvalues of the Laplacian matrix of.
+∎
+
+SECTION: A.3.Proof of Theorem4
+
+Letdenote a weight obtained by a relaxed solution,. We analyze the rounding process of the relaxed solutioninto the discrete solution. Letand,denote their entries respectively. The rounding procedure has no requirement on the order of the rounding sequence, w.l.o.g, suppose we round from indexto.
+
+In the deterministic rounding phase, we opt for the rounding method that minimizes the loss per round. Additionally, further rounding is conducted for the cases that do not meet the loss inequality. Then the following inequality holds:
+
+where, (a) denotes the phase of deterministic rounding.
+∎
+
+Note.We state that finding an entry-wise concave principle similar to(Wang et al.,2022)for the maximum minimal cut problem is challenging.
+
+We consider the case of unweighted graphs for convenience, i.e.,. We begin with the change in cost functionafter roundingto.
+
+Roundingtoand the difference of them is similarly denoted to. Ifthen show thatrounds to;thenrounds to; otherwiseis unchanged, i.e..
+
+Consequently, the variation ofafter roundingtocan be obtained.
+
+We analyzein conjunction with the quadratic function.is regarded as a quadratic function of. Thus, it is easy to see thatis hardly uniformly monotonic. In addition, the monotonicity of the eigenvalues is even more difficult to analyze.
+This reveals that the loss function cannot consistently decrease throughout the entire rounding process, which is also one of the reasons why the previous combinatorial solvers are powerless to deal with the MMCP. However, our approach guaranteesdirectly by rounding procedure, enabling the Theorem4hold.
+
+SECTION: A.4.Proof of Theorem5
+
+Letdenote a feasible solution with weightof. Consider the tree obtained fromby adding edges,untilbecome to a tree. The treeofcan be constructed in the same way. Setand, the edge setconnects the cutandaccording to the definition of maximum minimal cut. We can construct a spanning treeofby selecting one edgefromand connecting it withand. Hence, the feasible solution with weightofcan be obtained by disconnecting an edge of.
+∎
+
+SECTION: A.5.Other Related Theorem
+
+For an undirected graphwith degree matrixand adjacency matrix. Define the Laplacian matrixof. Then the number of spanning trees ofis equal to any one of the algebraic cofactors of.
+
+For an undirected graph, the number of connected components ofis equal to the number of zero eigenvalues of the Laplacian matrix.
+
+SECTION: Appendix BDetails of the Proposed Algorithms
+
+SECTION: B.1.Inherent Complexity of MMCP
+
+Although max-cut and maximum minimal cut are both NP-hard problems, computing the maximum minimal cut of a graph seems to be harder. Interestingly, the max-cut problem can be optimally solved in polynomial time in planar graphs(F.,1975), while MMCP was proved NP-complete even on planar graphs in(D.J. and S.M.,1991)that showed the MMC on graphs of clique-widthcannot be solved in timeunless the Exponential Time Hypothesis (ETH) fails.
+
+SECTION: B.2.Details of Heuristic Solver
+
+The case of disconnecting edges.In Section4.5, recall that in Phase II of Heuristic, all the edges ofare broke. The following cases may appear.
+
+Case1: The current graph is exactly two parts after disconnecting the edges of. Then it only needs to connect one edge between the two connected components to induce a new tree. (e.g.in FigureB.1)
+
+Case2: The disconnected edge will be reserved if the neighbor ofonly has neighborin, and such vertex will be removed from the neighbor of. (e.g.in FigureB.2)
+
+Case3: The current graph is divided into several connected components after disconnecting the edges ofand it is necessary to connect all the neighbors oftoto induce a new tree. It should be noted, that the corresponding edge should be added according tocase1 ifis the disconnected-vertex in.
+
+The case of adding edges.In Section4.5we mentioned that after selecting the vertices in Phase III, we plan to be connected with, the details of adding edges are as follows.
+
+Case1: The neighbor ofandare in the same connected component, so there is no need to add an edge. (e.g.in FigureB.2)
+
+Case2: The neighborofhas neighborbelong toand the connected component contained, then it is necessary to select a vertex in, the vertex satisfies the condition, and connect such a vertex to. (e.g.in FigureB.2)
+
+Case3: The neighborofdoes not meet the above cases, then we select the vertexin the connected component containedwho has neighborsbelongs toor another connected component. The edge between such vertex andwill be added.(e.g.in FigureB.2)
+
+However, we find that the process of adding vertices is time-consuming. Therefore, we opt to construct a spanning tree as a substitute, thereby improving the efficiency of the algorithm.
+
+The pipeline of heuristic solver.The heuristic solver initially selects a starting vertex based on the optimal cut induced by the current spanning tree. It identifies a candidate set by choosing vertices connected to the selected vertex and presented in the target cut. Subsequently, through a sequence of disconnecting edges, adding edges, and splicing operations, a new spanning tree is obtained. The optimal solution on this new spanning tree is then calculated. This process iterates until adding a vertex to the current optimal cut no longer increases the objective value. FigureB.3shows the full process of adding vertex from one cut to another cut, which brings in spanning tree transformation. To prevent redundant vertices, a final round of vertex deletion is performed to explore the possibility of achieving a more optimal solution.
+
+Complexity analysis.Suppose the number of vertices and edges areand, respectively. The time complexity of constructing a spanning tree is. Determining the candidate set when adding vertices requires. The time used to get the maximum solution of the spanning tree is. Thus, the time complexity of the heuristic solver is.
+
+SECTION: B.3.Exact Search Algorithm
+
+To verify the accuracy of the proposed method on small graphs, we developed an algorithm for brute force search to achieve exact solutions. The graph is first simplified by graph partitioning. We traverse all possible vertex subsets, checking whether they form valid cuts, and return the vertex subset with the maximum cut value along with its value. We give the pseudo-code of in Algorithm1.
+
+Complexity analysis.The time complexity of the brute force search algorithm is, whereis the number of vertices. It is not applicable for solving MMCP on larger-scale graphs.
+
+SECTION: B.4.Random Search Algorithm
+
+We designed a random tree search algorithm in Section4.6. The demonstration and the pseudo-code of the algorithm are given in FigureB.4and Algorithm2, respectively.
+
+Complexity analysis.The time complexity of the random tree search algorithm is, whereandare the number of vertices and edges, individually. It is not suitable for solving MMCP of graphs that differ too much from the tree structure.
+
+SECTION: B.5.Genetic Algorithm
+
+To further assess the performance of the proposed heuristic solver, we adaptively modified a classical heuristic, Genetic Algorithm (GA)(Benabbou et al.,2020), as a baseline. The graph is initially simplified through graph partitioning. Linear ranking selection is employed to generate the parent population. After obtaining new individuals through crossover and mutation, the solutions are evaluated for bi-connectivity requirements using Depth-First Search (DFS). The fitness of a valid solution is defined by its cut value, while solutions that do not meet the constraint are assigned a fitness of. The pseudo-code of the genetic algorithm for the MMCP is as shown in Algorithm3.
+
+SECTION: Appendix CMore Details of the Experiments
+
+SECTION: C.1.Datasets
+
+Synthetic Mnist datasets.Synthetic Mnist111http://yann.lecun.com/exdb/mnist/datasets are generated according to Section5.2. In summary, the synthetic Mnist datasets are classified into two primary types as explained below.
+
+(1)Isomorphic graph.The datasets are constructed by individually setting the number of vertices and edges to be 36 and, where. These graphs are undirected, connected, and do not contain bridges, encoded as ‘I-36—’.
+
+(2)Heterogeneous graph.Undirected connected graphs without bridges are built whose number of vertices is, named ‘H-36’.
+
+We divide all the datasets into training, validating, and testing sets and count all the constructed datasets as shown in TableC.1. It is important to note that all synthetic graphs used are undirected, weighted, and connected graphs without bridges.
+
+Real-world datasets.There are many real-world datasets commonly used for combinatorial optimization problems on graphs. However, there are no labeled datasets specifically tailored for MMCP, we have selected some typical real-world datasets from these different tasks, which are most undirected, unweighted, and connected graphs. The unconnected graphs are eliminated from all datasets. All datasets are described as follows.
+
+(1)ENZYMES dataset.The ENZYMES dataset222https://paperswithcode.com/dataset/enzymesis a collection of graph data constructed by the protein tertiary structures obtained from the BRENDA enzyme database(Zhao et al.,2018).
+
+(2)IMDB dataset.The IMDB-BINARY dataset333http://www.graphlearning.io/is the movie collaboration dataset that is graphs with vertices referring to actors. There will be an edge if two actors appear in the same movie(Kersting et al.,2016).
+
+(3)REDDIT dataset.The REDDIT-BINARY dataset(Yanardag and Vishwanathan,2015)is constructed from online discussion threads in Reddit444https://www.reddit.com/where vertices represent users and edges mean at least one of two users responded to the other user’s
+comment.
+
+(4)Power Grid.There are five main power grid datasets, which are coded as 36-vertices, Area 1, Area 2, IEEE118, and IEEE300. Each of these datasets has only one graph and corresponding parameters, where the parameters of IEEE118 and IEEE300 are derived from the results of built-in power flow calculation by PyPower555https://github.com/rwl/PYPOWER. The edge weights signify the average active power on lines.
+
+The training, validating, and testing sets of the above datasets are composed of subgraphs withobtained by removing all bridges, self-loops, and duplicate edges of the corresponding original graphs. Thus, we show the statistics of each dataset in Table2. It is worth mentioning that graphs with a vertex count ofare not included in the subgraphs counted. In addition, we have undertaken case studies on actual power grids, which are categorized as a real-world dataset as well.
+
+SECTION: C.2.More Experimental Results
+
+Due to space constraints in the main text, we show more experimental results in this section. It is important to note that all experiments still adhere to the setup outlined in Section5.1.
+
+To further assess the efficacy of the key components in PIONEER, we perform more ablation studies in detail here, including the complete results of Figure5, the removal of the graph partitioning from the proposed framework, and the analysis of rounding.
+
+Full results of w/o unsupervised solver.In tableC.2, we give detailed numerical results in Figure5and further report experimental results on real-world datasets.
+
+As shown in TableC.2, the heuristic solver exhibits strong performance on its own, especially on sparse graphs. Nevertheless, our proposed framework presents notable time advantages and attains comparable or even superior quality of solutions. This is attributed to the unsupervised solver providing an improved initial solution for the heuristic, enabling it to more efficiently and swiftly discover the optimal solution. Therefore, we can conclude that unsupervised learning plays a crucial role in accelerating our framework.
+
+w/o Graph partitioning (GP).The introduction of graph partitioning is aimed at simplifying the scale of the graph, thereby reducing computational complexity to achieve acceleration, the theory of which has been guaranteed by Theorem1. Nevertheless, we execute random algorithms on real-world datasets to more intuitively illustrate the time speedup of graph partitioning.
+
+In FigureC.1, we observe that the running time employed in graph partitioning is significantly shorter than that of directly solving the original graph. This is attributed to the reduction in graph scale, which effectively lowers complexity and enhances runtime speed for various graph structures. Moreover, it implies that our graph partitioning can serve as an effective starting point for accelerating other MMCP algorithms.
+
+The analysis of rounding.In Section4.3, we introduce two rounding methods, deterministic rounding and constraint-prior rounding, primarily used to discretize the relaxed solutions obtained by neural networks. We refer to these as the first-phase and second-phase rounding, respectively. Similar to(Wang et al.,2022), general unsupervised combinatorial solvers directly utilize the loss function as the basis for rounding, selecting the integer solution with a smaller loss at each rounding step. This aligns with rounding phase I as defined in Definition3. However, we have discovered that network learning is not straightforward due to connectivity being a special property that cannot be directly represented by solutions. Hence, we have devised the second phase of rounding, named constraint-prior rounding. The phase II of rounding serves the main purpose: adjusting the infeasible solution after the phase I of rounding to meet connectivity requirements. Therefore, we conducted comparative experiments on all datasets. In addition, we used the common rounding method as a baseline, i.e. rounding up relaxed solutions to the nearest integer, which does not satisfy Theorem4. It is important to note that we only demonstrate the impact on unsupervised solvers, as heuristic solver consistently finds satisfactory solutions.
+
+We evaluate the effectiveness of different rounding methods by progressively removing them one by one. The results are presented in TableC.3. Although the method that directly rounds to the nearest integer achieves the fastest rounding speed, it only satisfies constraints at a minimal level. This suggests that obtaining valid solutions solely through simple rounding becomes challenging once there is no assurance from Theorem4. Additionally, while constraint-prior rounding can improve the legality of solutions, its cost cannot be guaranteed and may result in lower but still acceptable cut values. It is also evident that satisfactory results can be obtained solely through deterministic rounding, owing to the performance guarantees provided by Theorem4. In contrast, the complete version achieves the highest objective value, as well as the highest solution legitimacy rate and fast processing speed.
+
+Meanwhile, the results also reveal that learning connectivity for networks might not be as straightforward, especially for connectivity learning in different graph structures. This insight inspired us to propose heuristic algorithms, precisely to enhance and repair the solutions of the unsupervised solver, addressing MMCP in various graph structures.
+
+w/o Upper bound.Recall that the penalty functionand, which has two key parameters, i.e. the adjustment parameterand the upper bound. Here, we only analyze the case without upper boundand leave the analysis ofinC.2.2.
+
+For different graphs, there are noticeable differences in the eigenvalues. The introduction ofis aimed at minimizing the impact of eigenvalue disparities on the learning process. As part of the ablation study, we set, that is, penalty isfor all graphs.
+
+The results are summarized in TableC.5. We can see that the variant withoutperforms the worst in terms of the legitimacy of solutions, which is consistent with our envision. Ifis fixed, the uniform dimension of the penalty for all graphs would make it challenging to distinguish whether the solutions are valid for graphs of different scales, thereby resulting in a decline in learning performance. This shows the need to combine the upper bound ofwith the penalty in the learning process of different graphs.
+
+We conduct parameter studies to analyze key parameters, consisting of the self-adaptive coefficientfor penalty and the balanced control parametersfor cost and penalty. We discuss the results in detail as follows.
+
+The parameter study of.Recall that we previously analyzed the case without upper boundfor the penalty. Next, we analyze the adjustment parameter(default). All experiments are performed on all datasets. As a comparison, set. Since there is no significant difference between the execution time of different, the running time is not recorded. Similar to the version without,mainly affects the learning of penalties by the network.
+
+As the result in TableC.4shows, by varyingfromto, we observe that our model achieves the best overall performance among different datasets whenis around. The results indicate that a smaller value ofintroduces more differentiation in determining the legality of solutions. This is because a largerwould impose a significant penalty even on solutions that already satisfy the requirements, leading to instability in the learning process. Overall, a
+moderate value aroundcan be a suitable choice for various datasets.
+
+The parameter study of.Recall that the loss function.is a control parameter that balances cost and penalty to improve the quality of the solution. To illustrate the role of, we conducted experiments on all datasets. We setandfor all datasets to determine the appropriate value. For the same considerations as before, only the results of the unsupervised solver are reported. As both solvers exhibit nearly identical runtime, execution times are not presented.
+
+As the results reported in TableC.6, for graphs with a larger number of edges,can effectively explore solutions with larger cut values while ensuring feasibility. This is attributed to the relatively simpler learning of connectivity structures in isomorphic graphs. In contrast, in real-world datasets where graph structures are more special and diverse, fixingproves more advantageous for prioritizing connectivity constraints, leading to a significant increase in the number of feasible solutions.
+
+To illustrate the performance guarantee of the unsupervised solver on Theorem4, we compare, the relaxed loss, and the discrete loss of the training process for real-world datasets in FigureC.2. According to Theorem4, when the relaxed lossis learned to be sufficiently small, i.e.,, a low-cost and feasible solution can be obtained by deterministic rounding. Therefore, our aim is to ultimately achieve the minimal discrete loss among them.
+
+As shown in FigureC.2, for discrete solutions with relaxed losses less than, all discrete solutions have losses lower than. In other words, the obtained discrete solutions are guaranteed by Theorem4, ensuring both constraint satisfaction and lower costs. Surprisingly, for cases where the relaxation loss is greater than, the discrete solutions obtained through our proposed rounding not only makehold but also ensure the validity offor the majority of solutions, fulfilling the constraints. Overall, our model can ensure performance without analyzing the entire rounding process for loss fluctuations in addressing MMCP.
+
+To further demonstrate the competitiveness of the proposed heuristic solver, we adaptively modify the classical genetic algorithm (GA) in SectionB.5and employ it as a baseline. The maximum number of iterations is set tofor the revised genetic algorithm and we record the optimal solution among them. TableC.7summarizes the results on real-world datasets to contrast different heuristics.
+
+As shown in TableC.7, our heuristic solver surpasses the competitor in terms of solution legitimacy and running time, which benefits from Theorem5. The results imply that the performance is worse if judging whether the solution satisfies the constraints after its generation because the solution space is not compressed into the feasible domain. We also observe that the proposed heuristic solver achieves larger cut values on datasets other than IMDB, primarily due to the significant variation in the cut values of IMDB solutions. Excluding illegal solutions may result in a higher average cut value compared to the case that all solutions are legal. Overall, our heuristic efficiently explores solutions of higher quality, ensuring adherence to the bi-connected constraint.
+
+The power grid is a vast and intricate network consisting of diverse components that can be represented as a connected graph comprising vertices and edges. The cross-section identification of the power grid is an extremely important and challenging task in power system analysis, which can be formalized mathematically as a maximum minimal cut problem.
+
+Problem Statement (Identification of Critical Cross-section).In the practical power grid, it is necessary to identify the critical cross-section, defined as a problem to find a set of channel sets consisting of several lines with maximum power summation that satisfy certain constraints. Since there is a limit to power delivery from one region to another, the exit or failure of any element in the channel can cause cascading failures, when the system power exceeds the set cross-section value. Therefore, the identification of a critical cross-section of the power grid is crucial to the safe and stable operation of the power system. Moreover, both sides of the critical cross-section must be connected respectively to ensure power supply. Thus, the task of identifying a critical cross-section of the power grid can be abstracted as a maximum minimal cut problem. An example of a cross-section in the power grid is shown in FigureC.3.
+
+Visualization of solutions.To illustrate how PIONEER works better, we visualize the solution for the 36-vertices of the power grid dataset in FigureC.4. Graph partitioning first realizes graph simplification and reduces computational complexity. The unsupervised solver achieves a solution similar to ground truth, which is then augmented by a heuristic solver to find the optimal solution. Note that the optimal solution can also be obtained directly by the proposed heuristic solver.
+
+SECTION: Appendix DBroader Impact
+
+In this paper, we introduce an unsupervised framework combined heuristic to resolve the maximum minimal cut problem. The broader impact of this paper is discussed from the following aspects:
+
+1)What does this study mean for the power grid?The power grid constitutes a critical component of the global energy system. However, in recent years, there have been recurrent incidents of major power outages. The root cause of these incidents is the occurrence of faults in overloaded transmission lines. When these lines are disconnected, it triggers a transfer of power flows, causing adjacent lines to become overloaded. This, in turn, leads to cascading failures. Therefore, the scope of power grid security analysis can be narrowed down by strategically monitoring critical cross-sections, providing ample time for subsequent load-shedding control strategies. However, in traditional power grid analysis, the identification of critical cross-sections is typically accomplished through complex mechanistic analyses or empirical expertise, lacking rapid and effective methods to address this challenge. Our research provides a significant solution to this difficulty, offering important insights for resolving such issues in power grids.
+
+2)Who may benefit from this study?The researchers, engineers, and organizations in the fields of electricity and transportation who employ our framework to address the maximum minimal cut problem may derive significant benefits from this research. This is due to our method’s independence from labeled data, coupled with its ability to deliver satisfactory solutions at a low cost and with high quality. On a broader scale, our research can also yield advantages for households and communities, stemming from our exploration of a fundamental problem. This problem holds relevance across diverse network planning and analysis scenarios, thereby supporting subsequent business needs.
+
+3)Who may be put at risk from this study?Although our method can ensure the quality of the obtained solution when the loss is low and further enhance the solution quality through a heuristic, the gap between the achieved solution and the true optimal solution remains unclear. Therefore, before deploying our method in scenarios that require strict guarantees on solution approximation, there are still some potential issues that need to be addressed.
+
+SECTION: Appendix ELicenses
+
+We adopt the following datasets in this work, their licenses are listed as follows:
+
+The Synthetic Mnist datasets in this work are generated and proposed by us. It is inspired by(Pogančić et al.,2019; Wang et al.,2022)and employs the images from MNIST(Deng,2012), which is under the Creative Commons Attribution-Share Alike 3.0 license and is publicly available. Please cite both our paper and their paper in the new publications.
+
+The real-world datasets in this work are ENZYMES, IMDB, and REDDIT from(Zhao et al.,2018; Kersting et al.,2016; Yanardag and Vishwanathan,2015)and are publicly available. Please cite their paper in the new publications.
+
+The power grid dataset in the case study is from China Electric Power Research Institute which has granted us a license to make it available. Please cite our paper in the new publications.
+
+All the datasets and code bases are publicly available except the actual power grid dataset. They contain no human information or offensive content.

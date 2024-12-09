@@ -1,0 +1,173 @@
+SECTION: NeRF-Guided Unsupervised Learning ofRGB-D Registration
+
+This paper focuses on training a robust RGB-D registration model without ground-truth pose supervision.
+Existing methods usually adopt a pairwise training strategy based on differentiable rendering, which enforces the photometric and the geometric consistency between the two registered frames as supervision. However, this frame-to-frame framework suffers from poor multi-view consistency due to factors such as lighting changes, geometry occlusion and reflective materials.
+In this paper, we present NeRF-UR, a novel frame-to-model optimization framework for unsupervised RGB-D registration.
+Instead of frame-to-frame consistency, we leverage the neural radiance field (NeRF) as a global model of the scene and use the consistency between the input and the NeRF-rerendered frames for pose optimization.
+This design can significantly improve the robustness in scenarios with poor multi-view consistency and provides better learning signal for the registration model.
+Furthermore, to bootstrap the NeRF optimization, we create a synthetic dataset, Sim-RGBD, through a photo-realistic simulator to warm up the registration model.
+By first training the registration model on Sim-RGBD and later unsupervisedly fine-tuning on real data, our framework enables distilling the capability of feature extraction and registration from simulation to reality.
+Our method outperforms the state-of-the-art counterparts on two popular indoor RGB-D datasets, ScanNet and 3DMatch.
+Code and models will be released for paper reproduction.
+
+SECTION: 1Introduction
+
+The difficulty of 3D data acquisition has significantly diminished owing to the substantial increase in RGB-D sensor availability and a concurrent decrease in costs. The prolific collection of RGB-D data has greatly propelled the advancement of deep learning in the field of 3D vision, resulting in substantial improvements in the performance of applications such as RGB-D SLAM and RGB-D reconstruction. A pivotal challenge in achieving reliable 3D reconstruction based on discrete RGB-D image frames lies in establishing correct inter-frame associations, through means such as feature matching, to facilitate camera pose estimation. Motivated by these, our goal is to devise a robust registration model for RGB-D images, thereby providing robust and high-quality pixel-level matching for RGB-D registration.
+
+Traditional methods, relying on hand-crafted features (such as SIFT[21]) find difficulty in handling complex and noisy real-world data.
+Deep learning based methods, on the other hand, have gained much attention lately and most works adopt a supervised learning approach[27,41,42,1]to accomplish robust registration. These learning-based methods can support RGB-D registration between frames even with very small overlaps. The performance of supervised learning approaches, however, depends highly on the quality of the data annotation, i.e., ground-truth frame poses, which are difficult to obtain and hence limit their application in practice.
+
+To overcome the reliance on annotated data in learning-based methods, the exploration of better strategies to extract information from unlabeled data for achieving unsupervised learning in RGB-D registration has gradually become a research focus. Inspired by works in multi-view geometry, studies have found that the geometric and photometric consistency inherent in the RGB-D sequences of a scene can offer effective supervision for feature extraction. To our knowledge, UR&R[12]is the first work proposing an unsupervised framework for RGB-D point cloud registration. It takes two RGB-D frames with overlap as input and estimates their relative pose with a registration model[37,43]. Based on this relative pose, UR&R rerenders one frame to the reference frame of the other with a point cloud-based differentiable rasterization mechanism, and enforces the photometric and geometric consistency between the rerendered and the input frames to enable training of the registration model.
+However, this frame-to-frame optimization lacks global contextual information of the entire scene, especially in cases with limited distinctive features, making it vulnerable to scenarios with poor multi-view consistency due to factors such as lighting and occlusion (see Fig.1). Furthermore, point cloud-based methods require large overlap to enable high-quality rerendering which limits its applicability in more challenging cases.
+
+We introduceNeRF-guidedUnsupervisedRegistration (NeRF-UR), an unsupervised RGB-D registration framework based on frame-to-model optimization. To overcome the limitations of frame-to-frame optimization, we adopt the neural radiance fields (NeRF) as the global model to support unsupervised training. Note, however, that the initialization of the NeRF requires accurate frame poses but we cannot achieve this without a good registration model, which makes achicken-and-eggproblem.
+So we opt to utilize synthetic RGB-D data rendered with 3D scene models to train an initial registration model to bootstrap the frame-to-model optimization. To this end, we create a synthetic dataset, Sim-RGBD, with photo-realistic rendering of CAD models, which contains more thank rendered images ofscenes. As shown in Fig1, the registration model is first trained on Sim-RGBD with the ground-truth poses and later unsupervisedly fine-tuned on the real-world data in a frame-to-model manner.
+As the NeRF is constructed from the entire RGB-D sequence, it can better handle multi-view inconsistency factors such as lighting changes, geometry occlusion and reflective materials. Therefore, enforcing the photometric and geometric consistency between the NeRF rerendering and the input frames can better optimize the estimated poses than the frame-to-frame methods, which enhances the learning signal for the registration model.
+
+This refining stage enables distilling the capability of feature extraction and registration from simulation to real world.
+
+We have evaluated our method on two popular indoor RGB-D datasets, ScanNet[7]and 3DMatch[44]. We demonstrate that our method outperforms both traditional and recent unsupervised learning-based registration pipelines. Moreover, our method achieves significantly better performance than previous methods in more challenging scenarios with lower overlap or severe lighting changes.
+
+Extensive ablation studies are conducted to prove the effectiveness of different components of our pipeline. In summary, our contributions are as follows:
+
+We propose a NeRF-guided frame-to-model optimization framework for unsupervised RGB-D registration. The infusion of global reconstruction information enhances the reliability of re-rendering errors, which fortifies the robustness of our registration model.
+
+We devise a synthetic bootstrap mechanism to provide high-quality initial poses for NeRF optimization and create a synthetic dataset for warming up RGB-D registration model.
+
+Our method achieves new state-of-the-art results on the two popular indoor RGB-D datasets, ScanNet and 3DMatch.
+
+SECTION: 2Related Work
+
+SECTION: 2.1Point Cloud Registration
+
+Point cloud registration is a problem of estimating the transformation matrix between two frames of scanned point clouds. The key lies in how to detect features with specificity from the two-frame point cloud, how to construct accurate correlations, and how to utilize accurate rigid transformations extracted from these correspondences. Since deep learning has been found good at feature representation, how to learn robust and invariant visual features through deep learning networks has become a focus of research.[36,25,26,11,24,27]Many Feature learning methods[37,8,16,1,2,5,6,27,40,42]were proposed. They get the point cloud features by neural network and use a robust estimator e.g. RANSAC to estimate the final rigid transformation. Different from focusing on feature learning, there are some end-to-end learning-based registration methods[39,35,14,22,19]that treat the registration as a regression problem. They encoded the transformations into the implicit space as a parameter in the network optimization process.
+
+SECTION: 2.2Unsupervised Point Cloud Registration
+
+The aforementioned methods rely on ground-truth poses to supervised the training. The ground-truth pose is often obtained by reconstruction of the SfM, which suffers from high computational overhead and instability. Recently, unsupervised RGB-D registration methods have been proposed to bypass the need of pose annotations. To our knowledge, UR&R[12]is the first unsupervised registration framework by introducing a differentiable render-based loss to optimize the feature extractor. BYOC[13]stands for the fact that randomly initialized CNNs also provide relatively good correspondences, proposed a teacher-student framework to train their feature extractor. LLT[37]fused the geometric and visual information in a more trivial way by introducing a multi-scale local linear transformation to fuse RGB and depth modalities. PointMBF[43]has designed a network based on unidirectional fusion to better extract and fuse features from geometric and visual sources and has achieved state-of-the-art performance. However, these methods have difficulty in handling multi-view inconsistency caused by factors such as lighting changes, highlight or occlusion. In this work, we design a NeRF-guided frame-to-model framework to address this issue.
+
+SECTION: 2.3Pose Optimization in Neural SLAM
+
+Existing Neural SLAM methods[30,46,32,34,45,38,20]incorporate neural implicit representations into RGB-D SLAM systems, allowing tracking and mapping from scratch. The groundbreaking work, iMAP[30], encode both the color and geometry of the scene into a MLP. This MLP can be jointly optimized with a batch of poses through rendering loss. In the subsequent works, NICE-SLAM[46]and Vox-Fusion[38]introduce a hybrid representation that combines learnable grid-based features with a neural decoder, enabling the utilization of local scene color and geometry to guide pose optimization. More recently, Mipsfusion[32]proposed a robust and scalable RGB-D reconstruction system with a multi-implicit-submap neural representation. Co-SLAM[34]proposed a joint coordinate and sparse-parametric encoding and a more global bundle adjustment approach. Inspired by the aforementioned works, we introduce our framework for estimating the initial camera pose using a feature extractor and subsequently refining the pose through implicit 3D reconstruction.
+
+SECTION: 3Method
+
+SECTION: 3.1Overview
+
+Given two RGB-D framesand, whereare the RGB images andare the point clouds backprojected from the corresponding depth images, our goal is to recover the-DoF relative posebetween them, which consists of a 3D rotationand a 3D translation.
+To solve this problem, recent deep registration methods first extract point featuresandfor the two frames with a point cloud registration model:
+
+and then extract point correspondencesvia feature matching. The relative pose is then estimated based on the correspondences. Obviously, the discriminativeness of the extracted features accounts for the quality of the resultant relative pose. However, the training ofheavily relies on the ground-truth pose, which suffers from great annotation difficulty and unstable convergence.
+
+In this work, we propose an unsupervised point cloud registration method namedNeRF-UR. Our method leverages unposed RGB-D sequences to train the registration model. To achieve effective supervision, we generates high-quality relative pose in a NeRF-guided manner (Sec.3.3). To bootstrap the parameters of, we build a scene-level synthetic dataset and pretrainon this dataset so that reasonable initial features can be learned (Sec.3.4).
+Fig.2illustrates the overall pipeline of our method.
+
+SECTION: 3.2Registration Model
+
+We use PointMBF[43]as our registration model, which fuses the information from both the visual (2D) and the geometric (3D) spaces for better feature distinctiveness. Our model contains two branches,i.e., the visual branch and the geometric branch. The visual branch is a modified ResNet-[17]network, following a U-shape architecture. The geometric branch is a KPFCN[2,33]network symmetric with the visual branch. Both branches adopt a three-stage architecture, and a PointNet-based fusion module fuses the features from the two modalities after each stage. Moreover, we would note that, although an RGB-D model is used here, our method is encoder-agnostic and can also work with only the visual branch[12]or the geometric branch[6].
+
+SECTION: 3.3NeRF-Guided Unsupervised Registration
+
+An unsupervised registration pipeline relies on high-quality poses to supervise the registration model.
+However, unsupervised registration is more prone to outliers, which significantly harm the quality of relative poses.
+Existing methods[12,37,43]use differentiable rasterization and optimize the frame pose according to the photometric and the geometric consistency between two nearby frames from an RGB-D sequence. Nevertheless, the consistency between two frames are easily to be affected by occlusion or lighting changes under different viewpoints, which fails to effectively refine the frame poses and thus harms the training of the registration model. This has inspired us that a more comprehensive modeling of the whole scene is required to effectively optimize the frame poses.
+Recently, NeRF[23]has the ability to model the lighting and geometric structures in a scene, and jointly optimize 3D maps and poses[46,34].
+Based on this insight, we propose to train the registration model scene by scene and optimize a NeRF for each scene for pose refinement. By leveraging the NeRF, we optimize the poses in aframe-to-modelfashion instead of the traditional frame-to-frame one, which can better handle the occlusion and lighting changes.
+
+Pipeline.As shown in Fig.2, to avoid the error accumulation and the huge time overhead caused by joint map-pose optimization in large scenes, we opt to process small subscenes instead of the whole scene.
+Specifically, we split the RGB-D sequence of a scene into subsequences offrames, and we optimize a NeRF for each subsequence. Within each subsequence, we further sample keyframes everyframes for training and all other frames are omitted. The reference frame of the first keyframe is treated as the global reference frame of the subscene. For each keyframe, we first register it with the previous keyframe withto obtain its initial pose, and then insert it into the NeRF to jointly optimize its pose and the map.
+At last, we use the optimized pose of each keyframe to supervise the registration model.
+
+Initial pose generation.Given two keyframes, we first extract their point featuresandwith, which are-normalized onto a unit sphere. For each point, we then find its nearest pointin the feature space as a correspondence. The weight for each correspondence is computed as:
+
+At last, we select the topcorrespondences with the largest weights. The same computation goes for. As a result, we obtaincorrespondences, denoted as. To compute the initial pose, we randomly samplecorrespondence subsets ofof the correspondences. For each subset, we use weighted SVD[3]to compute a pose hypothesis and select the best pose which minimizes:
+
+Pose optimization.We adopt a NeRF model similar with Co-SLAM[34]due to its advances in the speed and the quality of reconstruction. Our NeRF maps the world coordinatesand the viewing directioninto the colorand the TSDF value. Following the SLAM pipeline, for each keyframe, our method can be split into theTrackingstage andMappingstage.
+
+In the tracking stage, we optimize the pose of the keyframe with the NeRF. The optimized pose in this stage is named thetracked pose, denoted as.
+For the-th keyframe, we first calculate its untracked pose, whereis the mapped pose of the previous keyframe as described later andis their initial relative pose from the registration model.is then optimized toby supervising the photometric and the geometric consistency between the input RGB-D frame and the rerendered frame by the NeRF.
+The NeRF parameters are fixed in this stage. Please refer to the supplementary material for more details about the NeRF training.
+As the NeRF implicitly models the whole scene, this frame-to-model paradigm could alleviate the influence of heavy occlusion or lighting changes from different viewpoints, and thus achieves more effective optimization of the keyframe pose.
+
+After one keyframe is tracked, we jointly optimize the NeRF parameters and the poses of the keyframes in the mapping stage. The pose refined in this stage is named themapped pose, denoted as.
+The mapping stage adopts a batch-wise optimization strategy.
+When a keyframe is tracked, it is added into the current batch. Then all keyframes in this batch are used to optimize the NeRF parameters to improve the implicit scene model, with their poses being optimized simultaneously. This joint optimization further improves the quality of the keyframe poses.
+After we have collected a maximal batch sizeof keyframes, we train the registration model with the mapped poses of the keyframes in the current batch. The batch is then emptied except the last keyframe, which is used to provides the anchor pose for the coming keyframes in the next batch.
+
+Training the registration model.After obtaining the optimized poses of a batch, we compute the relative poses between consecutive keyframes which are used as the frame poses to train the registration model. We first compute correspondences between two keyframes with their optimized poses and then apply the circle loss[31,18]and the correspondence loss (Eq.3) during training. Please refer to the supplementary material for more details.
+
+SECTION: 3.4Synthetic Bootstrap
+
+Jointly optimizing the NeRF parameters and the poses of keyframes requires relatively accurate initial poses. However, a randomly initialized registration model tends to generate enormous outlier correspondences. This causes the initial poses to be erroneous, and thus leads to suboptimal convergence. To address this issue, we propose to leverage synthetic data to bootstrap the registration model. With the synthetic data, we can warm up the registration model in supervision by the ground-truth poses so that it can provide reasonable initial poses.
+
+Sim-RGBD dataset.To bootstrap the model training, we first construct a synthetic dataset using photo-realistic simulation with BlenderProc[9], namedSim-RGBD. Sim-RGBD consists ofscenes, which are split intotraining scenes andvalidation scenes.
+Specifically, for each scene, we create two boxes centered atin the sizes of respectivelyand, and uniformly selectpositions in the space between them. We then place a random object model from ShapeNet dataset[4]at each position, which is randomly rotated, translated, and scaled.
+
+After constructing the synthetic scenes, we renderpairs of RGB-D frames from each scene. Another problem here is how to sample appropriate camera poses to ensure the synthetic pairs are more realistic. To this end, we opt to first sample the pose of the source frame, and then sample the relative pose between the source and the target frames. For the source pose, the camera direction is determined by a random pitch angle betweenand a random yaw angle between. And the camera position is determined by a random distance betweenfromalong this direction. For the relative pose, we first randomly sample a rotation axis, and then sample the rotation angle fromand the translation from.
+
+As the two rendered frames could have little overlap, we only preserve the pairs with the overlap ratio above. As shown in Sec4.3, the synthetic scenes simulated with this simplistic strategy effectively bootstrap the model.
+
+Training settings.Similar to Sec.3.3, we use the ground-truth poses to retrieve correspondences and apply the circle loss to train the registration model. Note that it is important to ensure the bootstrapping stage and the NeRF-guided learning stage to use the same training strategy. Otherwise, the two models could be in different feature spaces, thus harming the final performance.
+
+SECTION: 4Experiments
+
+We conduct our experiments on three RGB-D datasets, 3DMatch[44], ScanNet[7], and Sim-RGBD, which is constructed using photo-realistic simulation for pre-training.
+The experimental content is outlined as follows. Initially, we introduce experimental design in Sec.4.1.
+Next, we introduce experimental outcomes in Sec.4.2and show the superiority of our method by giving the corresponding experimental data.
+Subsequently, we also conduct sufficient ablation experiments in Sec.4.3on our method, aiming to analyze the specific contributions of each module within our overall design.
+The qualitative results are shown in Sec.4.4.
+
+SECTION: 4.1Experimental Settings
+
+Datasets.We conduct extensive experiments on two large real-world datasets 3DMatch[44]and ScanNet[7], together with a synthetic dataset Sim-RGBD. All of them contain RGB-D images, camera intrinsic, and ground-truth camera poses.
+For the ScanNet dataset[7], we follow its original training/testing/validation split and divide it into three parts, which contain 1045/312/100 scenes for each. Then we randomly select 300 scenes for training in the train split.
+For the 3DMatch dataset[44], we follow its original training/testing/validation split and divide it into three parts, which contain 71/19/11 scenes for each.
+For the Sim-RGBD dataset, we split it into 62/28 scenes for training/testing.
+
+Implementation Details.We adopted some settings from PointMBF[43], such as data processing, learning rate, and so on.
+On the software side, our code is built using PyTorch[28]and PyTorch3D[28].
+And on the hardware side, our network is training with an Nvidia GeForce RTX 3090Ti GPU with 24GB memory and an Intel®Corei9-12900K @ 3.9GHz16 with 32GB RAM.
+
+Metrics.We follow previous work[43,37,12]and use rotation error, translation error, and chamfer error as our evaluation metrics. Each metric is reported with three different thresholds with a mean and median value. In addition, we follow settings in[12,37,43]to generate view pairs by sampling images pairs which are 20 frames apart. Also we evaluate view pairs by sampling frames with 50 frames apart.
+However, as the test data lacks overlap in certain segments of the 50 frame apart, its evaluation markedly distorts both the mean and median values. Consequently, we opt not to include these results in our experiment presentation.
+
+Baseline Methods.We compare our method with baselines from three categories, (1) traditional methods: ICP[3], FPFH[29]SIFT[21], (2) learning-based supervised methods: SuperPoint[10], FCGF[6], DGR[5], 3D MV Reg[15]and REGTR[40], and (3) unsupervised methods: UR&R[12], BYOC[13], LLT[37]and PointMBF[43]. We use the results of the baselines reported by[37,43].
+
+SECTION: 4.2Quantitative Results
+
+We claim our experimental comparison with existing methods in Table.1and Table.2. Our framework is bootstrapped on the Sim-RGBD dataset and fine-tuned on ScanNet[7]and 3DMatch[44], respectively.
+In Table.1, we primarily present the results on the ScanNet test scene with 20 frames apart. Due to this 20 frames apart, the overlap in the images is limited, posing challenges in demonstrating the superiority of our method.
+Therefore, in Table.2, we present the results of our method alongside PointMBF on the ScanNet test scene with 50 frames apart. The experimental results show the superiority of our method.
+
+Evaluate on 20 frames apart.Our approach achieved considerable improvement and outperformed the competitors.
+It is worth noting that, compared to the current state-of-the-art method pointMBF, we make more progress in training on the 3DMatch dataset. As in the Table.1, we gain a 2.6 percentage point in the rotation accuracy in the threshold of 5∘, 3.2 percentage point in the translation accuracy in the threshold of 5 cm, 1.9 percentage point in the Chamfer distance accuracy in the threshold of 1 mm, respectively. The result shows that the registration model obtained by training our method has better generalization. Also, the results of training on ScanNet prove our superiority. Above, we find that the NeRF-Guided unsupervised strategy is of great significance.
+Our two-stage NeRF-guided training approach is designed to more effectively harness the capabilities of the registration model, resulting in improved performance.
+
+Evaluate on 50 frames apart.Since the test with a 20 frame apart is not enough to show the capability of our method with a large overlap, we separately compared our method with the current state-of-the-art method with a 50 frame apart setting in Table.2. It is evident that our method achieves higher accuracy even with a smaller overlap.
+
+SECTION: 4.3Ablation Study
+
+To verify the role of the various parts in our pipeline, we design multiple ablation studies. We conducted related experiments on real datasets as well. In the following experiments, our model underwent a bootstrapping operation on the synthetic dataset Sim-RGBD, unless otherwise specified.
+
+Comparison with other rendering strategies.In our pipeline, the point cloud rasterization step in recent unsupervised RGB-D point cloud registration methods is replaced with the construction of NeRF to achieve unsupervised training. We believe that constructing NeRF using multi-frame RGB-D images, as opposed to their approach of using only two frames for point cloud rasterization, can better leverage photometric and geometric consistency in the scene. This, in turn, provides more effective supervisory signals for the registration model.
+
+The results in Table.3indicate that, under the same settings, i.e., when our registration model undergoes the same bootstrap process on a synthetic dataset, the NeRF-guided approach outperforms their point cloud rasterization method. This finding further validates the correctness and effectiveness of the NeRF-Guided framework proposed in this study.
+
+Effect of bootstrap module.In the preceding discussion, it is mentioned that the construction of NeRF requires a relatively accurate initial camera pose. We have observed that performing bootstrapping on a synthetic dataset can assist the registration model in providing a better camera pose when operating in real-world scenes. We consider the bootstrapping process to be essential, as the absence of this stage significantly degrades the final performance. Consequently, we conduct an ablation study on the presence or absence of bootstrapping.
+
+The results are shown in Table.4. Our findings indicate a substantial decrease in performance when the bootstrapping operation is omitted. This aligns with our hypothesis that without a sufficiently good initial camera pose, the effectiveness of NeRF in camera pose optimization diminishes, and in some cases, may even result in no improvement at all.
+
+Effect of fine-tuning module.To demonstrate the necessity of using NeRF for pose optimization, we conduct this ablation study. We test four models on the ScanNet dataset, each representing a different training strategy: a registration model obtained after bootstrapping, a registration model fine-tuned using the pose generated by RANSAC, a registration model fine-tuned using the pose optimized by NeRF with 20 iterations for tracking, and a registration model fine-tuned using the pose optimized by NeRF with 100 iterations for tracking.
+
+The results are shown in Table.5.
+Based on the results of this ablation study, we made two key findings. First, the fine-tuning operation on real-world scenes is crucial. Second, the quality of the pose, used to generate supervisory signals, plays a critical role in the model’s performance.
+
+SECTION: 4.4Qualitative Results
+
+Fig.4provides a gallery of the correspondence results of the model trained on ScanNet with PointMBF and NeRF-UR. The NeRF-Guided unsupervised registration enables the registration model to perform better on scenes with smaller overlaps (row) and more dramatic changes in lighting conditions (androws) between relative frames.
+
+SECTION: 5Conclusion
+
+We have presented NeRF-UR, a frame-to-model optimization framework for unsupervised RGB-D registration. Our method constructs a NeRF and enforces the photometric and the geometric consistency between the input and the NeRF-rerendered frames to optimize the estimated poses from the registration model. This design can effectively improve the robustness to lighting changes, geometry occlusion and reflective materials. We further devise a bootstrap mechanism on synthetic dataset to warm up the NeRF optimization. Extensive experiments on two benchmarks have demonstrated the efficiency of our method. We think the NeRF-guided unsupervised learning is a promising mechanism for 3D vision and we would like extend it to more tasks such as localization, reconstruction, etc in the future.
+
+SECTION: References

@@ -1,0 +1,230 @@
+SECTION: Unsupervised Learning of Category-Level 3D Pose from Object-Centric Videos
+
+Category-level 3D pose estimation is a fundamentally important problem in computer vision and robotics, e.g. for embodied agents or to train 3D generative models.
+However, so far methods that estimate the category-level object pose require either large amounts of human annotations, CAD models or input from RGB-D sensors.
+In contrast, we tackle the problem of learning to estimate the category-level 3D pose only from casually taken object-centric videos without human supervision.
+We propose a two-step pipeline: First, we introduce a multi-view alignment procedure that determines canonical camera poses across videos with a novel and robust cyclic distance formulation for geometric and appearance matching using reconstructed coarse meshes and DINOv2 features.
+In a second step, the canonical poses and reconstructed meshes enable us to train a model for 3D pose estimation from a single image.
+In particular, our model learns to estimate dense correspondences between images and a prototypical 3D template by predicting, for each pixel in a 2D image, a feature vector of the corresponding vertex in the template mesh.
+We demonstrate that our method outperforms all baselines at the unsupervised alignment of object-centric videos by a large margin and provides faithful and robust predictions in-the-wild.
+Our code and data is available athttps://github.com/GenIntel/uns-obj-pose3d.
+
+SECTION: 1Introduction
+
+Category-level object pose estimation is a fundamentally important task in computer vision and robotics with a multitude of
+real-world applications, e.g. for training 3D generative models on real data and for robots that need to grasp and manipulate objects.
+However, defining and determining the pose of an object is a task that is far from easy.
+
+Current approaches achieve high performance, but they require large amounts
+of annotated training data to generalize successfully[38,1,26,28,33], or additional inputs during inference, such as CAD Models[7,14], 3D Shapes[32,3,37]orRGB-D[8].
+However, all of these are either time-consuming to obtain or not available in practice at all. This motivates the development of methods for learning category-level 3D pose estimators in a fully unsupervised fashion.
+While doing so from images in the wild seems infeasible, object-centric video data[19]offers a more accessible alternative. Such videos can be easily captured using consumer-grade cameras and makes it possible to leverage coarse 3D reconstructions during training, providing a practical and cost-effective method for collecting data.
+Therefore, we propose the new task of learning a single-image category-level 3D pose estimator from casually captured object-centric videos without any human labels or other supervision. In practice, we leverage CO3D[19]as training data and show that our proposed model is able to generalize and predict accurate poses in the wild for Pascal3D+[29]and ObjectNet3D[31].
+We address the challenging task of learning category-level 3D pose in an unsupervised fashion from casually captured object-centric videos. In particular, we propose a two-step pipeline (Figure1).
+The first step extracts DINOv2[18]features from the images and reconstructs a coarse 3D mesh from the video with off-the-shelf methods[11,4].
+Building on this input, we introduce a novel 3D alignment procedure, where a key contribution is a novel 3D cyclical distance in terms of geometry and appearance that enables the robust alignment of shape reconstructions even under severe noise and variations in the object topology.
+As a result, we can align all objects from the object-centric training videos into a canonical coordinate frame without supervision.
+In a second step, we leverage the canonical poses and 3D meshes obtained from the first step to train a category-level neural mesh[16,26,9,36]in an unsupervised manner.
+In particular, we represent objects using a prototypical 3D mesh with surface features to capture the geometry and neural appearance of an object category
+and train a neural network backbone to predict, for each pixel in a 2D image, a feature vector of the corresponding vertex in the template mesh.
+Finally, the object 3D pose is solved using a pose fitting algorithm based on the estimated correspondence pairs.
+We demonstrate that our method outperforms all baselines by a large margin at the unsupervised alignment of object-centric videos on the CO3D[19]dataset.
+Moreover, our model provides faithful and robust predictions in-the-wild on Pascal3D+[29]and ObjectNet3D[31]despite being trained from raw object-centric videos only.
+
+SECTION: 2Related Work
+
+Supervised Category-Level 3D Pose Estimation.Traditional methods to determine object poses were to label keypoints in images and train supervised methods to predict them[23,38], or to use only pose labels and directly predict them by casting the pose estimation problem as bin classification by discretizing the pose space[21]. More recent methods utilize 3D meshes of objects or object categories. NeMo[26]uses 3D meshes with neural features that are rendered-and-compared to feature maps from a CNN to obtain pose estimates.[13]predicts a single embedding vector per image and shows that superior performance can be obtained by simply retrieving the closest training sample.
+In contrast to the above methods, our method is unsupervised.
+
+Few-Shot and Zero-Shot Pose Prediction.[33]proposes to train a supervised pose estimator across many categories and shows that their approach can generalize well to similar but unseen objects. Many works implement zero shot pose estimation by conditioning the model on the 3D shape of the unseen object[32,3,37,34]or by leveraging renderings of CAD models[7,14]. Other methods use few-shot learning[22]or zero-shot learning with DINOv2[18]. In contrast to the above, our method does not require any annotated dataset, 3D shapes or CAD models.
+
+Pose Alignment.The work from Goodwin et al.[5](ZSP) is most close to the first step of our method, as it aligns the poses of two object-centric videos in a fully unsupervised fashion. Similar to our work, they use DINO[2]to obtain semantic correspondences.
+They perform first a coarse alignment by matching one image from the source video to one of many images from the reference video. Then they leverage cyclical distances to select few promising correspondences in the two images, and finally leverage respective depth maps to align both images using least squares.
+Goodwin et al. extend their work in[6](UCD+) to match many images from the source video to many of the reference video. By finding a consensus over these many to many alignments with a single transformation they demonstrate improved performance. The first step of our work is similar to these works by that it also leverages DINO features and cyclical distances. However, our work adds a geometric distance to perform the alignment directly in 3D and introduces weighted correspondences to enable the necessary robust regression of the SE3 transformations from noisy and inaccurate geometries, which leads to significant improvements in the alignment accuracy. Note also that these previous approaches used RGB-D inputs, while our method works on images directly.
+
+Surface Embeddings and Neural Mesh Models.Recent work uses known poses and approximate object geometries to learn features in 3D space to uniquely identify parts of objects.[17]first used known mesh templates of deformable objects to train a network that predicts surface embeddings from the images. NeMo[26]presents a generative model trained with contrastive learning.[27]presents an extension through replacing vertices by Gaussian ellipsoids and using volume rendering. Similar to our work, many recent works leverage pre-trained vision
+tranformers DINO[2]and DINOv2[18]to unproject image features onto depth maps[5,6,37].
+In contrast to[17,26,27], our approach does not require any pose annotation, while also going beyond[5,6]by enabling 3D pose estimation in the wild from a single image, and not requiring RGB-D images and CAD models as input[37].
+
+SECTION: 3Method
+
+In this section, we describe our approach for learning category-level 3D pose estimation without supervision from object-centric videos. Our method proceeds in a two-step approach. First, we align object instances across videos in an unsupervised manner to bring them into a canonical reference frame (Section3.2).
+Given the aligned videos, our model learns to establish dense correspondences between images and a reconstructed 3D template mesh by predicting a feature vector for each pixel in a 2D image that corresponds to a visible vertex in the template
+mesh (Section3.3).
+Finally, we describe how our model can efficiently estimate object poses from in-the-wild data using the predicted correspondences via render-and-compare.
+
+SECTION: 3.1Meshes with Surface Features
+
+In both steps of our approach, the video alignment and the representation learning, we represent objects asneural meshes, i.e. meshes with surface features to capture the geometry and appearance of an object instance or category[9,26,36,16].
+In particular, the geometric representation is a triangular mesh, where we denote the set of vertices as.
+The appearance is represented by storing one or multiple appearance featuresat each mesh vertex.
+Together, the geometry and appearance define a neural mesh as.
+
+SECTION: 3.2Self-supervised Alignment of Objects
+
+Our goal is to align the camera poses of multiple object-centric videos into a common coordinate frame.
+To achieve this, we represent each object-centric video as a neural mesh with self-supervised surface features.
+In particular, we utilize off-the-shelf structure-from motion[20]to obtain a coarse object shape reconstruction for each video.
+Note that the reconstructed shapes cover the whole object, as the object-centric videos move in a full circle around the object.
+We post-process the reconstructed point cloud to clean it and generate a watertight mesh, for which we provide details in the supplementary material.
+Subsequently, we project the reconstructed coarse meshes into the feature mapthat is obtained from a self-supervised transformer backbone[18]. We collect from every video a set of feature vectors for every vertexthat describe the appearance of a local patch (Figure2).
+Thus the number of features per vertex depends on the number of images in which the vertex is visible.
+As feature extractor, we use a self-supervised vision transformer[18]which has shown emerging correspondence matching abilities.
+
+Finding geometric and appearance correspondences.Given the mesh vertices of the source object instanceand the corresponding aggregated features, we aim to align them to the reference counterpartsand.
+In practice, we select a reference video at random from the set of all available videos and align the remaining videos to the reference.
+More precisely, we aim to optimize the transformation, which is composed of rotation, translation and scale, under which the transformed source vertices and corresponding features yield the minimal distance to the reference counterparts with respect to geometry as well as appearance. Formally, our optimization problem optimizes
+
+whereis the similarity between two videos given a transformation, which combines a geometric distance between the mesh geometriesand an appearance distancebetween surface features.
+
+Assuming that the object instances shapes contain a negligible variance and no symmetries, a suitable geometric distance is the Chamfer Distance defined as
+
+whereis the vertex index of the Euclidean nearest neighbor of vertexin the respective other set of vertices
+
+However, as the 3D object is rather coarse and noisy, and the alignment can be ambiguous due to symmetries or shape differences among objects, we optimize each vertex to also be geometrically close to its nearest neighbor in feature space using the appearance distance
+
+with the nearest neighbor in feature spacedefined as
+
+As the self-supervised vertex features are view-dependent, the appearance distance computes the minimum feature distance across all views to select the nearest neighbor.
+
+Weighting Correspondences.An open challenge for the alignment of casually captured object-centric videos is that the estimated correspondence pairs between videos can be unreliable. For example, due to errors in the shape reconstruction or significant topology changes among different object instances, such as one bicycle having support wheels whereas the other does not.
+In these cases the correspondences in the geometry and feature space are ill-defined which leads to unreliable correspondence estimates.
+To account for such unreliable correspondences, we introduce a weight factor for each correspondence pair that estimates its quality.
+At the core of the correspondence weighting, we introduce a 3D cyclical distance among the vertices of two neural meshes that is inspired by 2D cyclical distances[5]for correspondence estimation, and is defined as
+
+The nested structure of our 3D cyclical distance first computesas the index of the nearest neighbor of vertexin the feature space, and in turn computes the nearest neighbor ofas.
+Notably,if the nearest neighbour maps back to the original vertexand hence the correspondence is reliable.
+Building on this 3D cyclical distance, we define the validity criteria for each pair of vertices as the sum of cyclical distances of the correspondence pair
+
+whereis the diameter of a neural mesh given as.
+
+To obtain the final weight factor for a correspondence pair we use the softmax normalization, across all feature and gemoetric correspondences.
+For the softmax normalization, we introduce the temperature, which enables us to steer between taking into account fewer high quality correspondences or more low quality ones (see Section4.4).
+Together with the weighting we formulate the weighted geometric distance as
+
+and likewise the weighted appearance distance as
+
+Our final distance measure to compare two neural meshes is computed as
+
+To find an approximately optimal solution, we use a RANSAC strategy, where we randomly choose four vertices on the source surface mesh. Together with their nearest neighbors in the feature space on the reference surface mesh, we estimate a single transformation using the Umeyama method[24].
+
+SECTION: 3.33D Pose Estimation In-the-Wild
+
+Our goal is to perform 3D pose estimation in in-the-wild images.
+To achieve this, we generalize our approach from the multi-view setting used to align object-centric videos, towards 3D pose inference from a single image.
+Our model uses a feature extractorto obtain image features from input image, wheredenotes the parameters of the backbone. The backbone output is a feature mapwith feature vectorsat positionson a 2D lattice.
+For training, we use the aligned object-centric videos (Section3.2) to train the weightsof the feature extractorsuch that it predicts dense correspondences between image pixels and the 3D neural mesh template.
+Specifically,
+we relate the features of an imageextracted by a backbone feature extractor to the vertex and background features by Von-Mises-Fisher (vMF) probability distributions[12].
+In particular, we model the likelihood of generating the feature at an image pixelfrom corresponding vertex featureas, whereis the mean of each vMF kernel,is the corresponding concentration parameter, andis the normalization constant ().
+We also model the likelihood of generating the featurefrom background feature asfor.
+
+When learning the models, as described next, we will learn the vertex features, the background feature, and the parametersof the neural network backbone. We emphasize that our model requires that the backbone must be able to extract features that are invariant to the viewpoint of the object to ensure thatis large irrespective of the viewpoint.
+
+Learning viewpoint-invariant vertex features.For training our model, we use the visible vertex features and their corresponding image features. Further, we use image features randomly sampled from the background. As optimization objective, we use the cross-entropy loss
+
+3D pose inference.We use the mesh with the vertex features, the background featureand the trained backboneto estimate the camera posevia render-and-compare. At each optimization step, we render a feature mapunder poseand compare it with the encoder’s feature map. Determined by the rendering, each feature map consists of foreground featuresand background features. Thereupon, we maximize the joint likelihood for all image features under the assumption of independence, given as
+
+Note, by allowing foreground image features to be generated by the background feature, we also account for clutter.
+
+We estimate the pose by first finding the best initialization of the object poseby computing the joint likelihood (Eq.12) for a set of pre-defined poses via template matching and choosing the one with the highest likelihood.
+Subsequently, we iteratively update our initial pose using a differentiable renderer to obtain the final pose prediction.
+
+SECTION: 4Experiments
+
+In this section, we discuss our experimental setup (Section4.1), present baselines and results for unsupervised alignment of object-centric videos (Section4.2) and 3D pose estimation in-the-wild (Section4.3). Additionally, we perform ablations of key model components in Section4.4.
+
+SECTION: 4.1Experimental Setup
+
+Dataset for alignment.To evaluate the unsupervised alignment of object-centric videos, we use the recently released Common Objects in 3D (CO3D) dataset[19]that provides images of multiple object categories, with a large amount of intra-category instance variation, and with varied object viewpoints. It contains 1.5 million frames, capturing objects fromcategories, across nearly 19k scenes. For each object instance, CO3D provides approximatelyframes promising aviewpoint sweep with handheld cameras. CO3D supplements these videos with relative camera poses and estimated object point clouds using Structure-from-Motion[20].
+
+We find that the unfiltered videos of CO3D are not ideal for our purpose. In particular, we find that videos with little viewpoint variation lead to inferior structure-from-motion results. Also, videos that are not focusing on the object’s center in 3D or are taken too close to it, contain little information for correspondence learning. Therefore, we filter the videos accordingly, targeting 50 videos per category. For multiple categories we end up with less than 50 videos namely, ”remote” 17, ”mouse” 15, ”tv” 16, ”toilet” 7, ”toybus” 41, ”hairdryer” 28, ”couch” 49, and ”cellphone” 23. With our simple filters, we end up aiming for 50 videos per category. More precise details for the filtering procedure are appended in the supplementary.
+As labels, we use the ground truth pose annotations provided by ZSP[5], that cover ten object instances of twenty different categories.Datasets for 3D pose estimation in-the-wild.We evaluate on two common datasets PASCAL3D+[30]and ObjectNet3D[31]. While PASCAL3D+ provides poses for the 12 rigid classes of PASCAL VOC 2012, ObjectNet3D covers pose annotations for over 100 categories. The object-centric video dataset CO3D covers 50 categories from the MS-COCO[15]dataset. We find 23 common categories across ObjectNet3D and CO3D, even tolerating the gap between a toybus in CO3D and a real one in PASCAL3D+ and ObjectNet3D. We believe that this non-neglegible gap could be bridged by exploiting the multiple viewpoint knowledge of the same object instance. Overall we validate on PASCAL3D+ with 6233 images, using the same validation set as[25], and on ObjectNet3D on 12039 images. Following[38], we center all objects.Implementation details.In our alignment step, we useand. Further, we leverage as self-supervised ViT the publicly available small version of DINOv2[18]with 21M parameters and a patch size of 14. At the input we use a resolution 448x448 ending up with a 32x32 feature map, where each feature yields 384 dimensions. In our second step, we use the same ViT as backbone and freeze its parameters. Further, we add on top three ResNet blocks with an upsampling step preceding the final block. Ending up with a 64x64 feature map, where each feature has 128 dimensions. We optimize the cross-entropy loss for 10 epochs with Adam[10]. In one epoch, we make use of all filtered videos. The training for each category-level representation takes less than an hour on a single NVIDIA GeForce RTX 2080.
+
+We note that the quality of our alignment method and the subsequent representation learning can vary depending on the chosen reference video. Therefore, we randomly choose five reference videos per category and report the mean performance and the standard deviation across all results.
+
+We report theaccuracy for pose estimation where the angle error for an estimated rotationand a ground truth rotationis given as
+
+We note that for the current state of unsupervised pose estimation, achievingprecision remains unsolved.
+
+SECTION: 4.2Unsupervised Alignment
+
+We follow the evaluation protocol of ZSP[5]and measure the alignment of one object instance to the nine remaining ones of the same category that are labelled. Additionally, we report the standard deviation across the chosen reference object instances. The quantitative results in Table1show that our proposed method significantly improves the state of the art byfromto. Our alignment algorithm can more efficiently use the video frames compared to ZSP[5], which only compares a single RGB-D frame from the source video with many RGB-D frames of the reference video. We note that ZSP uses DINOv1 features in contrast to our method, which uses DINOv2. Therefore, we provide an ablation of our method with respect to different feature extractors in the supplementary.
+One reason for our model to outperform UCD+[6], an extension of ZSP, is likely that our optimization does exploit the object geometry extensively, whereas others are using it only for refinement. A qualitative comparison of our method against ZSP is depicted in Figure3. It shows that our alignments are highly accurate despite a large variability in the object instances. We note that at the time of writing, there is no source code publicly available to compare with UCD+.
+
+SECTION: 4.3In-the-Wild 3D Pose Estimation
+
+As we are not aware of any unsupervised method learning pose estimation from videos, we compare our pose estimation method against two supervised methods[38,27]and ZSP. We provide ZSP with ten uniformly-distributed images of the same reference video that our method uses. Further, we provide ZSP with depth annotations using the category-level CAD models and pose annotations in the PASCAL3D+ and ObjectNet3D data. Despite our method not requiring any depth information, it outperforms ZSP by a large-margin on both PASCAL3D+, see Table2, and on ObjectNet3D, see Table3. Qualitative results are depicted in Figure4. We find that ZSP is highly compute intensive, requiringseconds per sample on average, while our proposed method takes onlyseconds on average.
+
+Categorical discussion.We observe that our method performs better for categories with only small topology changes and deformations, (e.g. car, microwave, couch) compared
+to categories with large intra-class variability (e.g. chair). Further, we recognize, that our method even generalizes well from a toybus to a real bus.
+Besides that, we analyze, that categories with less available videos (e.g. remote, TV, toilet) on average achieve lower performance.
+
+SECTION: 4.4Ablation
+
+Unsupervised alignment.Using the ground-truth annotations of our five references, we measure the effect of both parameters introduced in the alignment method. Namely, the appearance distance weightand the cyclical distance temperature. We remark that for the distance between two meshes with surface features, the appearance weight trades-off feature correspondences versus Euclidean correspondences. Where an appearance weight ofmeans that the distance depends solely on the Euclidean correspondences. Contrarily, an appearance weight ofresults in solely depending on feature correspondences. Further, our cyclical distance temperature weights each correspondence, implicitly trading-off many low-quality correspondences versus few high-quality ones. Intuitively, increasing the value ofresults in averaging over more correspondences, while decreasingresults in taking only the correspondences with high validity into account.
+In Figure5, we see that both parameters yield a significant impact on theaccuracy. With an optimum forand. Intuitively, this means that taking many correspondences into account is more beneficial. Additionally, the Euclidean correspondences are weighted four times as much as the feature correspondences. Besides that, the ablation shows that while many correspondences are essential for using solely Euclidean correspondences, the opposite is true when using solely feature correspondences.
+
+3D pose estimation in-the-wild.Following the alignment, the in-the-wild 3D pose estimation task can also be solved using neural network regression with the 6D rotation representation proposed in[39]. However, we observe that the results are worse than our 3D template learning method combined with render-and-compare, see Table4.
+
+SECTION: 4.5Limitations
+
+We have proposed a model which substantially outperforms existing applicable baselines for the task of unsupervised category-level 3D pose estimation in-the-wild.
+However, our proposed method does not yet reach the performance of fully supervised baselines.
+One advancement we aspire is to relax the rigidity constraint of our shape model. Therefore, we plan to leverage the aligned reconstructions and introduce a parameterized model for the shape. A deformable shape would yield the potential to improve the correspondence learning as well as the subsequent matching of features at inference. Moreover, we see a future research direction in enabling the model to learn from a continuous stream of data, instead of building on a set of pre-recorded videos. This would even better reflect the complex real-world scenarios of embodied agents.
+
+SECTION: 5Conclusion
+
+In this paper, we have proposed a highly challenging (but realistic) task: unsupervised category-level 3D pose estimation from object-centric videos.
+In our proposed task, a model is required to align object-centric videos of instances of an object category without having any pose-labelled data.
+Subsequently, the model learns a 3D representation from the aligned videos to perform 3D category-level pose estimation in the wild.
+Our task defines a complex real-world problem which requires both semantic and geometric understanding of objects, and we demonstrate that existing baselines cannot solve the task.
+We further proposed a novel method for unsupervised learning of category-level 3D pose estimation that follows a two-step process:
+1) A multi-view alignment procedure that determines canonical camera poses across videos with a novel and robust cyclic distance formulation for geometric and appearance matching.
+2) Learning dense correspondences between images and a prototypical 3D template by predicting, for each pixel in a 2D image, a feature vector of the corresponding vertex in the template mesh.
+The results showed that our proposed method achieves large improvements over all baselines, and we hope that our work will pave the ground for future advances in this important research direction.
+
+SECTION: 6Acknowledgement
+
+Adam Kortylewski acknowledges support for his Emmy Noether Research Group funded by the German Science Foundation (DFG) under Grant No. 468670075.
+
+SECTION: References
+
+SECTION: Appendix ASupplementary
+
+SECTION: A.1Alignment Ablation
+
+In Table5, we study the effect for different distance calculations between two vertices containing many features from many viewpoints. We observe, that averaging over the features in a single vertex before calculating the distance to another vertex reduces the performance drastically. Further, calculating the distance by averaging over the bi-directional nearest neighbor distances, slightly improves the performance compared to taking the minimum distance over the bi-directional nearest neighbor distances.
+
+Besides that, we show that refining the initial alignment using few gradient-based optimization steps improves the results, especially with respect to the more fine-grainedandaccuracies.
+
+In the same table, we observe the significant effect for using different feature extractors.
+
+SECTION: A.2In-the-Wild 3D Pose Estimation Ablation
+
+In Table6, we ablate our 3D pose estimation method for various amount of training data. We show the results for maximum 5, 10, 20, or 50 videos per category.
+
+SECTION: A.3Mesh Reconstruction from Videos
+
+Using structure-from-motion[20]we obtain a point cloudfor each video. Further, we reconstruct a coarse mesh using three steps. First, we randomly downsample the point cloud to 20000 points and clean it using the object segmentation provided by CO3D. Therefore, we compute an average ratio of visibility for each pointby projecting it in allframes, using the respective projectionfor frame, and averaging over the respective visibilitiesas follows
+
+Hereby we set, if the projected vertex is not inside the frame. We filter out all points which ratio of visibility lies below 60%.
+Second, we use alpha shapes[11]to estimate a coarse shape from the clean point cloud. Figuratively speaking, this algorithm starts off with a convex volume and then iteratively carves out spheres while preserving all original points. We set the size of the sphere to 10 times the particle size, where the particle size is the average distance of each point to its 5th closest point. Third, we use quadratic mesh decimation[4]to end up with a maximum of 500 faces. This method iteratively contracts a pair of vertices, minimizing the projective error with the faces normals. All steps are visualized in Figure6.
+
+SECTION: A.4Videos Filtering
+
+We filter out three types of videos. Type a), object is too far away from the camera. Type b), object is too close to the camera. Type c), the variance of viewpoints is too small. Type a) is not ideal because the point cloud and the images yield only few details of the object. Type b) is problematic because the close-ups prevent us from robustly cleaning the noisy point cloud as there is less information accumulated from the object segmentations. Type c) results in a very noisy or even broken structure-from-motion.
+For the identification of type a), object is too far away from the camera, we use the average object visibilityover allframes widthand heightformally defined as
+
+We require an average object visibility of at least 10%. A filtered out video is illustrated in Figure7.
+For the identification of type b), the object is too close to the camera, we use the projection of the 3D center into all frames, expecting it to be in the center of the frames. We compute the 3D centerusing the camera rays with positionand directionby minimizing its projected distances to the rays
+
+It can be shown that this resolves to the following system of linear equations
+
+With the outer product. For a correct camera focus, we expect the projected 3D center to lie within the centered rectangle spanning 60% of the image width and height. In total, we require 80% of the frames to be focused on the 3D center. A negative example is provided in Figure7. A filtered out video is illustrated in Figure8.
+
+For the identification of type c), the variance of viewpoints is too small, we subtract the centerof all camera positionsand normalize them to lie on the unit sphere. Further, we divide the unit sphere into 38 bins and calculate the viewpoint coverage as percentage of viewpoint bins covered. We require a viewpoint coverage for each video of 15%. A rejected video is shown in Figure9.
+
+SECTION: A.5ObjectNet3D
+
+We report more qualitative results are visualized in Figure10.

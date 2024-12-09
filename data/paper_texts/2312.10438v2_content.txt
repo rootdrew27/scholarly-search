@@ -1,0 +1,1172 @@
+SECTION: Bayes-Optimal Unsupervised Learning for Channel Estimation in Near-Field
+Holographic MIMO
+
+Holographic MIMO (HMIMO) is being increasingly recognized as a key
+enabling technology for 6G wireless systems through the deployment
+of an extremely large number of antennas within a compact space to
+fully exploit the potentials of the electromagnetic (EM) channel.
+Nevertheless, the benefits of HMIMO systems cannot be fully unleashed
+without an efficient means to estimate the high-dimensional channel,
+whose distribution becomes increasingly complicated due to the accessibility
+of the near-field region. In this paper, we address the fundamental
+challenge of designing alow-complexity Bayes-optimalchannel
+estimator in near-field HMIMO systems operating inunknownEM environments. The core idea is to estimate the HMIMO channels solely
+based on the Stein’s score function of the received
+pilot signals and an estimated noise level,withoutrelying
+on priors or supervision that is not feasible in practical deployment.
+A neural network is trained with the unsupervised denoising score
+matching objective to learn the parameterized score function. Meanwhile,
+a principal component analysis (PCA)-based algorithm is proposed to
+estimate the noise level leveraging the low-rank near-field spatial
+correlation. Building upon these techniques, we develop a Bayes-optimal
+score-based channel estimator for fully-digital HMIMO transceivers
+in a closed form. The optimal score-based estimator is also extended
+to hybrid analog-digital HMIMO systems by incorporating it into a
+low-complexity message passing algorithm. The (quasi-) Bayes-optimality
+of the proposed estimators is validated both in theory and by extensive
+simulation results. In addition to optimality, it is shown that our
+proposal is robust to various mismatches and can quickly adapt to
+dynamic EM environments in an online manner thanks to its unsupervised
+nature, demonstrating its potential in real-world deployment.
+
+SECTION: IIntroduction
+
+With an ultra-massive number of antennas closely packed in a compact
+space, holographic MIMO (HMIMO) is envisioned as a promising next-generation
+multi-antenna technology to enable an unprecedentedly high degree
+of spectral and energy efficiency[2]. Extensive research
+efforts have been dedicated to many different aspects of HMIMO systems,
+suchas fundamental performance limits[3],
+channel measurement and modeling[2,4,5,6,7],
+beamforming and focusing methods[8,9,10,11],
+positioning and sensing[12,13], and integrated
+sensing and communications[14], etc. Nevertheless, one
+fundamental problem is that, the promised gains of HMIMO can hardly
+be realized without an efficient means to estimate the extremely high-dimensional
+channel.
+
+The challenges to estimate the HMIMO channel are mainly three-fold[15]. The first challenge arises from the complicated
+and dynamic channel distributions. The extremely large-scale array
+significantly expands the near-field region with spherical wavefront,
+which greatly complicates the channel distributions and enlarges the
+codebook size to sparsify the channel[16]. Also, since
+HMIMO systems often operate at higher frequency bands, they are vulnerable
+to various types of blockage and movement, which can easily shift
+the channel distributions in a dynamic manner. Second, priors or a
+supervised dataset are difficult to obtain. Existing estimators either
+utilized the prior knowledge, e.g., sparsity in some transform domain,
+or a large supervised channel dataset, to enhance the estimation accuracy.
+Nevertheless, both of them require tedious, if not prohibitive, efforts
+to realize in practice, considering the enormous system scale and
+the complicated channel distributions in the near-field HMIMO systems.
+The computational complexity poses the third challenge. The scale
+of near-field HMIMO systems prohibits the use of classical Bayes-optimal
+channel estimators which include complicated matrix inversion, and
+calls for low-complexity alternatives.
+
+SECTION: I-ARelated Works
+
+The simplest approach to estimating the channel is the least squares
+(LS) method[17], which offers reasonable performance in
+fully-digital systems but suffers from a high pilot overhead in hybrid
+analog-digital systems. To enhance the performance, the regularized
+LS estimators prevail, which, in addition to the LS objective, minimize
+an extra regularization term to enforce the channel to follow the
+prior knowledge of its characteristics, e.g., sparsity[18,19,20]or low-rankness[21]. By contrast, the Bayesian point of
+view instead believes that the channels should follow a prior distribution,
+and focuses on optimizing the maximum a posteriori (MAP) or the minimum
+mean-square-error (MMSE) objectives[22]. Both the regularization-based
+and Bayesian perspectives stress the availability of a proper prior.
+Nevertheless, finding such a prior may be difficult in practice as
+the HMIMO channels have become increasingly complicated, e.g., with
+the near-field[16]and hybrid-field effects[23].
+Simply resorting to the classical angular domain sparsity or the priors
+based on some simple mixture distributions can no longer offer competitive
+accuracy.
+
+Deep learning (DL)-based approaches then emerge as a potential paradigm
+that attempts to learn the priors from a large volume of data instead
+of relying on hand-crafted designs[24,25].
+As a result, data is fundamental to DL-based methods. Depending on
+how the data are leveraged, DL methods can be categorized as supervised,
+unsupervised, and generative approaches. As for the channel estimation
+problem, supervised learning refers to those that require a paired
+dataset of the received pilot signalsand the channel, i.e.,, in order to implicitly
+exploit the prior, while the generative learning requires a dataset
+ofto explicitly model the prior distribution[26].
+However, both supervised and generative learning requires a dataset
+involving the ground-truth channel, which, in practice,
+cannot be easily acquired without a competitive channel estimator.
+This brings about a chicken-and-egg dilemma: To train competitive
+models we need to prepare a dataset of ground-truth channels, but
+such a channel dataset comes from nowhere. To tackle the dilemma,
+unsupervised learning is an ideal candidate as it only requires a
+dataset of the received pilots, which can be readily
+obtained in abundant volume. Existing unsupervised channel estimators
+generally suffer from sub-optimal accuracy. In[27],
+the authors proposed to train a multi-layer perceptron (MLP)-based
+neural network to minimize online loss functions based on the LS and
+the nuclear-norm-based regularizer, respectively. This is, essentially,
+training a neural network-based solver for the regularization-based
+channel estimator, whose performance is hence still subject to the
+hand-crafted regularizer. Results therein show a large performance
+gap compared to supervised learning. In[28,29], the
+authors proposed to minimize the Stein’s unbiased risk estimator (SURE)
+objective as a surrogate to the mean-square-error (MSE) loss in order
+to approach the accuracy of supervised learning, but the SURE loss
+involves a Monte-Carlo approximation, which will degrade the accuracy
+of the trained estimator and increase its bias. The performance is
+still inferior to supervised training, let alone the oracle performance
+bound.
+
+As a golden standard, the MMSE estimator can achieve the Bayes-optimal
+accuracy in terms of MSE, but as mentioned in the above discussions,
+its implementation requires either a perfect knowledge of the prior
+distribution[5,30], or learning such a distribution
+from a substantial number of ground-truth channels[23,15],
+both of which are difficult, if not impossible, to realize in near-field
+HMIMO systems. In addition, computational complexity is again a significant
+issue. Even the linear MMSE (LMMSE) estimator still contains a general
+matrix inverse that consumes a significant amount of computational
+budget[31]. The existing works on HMIMO channel estimation
+mainly focused on the low-complexity alternatives to the MMSE estimator.
+In[5], a subspace-based channel estimation algorithm
+was proposed, in which the low-rank property of the HMIMO spatial
+correlation was exploited without full knowledge of the spatial correlation.
+In[32], a discrete Fourier transform (DFT)-based HMIMO
+channel estimator was proposed based on a circulant matrix-based approximation
+of the spatial correlation matrix. Nevertheless, such an algorithm
+was limited to the uniform linear array (ULA)-based HMIMO systems,
+and cannot be extended to more general antenna array geometries. In[33], angular domain channel sparsity was exploited for
+the design of compressed sensing (CS)-based channel estimators in
+holographic reconfigurable intelligent surface (RIS)-aided wireless
+systems, but such a nice property dose not hold in the considered
+near-field region. In[30], a concise tutorial of HMIMO
+channel modeling and estimation was presented. Even though the aforementioned
+estimators significantly outperform the conventional LS scheme, there
+still exists quite a large gap from that of the Bayes-optimal MMSE
+estimator.
+
+SECTION: I-BContributions
+
+The target of this paper is thus to establish an efficient and Bayes-optimal
+channel estimator for near-field HMIMO systems that operates in an
+arbitrary unknown EM environment, circumventing the
+need for priors or supervision. The main contributions are summarized
+as follows.
+
+We introduce anunsupervisedDL framework that validates
+the feasibility of establishing Bayes-optimal channel estimators solely
+based on theStein’s score functionof the received pilot
+signals and the estimated noise level.
+
+We then devise practical algorithms to obtain the two key ingredients
+of the unsupervised Bayes-optimal estimator, i.e., the score function
+and the noise level. For the former, we propose to train a neural
+network-based parameterized score function with the denoising score
+matching loss. As for the latter, we exploit the low-rankness of the
+near-field spatial correlation to build a principal component analysis
+(PCA)-based noise level estimator. The theoretical underpinnings are
+discussed along with the algorithms.
+
+We propose score-based channel estimators for near-field HMIMO systems
+with both the fully-digital and hybrid analog-digital architectures.
+For fully-digital transceivers, the Bayes-optimal estimator is as
+simple as a sum of the received pilot signals and the rescaled score
+function by the estimated noise level. As for the hybrid analog-digital
+architecture, we insert the proposed score-based estimator into iterative
+message passing algorithms, and propose an efficient technique to
+reduce their complexity. A complexity analysis shows that the algorithms
+in both setups are only dominated by the matrix-vector product.
+
+Extensive numerical results demonstrate that the proposed score-based
+estimator is indeed quasi-optimal when compared to the oracle performance
+bound. In addition, the robustness and the generalization capability
+are validated in different system configurations. Furthermore, thanks
+to the unsupervised nature, the proposed estimator can automatically
+adapt to dynamic environments with varying channel distributions,
+which justifies its practical value.
+
+SECTION: I-CPaper Organization and Notation
+
+The remaining parts of the article are organized as follows. In SectionII, we introduce the statistical channel
+model and the system model for near-field HMIMO systems. In SectionIII, we first discuss the
+general framework and the two core techniques of the score-based estimator,
+i.e., the unsupervised learning of the score function and the PCA-based
+noise level estimation. Then, in SectionIV,
+we respectively present the algorithms for the fully-digital, as well
+as the hybrid analog-digital systems. In SectionV,
+extensive simulation results are presented to illustrate the advantages
+of our proposal in terms of performance, generalization, and robustness.
+In SectionVI, we conclude the paper
+and discuss future directions.
+
+Notation:is a scalar.,,
+andare the trace, the-norm, and the-th entry of a vector, respectively.,,,,are the transpose, Hermitian, real part, imaginary
+part, and the-th entry of a matrix, respectively.andare the complex and the real Gaussian distributions with meanand covariance, respectively.is an identity
+matrix with appropriate size.
+
+SECTION: IIHMIMO Channel and System Models
+
+SECTION: II-AChannel Model for Near-Field HMIMO
+
+Consider the uplink of an HMIMO system where the base station (BS)
+is equipped with a uniform linear array (ULA)111The applicability of the proposed score-based algorithms
+extends beyond the ULA model and encompasses various array configurations.
+As one will see from SectionIII,
+the derivation of the algorithms rely solely on the low-rank property
+of the near-field spatial correlation matrix, rather than the specific
+array geometries. The ULA-based channel model was adopted because,
+at the time of preparing this paper, we could only find one reference
+in the literature, namely[34], on the near-field spatial
+correlation for HMIMO systems.with thousands of compactly packed antennas with spacingsbeing much smaller than half of the carrier wavelength,
+i.e.,, as illustrated in Fig.1.
+The BS is assumed to simultaneously serve multiple single-antenna
+users. We define a Cartesian coordinate system at the center of the
+ULA (i.e., the reference antenna), denoted by. Similarly,
+we denote the position of the-th antennaas. The propagation characteristics of the channel
+differ in the (radiating) near-field and far-field regions, whose
+boundary is determined by the Rayleigh distance,
+whererefers to the number of antennas. Due to the joint effect
+of the array aperture and the carrier wavelength, the near-field region
+is non-negligible in HMIMO systems, which, compared to the traditional
+far-field setup, is a paradigm shift that brings new degrees-of-freedom
+(DoFs) for communications[12,19].
+
+When there are infinitely many multi-paths, it follows from the central
+limit theorem that the channel between the HMIMO and a particular
+user, i.e.,, can be modeled
+by the correlated Rayleigh fading222Similar to[5,30,32],
+in this work, we have also adopted the correlated Rayleigh fading
+model. In addition to its mathematical tractability, this choice of
+channel model enables the straightforward derivation of the oracle
+MMSE performance bound, which serves as an important benchmark for
+assessing whether the proposed algorithms have achieved Bayes-optimal
+performance.as[5,30,35]
+
+which is solely determined by the spatial correlation,
+with subscript NF denoting the near-field. This model has been and
+still is the foundation of most theoretical research in HMIMO systems[2,5]. It has been further established in[34]that, while the number of scatterers tends to infinity, the near-field
+spatial correlation for HMIMO has a generic integral expression, given
+by
+
+wheredenotes the average received power at the reference
+antenna,denotes the position of a scatterer
+in the support of random scatterers,refers to the distance between scattererand the-th
+antenna element, andis the probability density function
+(PDF) of the scatterer location, called thepower location
+spectrum (PLS). The expression (2)
+holds true for any PLS.
+
+To gain further insights, we consider a specific,
+named the generalized one-ring model, assuming that the scatterers
+are located on a ring whose center is freely positioned, as shown
+in Fig. 1. We denote the radius and the angular direction of the ring
+asand, respectively.
+The coordinate of the ring center is given by,
+whereis the distance between the origin and the ring center.
+The location of a certain scatterer on the ring is then given by,
+whereis the angular position of the scatterer
+on the ring. We notice that in a certain EM environment in which,, andare given, the distancein
+(2) reduces to a function of,
+given by
+
+so as, which reduces to. Plugging (3)
+into (2), whenis satisfied,
+the near-field spatial correlationcan be
+approximately simplified as
+
+according to[34, Lemma 2]. Hereandare respectively defined asand, whileandare determined similarly. For the ease of simulations,
+we utilize the particular von-Mises distribution forto
+model the scatterer distribution on the ring, given by[36]
+
+in whichdenotes the zeroth-order Bessel function
+of the first kind, whileandare
+the two parameters determining the concentration and the mean of the
+distribution, respectively. The distribution is the circular analog
+of the normal distribution. Whenis zero, the distribution
+is uniform, while whenis large, the distribution becomes
+concentrated about the angle. After plugging (5)
+into (4), the integration can
+be computed numerically by Monte-Carlo methods to obtain the near-field
+spatial correlation.
+
+By contrast, the far-field spatial correlationis characterized by the following integration[32,34],
+i.e.,
+
+in whichis the angle of arrival (AoA), andis thepower angular spectrum (PAS)characterizing the power
+distribution over different AoAs[34]. In particular,
+in isotropic scattering environments where the multi-paths are uniformly
+distributed,has a closed-form expression,
+i.e.,[37]
+
+Otherwise, in non-isotropic scattering environments,can also be obtained through numerical integration.
+
+The differences between the near-field and the far-field spatial correlations
+are two-fold. First,is solely determined
+by the PAS,, whereasrelies
+not only on the AoAs but also on the scatterers’ positions, denoted
+as the PLS,. Second, althoughexhibits spatial wide-sense stationarity, as evidenced bybeing solely dependent on array index difference,, this stationary
+characteristic does not generally apply to.
+Whenholds
+true, the two expressions are approximately equal, i.e.,,
+but in other cases, the exact near-field correlationmust be taken into account. For better illustration, we plot a visualized
+comparison ofandin Fig.2. It is observed that
+the element of the far-field spatial correlationis solely determined by the index difference, which is called
+the spatial stationarity property. By contrast, such a property does
+not hold for the near-field spatial correlation, whose elementdepends explicitly on both indexesand. Also, the near-field
+correlationresults in a non-uniform average
+power distribution among the antennas. We also compare
+the spatial correlation matrices for both the HMIMO ()
+and the nominal MIMO systems (). It
+is demonstrated that, in both the far-field and the near-field cases,
+the HMIMO systems exhibit a much stronger spatial correlation compared
+with the MIMO counterpart. The rank of the spatial correlation matrix
+is the lowest in the near-field HMIMO case, indicating the strongest
+correlation.
+
+SECTION: II-BSystem Model for Near-Field HMIMO
+
+We introduce the system model for the near-field HMIMO. We mainly
+consider two mainstream transceiver architectures, i.e., the fully-digital
+and the hybrid analog-digital ones[38]. We assume orthogonal
+pilots are utilized and hence focus on a specific user without loss
+of generality. In the uplink channel estimation, the user sends pilots
+to the BS fortime slots. The received pilot signals,,
+at time slotis
+
+whereis the
+pilot combining matrix,is the pilot symbol, andrefers to the additive white Gaussian noise. Aftertime slots
+of pilot transmission, the received pilot signals are,
+in which,,
+and the noiseis obtained similarly and whitened
+as[29]. In fully-digital HMIMO systems, the number of radio
+frequency chains is equal to that of antennas, i.e.,.
+We may set the combiner as, and the system
+model reduces to[5,30,32]. In contrast, in hybrid analog-digital
+systems, the pilot combing matrix is the product of ananalog/holographic
+combiner333The overall architecture of the hybrid analog-digital
+transceivers are similar for the HMIMO[8]and the MIMO
+systems[39]. The difference mainly lies in how the analog
+combiners are implemented physically. Specifically, in the HMIMO systems,
+the analog/holographic combiners are often implemented by low-cost
+metasurfaces[8], while in the MIMO systems, the analog
+combiners are mostly implemented by traditional phase shifters[39].and a digital combiner,
+i.e.,[8,39]. Notice that the combiners cannot be optimally
+tuned without knowledge of the channel. Without loss of generality,
+we consider an arbitrary scenario in which the digital combineris configured as identity, and the elements of theanalog/holographic
+combinerare randomly selected from
+one-bitquantized anglesfor the energy efficiency
+considerations[23,31]. The elements offollowthe same distribution as,
+that is.
+As most of the existing deep learning libraries handle real-valued
+inputs, we transform the received pilot signals into a equivalent
+real-valued form,
+
+in which,,,with.
+
+Given the fact thatholds in hybrid analog-digital
+systems and a small pilot overhead, the measurement matrixis often a fat matrix with. This means that the
+dimension ofis smaller than that of the channels,
+which renders channel estimation an under-determined problem with
+infinitely many possible solutions. This necessitates the use of the
+prior knowledge of the channelin some forms to reach
+a high-quality solution. By contrast, sincein
+fully-digital transceivers, it is good enough to simply setin the channel estimation stage. In such a scenario,is a square matrix, i.e.,, and the system model becomes
+
+which reduces to a denoising problem. Nevertheless, to achieve competitive
+estimation performance, it is essential to leverage the prior of the
+channel, not to mention the Bayes-optimal MMSE estimator,
+which typically requires full knowledge of the prior distribution.
+
+However, the grand challenge is that, we actually have very limited
+prior knowledge of the channelin real environments,
+let alone characterizing its full prior distribution. As mentioned
+in SectionI, previous works either attempt
+to adopt simplified priors, e.g., based on sparsity and low-rankness,
+or introduce the postulated ones, e.g., by using mixture distributions,
+which, however, can only characterize limited aspects of the channel
+feature, and hence often result in sub-optimal performance. On the
+other hand, existing DL methods mostly rely on a supervised dataset
+of ground-truth channels, which are hardly available
+in practice. Hence, in the next section, we study how to achieveBayes-optimalchannel estimation without priors or supervision, which is extremely
+important in practice.
+
+SECTION: IIIGeneral Frameworks of the Score-Based Channel Estimator
+
+In this section, we propose general frameworks and enabling techniques
+of the Bayes-optimal score-based channel estimator. We first consider
+the fully-digital transceivers and derive the closed-form expression
+of the Bayes-optimal channel estimator solely based on the received
+pilot signals. Next, we propose techniques to acquire
+the two crucial elements of the estimator, namely the score function
+and the noise level, based on score matching and PCA, respectively.
+
+SECTION: III-ABridging MMSE Estimation with the Score Function
+
+In this subsection, we first focus on the fully-digital system model,
+i.e., (10). Extension to hybrid
+analog-digital HMIMO systems will be presented in SectionIV-B.
+
+Our target is a Bayes-optimal channel estimator,,
+that minimizes the mean-square-error (MSE), i.e.,
+
+where the expectation above is taken with respect to (w.r.t.) the
+unknown channel, whileis
+the posterior density. Taking the derivative of the above equation
+w.r.t.and nulling it, we reach the Bayes-optimal,
+i.e., minimum MSE (MMSE), channel estimator, given by
+
+whereis the joint density, andis the measurement density obtained via marginalization, i.e.,
+
+The last equality holds since the likelihood functionexpressesas a convolution between the prior distributionand the i.i.d. Gaussian noise. Taking the derivative
+of both sides of (13) w.r.t.gives
+
+Dividing both sides of (14) w.r.t.results in the following:
+
+where the second equality holds owing to the Bayes’
+theorem, and the last equality holds due to (12)
+and. By rearranging
+the terms and plugging in,
+we reach the foundation of the proposed algorithm:
+
+in whichis called theStein’s
+score functionin statistics[40]. Based on (16),
+we notice that the Bayes-optimal MMSE channel estimator could be achievedsolely based on the received pilot signals,
+without having access to the prior distributionor
+a supervised training dataset consisting of the ground-truth channels, which are both unavailable in practice. With efficient
+estimators of the noise leveland the score
+function, the Bayes-optimal
+MMSE channel estimator can be computed in a closed form with extremely
+low complexity. In the following, we discuss how to utilize the machine
+learning tools to obtain an accurate estimation of them basedsolelyon.
+
+The above derivation depends on the nice properties of the additive
+white Gaussian noise, i.e.,,
+which is the most commonly seen noise distribution in MIMO systems
+and has been widely adopted in the previous works on HMIMO channel
+estimation[5,30,32]. Nevertheless, one
+can easily see that it also holds when the noise follows correlated
+Gaussian distribution444The correlated noise could be observed as electromagnetic interference
+in holographic RIS-assisted wireless systems[37]., e.g.,, by
+replacingin (16) with the
+covariance matrix. Furthermore, when the environment
+contains some long-tailed Cauchy noise[41], the extension
+can also be derived using a similar procedure[42].
+We omit further discussion here due to the limited space.
+
+SECTION: III-BUnsupervised Learning of the Score Function
+
+We discuss how to get the score function.
+Given that a closed-form expression is intractable to acquire, we
+instead aim to achieve a parameterized function with a neural network,
+and discuss how to train it based on score matching. We first introduce
+the denoising anto-encoder (DAE)[40], the core of the
+training process, and explain how to utilize it to approximate the
+score function.
+
+To obtain the score function,
+the measurementis treated as the target signal that
+the DAE should denoise. The general idea is to obtain the score functionbased on its analytical relationship
+with the DAE of, which will be established later inTheorem2. We first construct a
+noisy version of the target signalbymanuallyadding some additive white Gaussian noise,,
+whereandcontrols the noise level555Note that the extra noise is only added during the training process.,
+and then train a DAE todenoisethe manually added noise.
+The DAE, denoted by, is trained by
+the-loss function.Theorem 2explains the relationship of the score function
+and the DAE.
+
+The optimal DAE,,
+behaves asymptotically as
+
+Please refer to[40, Appendix A].
+∎
+
+The above theorem illustrates that, for a sufficiently small,
+we can approximate the score function based on the DAE by,
+assuming that parameter of the DAE,, is near-optimal,
+i.e.,. Nevertheless, the
+approximation can be numerically unstable as the denominator,,
+is close to zero. To alleviate the problem, we improve the structure
+of the DAE and rescale the original loss function.
+
+First, we consider a residual form of the DAE with a scaling factor.
+Specifically, let.
+Plugging it into (17), the score function is approximately
+equal to
+
+This reparameterization enablesto approximate the score function directly, thereby circumventing
+the requirement for division that may lead to numerical instability.
+In addition, the residual link significantly enhances the denoising
+capability of DAE, as it can easily learn an identity mapping[43].
+
+Second, since the varianceof the manually added
+noise is small, the gradient of the original-loss function,
+i.e.,,
+can easily vanish to zero and may further lead to difficulties in
+training. Hence, we rescale the loss function by a factor ofto safeguard the vanishing gradient issue, i.e.,
+
+where (18) is plugged into the loss function.The expectation is taken with respect toand.
+
+We are interested in the region whereis sufficiently
+close to zero, in which casecan
+be deemed equal to the score functionaccording to (18). Nevertheless, directly
+training the network using a very smallis difficult
+since the SNR of the gradient signal decreases in a linear ratewith respect to, which introduces difficulty for the
+stochastic gradient descent[44]. To exploit the asymptotic
+optimality of the score function approximation when,
+we propose to simultaneously train a networkconditioned on varyingvalues in each epoch, such that
+it can handle variouslevels and generalize to the desired
+region, i.e.,.
+To achieve the goal, we linearly anneal the level of the added noisefrom
+a large value to a small one in each epoch. That is, weconditionon the manually added noise
+levelduring training.
+
+The proposed algorithm is described inAlgorithm 1. The DAE
+is trained with a stochastic gradient descent forepochs. In
+each epoch, we draw a random vectorand annealto control the extra noise level according to the current number of
+iterations. Then, the scaled DAE loss functionin (19) is minimized by stochastic gradient
+descent. Note that in the training process, nothing but a dataset
+of the received pilot signalsis necessary, which is
+readily available in practice. In the inference stage, one can apply
+formula (16) to compute the score-based MMSE estimator,
+in which the score function can be approximated by using,
+i.e., settingas zero, and noise level() can be
+estimated by the PCA-based algorithm in the next subsection.
+
+SECTION: III-CPCA-Based Noise Level Estimation
+
+We propose a low-complexity PCA-based algorithm to estimate the noise
+levelrequired in (16) based
+ona single instanceof the received pilot signals,
+while the mean, i.e., the ground-truth HMIMO channel,
+is completely unknown. Mathematically, the problem is to estimatefrom a single realization of a multivariate
+Gaussian distribution with unknown mean, which is certainly an intractable
+problem if the mean, i.e., the HMIMO channel, does not have any particular
+structure. In the following, we first motivate the idea by analyzing
+the HMIMO spatial correlation matrix, and then present the proposed
+PCA-based algorithm, i.e.,Algorithm 2.
+
+The basic idea behind is the low-rank property of the spatial correlation
+matrixof HMIMO due to the dense deployment of the antenna
+elements, which introduces a strong correlation between adjacent antenna
+elements. For example, for far-field isotropic scattering environments,
+the rank of the correlation matrixis
+roughly[4]. It decreases with the shrink of antenna spacing
+and the increase of the carrier frequency. For example, when,
+around 80% of the eigenvalues ofshrink
+towards zero. The rank deficiency phenomenon of the spatial correlation
+matrix tends to be even more prominent in non-isotropic scattering
+environments[30], particularly in the near-field region[45]. For example, for the same near-field system configurations
+as Fig.2(a), more than 95%
+of the eigenvalues ofare close to zero.
+Hence, we propose to make use of the low-rankness of the HMIMO spatial
+correlation to estimate.
+
+We present the PCA-based algorithm by using an illustrative example.
+Following the same setting as Fig.2(a),
+we generate an HMIMO channel sampleand the corresponding
+received pilot signalswhen the
+received SNR is 0 dB. We reshapeinto their corresponding square tensors,
+and plotted the heat map ofas shown in Fig.3(a). We then decomposeintovirtual subarray tensors by using
+a sliding window of shape, and then
+reshape them back intovectors, i.e.,.
+Similarly, the noiseless channeland the noisecan also be decomposed asand, and
+should satisfy
+
+Thanks to the low-rank property of the near-field spatial correlation, the decomposed virtual subarray channelsshould also
+lie in a low-dimensional subspace. In Fig.3(b),
+we plot the eigenvalues of the covariance matrices of the received
+pilot signalscorresponding to the decomposed virtual subarray channelsin descending order, with a reference line that marks the noise level. As observed
+in the figure, the eigenvalues ofshrink to zero with only about 10 principal dimensions. The zero eigenvalues
+correspond to the redundant dimensions. By contrast, we observe that
+the eigenvalues of the covariance ofare concentrated aroundin the redundant
+dimensions. This example suggests that it is possible to estimate
+the noise level based on the redundant eigenvalues, which can be shown
+to follow a Gaussian distribution by using the following theorem.
+The above manipulations correspond to lines 3 to 7 inAlgorithm
+2.
+
+The redundant eigenvalues of the covariance ofis Gaussian distributed with variance.
+
+Please refer to AppendixA.
+∎
+
+The above theorem motivates us to first separate the principal and
+the redundant dimensions, and then estimate the noise levelbased on the redundant ones. In fact, the principal and redundant
+eigenvalues could be separated by an iterative process. Assuming that
+the eigenvalue setcould be divided into two subsetsandsuch that,
+whereis the set of the principal eigenvalues andconsists of the redundant eigenvalues. We first
+assume thatand,
+and iteratively move elements fromtoas long as the condition that, the mean ofis also
+the median of it, is not satisfied, as realized by lines 8 to 14 inAlgorithm 2666If the ’if’ statement in line 11 is never satisfied, the estimated
+noise is set aswhen,
+corresponding to the smallest eigenvalue.. If the redundant eigenvalues, following a Gaussian distribution,
+could be successfully sorted out, we can then simply resort to the
+sample standard deviation, which is the minimum variance unbiased
+estimator, to estimate the noise level.
+It has been proved in[46]that, such a method offers
+an accurate estimate of the noise level, as long as the principal
+dimension is not too large compared to the overall dimension, which
+can be easily satisfied by the near-field HMIMO channel since the
+rank of the spatial correlation matrices is extremely low. Empirically,
+we conclude that adopting asliding window is enough to
+offer an accurate estimate when. More experimental evaluations
+will be presented in SectionV.
+
+SECTION: IVPractical Algorithms of the Score-Based Channel Estimator
+
+In this section, we present and analyze practical algorithms for the
+proposed score-based channel estimator. We first focus on the fully-digital
+systems in SectionIV-A,
+and then discuss how to extend it to hybrid analog-digital transceivers
+based on iterative message passing algorithms in SectionIV-B.
+Lastly, we analyze the computational complexity.
+
+SECTION: IV-AScore-Based Estimator in Fully-Digital Systems
+
+The procedure of the score-based estimator in fully-digital near-field
+HMIMO systems is summarized inAlgorithm 3. In the offline
+stage, the BS first collects a dataset of received pilot signalsto train the DAE neural networkbyAlgorithm
+1. This will cost no additional overhead for the spectral resources,
+and also does not require knowledge of the noise level. At the online
+inference stage,Algorithm 3requires the received pilot
+signals, the well-trained DAE parameters,
+and the shape of the sliding window for estimating the noise level. As an initialization, we first employ
+the trained DAE networkto approximate the score function
+using.
+Then,Algorithm 2is executed to obtain the estimated noise
+level. Finally, we plug the estimated noise level and the score function
+into (16) to compute the estimated channel. We shall
+analyze the complexity in SectionIV-C,
+which is extremely low since no costly matrix inversion is required.
+
+In particular, it is worth noting that the algorithm does not require
+any kind of the prior knowledge of the channel or the noise statistics.
+Only the received pilot signalsare required in both
+the training and the inference stages. Furthermore, only the DAE networkis parameterized in this algorithm, whose training
+is unsupervised. Hence, when the EM environment is dynamic, one can
+keep updating the parametersin an online manner to
+track the changes so as to adapt to the new channel distribution,
+which will be discussed later in SectionV-F.
+
+SECTION: IV-BScore-Based Estimator in Hybrid Analog-Digital Systems
+
+In this section, we shift the focus to the more general hybrid analog-digital
+HMIMO systems. We first introduce the general design principle based
+on iterative message passing algorithms and explain the practical
+difficulties in applying such methods. Then, we discuss how the score-based
+estimator and the PCA-based noise level estimation serve as a perfect
+match to tackle these challenges and enable Bayes-optimal channel
+estimation for HMIMO in unknown EM environments.
+
+For hybrid analog-digital transceivers, we consider the general system
+model (9) for CS-based
+channel estimation. Under such circumstances, Bayes-optimal estimation
+can be achieved by orthogonal AMP (OAMP)777The Bayes-optimality of OAMP necessitates the measurement matrixto be right-unitarily-invariant[47], which covers a large
+set of random matrices and can be easily satisfied sincein the channel estimation depends on the received pilot combiners
+which can be manually configured.[47,48], an iterative algorithm with the following
+update rules consisting of a linear estimator (LE) and a non-linear
+estimator (NLE), i.e.,
+
+where the LE is constructed to be de-correlated and the NLE is designed
+to be a divergence-free function[47]. We say that the LE
+is de-correlated whenholds, while the divergence-free function can be constructed from
+an arbitrary function after subtracting its divergence[47].
+When both the LE and the NLE are locally MMSE optimal, the replica
+Bayes-optimality of the OAMP algorithm was conjectured in[47]and rigorously proved in[49]. The term ‘orthogonal’
+in the name of OAMP derives from the fact that when the conditions
+of the LE and the NLE are satisfied, the error after the LE, i.e.,, consists
+of independent and identically distributed (i.i.d.) zero-mean Gaussian
+elements independent of, and at the same time, the error
+after the NLE, i.e.,,
+consists of i.i.d. entries independent ofand[47]. Hence, we have that in the-th iteration,
+
+in whichis the ground-truth HMIMO channel, andis the effective i.i.d. Gaussian noise vector withdenoting the noise level. Hence, the NLE should be the Bayes-optimal
+MMSE denoiser to estimatefrom,
+which is essentially the same as the score-based estimator for fully-digital
+systems proposed in SectionIV-A.
+In addition, the LE should be the linear MMSE (LMMSE) estimator withbeing the LMMSE matrix given by
+
+The coefficientis multiplied to ensure that the LE is de-correlated. The final estimated
+channel afteriterations is, which, when
+converged, is the Bayes-optimal solution.
+
+Although sounds promising, there are a number of challenges that have
+hindered the application of OAMP to near-field HMIMO channel estimation.
+
+First, the complexity incurred by the LE is prohibitive when the dimension
+of the channelbecomes extremely
+large in near-field HMIMO systems, as it requires inverting ageneral matrix in each iteration, causing a complexity at the order
+of. This is exceedingly large. Second, the noise
+statistics is unknown. The levelof the Gaussian
+noisein the EM environment should be accurately estimated
+in the first place. Otherwise, both the LE and the NLE cannot be effectively
+computed. Third, the optimal MMSE estimator in the NLE cannot be constructed
+without knowledge of the prior distribution of the HMIMO channel,
+which, however, is generally not available in practice given the complicated
+distribution of the near-field HMIMO channel. One should circumvent
+the prior distribution by other techniques so as to implement the
+MMSE estimator. In the following, we discuss the practical design
+of the LE and the NLE to tackle these challenges mainly on the basis
+of the proposed techniques.
+
+The LMMSE matrix in the LE, i.e., (23), requires
+the computation of a general matrix inverse with prohibitive complexity.
+For a general measurement matrix, the matrix inverse
+is essential but could be greatly simplified by using the singular
+value decomposition (SVD) of, i.e.,,
+where bothandare orthogonal matrices,
+andis a diagonal matrix. Plugging the SVD ofinto (23), we can get the following results
+after some algebra, i.e.,
+
+Thanks to the SVD operation, we no longer need to calculate a general
+matrix inverse like (23) in every iteration. Instead, the new expression requires computing the SVD of matrixonly once888The SVD ofcan be pre-computed and cached.,
+and the computation of (24) becomes much simpler,
+sinceis diagonal. The complexity of the inverse is cut down drastically
+fromto.
+
+Having solved the complexity issue, another problem is that both the
+environmental Gaussian noise level of, i.e.,,
+and the effective Gaussian noise level of, i.e.,, are both unknown in practice, but should
+be frequently used in OAMP. For, it can
+be estimated fromafter treatingas a whole, by using the PCA-based estimator
+proposed inAlgorithm 2. For,
+we propose two possible methods to estimate it. First, sinceis similar to the fully-digital system model, i.e., (10),
+we could apply the PCA-based noise level estimator toto get an estimate ofin each iteration.
+However, this method requires runningAlgorithm 2once per
+iteration, and incurs a high computational complexity. The second
+possible option is to utilize the following estimator proposed in[50]for, given by
+
+where the functionreturns the maximum value
+of the inputs, andis set as a small positive value to circumvent
+numerical instability. The complexity of this approach is much smaller
+than the first one since it only involves a simple matrix product,
+and the denominatorcan be
+pre-computed. Empirically, we observe that these two methods offer
+a similar performance. Hence, we pick the latter due to its relative
+lower computational complexity.
+
+Based on (22),in each iteration
+is the ground-truth channel corrupted by white Gaussian noise,
+which is similar to the formulation in fully-digital systems, i.e.,
+(10). After treatingasandasinAlgorithm 2, the NLE is the same as the score-based estimator
+inIV-A, given by
+
+As the effective noise levelvaries in
+different numbers of iterations, we pretrain and store a few sets
+of DAE parameters corresponding to different noise levels and then
+load different DAE parametersaccording to the estimated
+noise level. The complete algorithm
+for the score-based estimator in hybrid analog-digital systems is
+summarized inAlgorithm 4.
+
+SECTION: IV-CComplexity Analysis
+
+We first discuss the complexity expressions in fully-digital systems
+and then extend them to hybrid analog-digital systems.
+
+For fully-digital HMIMO systems, the inference complexity of the proposed
+score-based algorithm consists of two parts: the computation of the
+score functionand the PCA-based
+estimation of the noise level. The former depends
+on the specific neural architecture of,
+and costs a constant complexity, denoted by, once the network
+is trained. For the latter, we analyze the complexity ofAlgorithm
+2line by line. The complexity of the virtual subarray decomposition
+in line 4 is represented as. The computation of
+the mean and covariance in lines 5 and 6 incurs costs ofand, respectively. The eigenvalue decomposition
+in line 7 has a complexity of, while sorting
+the eigenvalues requires. The eigenvalue splitting
+and the noise level estimation, from lines 8 to 14, have a complexity
+of. Considering that in HMIMO systems, the approximationholds, the complexity of calculating the variance
+term is approximately. Therefore, the
+overall complexity for the score-based estimator in fully-digital
+HMIMO systems, i.e.,Algorithm 3, is roughly,
+which scales linearly with the number of antennas. In practice,
+the fluctuation of the received SNR may not be frequent. In such a
+case, it is not a necessity to estimate the received SNR for every
+instance of the received pilot signals. Therefore, the
+actual complexity of the proposed score-based algorithm is within
+the range ofand,
+which is extremely efficient given the near-optimal performance999Most previous works on channel estimation assume that the received
+SNR is perfectly known[5,30,32]. As such,
+the complexity reduces to..
+
+For hybrid analog-digital HMIMO systems, we analyze the per-iteration
+complexity ofAlgorithm 4. We first analyze the LE. Thanks
+to the SVD-based method, we no longer need to compute a costly general
+matrix inversion in each iteration. If the SVD of matrixis pre-computed and cached, only the inversion of a diagonal matrix
+is required per iteration, which only incurs a complexity of.
+Hence, the complexity of the LE is only dominated by the matrix-vector
+product with complexity. The overall
+complexity of the LE is. For the
+NLE, the complexity involves one forward propagation of the neural
+network, which is of a constant complexity. Therefore,
+theper-iterationcomplexity of the score-based estimator
+in hybrid analog-digital systems is,
+dominated by the matrix-vector product. In addition, before the iterations,
+we need to run the PCA-basedAlgorithm 2only onceto estimate the Gaussian noise level in the environment, which costs.
+
+SECTION: VSimulation Results
+
+SECTION: V-ASimulation Setup
+
+We consider uplink channel estimation in a typical HMIMO system whose
+general parameters are listed in TableI.
+Specifically, the antenna spacings are configured to be smaller than
+the nominal value of half the carrier wavelengthto
+model the quasi-continuous aperture in HMIMO systems. In addition,
+the distance between the BS and the scatterer ring is set within the
+near-field region, i.e.,.
+
+The following baselines are compared in the simulations.
+
+LS: Least squares estimation.
+
+Oracle MMSE: Oracle MMSE is the MMSE estimator that has aperfect knowledgeof both the spatial correlation matrixand the noise level,
+given by
+
+Note that since the HMIMO channel follows a correlated Rayleigh fading,
+the linear MMSE is the optimal MMSE estimator that provides theBayesian
+performance bound. It is also worth noting thatis extremely difficult, if not impossible, to be acquired in practice
+since it containsentries and is thus prohibitive to estimate
+whenis particularly large in HMIMO systems.
+
+Sample MMSE: Sample MMSE estimator has the same expression
+as (27), but replaces the true spatial correlationwith an estimated onebased upon the testing samples, given by[32], in whichis the number of testing samples
+andis the-th sample of the received pilots
+in the testing dataset. We also utilize theperfectnoise
+levelin sample MMSE.
+
+During the training stage, the hyper-parameters in the proposed score-based
+estimator are selected as,,,, and. In addition,
+we adopt a batch size of 16 and reduce the learning rateby half after every 25 epochs. In the inference stage, the shape of
+the sliding window in the PCA-based noise level estimation algorithm
+is. The performance is evaluated based on the normalized
+MSE (NMSE) on a testing dataset withsamples, i.e.,.
+For the neural architecture of the DAE,
+we adopt a simplified UNet architecture[51]. Note
+that depending on the complexity budget, many other prevailing neural
+architectures could also be applied[15]. The SNR definition
+in this article refers to the received SNR if not stated otherwise.
+
+In the following, we first evaluate the accuracy of the PCA-based
+noise level estimation, which is a crucial component of the proposed
+score-based estimator. Subsequently, we provide extensive simulations
+for the score-based estimator in both the fully-digital and the hybrid
+analog-digital HMIMO systems, in terms of estimation accuracy, sample
+complexity, robustness, and online adaptation capability.
+
+SECTION: V-BAccuracy of the PCA-Based Noise Level Estimation
+
+The accuracy of the noise level estimation has an impact on the NMSE
+performance of the proposed score-based estimator. Hence, different
+from most previous works that have assumed a perfect knowledge of
+the noise level, we alleviate such an
+assumption and propose a PCA-based method to estimate it. In TableII, we list the estimation accuracy
+under different SNRs, wheredenotes
+the estimated noise level. The bias, the standard deviation (std),
+and the root MSE (RMSE) of the estimator are given by,,
+and,
+respectively. The RMSE gives an overall assessment of the performance,
+while the bias and the std reflect the accuracy and robustness of
+different estimators. We also provide the percent error, defined as, to show the
+error as a percentage of the true noise level. We compare the proposed
+PCA-based method with the following benchmarks.
+
+Sparsity-based: The squared median absolute deviation (MAD)
+algorithm for the noise level estimation of sparse signals[52].
+Similar to[52], we utilize the estimator
+after transforming the channel into the angular domain.
+
+Oracle bound: Assume perfect knowledge of the ground-truth
+channel, and estimate the noise level directly
+fromby using
+sample standard deviation, which is the minimum variance unbiased
+estimator.
+
+Since the sparsity-based algorithm was originally proposed for the
+complex-valued case, we perform the comparison using the complex-valued
+version of the proposed PCA-based method, which offers a similar performance
+as the real-valued version.
+
+TableIIcompares the performance of
+different noise level estimators. As shown in the table, the proposed
+method has a comparable RMSE with the oracle bound and significantly
+outperforms the sparsity-based algorithm. The advantages of our proposal
+are consistent across different SNR levels, with a negligible percent
+error of less than 3%. This indicates that the proposed method can
+effectively exploit the low-rank property of the near-field spatial
+correlation. By contrast, the sparsity-based algorithm performs poorly
+since the near-field HMIMO channel lacks sparsity in the angular domain.
+Later, in SectionV-D, we will illustrate
+that the proposed score-based channel estimator is robust to SNR estimation
+errors, and the accuracy of the PCA-based estimator will cause almost
+no performance loss compared to using the true noise level.
+
+SECTION: V-CEstimation Accuracy in Fully-Digital Systems
+
+In Fig.4(a), we plot the NMSE
+performance as a function of the received SNRin fully-digital
+HMIMO transceivers, in which. We depict two lines
+for the proposed score-based estimator. The yellow one refers to the
+performance when the PCA-estimated noise level is adopted in (16),
+while the purple line corresponds to the case in which the perfect
+noise level is utilized. It is observed that these two lines largely
+overlap, indicating that the PCA-estimated noise level provides almost
+the same performance as the perfect noise level. Additionally, the
+proposed score-based algorithm significantly outperforms the LS and
+the sample MMSE estimators by over 10 dB and 5 dB, respectively, in
+terms of NMSE, and achieves arguably the same NMSE performance (with
+a negligible 0.6 dB drop) as the oracle MMSE performance bound. The
+competitive results are consistent in different SNR ranges. Notice
+that the oracle MMSE method utilizes the true covariance and noise
+level, but the proposed method requires neither. This demonstrates
+the strong capability of the unsupervised score-based estimator to
+achieve a near-Bayes-optimal performance without any oracle information
+in unknown EM environments.
+
+SECTION: V-DRobustness to Noise Level Estimation Errors
+
+In Fig.4(b), we illustrate the
+how the accuracy of the estimated noise level will affect the performance
+of the proposed score-based estimator. In the simulations, the true
+noise level is set as, corresponding
+to an SNR of 10 dB. We vary the adopted values ofin (16) within,
+and plot the corresponding NMSE performance curve in blue. Particularly,
+we utilize red and green dots to denote the NMSE achieved with the
+estimated and true SNR values, respectively. The LS and the oracle
+MMSE algorithms are presented as the performance upper and lower bounds.
+It is observed that even when an inexact received SNR is adopted,
+the performance of the score-based algorithm is still quite robust
+and significantly outperforms the LS method. Also, the estimated received
+SNR by the PCA-based method is accurate enough to offer a near-optimal
+performance, even in unknown EM environments.
+
+SECTION: V-ESample Complexity
+
+In Fig.4(c), we study the sample
+complexity of the proposed score-based estimator, where the NMSE is
+shown as a function of the number of training samples. The received
+SNR when plotting the figure is 10 dB. We notice that the gap between
+the proposed score-based estimator and the oracle MMSE bound gradually
+vanishes whenincreases. The NMSE gap shrinks to less than 1
+dB at, and further reduces to less than 0.5 dB when.
+The sample complexity curve of the proposed estimator follows a similar
+trend as the sample MMSE method, whose performance both starts to
+saturate asreaches 10,000. Additionally, we are also interested
+in the low-sample region when fewer than 1,000 training samples are
+available. The region is zoomed in and shown in the subfigure. It
+is observed that, the score-based estimator can bring a 2 dB margin
+with onlytraining samples, and further bring a 6 dB advantage
+withsamples, as compared to the LS estimator. This confirms
+that the effectiveness of the proposal in different sample regions.
+As a final comment, we emphasize again that the training process is
+totally unsupervised and only the received pilot signalsare required.
+
+SECTION: V-FOnline Adaptation in Dynamic Environments
+
+Since the proposed score-based method is unsupervised, and only requires
+the received pilot signalsduring training, it is possible
+to update the network parametersin an online manner
+to adapt to the dynamic EM environments. To illustrate the idea, we
+consider a dynamic environment as shown in Fig.5(a),
+which labels three possible positions of the scatterers. We assume
+that the scatterers gradually move from positions 1 to 3 to model
+the dynamic EM environment, and that each position lasts for 2,000
+pilot transmission slots.
+
+We keep runningAlgorithm 1so as to update the parameters
+of the network parametersof the score function. Since
+the received pilot signalsarrive one by one in an online
+manner, we utilize a batch size of 1 and update the network parameters
+once a new sample is received. In addition, we also change the hyper-parameters
+to,,,
+and keep the learning rateconstant.
+
+In Fig.5(a), we illustrate the
+3 positions of the scatterer ring with different values of direction, radius, and distance, which are labeled in Fig.5(b). We depict the online adaptation
+performance as a function of the number of pilot transmission slots.
+We assume that the parameters of the network, i.e.,,
+are well trained offline for position 1 as described in SectionV-A.
+By contrast, the scatterer rings in positions 2 and 3 are never seen
+before in the offline training stage, but suddenly appear in online
+deployment. For clarity, we zoom in the transition phase between different
+scatterer positions.
+
+From the results in position 1, it is observed that the online adaptation
+will not have negative influence on the performance of the well-trained
+network parameters. During the transition phase from
+positions 1 to 2, we first observe an abrupt increase in NMSE. However,
+after a few pilot transmission slots, the online adaptation algorithm
+quickly recovers the performance to a remarkable level that is close
+to the oracle MMSE bound. The performance improves steadily with more
+samples. A quite similar curve also appears during the transition
+from positions 2 to 3. These results confirm the effectiveness of
+the proposed score-based estimator in handling the uncertainties in
+the EM environments, which is crucial in practical deployment. The
+running time complexity of the online adaptation process is less than
+0.01 s per sample on a Nvidia A40 GPU. This ensures a real-time adaptation
+to dynamic environments.
+
+SECTION: V-GEstimation Accuracy in Hybrid Analog-Digital Systems
+
+In Fig.6(a), we plot the
+NMSE as a function of the received SNR when the under-sampling ratioequals 0.3 in hybrid analog-digital HMIMO transceivers.
+We find that under such a low under-sampling ratio, the performance
+gain of the sample MMSE algorithm is marginal as compared to the LS
+estimator. By contrast, the performance of the proposed score-based
+method still remains close to the oracle MMSE bound across different
+SNR levels. As observed, the gap to the oracle bound becomes slighter
+larger in the high SNR region. Nevertheless, it is still significantly
+better than other baselines.
+
+In Fig.6(b), we illustrate
+the NMSE performance at different number of iterations when the under-sampling
+ratiois 0.5 in hybrid analog-digital systems.
+As observed from the figure, the score-based OAMP algorithm converges
+rapidly to the oracle bound within only about 5 iterations, which
+proves its supreme efficiency and validates our convergence analysis.
+It is also interesting to notice that the NMSE is monotonically decreasing
+with more iterations. This enables a flexible trade-off between complexity
+and performance.
+
+In Fig.6(c), we examine
+the effectiveness of the score-based OAMP algorithm under different
+under-sampling ratios when the received SNR is set as 0 dB. The performance
+trend of the our proposal aligns well with the oracle bound. The gap
+vis-a-vis the bound is consistently smaller than 0.5 dB even under
+extremely small under-sampling ratios, e.g.,.
+This indicates that our proposed method can seamlessly generalize
+to the different pilot lengthsthat may be encountered in practice.
+It is also interesting to observe that, the NMSE of both curves decreases
+quickly when the under-sampling ratio increases from 0 to 0.4, and
+gradually saturates thereafter. This confirms that the pilot overhead
+for near-field HMIMO channel estimation can be significantly reduced
+with proper prior information about the channel. The similar NMSE
+trend to the oracle bound also indicates that the score-based method
+leads to a near-optimal pilot overhead, and confirms that it effectively
+learns the prior distribution of the near-field HMIMO channel in a
+totally unsupervised manner.
+
+SECTION: V-HRuntime Complexity
+
+In SectionIV-C, we
+have analyzed the complexity of the proposed algorithms. To offer
+a more straightforward comparison, we further provide the runtime
+complexity. We provide the runtime complexity as a reference. The
+system settings are the same as listed in TableI.
+The under-sampling ratio is set asfor hybrid
+analog-digital systems. The proposed score-based algorithm is set
+to terminate after 5 iterations in hybrid analog-digital systems.
+
+In the fully digital systems, both the oracle MMSE
+and the sample MMSE methods necessitate the computation of a high-dimensional
+() matrix inversion, whose complexity is in the order
+of. The runtime is therefore exceedingly high
+in HMIMO systems. By contrast, as analyzed in SectionIV-C,
+the proposed score-based method eliminates the matrix inversion and
+exhibits a linear complexity with respect to the number of antennas.
+Hence, the runtime is significantly shorter.
+
+In the hybrid analog-digital systems, high-dimensional
+matrix inverse is still necessary for the MMSE methods, but the dimension
+is decreased to(),
+leading to a complexity of.
+It is still quite large, though shorter than that in fully-digital
+systems. By contrast, the complexity of the proposed score-based estimator
+is only dominated by the matrix-vector product as analyzed in SectionIV-C, which is much shorter compared
+to the MMSE methods. The simulation results also support our analysis.
+
+SECTION: V-IPerformance under the Mutual Coupling Effect
+
+The mutual coupling (MC) effect will become stronger
+with the densely placed antenna elements in HMIMO systems. Hence,
+we provide additional experiments to illustrative that effectiveness
+of our proposed methods under the MC effect. The MC matrixis defined as[53]
+
+whereis the reference antenna impedance, anddenotes the S-parameter matrix of an antenna array, calculated based
+on the specific array geometry by using EM simulation tools. Specifically,
+we resort to the Antenna Toolbox in Matlab. We refer the readership
+to[54]for the detailed calculation process. In the
+simulations, we utilize the same system parameters described in TableI, and define the HMIMO as a dipole
+ULA with an element length ofand width
+of. We assume that,
+which is equal to the real-valued port generator resistance[55].
+Under the MC effect, the effective channel is
+
+withbeing the near-field HMIMO channel as defined
+in (1). The effective NF channel should follow,
+whereis the effective channel covariance. Similarly, we also transforminto its real-valued equivalent.
+The goal becomes the estimation of the effective channel,
+instead of the original channel. However, it is worth
+noting that the system model and the mathematical problem behind both
+remain unchanged. Therefore, the proposed score-based algorithms can
+be directly applied to estimate the effective channel under the MC
+effect.
+
+In Fig.7, we depict the
+NMSE performance as a function of the received SNRin fully-digital
+HMIMO transceivers under the MC effect101010The effect of MC on antenna efficiency does not
+appear in Fig.7because we are analyzing
+the received SNR instead of the transmit SNR.. Different from the previous simulations, we re-generate
+datasets using theeffective channelthat
+takes MC into account, and train the proposed score-based methods
+using the received pilot signals. We compare our proposal with two
+oracle MMSE benchmarks. One disregards the MC effect and utilizes
+the original NF spatial correlationin (27).
+By contrast, the second one considers the MC effect and utilizes the
+effective covarianceinstead of.
+As observed, these two bounds are close in the low and the mid SNR
+regions, while the performance loss of disregarding the MC effect
+becomes more apparent in the high SNR scenario. In addition, it is
+observed that the proposed score-based methods can still offer the
+near Bayes-optimal performance, similar to the oracle MMSE bound considering
+the MC effect. This is because the score function estimator is trained
+in a unsupervised manner using the received pilot signals,
+which naturally incorporate the distortion caused by the MC effect.
+
+SECTION: VIConclusions and Future Directions
+
+Leveraging the connection between the MMSE estimator and the score-function,
+in this paper, we proposed an innovative unsupervised learning framework
+for channel estimation in near-field HMIMO systems. Different from
+existing methods, the proposed algorithms are trained solely based
+on the received pilots, without requiring any kind of prior knowledge
+of the HMIMO channel or the noise statistics. This enables it to work
+in arbitrary and unknown EM environments that may appear in real-world
+deployment. The key components of the proposed framework, i.e., learning
+the score function, the PCA-based noise level estimation, and the
+iterative message passing algorithms, are presented along with theoretical
+underpinnings. Extensive simulation results have demonstrated that
+our proposal can achieve promising performance in both fully-digital
+and hybrid analog-digital systems, reaching an NMSE value close to
+the oracle MMSE bound with significant reduction in complexity. Furthermore,
+we provided relevant simulation results to validate its strong robustness
+and the online adaptation to dynamic EM environments without any priors
+or supervision. The results have clearly proven the effectiveness
+of the score-based unsupervised learning framework for designing Bayes-optimal
+channel estimators in near-field HMIMO systems. As future directions,
+it is interesting to extend our proposal to low-resolution HMIMO transceivers[56]and incorporate advanced meta-learning algorithms
+to improve the efficiency of the online adaptation process.
+
+SECTION: Appendix AProof of Theorem3
+
+Define the covariance ofas
+
+in whichis the mean vector. The eigenvalue decomposition ofis given by
+
+We can representby using the eigenvector matrixas a basis, i.e.,,
+with. Assuming thatlies in a-dim subspace () and could be represented as, wherewithconsisting of theeigenvectors corresponding to thelargest eigenvalues, we have
+that
+
+Multiplying both sides with, we obtain that
+
+in whichfollowsaccording to the property of Gaussian distribution. It is observed
+that the noisehas been separated from the measurementby matrix. Hence, the covariance ofis
+
+from which we easily conclude that the redundant eigenvalues follow
+a Gaussian distribution with variance.
+
+SECTION: References

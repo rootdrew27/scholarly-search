@@ -1,0 +1,192 @@
+SECTION: Disentangling Visual Priors: Unsupervised Learning of Scene Interpretations with Compositional Autoencoder
+
+Contemporary deep learning architectures lack principled means for capturing and handling fundamental visual concepts, like objects, shapes, geometric transforms, and other higher-level structures. We propose a neurosymbolic architecture that uses a domain-specific language to capture selected priors of image formation, including object shape, appearance, categorization, and geometric transforms. We express template programs in that language and learn their parameterization with features extracted from the scene by a convolutional neural network. When executed, the parameterized program produces geometric primitives which are rendered and assessed for correspondence with the scene content and trained via auto-association with gradient. We confront our approach with a baseline method on a synthetic benchmark and demonstrate its capacity to disentangle selected aspects of the image formation process, learn from small data, correct inference in the presence of noise, and out-of-sample generalization.
+
+SECTION: 1Introduction
+
+Computer vision (CV) experiences rapid progress thanks to recent advances in deep learning (DL), which keeps outperforming humans not only on benchmarks but also in demanding real-world applications. Unfortunately, the mainstream DL models still lack the capacity of structural, higher-level interpretation of visual information. Most of their impressive feats concern low-level image processing, where local features and patterns are essential. As a result, DL excels at tasks like denoising, superresolution, style transfer, object detection, and similar. However, as soon as higher-level, structural descriptions become essential, DL models tend to overfit, fail, and – in the generative setting – hallucinate, producing images that are obviously incoherent for humans.
+
+The remedy that is nowadays being proposed to address these issues is to throw more data at the model. While this may indeed bring measurable improvements in some cases, the law of diminishing returns renders this strategy impractical: gaining even a tiny improvement may require vast amounts of data, which often needs to be subject to costly labeling. Moreover, empirical and theoretical works indicate that this policy is fundamentally flawed and will never address the problem of the long tails of distributions and out-of-sample generalization (see, e.g.,[5]). Recent works suggest that these limitations affect even the most sophisticated and largest architectures, large language models[21].
+It becomes thus evident that contemporary DL still lacks the means for principled capturing and handling of fundamental CV concepts, like objects, shapes, spatial relationships between them, and other higher-level structures.
+
+In this study, we posit thatthe promising avenue for making CV systems capable of principled, scalable scene interpretation is to equip them with elements of domain-specific knowledge about the image formation process. We achieve that by designing a neurosymbolic architecture of Disentangling Visual Priors (DVP) that uses a domain-specific language (DSL) to capture selected priors of image formation, including object compactness, shape, appearance, categorization and geometric transforms. Using this DSL, we can express template programs that explain scene content and learn how to parameterize them using features extracted from the scene by a convolutional neural network (CNN). The execution of the parameterized program produces geometric primitives that are then rendered and assessed for their correspondence with the scene content. As the DSL programs and scene rendering are realized in a differentiable way, DVP forms acompositional autoencoderthat is trainable with gradient end-to-end. Crucially, it learns from raw visual data, without object labels or other forms of supervision.
+
+In the experimental part of this study, we demonstrate how DVP manages to autonomously learn todisentangleseveral aspects of scene content and image formation: object color from its shape, object shape from its geometric transforms, geometric transforms from each other, and object category from the remaining aspects. As a result, we obtain an interpretable, transparent image formation pipeline, which naturally explains the chain of reasoning, can learn from small data, and conveniently lends itself to further inference (e.g. object classification) and out-of-sample generalization.
+
+This paper is organized as follows. Section2presents DVP. Section3discusses the related work. Section4covers the results of extensive experimenting with DVP and its juxtaposition with several baseline architectures. Section5concludes the paper and points to possible future research directions.
+
+SECTION: 2The proposed approach
+
+In DVP, the model attempts to produce a symbolic interpretation of the perceived scene and learns by trying to align the rendering of that interpretation with the actual scene content. In this study, we consider 2D scenes featuring a single object filled with color and placed at the center of a uniform background.
+
+DVP is a neurosymbolic architecture comprising three components (Fig.1):
+
+ThePerceptionmodule, a convolutional neural network (CNN) that transforms the 2D input image of the scene into an image latent,
+
+The DSLProgramthat generates and transforms visual primitives parameterized with geometric features derived fromand so produces ahypothesis(guess) about the scene content in terms of symbolic representation comprising objects and their visual properties,
+
+TheRendererthat renders that symbolic representation on a raster canvas.
+
+In the following, we describe these modules on the conceptual level; for implementation details and hyperparameter setting, we refer the reader to Sec.4.
+
+ThePerceptioncan be an arbitrary neural network mapping the input image to a fixed-dimensional latent vector, typically a CNN followed by a stack of dense layers (MLP), often referred to asbackbonein DL jargon. The specific variants of Perception used in this study are covered in Sec.4.
+
+TheProgramis parameterized with the latentand expressed in a bespoke DSL that features the following types:
+
+Latent, the type of, which is the only input to the program,
+
+Double, for floating-point scalar values,
+
+Appearance, a 3-tuple of Doubles encoding color in the RGB format,
+
+Shape, which stores a closed silhouette of an object (detailed below),
+
+Scene, a 3-tuple (Shape, Appearance, Appearance) describing respectively the object’s shape, its color, and the color of the background.
+
+Programs are composed offunctions, some of which depend on internal parameters that can change in training. Suchlearnable DSL functionsare:
+
+ObjectAppearance: LatentAppearance
+
+BackgroundAppearance: LatentAppearance
+
+Scaling: LatentDouble
+
+Rotation: Latent(Double, Double)
+
+DescribeShape: LatentShape
+
+Prototype: LatentShape
+
+Each learnable function contains a separate dense neural network (MLP) that determines the outcome of function’s calculation in direct or indirect manner. The direct mode is used by all but the last function in the above list. For instance, Rotation is an MLP with the number of inputs equal to the dimensionality ofand two outputs that encode the perceived object’s predicted rotation angleas; Scaling is an MLP that returns a single positive scalar to be interpreted as a magnification factor of the object; DescribeShape contains an MLP that learns to retrieve the shape of the input object observed by Perception and conveyed by the latent, and encode it as a vector of Elliptic Fourier Descriptors (EFD,[15]), detailed inAppendix 2. Technically, the output of the MLP is interpreted as real and imaginary parts of complex coefficients that form the spectrum which is mapped with inverse Fourier Transform to object’s contour represented as complex ‘time series’.
+
+The Prototype function implements the indirect mode. It holds an arrayof shape prototypes, represented as a learnable embedding (i.e. the elements of the array are parameters of this operation). It also contains an MLP which, when queried, returns the predicted index of the prototype. Overall, Prototype returns thusMLP(); however the indexing operation is implemented in differentiable fashion, which makes it amenable to gradient-based training algorithms.
+
+Thenon-learnable DSL functionsare:
+
+Scale: (Shape, Double)Shape
+
+Rotate: (Shape, (Double, Double))Shape
+
+where the former scales the input shape according to the scaling factor given by the second argument, and the latter rotates the input shape bygiven as.
+
+The DSL allows expressing a number of programs. For the purpose of this study, we are interested in programs with the signature LatentScene, where the result is passed to the Renderer. One of the programs used in the experiments in Sec.4is shown in Fig.1and has the form:
+
+(: Latent)Scene = (Rotate(Scale(DescribeShape(), Scaling()), Rotation()),ObjectAppearance(),BackgroundAppearance())
+
+where the shape inferred from the latent by DescribeShape is subsequently subject to scaling and rotation, after which the transformed shape is combined with its appearance and the appearance of the background, and returned as a Scene to be rendered.
+In Sec.4, we compare a few variants of DVP equipped with such predefined programs.
+
+TheRendereris responsible for producing the rasterized and differentiable representation of the scene produced by the Program. In recent years, several approaches to differentiable rendering have been proposed[19,16,8,11]; of those, we chose the rendering facility available in PyTorch3D[19]for our implementation of DVP, which was motivated by its versatility and ease of use.111Pytorch3D can render several classes of geometric objects using representations such as meshes, point clouds, volumetric grids, and neural-network based representations, also in 3D; while this last capability was not used in this study, we plan to engage it in further works on this topic.This renderer operates similarly to computer graphics pipelines: the scene is approximated with a mesh, the triangles comprising the mesh are rasterized, and the resulting rasters are merged to form the final image.
+
+Training.
+We train DVP via autoassociation, like conventional autoencoders. As all its components are differentiable, it can be trained with an arbitrary gradient-based algorithm. In each iteration, a training image(or a batch thereof) is fed into the model, which responds with the raster canvas= Renderer(Program(Perception())) containing the predicted rendering. Then, a loss functionis applied to these images and measures the pixel-wise error between them. Finally, we take the gradientwith respect to all parameters of the modeland use it to update, accordingly to the specific variant of stochastic gradient descent.collects the parameters of Perception and all learnable DSL instructions in the Program. The Renderer is non-parametric; therefore, its only role is to ‘translate’ the gradient produced byinto the updates ofrequired by the Program and the Perception.
+
+SECTION: 3Related work
+
+DVP represents the category of image understanding systems inspired by thevision as inverse graphics"[1], which can be seen as a CV instance of the broaderanalysis-by-synthesisparadigm. While considered in the CV community for decades (see, e.g.,[14]), it experienced significant advancement in recent years, thanks to the rapid progress of DL that facilitated end-to-end learning of complex, multi-staged architectures. Below, we review selected representatives of this research thread; for a thorough review of other approaches to compositional scene representation via reconstruction, see[22]; also,[6]contains a compact review of numerous works on related CV topics, including learning object geometry and multi-object scene representations, segmentation, and shape estimation.
+
+The Multi-Object Network (MONet), proposed in[2]and used in the experimental part of this study as a baseline, is a composite unsupervised architecture that combines image segmentation based on an attention mechanism (to delineate image components) with a variational autoencoder (VAE), for rendering individual components in the scene. As such, the approach does not involve geometric aspects of image formation and scene understanding. Also, it does not involve geometric rendering of objects: the subimages of individual components are generated with the VAE and ‘inpainted’ into the scene using raster masks.
+
+PriSMONet[6]attempts decomposition of 3D scenes based on their 2D views. Similarly to MONet, it parses the scene sequentially, object by object, and learns to generated objects’ views composed from several aspects: shape, textural appearance and 3D extrinsics (position, orientation and scale). The background is handled separately. Object shapes are represented using the Signed Distance Function formalism, well known in CV, and generated using a separate autoencoder submodel (DeepSDF); in this sense, PriSMONet does not involve shape priors. In contrast to[2], the architecture engages differentiable rendering.
+
+Another related research direction concerns part discovery, where the goal is to decompose the objects comprising the scene into constituents, which preferably should have well-defined semantics (i.e., segmentation at the part level, not the object level). The approaches proposed therein usually rely on mask-based representations (see, e.g.[10,4]); some of them involve also geometric transforms (e.g.[10]).
+
+DVP distinguishes itself from the above-cited works in several ways. Firstly, it relies on a physically plausible, inherently differentiable, low-dimensional shape representation (EFD), while most other works use high-dimensional and localized representations, like pixel masks, point clouds, meshes, or signed distance functions (see[6]for review).
+DVP represents geometric transforms explicitly, rather than as an implicit latent, like e.g.[2]. Last but not least, it expresses the image formation process in a DSL, which facilitates disentanglement of multiple aspects of this process, i.e. object shape, appearance, and pose.
+
+SECTION: 4Experimental results
+
+We compare the performance of several variants of DVP to related methods and assess its ability to learn from small data and robustness to noise.
+
+Task formulation.
+One of the most popular benchmarks for compositional scene interpretation is Multi-dSprites[2].
+In this study, we consider a similar problem but involving a single object. We generated a dataset of 100,000 images, each containing a single shape from one of 3 categories (ellipse, square, heart), randomly scaled and rotated, and rendered using a randomly picked color at the center of a 64x64 raster filled with a different random color. The task of the model is to reproduce this simple scene in a compositional fashion. The dataset was subsequently divided into training, validation, and test subsets of, respectively, 90k, 5k, and 5k examples. While our dataset is similar to dSprites[18], it diverges from it in centering objects in the scene, using color and a larger range of object sizes, and applying anti-aliasing in rendering.
+
+Configurations of DVP and baselines.
+We compare DVP architectures that feature two types of DSL programs, those based ondirectinference of the object shape from the latent (DVP-D), and those based on objectprototypes(DVP-P). In the former, we employ the programpresented in Sec.2. In DVP-P, we replace inthe Describe() call with Prototype().
+
+We consider two categories of Perception modules (‘backbones’), i.e. subnetworks that map the raster image to a fixed-dimensional latent vector (Sec.2): pre-trained and not pre-trained ones (Table1). Our pre-trained architecture of choice is ConvNeXt-B[17], a large modern model that proved very effective at many computer vision tasks[9].
+In the non-pretrained case, Perception is trained from scratch alongside the rest of the model. For this variant, Perception is a 6-layer CNN (CNN1) followed by an MLP (seeAppendix 1for details).
+
+Our baseline model is MONet[2], outlined in Sec.3. To provide for possibly fair comparison, we devise its pre-trained and non-pretrained variant: in the former, we combine it with ConvNeXt-B serving as part of the feature extraction backbone network (the counterpart of Perception in DVP); in the latter it is the original CNN used in MONet (CNN2 in Table1).
+
+The models were trained using the Adam algorithm[12]with the learning rate 0.0001. The training lasted for 40 epochs, except for DVPsmallconfigurations trained on the full dataset, which were trained for 160 epochs. A typical training run lasted 3 to 4 hours on a PC with NVIDIA GeForce RTX 3090 GPU.
+
+Data scalability.
+We expect the compositional constraints imposed by the DSL to narrow the space of possible scene interpretations and facilitate learning from small data, so we trained DVP and the baseline architectures in three scenarios: on the entire training set (100%, 90k examples) and on the training set reduced (via random sampling) to 5% and 1%, i.e. respectively 4.5k and 900 examples.
+
+In Table2, we juxtapose the test-set reconstruction accuracy of DVP with the reference configs using commonly used metrics: Mean Square Error (MSE), Structural Similarity Measure (SSIM,[20]), Intersection over Union (IoU), and Adjusted Rand Index (ARI222ARI measures the similarity of two clusterings by counting the numbers of pairs of examples that belong to the same/different clusters in them and adjusting those numbers for the odds of chance agreement. Here, the examples are pixels, and there are two clusters: the background and the foreground.).
+While MSE is calculated directly from the RGB values of the input image and model’s rendering (scaled to theinterval), IoU and ARI require the rendered pixels to be unambiguously assigned to objects or the background.
+We achieve that by forcing the models to render scenes with white objects on a black background, which results in binary masks representing the assignment of pixels333Our implementation reuses object masks produced in the RGB rendering process.(in contrast to complete rendering, where the model controls also the colors).
+
+When training models on the full training set (100%), DVP is clearly worse than MONet on MSE, which can be explained by the latter using raster masks to delineate objects from the background. Nevertheless, the remaining metrics suggest that the gap between the methods is not that big; in particular, when using the pre-trained large perception, DVP in the direct mode manages to perform almost on par on SSIM and beats MONet on the IoU.
+
+When trained on 5% examples from the original training set, all methods observe deterioration on all metrics (though MONet configurations maintain almost unaffected IoU and ARI); this is particularly evident for the MSE, which increases several folds for all configurations. When training on 1% of the original training set, all configurations experience further deterioration on all metrics. However, this time MONet seems to be more affected than DVP, in particular on MSE (almost 2 orders of magnitude compared to the 5% scenario) and on the IoU (over 20 percent point loss for both pre-trained and non-pretrained variant). In contrast, MSE for DVP increases by a single-digit factor, and other metrics drop only moderately. This confirms that DVP is capable of learning effectively from small data, also when forced to train the Perception from scratch.
+
+In Fig.2, we present the rendering of selected test-set examples produced by one of the DVP models (DVP-P❄) and compare it with one of the baselines (MONet❄). As the best renderings produced by all configurations are virtually indistinguishable from the input image, we focus on the worst cases, i.e. the 6 examples rendered with the largest MSE error by DVP-P❄. For the models trained on 5% of data, the differences between the reconstructions produced by DVP and MONet can be traced back to their different operating principles: MONet is better at reproducing colors, but worse at modeling the shape of the objects. On the other hand, DVP can occasionally fail to predict the correct rotation of the object. For the models trained on 1% of data, DVP can mangle the shape, while MONet may struggle with figure-ground separation, producing incorrect masks that blur the object and the background. It is important to note that the examples with the largest MSE error contain large objects, as pixel-wise metrics roughly correlate with object size.
+
+Robustness. Figure3presents how the metrics of the models trained on all data (100%) degrade with the increasing standard deviationof normally distributed white noise added to pixels of test-set images. While MONet exhibits the best robustness on MSE, DVP is better on the qualitative metrics (IoU, SSIM and ARI), degrading more gracefully.
+
+Explanatory capacity.
+Figure5shows the visual representation of the prototypes formed by DVP-P❄in its learnable 8-element embedding. The EFDs represent them as closed curves (Sec.Appendix 2), which may occasionally coil (e.g. #5 and #6 at the bottom of Fig.5). All presented models, including the one trained on just 1% of data, learned prototypes that correctly capture shape categories. The remaining embedding slots contain random curves, used sparingly and contributing only marginally to the predicted shape, as evidenced by the normalized sum of embedding weights visualized in color. Models usually allocate a single embedding slot per category, except for hearts, for which they often form two prototypes. Given that these prototypes are rotated in opposite (or almost opposite) directions and used alternatively (notice lower weights), we posit that in the early stages of learning, the hearts’ prototype is an equilateral triangle, and Rotation co-adapts to the 120° invariance of this shape by generating a limited range of rotation angles. Once the prototype shape becomes more accurate, that invariance is lost, and it is easier to form a second prototype than to re-learn Rotate.
+
+By assigning labels to the identified categories, we can use a DVP model as a classifier that points to the predicted category with theover the outputs of the MLP in the Prototype function. We determined that all DVP models presented in Table2, when queried in this mode, achieve classification accuracy of 99.7% or more when queried on the test set.
+
+Out-of-sample generalization. To determine if the disentanglement of image formation aspects helps DVP to generalize well beyond the training distribution, we query selected variants of DVP and the baseline configurations on shapes from previously unseen categories: hourglass, triangle, L-shape. Table3and Fig.4summarize the quality of reconstruction. As expected, the metrics are worse than in Table2; however, visual inspection of the reconstructed scenes reveals that DVP not only correctly models the background and the foreground colors, but also makes reasonably good predictions about object scale/size and orientation. Shape is the only aspect that is not modeled well enough. Interestingly, while DVP-Dsmallsubstantially outperforms DVP-D❄on metrics, the latter is more faithful at reconstructing shape. Overall, the results confirm that DVP effectively disentangles the visual aspects also when faced with new types of objects.
+
+Discussion.
+While conventional DL models still maintain the upper hand when compared with DVP on pixel-wise metrics (Table2), it is important to emphasize that the precise reconstruction of all minutiae of the image content is not the primary goal here. Reconstruction error serves here only as the guidance for the learning process, and in most use cases robust information about scene structure and composition will be of more value than attention to detail. Moreover, having a correctly inferred scene structure significantly facilitates further processing, like precise segmentation of individual objects with conventional techniques.
+
+One of the key advantages of DVP istransparencyandexplainability. For the sake ofglobal explanation, each component of the model is by construction endowed with an a priori known interpretation. Forlocal explanation, the outputs produced by DVP components in response to a concrete image can be inspected and interpreted, as evidenced above by our analysis of the learned prototypes. DVP produces an‘evidence-based’, compositional interpretation of the scenethat can be verified and reasoned about.
+
+Thanks to task decomposition provided by DSL programs, DVP can disentangle image formation aspects using a simple pixel-wise loss function, rather than resorting to more sophisticated means. This disentanglement addresses the combinatorial explosion of the number of interactions of shape, size, orientation, and appearance. The DSL program informs the model about the way they interact with each other, and so facilitates learning and generalization, without any need for data labeling, tagging, or other forms of supervision. In particular, even though we endow each DSL function with a specific semantic (e.g. that Rotation controls the orientation), we do not train them via supervision, with concrete output targets — the guidance they receive in training originates in theinteractionswith other DSL functions they are composed with.
+
+Compared to conventional disentangling autoencoders (like the Variational Autoencoder, VAE[13]), the disentanglement in DVP is arguably notentirelyemergent, as it is guided by amanually designedDSL program. In this sense, DVP offers ‘explanation by design’. Notice, however, that explanation always requires pre-existing domain knowledge. If, for instance, one strives to determine whether a DL model has learned the concept of object rotation, that concept must be first knownto him/her. In other words, one can equip the model with snippets of domain knowledge in advance or look for them in the model only once it has been trained. Our approach follows the first route, offering both explanation and efficient learning.
+
+SECTION: 5Conclusions and future work
+
+This study demonstrated our preliminary attempt at developing a compositional and versatile DSL framework for well-founded image interpretation. Our long-term goal is the structural decomposition of complex scenes (prospectively 3D), involving multiple composite objects, alternative object representations, and other aspects of image formation (e.g. texture, object symmetry). In particular, parsing more complex scenes than those considered here will require extending the DSL to allow analysis of multiple objects while resolving the ambiguities that may originate in, among others, occlusion. In general, one may expect different types of scenes to be more amenable to interpretation by different DSL programs. For ambiguous scenes (e.g. due to occlusion), there might be multiple alternative interpretations. For these reasons, we intend to equip DVP with a generative program synthesis module that will produce alternative scene parsing DSL programs in a trial-and-error fashion, guided by feedback obtained from the confrontation of the produced rendering with the input image.
+
+This research was supported by TAILOR, a project funded by EU Horizon 2020 research and innovation program under GA No. 952215, by the statutory funds of Poznan University of Technology and the Polish Ministry of Education and Science grant no. 0311/SBAD/0726.
+
+SECTION: Appendix Appendix 1Technical details of DVP
+
+SECTION: Architecture
+
+Perception module. The perception module is composed of CNN used for feature extraction and a submodule used for mapping those features to latent vector(Fig.1).
+
+Both DVPsmallconfigurations employ a CNN1 architecture, which consists of repeating the following block: a convolutional layer with a kernel size of, a GELU444Gaussian Error Linear Unit.activation function, an average pooling layer with a window size of, and a batch normalization layer. This block is repeated six times, while increasing the number of output channels: 64, 128, 256, 256, 512, 512. This is followed by a single convolutional layer with a kernel size of(equivalent to a linear layer applied per pixel) to reduce the number of output channels to 256. The resulting tensor of sizeis flattened, forming a 256-dimensionalvector.
+
+DVP❄configurations use ConvNeXt-B as the feature extraction submodule. We use the pretrained instance of this network which was trained on the ImageNet-1K dataset. The feature extractor is frozen, which means its weights are not updated during the optimization process. The feature map produced by the extractor is extended with spatial positional encoding, flattened, and passed to the Transformer submodule, whose task is to transform the feature map into 256-dimensionalvector. This approach is inspired by Detection Transformer (DETR)[3]; our Transformer submodule reuse DETR’s hyperparameters.
+
+Learnable functions. All learnable functions of the DSL use 3-layer MLPs with a hidden layers’ size of 256 and GELU activation function. The output layer is designed to match the needs of a given DLS function in terms of the number of units and activation function. For instance, the ObjectAppearance function produces 3-dimensional vectors in the range, therefore its MLP has 3 units in the last layer, each equipped with the sigmoid activation function.
+
+SECTION: Training
+
+Training DVP models in a generic way, i.e. starting from default random initialization of all parameters and using bare MSE as the loss function, leads on average to worse results than those reported in Table2. To attain the reported level of accuracy, DVP needs additional guidance, particularly in its prototype-based variant DVP-P. While these aspects are usually not critical for progress in training and its convergence, we cover them in this section for completeness.
+
+DVP-D configurations require relatively little guidance. Initially, EFD shape contours produced by the model often appear ’jagged’ and contain many intersections and loops. To address this issue, we add to the main MSE loss function an extra component that encourages the model to increase the amplitude of the first component and penalizes the subsequent low-frequency components (i.e., in the absence of MSE error, this component would in the limit cause the model to produce perfect circles). This form of regularization is applied with a weight of 0.001 while processing the first 30 kimg5551 kimg = 1024 imagesin training.
+
+DVP-P configurations require more supervision and hyperparameter tuning. We apply the following techniques:
+
+The prototypes are initialized with random hexagons (even though technically speaking, the EFD order used in our configurations (8) is insufficient to precisely model all the corners of these polygons, resulting in rounded shapes).
+
+The prototypes are frozen for the first 30 kimg of training in case of all DVP-P❄models, and respectively 480 kimg, 240 kimg and 60 kimg in case of DVP-Psmallmodels trained on 100%, 5%, and 1% of the training set. Without freezing, the prototypes tended to collapse to a local minimum (a circle), which made it difficult to learn how to rotate them.
+
+We employed the load balancing loss[7]to encourage the P prototype-weighing MLP in the Prototype DSL function to choose the prototypes uniformly. The balancing loss is turned off after 120 kimg for DVP-P❄models, and respectively after 960 kimg, 480 kimg and 240 kimg in case of DVP-Psmallmodels trained on 100%, 5%, and 1% of the training set.
+
+As illustrated in Fig.5, the models occasionally reconstruct the shapes as mixtures of multiple prototypes. In order to address this issue, we applydistribution sharpeningto the distribution produced by the prototype-weighing MLP. The sharpening starts at the 5th epoch for DVP-P❄models, the 10th epoch for DVP-Psmalltrained on 5% and 1% of the training set, and the 20th epoch for DVP-Psmalltrained on the full training set.
+
+We apply gradient clipping by norm to the prototypes with the maximum norm of 0.01 in order to stabilize the training.
+
+SECTION: Appendix Appendix 2Representing shapes with Elliptic Fourier Descriptors
+
+The elliptic Fourier Transform[15]is a method of encoding a closed contour with Fourier coefficients. The method can be viewed as an extension of the discrete-time Fourier Transform from the time domain to the spatial domain. We assume the contour to be encoded with the transform to be represented as a sequence ofcontour pointssuch thatand. The elliptic Fourier transform of orderis defined as:
+
+where,,and.
+
+The Elliptic Fourier Descriptors (EFD) are the coefficients,,, and. They are translation invariant by design and can be further normalized to be invariant w.r.t. rotation and scale.
+
+The original contour can be reconstructed using the inverse transform given by the following equations:
+
+SECTION: References

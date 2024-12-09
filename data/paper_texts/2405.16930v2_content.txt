@@ -1,0 +1,295 @@
+SECTION: From Obstacles to Resources:Semi-supervised Learning Faces Synthetic Data Contamination
+
+Semi-supervised learning (SSL) can improve model performance by leveraging unlabeled images, which can be collected from public image sources with low costs. In recent years, synthetic images have become increasingly common in public image sources due to rapid advances in generative models. Therefore, it is becoming inevitable to include existing synthetic images in the unlabeled data for SSL. How this kind of contamination will affect SSL remains unexplored. In this paper, we introduce a new task, Real-Synthetic Hybrid SSL (RS-SSL), to investigate the impact of unlabeled data contaminated by synthetic images for SSL. First, we set up a new RS-SSL benchmark to evaluate current SSL methods and found they struggled to improve by unlabeled synthetic images, sometimes even negatively affected. To this end, we propose RSMatch, a novel SSL method specifically designed to handle the challenges of RS-SSL. RSMatch effectively identifies unlabeled synthetic data and further utilizes them for improvement. Extensive experimental results show that RSMatch can transfer synthetic unlabeled data from ‘obstacles’ to ‘resources.’ The effectiveness is further verified through ablation studies and visualization.
+
+SECTION: 1Introduction
+
+Semi-supervised learning (SSL) methods[33,44,6]require a small number of labeled data for supervision and leverage extensive unlabeled data to enhance model performance, thereby reducing the need for extensive data labeling.
+A major origin of unlabeled images is the publicly available image sources,e.g., the Internet.
+
+Various SSL methods are proposed to improve the effectiveness of learning from both labeled and unlabeled data. However, a new problem has arisen in recent years: A large number of powerful consumer-grade generative models[13,22]is emerging rapidly, allowing users to enjoy the convenience of synthesizing and sharing AI-generated images. Thus, an increasing amount of synthetic data is being uploaded to public image sources. As a result, the unlabeled data we collect from public image sources will be inevitably contaminated by synthetic data, as shown in Fig.1.
+
+The problem introduced by synthetic data contamination in the unlabeled data for SSL has not been investigated: As shown in Fig.1, although some robust SSL methods[30,19,14,16]focused on different domains of the labeled and unlabeled data, all the unlabeled data are from another specific domain with significant different visual appearance in their setting. However, in our setting, the unlabeled data includes both real images from the target domain and synthetic data from various generative models. And these synthetic images are sometimes hard to identify, even for humans. Meanwhile, some works[39,40]focused on designing generative models for SSL, not investigating the impact of existing synthetic images. Thus, their task is different from ours.
+
+Given this problem unexplored, we first investigate:Are SSL methods ready for unlabeled data contaminated by synthetic images?To answer this question, we set up a new task named Real-Synthetic Hybrid SSL (RS-SSL), which means that a portion of existing synthetic images from public image sources is mixed into the unlabeled data, as illustrated in Fig.1. For this task, we established a new RS-SSL benchmark with commonly used SSL datasets and mainstream generative models. Then, we evaluated the performance of some representative SSL methods on our benchmark. Unfortunately, our finding is that current SSL methods, even those robust SSL methods, cannot utilize existing synthetic data efficiently: The contamination caused by existing synthetic images provides no significant improvement and sometimes has a negative impact.
+
+Can we alleviate this problem and better utilize existing synthetic images for SSL?We analyzed the negative impact caused by the synthetic images and found the potential utilization value of these data. We further propose a new SSL method, RSMatch, for utilizing these synthetic data. RSMatch deals with the unlabeled data in two steps:
+
+1)Synthetic data identification: RSMatch can distinguish the synthetic images in the unlabeled data. This is challenging since we have no labeled synthetic images, which makes it impossible to train a synthetic image identification model using standard supervision. RSMatch achieves this by dynamically mining reliable synthetic data for training a deepfake detector.
+
+2)SSL with real and synthetic data: With the success of identification, RSMatch can eliminate the negative impact and further utilize the synthetic images to improve SSL performance by introducing an extra dummy head for dealing with synthetic data.
+
+Our contributions can be summarized as follows:
+
+We introduce RS-SSL, a new practical and challenging SSL task considering the impact of synthetic data contamination.
+
+We observed that recent SSL methods struggle to utilize unlabeled synthetic data on our RS-SSL benchmark and analyzed the issue caused by these data.
+
+We propose RSMatch, a new SSL method that can identify and utilize the synthetic unlabeled data to improve SSL performance.
+
+SECTION: 2Related work
+
+SECTION: 2.1Semi-supervised learning
+
+Semi-supervised learning (SSL) aims to utilize unlabeled data to improve the model supervised by limited labeled data, thus reducing the cost of labeling additional data. Typically, SSL methods apply consistency regularization[1]for self-training to utilize unlabeled data. FixMatch[33]is one of the most influential SSL methods recently, as it effectively integrates some techniques from earlier works[3,38,27,2], becoming a foundational framework for subsequent works. The following works improved the effectiveness of SSL in various aspects, such as class-wise dynamical thresholds[44,37], contrastive learning strategies[18,47]. These methods have also propelled the development of SSL for downstream tasks[34,23]. Meanwhile, there are also SSL methods, named robust SSL, considering the potential issues in unlabeled data, such as class imbalance[42,8], domain difference[14,16], and open-set problems[19,30]. However, the issue caused by synthetic data contamination remains uninvestigated. And we experimentally found that these robust SSL methods cannot tackle this problem.
+
+As far as we know, we are the first to tackle the problem of SSL with synthetic data contamination. While some works such as MP-SSL[39]considered a problem named generative SSL, their setting is to guide the generative model to generate better data for training. Thus, it is different from ours, as we aim to mitigate the impact caused by already existing synthetic data in the unlabeled data.
+
+SECTION: 2.2Training with synthetic data
+
+Utilizing synthetic data from training has never ceased, as this kind of data is easy to obtain.
+With the rapid emergence of powerful generative models, How synthetic images impact training has become an unavoidable problem. Early works[4,46,15]explored training with images generated by GAN-based models. Recent works focus on generated data from more powerful Diffusion Models[32,13]. Hatayaet al.[9]evaluated the effect of generated data on several supervised vision tasks and found that the generated data can have negative effects. Heet al.[12]found the generated data from the GLIDE model[22]is helpful for zero-shot and few-shot classification on the pre-trained CLIP model[25]. These works, however, only focus on investigating the impact of labeled synthetic data on supervision tasks where the prompt is available and serves as the classification label. In contrast, we consider another practical scenario for SSL, in which the collected real and synthetic images are all unlabeled and mixed together.
+
+SECTION: 2.3Text-to-image diffusion model
+
+Diffusion models[32,13]learn to reverse the forward diffusion process to recover the original data from the added noise. Due to the high generation quality, diffusion models have become the mainstream generative models in recent years. Meanwhile, diffusion models can be guided by multimodal conditions to synthesize images[21,45]. Text-to-image generation takes the natural language description as the condition and is supported by many diffusion model-based works such as GLIDE[22], stable diffusion[28]with its variants[24,20], Imagen[29],etc. These works made high-quality generative models accessible to ordinary users on consumer-grade devices, leading to a large number of synthetic images being uploaded to public image sources. We use a combination of these models to construct the RS-SSL benchmark closer to real-world scenarios.
+
+SECTION: 3Are SSL methods ready for RS-SSL?
+
+SECTION: 3.1RS-SSL benchmark
+
+We build a new benchmark for evaluating SSL methods. We first analyze how existing synthetic data will be mixed in the unlabeled data during data collection. Then, we apply commonly used generative models and SSL datasets to construct the RS-SSL benchmark.
+
+Analysis on data collection.When collecting unlabeled data from public image sources, one major way is using the class names of the target task as keywords for searching. Therefore, it is likely to get the public synthetic images attached by text prompts related to the target classes. Meanwhile, considering the vast number of generative AI users, the text prompts will be highly diverse, and the images will come from different generative models. Therefore, we propose to construct the RS-SSL benchmark as follows.
+
+Prompts.To simulate the practical data collection scenario, we use diverse text prompts related to the classes of the target task for generation. Inspired by Heet al.[12], we leverage an off-the-shelf word-to-sentence model T5[26]to get diverse description texts. Specifically, we feed the T5 model with class names from SSL datasets and generate various descriptions. For example, the generated description for the class namecatcould beA beautiful white cat laying on a rock.
+
+Generative models.While previous works[11,9]focusing on the impact of synthetic data typically use one specific generative model, we consider that different users will use different types of generative models. Thus, we apply three different generative models, GLIDE[22], Stable Diffusion v1.4 (SD14)[28], and SDXL-Lightening[20], to represent the commonly used generative models published at different times. We apply these models with the above-mentioned text prompts to get synthetic images.
+
+Benchmark construction.We adopt commonly used SSL datasets as target tasks and construct the RS-SSL benchmark by adding additional synthetic images into the unlabeled data. Specifically, for each class in one selected SSL dataset, we use the T5 model to gettext prompts and randomly use the prompts to generateimages with our selected generative models. Each model generates the same number of images. Here,is the number of original unlabeled images, and we introducesynthetic ratio, denoted as, to control the ratio of synthetic images.
+We keep the class-wise balance during generation. Fig.2demonstrates some synthetic images in our RS-SSL benchmarks.
+
+SECTION: 3.2Evaluating existing SSL methods.
+
+We evaluate three representative SSL methods[33,44,6]and three robust SSL methods[30,19,14]with the constructed RS-SSL benchmark. To explore the impact of synthetic data, we mainly compare the SSL results of each method on 1) the entire RS-SSL benchmark and 2) the RS-SSL benchmark without the synthetic part (i.e., only the real unlabeled data). The results in Tables1and2show thatexisting synthetic images in unlabeled data cannot provide significant improvement and even have negative effects at times. Meanwhile, the robust SSL methods originally designed for open-set and domain adaption problems also failed on this task.
+
+SECTION: 3.3Analysis of the impact of synthetic data.
+
+The failure of existing SSL methods prompts us to analyze the issue caused by the introduction of synthetic data. While previous research[9,31]has observed a bag of visual issues with synthetic data,e.g., unnatural details, semantic errors,etc., we further go through the viewpoint of the model (i.e., the feature distribution) to analyze the impact of synthetic data for SSL. Fig.3is the T-SNE[35]feature distribution visualization of unlabeled images from three randomly selected classes from CIFAR-10. The feature is extracted by a learned model using the FixMatch[33]SSL method. Our observation can be summarized as follows:
+
+The negative impact of synthetic data.There exists a distribution bias between real and synthetic unlabeled data for each class. This is likely caused by style differences, semantic bias (e.g., a whole car in real data vs. a wheel in synthetic data), and noisy samples. Those biased synthetic samples break the boundaries between different classes, thus leading to a negative impact on SSL.
+
+The potential value of synthetic data.Despite the distribution bias, we also observe that many synthetic samples form a good cluster and are close to the real data cluster of the related class. Meanwhile, from the visualization of synthetic samples, it is evident that some images effectively provide new content related to the target class, which can enrich the knowledge learned by the model. This suggests the potential learning value of the synthetic images.
+
+SECTION: 4RSMatch
+
+The evaluation results confirm the necessity of introducing and solving the RS-SSL task. Based on our findings, we propose a new SSL method, RSMatch, to transfer synthetic datafrom obstacles to resources.
+
+SECTION: 4.1Overview of RSMatch
+
+As illustrated in Fig.4, RSMatch involves two steps in each training iteration.
+
+1) Synthetic data identification: A lightweight deepfake detector, which is a binary classifier for real and synthetic, is trained to identify the synthetic unlabeled images. Since there is no labeled synthetic data, we propose the class-wise synthetic data queue (CSQueue) to dynamically mine reliable synthetic images from the unlabeled data for supervision, as detailed in Sec.4.2.
+
+2) SSL with both real and synthetic data: The proposed real and dummy head structure is used for training with real and synthetic images separately to improve the SSL performance, as detailed in Sec.4.3.
+
+RSMatch is orthogonal to the basic SSL methods. Thus, we can apply different methods as the basic framework for supervision and self-training strategies. Here, we use FixMatch[33]as the basic SSL framework for introduction in the following sections.
+
+SECTION: 4.2Synthetic data identification
+
+Training a deepfake detection model with real and synthetic labels is a mature technology[41]. However, in the RS-SSL task, there is no labeled synthetic data. Thus, we propose to mine and store reliable synthetic images as new labeled data for supervision. This is achieved by our CSQueue and the corresponding updating and training strategy.
+
+CSQueue structure.CSQueuecontainsfirst-in, first-out sub-queues.is the number of classes of the target task. The-th sub-queueis used to store the mined synthetic imagescorresponding to the-th class.is the queue size.
+
+We propose a class-wise queue structure because we found a single queue will be dominated by synthetic data from a certain few classes. Thus, the model can only identify synthetic data from these classes. We believe this is because synthetic data from some classes are more easily distinguished than those from other classes.
+
+Updating strategy.For each training iteration, we randomly selectclasses (i.e.,sub-queues,) for updating. As shown in Fig.5, for each selected class, we first obtain the unlabeled images belonging to this class regarding the pseudo-labels from the classifier’s real head. Then, we sort the images based onfrom the deepfake detector, which denotes the confidence score to be synthetic data:
+
+whereare the logits output on ‘real’ and ‘synthetic’ respectively. Finally, we push the top-images with the highestinto the corresponding sub-queue. Meanwhile, the oldest samples will be popped if the length exceeds. This first-in-first-out strategy can prevent noisy images from remaining for a long time.
+
+Training deepfake detector.The images stored in CSQueue serve as newly labeled synthetic data. In each iteration, we sample a batch of real datafrom the labeled datasetand a batch of synthetic datafrom CSQueuewith the same batch sizeto train the deepfake detector:
+
+whereis the input image.denotes the real and synthetic labels, respectively,denotes the cross-entropy loss function.,denotes the binary head and encoder of the deepfake detector.
+
+Meanwhile, the provided unlabeled batch from the SSL task enables us to further improve the deepfake detector by self-training following the basic SSL framework:
+
+wheredenotes the unlabeled images. We use a batch size of, wherecontrols the ratio of labeled and unlabeled batches.denotes the confidence score of the deepfake detector.is the binary pesudo-label.is the indicator for selecting samples with confidence scores over threshold. This thresholding process follows FixMatch[33]. Different thresholding methods will be applied regarding the basic SSL framework.
+
+Experimental results prove that our method can mine reliable synthetic images from unlabeled data and achieve over 90% identification accuracy. We also demonstrate the necessity of the class-wise design through ablation studies.
+
+SECTION: 4.3SSL with both real and synthetic data
+
+The success of identifying synthetic images in unlabeled data enables us to further consider how to utilize them. With our analysis above, 1) The distribution bias between the synthetic and real images will corrupt the learned prototype for the target classes. 2) However, we believe that those well-clustered synthetic images also contain valuable content related to their corresponding class. Thus, treating them properly might enable the encoder to extract more comprehensive features.
+
+Based on this idea, we propose to use identified synthetic images to train the encoder without affecting the original classification head since the parameters of the head are related to the learned class-wise prototype. To achieve this, we introduce an additional head,i.e., the dummy head, to the classifier for dealing with synthetic data. Thus, the original head,i.e., the real head, can be protected from synthetic data. Meanwhile, the gradients from synthetic data can also be backpropagated to the encoder.
+
+Training with real data.The original real head of the classifier uses labeled real data for supervision and unlabeled real data for self-training following the basic SSL framework[33]:
+
+where,denotes the labeled and unlabeled data, respectively.,denotes the real head and encoder of the classifer.denotes the confidence score from the real head.is the K-class pseudo-label.denotes the K-class annotation of labeled data.denotes filtering out the synthetic images by the deepfake detector.
+
+Training with synthetic data.The identified synthetic images are further utilized to train the dummy head:
+
+whereis for only using the synthetic images.is also the pseudo-label from the real head, as mentioned in Eq.5. The dummy head will not be used for pseudo-labeling.
+
+Finally, RSMatch is trained with all the losses mentioned above:
+
+where,are applied to the deepfake detector.,, andare applied to the classifier.is the weight of unsupervised loss introduced by the basic SSL framework[33].
+
+Inference.RSMatch needs only the real head and the encoder from the classifier for inference. The deepfake detector, CSQueue, and dummy head are only used for training and can be easily removed during inference. Therefore, compared with basic SSL methods, RSMatch does not introduce any additional inference computational cost.
+
+SECTION: 5Experiments
+
+SECTION: 5.1Experimental setup
+
+Benchmark and metrics.We construct the RS-SSL benchmark following Sec.3. For the SSL datasets, we choose the commonly used CIFAR-10[17], CIFAR-100[17], and large-scale TinyImageNet[7], ImageNet[7].
+We use various labeled data numbers and synthetic ratiosfor experiments. We consider the standard classification accuracy for evaluation.
+
+Implementation details.We generateprompts for each class in one dataset to construct the RS-SSL benchmark. We apply RSMatch on three representative SSL methods: FixMatch[33], FlexMatch[44], and SoftMatch[6]. We also follow their settings on the SSL hyperparameters. For the classifier, we use WideResNet28-2[43]for all the datasets except ImageNet, where we use ResNet-18[10]. For the deepfake detector, we apply the same structure but half the channels in each medium layer. The new hyperparameters introduced by RSMatch are the sub-queue size, selected sub-queue number, and enqueue number per iteration. We set,, and. The ablation of these parameters and other detailed settings are reported in the supplementary material. For the main results, we ran each experiment three times and reported the mean result with standard deviation. We use the USB[36]SSL codebase.
+
+0.3
+
+0.2
+
+0.2
+
+0.2
+
+0.0
+
+0.3
+
+0.1
+
+0.1
+
+0.3
+
+0.1
+
+0.1
+
+0.2
+
+0.1
+
+0.3
+
+0.7
+
+0.2
+
+0.1
+
+0.4
+
+0.1
+
+0.2
+
+0.2
+
+0.2
+
+0.1
+
+0.1
+
+0.1
+
+0.1
+
+0.2
+
+0.2
+
+0.1
+
+0.3
+
+0.1
+
+0.2
+
+0.1
+
+0.2
+
+0.1
+
+0.3
+
+0.2
+
+0.1
+
+0.0
+
+0.1
+
+0.1
+
+0.1
+
+0.1
+
+0.2
+
+0.3
+
+0.1
+
+0.1
+
+0.1
+
+0.2
+
+0.0
+
+0.1
+
+0.0
+
+0.1
+
+0.2
+
+0.1
+
+0.1
+
+0.2
+
+0.1
+
+0.1
+
+0.1
+
+Baseline methods.We evaluate and compare RSMatch with the above-mentioned SSL methods: FixMatch[33], FlexMatch[44], and SoftMatch[6]. Moreover, we compare with some robust SSL methods to investigate if they can tackle the RS-SSL task. We select OpenMatch[30]and IOMatch[19], which are designed for the open-set problem, and CAFA[14], which is designed for both open-set and domain difference problems.
+
+SECTION: 5.2Experimental results
+
+SSL methods on RS-SSL benchmark.We evaluate three representative SSL methods on our RS-SSL benchmark using CIFAR-10 and CIFAR-100. Table1shows the results on various synthetic ratios. Table2shows the results on various numbers of labeled data.Real onlydenotes we manually remove the synthetic images in the unlabeled data. Thus, it can be referenced as the ideal scenario in which the SSL methods are not affected by any synthetic images. We can conclude from the results thatSSL methods struggled to utilize existing unlabeled synthetic images.For instance, FixMatch experiences a 1.89% drop in classification accuracy when an equal number of synthetic images are added alongside the original real images on CIFAR-10. However, advancements in SSL methods have not addressed the RS-SSL task, as both FlexMatch and SoftMatch also struggle with this issue.
+
+The effectiveness of RSMatch.On the contrary, the results show that our RSMatch can further utilize the unlabeled synthetic data to improve the SSL performance. For example, RSMatch improves by 1.75% in accuracy on CIFAR-100 with an additional 50% synthetic data using SoftMatch. The same conclusion is drawn in Table2, where we fix the synthetic ratio and select various numbers of labeled images. For example, RSMatch improves by 0.78% on CIFAR-100 with 50 labeled images per class using FixMatch.
+
+0.2
+
+0.2
+
+0.3
+
+0.1
+
+0.3
+
+0.3
+
+0.3
+
+0.3
+
+Experiments on large-scale datasets.We further evaluate RSMatch on large-scale TinyImageNet and ImageNet with more classes, samples, and higher resolution. The results in Table3show that the synthetic data also have a negative impact on these challenging datasets. However, RSMatch can still utilize synthetic data to improve SSL performance. For example, RSMatch improves by 1.81% on TinyImageNet with.
+
+Evaluation of robust SSL methods.Despite conventional SSL methods, there are also robust SSL methods focusing on the problems of unlabeled data like open-set and domain difference. We evaluate several robust SSL methods on the RS-SSL benchmark in Table4. Note that CAFA[14]is designed for both open-set and domain differences in the unlabeled data. However, as we’ve mentioned, their setting is all the unlabeled data are from another specific domain. Thus, their domain-matching strategy, treating all unlabeled data as another domain, failed on the RS-SSL task. The results further prove the necessity of proposing the RS-SSL task and RSMatch.
+
+Ablation studies on RSMatch components.We conduct ablation studies on each component of RSMatch in Table5. Row 1 denotes our baseline FixMatch. Row 2 shows that the absence of an individual deepfake detector (i.e.,ind. models) impacts identification accuracy. Meanwhile, as shown in the GradCAM++[5]visualization in Fig.6, the deepfake detector and classifier have different focuses on the same image, thus proving the necessity of using two individual networks. Row 3 shows that the single queue without class-wise structure results in worse synthetic data identification accuracy. As we mentioned, the single queue will be dominated by specific classes. Row 4 shows that the synthetic data cannot be utilized for training to improve SSL performance without the dummy head. The results prove the effectiveness of each component in RSMatch.
+
+Analysis of SSL process.In Fig.7, we further analyze the SSL process from the accuracy curve of the deepfake detector and the utilization ratio of unlabeled data (i.e., unlabeled data with confidence score over the SSL threshold) during training. Fig.7(a) shows that our proposed deepfake detector and CSQueue can successfully distinguish real and synthetic imagesunder the condition that no synthetic image labels are providedin the RS-SSL task. Fig.7(b) shows that FixMatch will directly utilize a large amount of synthetic data during training, thus resulting in low performance. Meanwhile, RSMatch can divide these synthetic data into the dummy head, thus eliminating the negative impact and improving the performance.
+
+SECTION: 6Conclusion
+
+In this paper, we propose and address a new challenging task, Real-Synthetic Hybrid SSL (RS-SSL), to investigate the impact of the increasingly generated and uploaded synthetic data on SSL. We first set up the RS-SSL benchmark to evaluate the performance of existing SSL methods. We found the current SSL methods are not ready to face the challenge of including existing synthetic images. Then, we propose RSMatch, a new SSL method that can identify the synthetic images in the unlabeled data without any provided synthetic labels and further utilize them to improve SSL performance. RSMatch can effectively reduce the need to specifically care for synthetic data when collecting unlabeled data from public image sources such as the Internet. Therefore, our research further advances the practicality of semi-supervised learning.
+
+SECTION: References

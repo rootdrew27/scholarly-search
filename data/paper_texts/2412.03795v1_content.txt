@@ -1,0 +1,261 @@
+SECTION: Samudra: An AI Global Ocean Emulator for Climate
+
+AI emulators for forecasting have emerged as powerful tools that can outperform conventional numerical predictions.
+The next frontier is to build emulators for long-term climate projections with robust skill across a wide range of spatiotemporal scales, a particularly important goal for the ocean.
+Our work builds a skillful global emulator of the ocean component of a state-of-the-art climate model.
+We emulate key ocean variables, sea surface height, horizontal velocities, temperature, and salinity, across their full depth.
+We use a modified ConvNeXt UNet architecture[Dheeshjith\BOthers. (\APACyear2024)]trained on multi-depth levels of ocean data.
+We show that the ocean emulator –Samudra– which exhibits no drift relative to the truth, can reproduce the depth structure of ocean variables and their interannual variability.
+Samudra is stable for centuries and 150 times faster than the original ocean model.
+Samudra struggles to capture the correct magnitude of the forcing trends and simultaneously remains stable, requiring further work.
+
+Geophysical Research Letters
+
+Courant Institute of Mathematical Sciences, New York University
+Program in Atmospheric and Oceanic Sciences, Princeton University
+Center for Data Science, New York University
+Lamont Doherty Earth Observatory, Columbia University
+
+Surya Dheeshjithsd5313@nyu.edu
+
+We develop a global, 3D, ocean autoregressive machine learning emulator for climate studies.
+
+The emulator, based on a UNet architecture, is stable for centuries, producing accurate climatologies and variability of ocean variables.
+
+The emulator training is robust to changes in seeds and initial conditions in the data.
+
+SECTION: Plain Language Summary
+
+AI tools are proving extremely effective in making fast and accurate predictions on weather to seasonal time scales. Capturing decadal to centennial changes, as those arising from ocean dynamics, remains an outstanding challenge for machine learning methods. We built an advanced AI model called ”Samudra” to simulate global ocean behavior. Samudra is trained on simulated data from a state-of-the-art ocean climate model and predicts key ocean features such as sea surface height, currents, temperature, and salinity throughout the ocean’s depth. Samudra can accurately recreate patterns in ocean variables, including year-to-year changes. It is stable over centuries and is 150 times faster than traditional ocean models. However, Samudra still faces challenges in balancing stability with accurately predicting the effects of external factors (like climate trends), and further improvements are needed to address this limitation.
+
+SECTION: 1Introduction
+
+The recent success of emulators for components of the climate system, primarily the atmosphere, continues to produce remarkable outcomes, e.g., achieving state-of-the-art performance for weather prediction tasks[Kochkov\BOthers. (\APACyear2024),Bi\BOthers. (\APACyear2023),Price\BOthers. (\APACyear2023)]and promising results reproducing climate models over decadal[Cachay\BOthers. (\APACyear2024)]to multi-decadal time scales[Watt-Meyer\BOthers. (\APACyear2023)].
+
+Existing work on ocean emulation has mainly been limited to the surface and upper ocean, or to steady forcing.
+Several works focusing on surface ocean variables show results for time scales of years to a decade[Subel\BBAZanna (\APACyear2024),Dheeshjith\BOthers. (\APACyear2024),Gray\BOthers. (\APACyear2024)].
+Emulators that include subsurface information have focused on the weekly to decadal time scales and at most the upper 1000[Xiong\BOthers. (\APACyear2023),Guo\BOthers. (\APACyear2024),Holmberg\BOthers. (\APACyear2024)], using a range of machine learning architectures (e.g., graph neural networks, Transformers).\citeAbire2023ocean explored longer time scales within a simplified ocean model with idealized steady forcing.
+Finally, a first seasonal coupled atmosphere-ocean emulation has shown promising results\citeAwang2024coupled considering the upper 300of the ocean. These ocean and atmosphere emulators have focused on several tasks, from seasonal forecasts based on reanalysis data to building a surrogate of a numerical model for evaluation and prediction.
+
+Building emulators (or surrogate models) of traditional numerical climate models aims to leverage the computational efficiency of machine learning approaches to reduce the often prohibitive computational cost of running a large number of numerical experiments with the original (usually CPU-based) climate model .
+One of the main benefits of building emulators is the ability to run large ensembles.
+For example, using large ensembles with different initial conditions, one can probe the likelihood of extreme events, explore the climate response to a range of forcing scenarios (e.g., greenhouse gases), and enhance numerical model development by reducing the number of perturbed parameter experiments typically used for calibration[Maher\BOthers. (\APACyear2021),Mahesh\BOthers. (\APACyear2024)].
+Emulators can be a useful tool for accelerating long spin-up integration or replacing full model components[Khatiwala (\APACyear2024)].
+These emulators can also help with data assimilation, replacing an expensive numerical model with a fast surrogate to generate affordable ensembles or an approximate adjoint, to maintain accuracy with reduced cost[Manshausen\BOthers. (\APACyear2024)].
+
+Our goal here is to reproduce the full-depth ocean state for four 3D and one 2D prognostic variables, using a time-dependent realistic atmospheric forcing as input, extending the work of\citeAsubel2024building,dheeshjith2024transfer.
+At rollout lengths of nearly a decade, our emulator shows considerable skill across several key diagnostics (mean and variance) when compared to the parent numerical model output, which is our ground truth.
+In particular, both the temperature structure as a function of depth and the El Niño-Southern Oscillation (ENSO) variability are well reproduced by the emulator.
+
+Simultaneously capturing variables with vastly different time scales, such as velocity (that can contain fast fluctuations) and salinity (typically slow fluctuations), is an outstanding issue for long integrations (already encountered by\citeAsubel2024building).
+To alleviate this problem, we introduce an additional emulator by focusing on the thermodynamics variables (i.e. potential temperature and salinity only).
+This additional emulator captures the slowly varying changes in potential temperature and salinity on time scales of decades to centuries.
+
+We show that our emulator can retain skill and remain stable for centuries for experiments equivalent to both control and climate change simulations.
+However, we also note that this stability is accompanied by a weak response to climate change forcing.
+This proof-of-concept work demonstrates (to our knowledge) the first ocean emulator capable of reproducing the full-depth (from the surface down to the ocean floor) ocean temperature structure and its variability, and running for multiple centuries in a realistic configuration with time-dependent forcing.
+
+The paper is organized as follows.
+We discuss the data and all emulator details in Section2.
+We explore the properties of the trained emulator across a test dataset and several multi-decadal experiments with a range of climate forcing in Section3.
+We present our conclusions in Section4.
+
+SECTION: 2Methods
+
+We built an autoregressive ocean emulator from data generated by a state-of-the-art numerical ocean simulation.
+Below, we describe the data, the emulator, the architecture, and the training and evaluation of the emulator.
+
+SECTION: 2.1Data
+
+The data was generated by OM4,[Adcroft\BOthers. (\APACyear2019)], an ocean general circulation model used as the ocean component of the state-of-the-art coupled climate model CM4[Held\BOthers. (\APACyear2019)].
+The circulation model was initialized with hydrography from the World Ocean Atlas[Levitus\BOthers. (\APACyear2015)]and forced with atmospheric reanalysis, following the OMIP-2 protocol and using version 1.4 of the JRA reanalysis[Tsujino\BOthers. (\APACyear2020)].
+The model is run for 65 years (1958-2022). We do not follow the repeat cycles protocol often used to extend the simulation.
+
+The ocean prognostic variables are potential temperature (), salinity (), sea surface height (), oceanic zonal (), and meridional () velocity components.
+The circulation model has 75 degrees of freedom in the vertical for each 3D prognostic variable, which we conservatively remap onto 19 fixed-depth levels of variable thickness - [2.5, 10, 22.5, 40, 65, 105, 165, 250, 375, 550, 775, 1050, 1400, 1850, 2400, 3100, 4000, 5000, 6000] to reduce the data size.
+We also conservatively coarsen the data in time using a 5-day simple average in geopotential coordinates, averaging over the fastest waves resolved by the circulation model (which originally used a 20-minute time-step).
+
+At this stage, the native horizontal grid for the data has a nominal resolution ofresolution but is curvilinear and has three poles (grid singularities) inland.
+We further post-process by filtering with an 18 by 18 cell Gaussian kernel using the gcm-filters package[Loose\BOthers. (\APACyear2022)], and then conservatively interpolate onto aglobal geographic (latitude-longitude) grid using the xESMF package[Zhuang\BOthers. (\APACyear2023)].
+Before the spatial conservative interpolation, we interpolate the velocities to the cell center using the xGCM package[Abernathey\BOthers. (\APACyear2022)]and rotate the velocity vectors so that theuandvvariables indicate purely zonal (east-west) and meridional (north-south) flow, respectively.
+
+SECTION: 2.2Ocean Emulator
+
+The variables used to create the ocean emulator from the numerical model are as follows:
+
+The ocean state, which includes all 19 depth levels.
+We distinguish the set of thermodynamics variables as the subset consisting of, as opposed to the dynamic variables.
+
+Atmosphere boundary conditions. This consists of the zonal surface ocean stress, meridional surface ocean stress, and net heat flux downward across the ocean surface(below the sea-ice) and its anomalies.
+The net heat flux is a sum of the short- and long-wave radiative fluxes, sensible and latent heating, heat content of mass transfer, and heat flux due to frazil formation (see K4 and K5 of\citeAgriffies_omip_2016 for the precise definition of CMIP variable ””).
+The heat flux anomalies are calculated by removing the climatological heat flux computed over the 65-year OM4 dataset.
+
+Our emulator,, is built to autoregressively produce multiple future oceanic states given multiple previous oceanic states. Specifically, we use a 2-input - 2-output model configuration.
+Mathematically, we have,
+
+whereis a positive integer andrepresents the predicted ocean state by the emulator at time.
+For the first time step, we use OM4 ocean states,and, along with the corresponding atmospheric forcing,, to produce the first set of predictions.
+Subsequent ocean states are recursively produced by using the generated ocean states as input.
+We illustrate the rollout process of the emulator in Figure1a).
+The use of multiple states provides additional context to the emulator, similar to the use of model time tendencies in PDE-based numerical integrations.
+In all of our experiments,.
+
+SECTION: 2.3Architecture
+
+UNet architectures[Ronneberger\BOthers. (\APACyear2015)]are used for a wide range of dense prediction tasks in computer vision, and building weather, and ocean emulators.
+UNets are composed of an encoder and decoder that are made up of convolutional blocks[LeCun\BOthers. (\APACyear1989)].
+In this study, we rely on the ConvNeXt UNet architecture from[Dheeshjith\BOthers. (\APACyear2024)]where the core blocks used are inspired by ConvNeXt blocks[Liu\BOthers. (\APACyear2022)]adapted from[Karlbauer\BOthers. (\APACyear2023)].
+The UNet implements downsampling based on average pooling and upsampling based on bilinear interpolation, which enables it to learn features at multiple scales.
+Each ConvNext block includes GeLU activations, increased dilation rates, and inverted channel bottlenecks.
+To save on computation, we did not use inverted channel depths and replaced the largekernels withkernels.
+We use batch normalization instead of layer normalization, as it yielded better skill.
+The encoder and decoder consist of four ConvNeXt blocks, each with channel widths [200, 250, 300, 400] in the encoder and [400, 300, 250, 200] in the decoder.
+The dilation rates used for the encoder and decoder are [1, 2, 4, 8] and [8, 4, 2, 1], respectively.
+Additionally, we include a single ConvNext block (with channel width 400 and dilation 8) in the deepest section of the UNet before upsampling.
+The total number of parameters for the ConvNeXt UNet model used here is 135M.
+We implemented periodic (or circular) padding in the longitudinal direction since the data are on the globe, and zero padding at the poles as in[Dheeshjith\BOthers. (\APACyear2024)].
+
+The architecture is modified from the original[Dheeshjith\BOthers. (\APACyear2024)]to process the multiple depth level ocean data (as opposed to surface only).
+In the surface ocean emulator, which contains only a single depth level, each channel is associated with a variable. In the multi-depth ocean emulator, each channel is associated with a variable and a depth level.
+Our main emulator takes as input four 19-level oceanic variables (), the surface variableand four atmospheric boundary conditions () and produces five output variables ().
+As discussed above, we use a 2-input 2-output model configuration and thus, there areinput channels andoutput channels.
+
+We train two emulators using the above architecture:
+(1) an emulatorthat uses all the variables,, as input and output,
+and (2) an emulatorthat only uses the thermodynamic variables,.
+
+SECTION: 2.4Training Details
+
+We illustrate the training of the model in Figure1a).
+We train and validate the emulators using 2800 and 140 data samples corresponding to the years 1975 to 2012 and 2012 to 2014, respectively. Each sample is a 5-day mean of the full ocean state and atmospheric boundary conditions.
+
+We ignore the OM4 data from 1958 to 1975 due to the excessive cooling of the model during this period while it adjusts from the warm initial conditions.
+This cooling does not reflect the forcing but rather an interior ocean model adjustment (see\citeAsane2023parameterizing and S3).
+Note that some regions are still cooling post-1975 in this simulation, which biased some of our testing (see results).
+
+The loss function used for optimization is
+
+is the total mean square error (MSE) loss function at time step t, wherecorresponds to the total number of input/output states used by the model in a single step,is the total number of recurrent passes,,andare the total number of output channels, height and width, respectively, of a single output state. Here, we setto obtain a 2-input 2-output model configuration andsteps.
+
+We use the Adam optimizer with a learning rate of, which decays to zero using a Cosine scheduler.
+Our emulators are trained using 4 80GB A100 GPUs for 15 and 12 hours for the modelsandrespectively, with a total batch size of 16.
+
+SECTION: 2.5Evaluation
+
+To evaluate the emulators, we take our initial conditions from 2014 and produce an 8-year rollout using the corresponding atmospheric forcing from 2014 to 2022.
+We compare the output from this rollout to held-out OM4 data in order to evaluate the emulator skill.
+
+In addition, we produce longer runs to assess the emulator’s response, similar to control simulations, with arbitrarily long rollouts.
+The emulator is forced with atmospheric boundary conditions taken over the period 1990-2000, with a repeat 10-year cycle. This period is chosen specifically because it has a near-zero globally integrated heat flux forcing, which ensures minimal ocean drift. We also performed a 100-year and a 400-year control run (see SI).
+
+For each of these evaluations, we produce predictions using bothand. All evaluations use a single 40GB A100 GPU.
+For each year of rollout,andtake about 90.52and 47.2, respectively.
+Thus, for the faster emulator, a century rollout takes approximately 1.3 hours.
+Roughly speaking,takes about half the time to produce the same number of states in the rollout compared to.
+
+SECTION: 3Results
+
+SECTION: 3.1Full-depth Global Ocean Emulator
+
+We begin by evaluating the emulatorsandagainst the ground truth to establish a baseline skill.
+Capturing the full-depth climatological profiles of potential temperature and salinity is a key target of ocean numerical climate models in general and, therefore, a key target for our ocean climate emulators.
+The structure of the zonal mean of potential temperature (Figure1b) is captured by the two emulators, demonstrating significant skill at reproducing the profile from OM4 (see S6 for salinity structure).
+The average mean absolute error is 5.7forand 4.5for, with a pattern correlation of roughly .99 for both emulators.
+The outputs show a robust thermocline structure, subtropical gyres, and a region of North Atlantic deep water formation at high latitudes.
+However, both emulators in the northern hemisphere show too warm and too salty high latitudes (around 55N), too cold and too fresh mid-latitudes, and Arctic signals down to 750depth (Figures S2 and S7).
+The biases are consistent with underestimating the Northward heat transport by the ocean, which is common to GCMs, including OM4.
+The potential temperature and salinity biases in the Southern Ocean for theemulator are reminiscent of responses of the Southern Ocean to residual transport, with opposite signed biases in the Southern Ocean and in the region north of it.
+Theemulator is warmer than the, at most depths (Figure S2).
+
+We performed several experiments to test the sensitivity of the emulators to different training choices.
+We find that the emulators’ skill is unchanged when using different seeds and start dates, i.e. the trained models are statistically reproducible.
+We measure robustness by calculating the root mean square error (RMSE) of rollouts with 5 different seeds and rollouts initialized with ocean states taken 6 months apart (different seasons).
+As shown in Figure1c), the RMSEs show little variance across the different trained models. The standard deviation of the RMSEs across training seeds in the emulatorsandare 0.0033 and 0.00225, respectively.
+
+The time series of potential temperatures at 2.5and 775(Figure2a) are further indicators that both emulators capture the climatological means and the upper ocean response to variable atmospheric forcing.
+The standard deviation of the 2.5potential temperature for OM4, and the emulatorsandare 1.45, 1.33and 1.45respectively, while the 775standard deviations of potential temperature are 4, 1.6and 2.5, respectively. See Figure S8 for time series of potential temperature at 2400, along with salinity, zonal velocity, and meridional velocity at depths 2.5, 775, and 2400, and Figure S10 for averaged global maps of potential temperature along with their corresponding biases.
+
+The emulator can skillfully emulate El Niño-Southern Oscillation (ENSO)’ response in both warm and cold phases (Figure2b) and S11).
+The smallest fluctuations in the Nino 3.4 time series are the hardest for the emulators to capture.
+The emulator responses are in phase with OM4 for all years shown, but the amplitude of oscillations have different modulations throughout the series, and between the emulators.exhibits higher skill thanin capturing the magnitude of ENSO events.
+We hypothesized that providing the velocities, whose data contain shorter time-scales and larger variability, helps the emulator produce larger Nino and Nina events.still manages to detect the correct phase and structure (Figure2b), d)) despite producing events with smaller magnitudes, both at the surface and in the upper ocean.
+The emulators capture the deepening and shoaling of the thermocline at the equator from equatorial Kelvin waves for the strongest events (Figure2d), e)).
+The magnitude of subsurface anomalies for the emulators is weaker than for OM4. Considering the Nino 3.4 time series, as shown in Figure2b), The mean absolute error is 0.0077forand 0.0124for, with corresponding correlations of 0.905 and 0.7017, respectively. For the Nino profiles, as shown in Figure2(c)-(e), the mean absolute error is 0.01and 0.07for the emulatorsandrespectively, and their corresponding pattern correlations are 0.976 and 0.973, respectively.
+
+For the ocean emulatorthat uses all variables, we noticed that the potential temperature and salinity fields exhibit atypically high spatial variability, with scales more characteristic of velocity so we posit that this results from using velocity inputs.
+This result is consistent with\citeAsubel2024building.
+We hypothesize that this may arise from the large separation in time scales and variability between velocity and potential temperature in the ocean.
+
+Finally, despite capturing the mean and climatology of ocean variables, the emulators struggle to capture the magnitude of the small but systematic potential temperature trends (Figure S1 global mean) over the same 8-year period (Figure2a and S1, S3); for most depths the trained models underestimate trends by 20% to 50% relative to OM4.
+Of the two emulators,has higher skill in capturing the global heat changes (Figure S9).
+The salinity trends in OM4 are weak, due to the small forcing, and to the use of salinity restoring boundary conditions.
+For both emulators, the trends are 7 or 8 orders of magnitude less than the mean value, consistent with the numerical representation of variables within the learned models, and suggesting the models captured the conservation of properties inherent in the OM4 data without strict conservation being imposed (Figures S4 and S5).
+
+SECTION: 3.2Long-term stability
+
+We also evaluated, without retraining, the ability of the emulators to produce long control experiments.
+Specifically, for these experiments, we use repeat boundary conditions over 10 years (described in Section2.5) chosen to contribute a near-zero net heat flux, allowing the emulators to run for arbitrarily long periods of time while minimizing potential temperature drift.
+
+Both emulators converge to an equilibrium, maintaining a global mean potential temperature close to OM4 throughout a century of integration (Figure3a).
+The global mean temperatures are 3.225forand 3.215for, compared to 3.219for OM4.
+In addition, we find thatover-predicts the variability in potential temperature, likely extrapolating some fast dynamics via the velocities variables.
+This issue is exacerbated in the deeper layers of the ocean, which have little variability in the original dataset.
+The temperature structure is again well preserved for the long rollouts (Figure3b), with different structures in potential temperature biases (S12) than for the 8-year test data (S2).
+
+In addition to exhibiting little to no drift compared to the test set, we examine the emulators’ respective skill in reproducing variability over these long time scales.
+Since we are reusing the same 10 year cycle to drive the emulator, we expected some persistent features to appear when looking at a phenomenon such as the response to ENSO.
+We find that although both emulators are able to produce appropriate Nino 3.4 anomalies for the entire century rollout (Figure3c) and S13),shows stronger peak-to-peak amplitude, but almost no cycle-to-cycle variability - perhaps due to the strong coupling of velocity with the wind stress forcing, whereasshows more aperiodic variability across years.
+
+To further push the boundaries of stability, we generate a 400-year rollout, with an identical forcing setup as for the century-long run.
+We find that both emulators remain stable (Figure S15).has the added benefit of exhibiting long-term aperiodic variability in potential temperature and salinity, despite the repeat forcing, across the centuries.
+
+SECTION: 4Discussion
+
+We produce a computationally cheap machine-learning (ML) emulator of a state-of-the-art ocean model.
+The ML architecture consists of a modified ConvNeXt UNet[Dheeshjith\BOthers. (\APACyear2024)].
+The reduced order model –Samudra– predicts key ocean variables, sea surface height, horizontal velocities, temperature, and salinity, across the full depth of the world oceans, while remaining stable for centuries.
+Integrating OM4 for 100 years takes approximately 8 days using 4,671 CPU cores, whereas our fastest emulator completes the same task in about 1.3 hours on a single 40GB A100 GPU. This represents approximately a 150x increase in SYPD (simulated years per day) for Samudra compared to OM4.
+
+The emulator performs well on a range of metrics related to the model climatology and its variability on the test set and long control simulations.
+Specifically, the emulator produces accurate climatologies over the last 8 years of the OM4 simulations and is robust to changes in seeds and initial conditions.
+Furthermore, it can capture variability (e.g., ENSO response to forcing), so we think this emulator could be used for studying the contemporary ocean and climate at a significant reduction in cost compared to the OM4. However, the emulator struggles to capture trends under a range of surface heat flux forcing.
+
+The lack of warming trends under generalization experiments is described in the Supporting Information (SI).
+We performed climate change forced experiments using the same repeated atmospheric forcing generated for the control experiment and a spatially uniform linear forcing of varying magnitudes for the surface heat flux.
+Figure S16 showcases the ocean heat content trends predicted byunder linear surface heat flux increases of 1, 0.5, 0.25, and 0.
+The patterns of ocean heat uptake are reminiscent of forced experiments[Todd\BOthers. (\APACyear2020),Couldrey\BOthers. (\APACyear2020)], with dipole patterns in the Southern Ocean and North Atlantic sinking region (Figure S14). However, the magnitude of change is too weak compared to the forcing (Figure S16).
+A similar behavior of weak generalization under climate change is also observed in ACE, the atmosphere climate emulator[Watt-Meyer\BOthers. (\APACyear2023)].
+
+There are several possible reasons for the lack of generalization associated with the weak warming trends: the ocean data for training, the atmospheric forcing data, the model formalism or the architecture.
+The ocean training data is produced from the OM4 run, similar to\citeAsane2023parameterizing.
+After initialization, the forced ocean simulation adjusts the atmospheric forcing by cooling in the first few decades, as opposed to a true historical response of slight warming.
+The effects of this initial drift can be alleviated by pruning years 1958 to 1975 from the training data, which removes the bulk of this adjustment period.
+Yet, different depths and regions adjust more slowly, and some of this bias may remain in the data as the time scale of equilibration of the model is 100’s of years.
+The other reason for the trend bias could possibly come from the forcing datasets.
+The atmospheric forcing imposed on the ocean is a result of the ocean atmospheric coupling.
+Therefore the atmospheric forcing has felt a changing ocean circulation, in particular in the North Atlantic[Chemke\BOthers. (\APACyear2020)].
+The resulting effect is that the ”forcing” applied to the ocean emulator is not entirely decoupled from the ocean response, potentially leading to some biases in the response as in[Todd\BOthers. (\APACyear2020),Couldrey\BOthers. (\APACyear2020)].
+We were able to alleviate these issues by adding an extra input as forcing, namely the cumulative heat forcing, which led to a more skillful model capable of capturing the global warming trend. However, this model was unstable under climate change forcing past 50 years.
+Another possibility is learning the model state might not be optimal; we explored learning tendencies (or difference between 2 states). This model had improved performance for the global warming trends but again was unstable over long timescales.
+Finally, different architectures might also play a role, however, our original exploration has not yet shown much improvement over the ConvNext architecture used here[Dheeshjith\BOthers. (\APACyear2024)].
+Therefore, we focused on the stable emulator in this paper as described above; however, an important challenge going forward is designing faithful emulators capable of capturing trends while remaining stable in long rollouts.
+
+SECTION: Open Research Section
+
+The code for generating rollouts and plots is available on GitHub athttps://github.com/m2lines/Samudra, while the model weights and data are hosted on Hugging Face athttps://huggingface.co/M2LInES/Samudraandhttps://huggingface.co/datasets/M2LInES/Samudra_OM4, respectively.
+
+The software used for training the models will be placed on GitHub at the revision stage of this work. For publication the code will be version tagged and archived via zenodo.
+
+SECTION: References
+
+SECTION: Supporting Information
+
+Text S1.Here we describe how we calculated.
+
+where Clim is the climatology ofover the entire data.
+
+Text S2.Calculation of Metrics
+
+Consider a predicted ocean state, its corresponding ground truth stateat time, channel, latitudeand longitude, and the normalized volumeat channel, latitudeand longitude.
+
+whereis the time period over which we calculate the metrics.
