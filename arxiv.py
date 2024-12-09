@@ -49,7 +49,7 @@ class ArxivFetcher:
                 "search_query": search_query,
                 "sortBy": sort_by,
                 "sortOrder": sort_order,
-                "start": 20,
+                "start": 40,
                 "max_results": str(max_results)
             }
             
