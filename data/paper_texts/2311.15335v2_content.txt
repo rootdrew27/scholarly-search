@@ -1,0 +1,176 @@
+SECTION: TORE: Token Recycling in Vision Transformers for Efficient Active Visual Exploration
+
+Active Visual Exploration (AVE) optimizes the utilization of robotic resources in real-world scenarios by sequentially selecting the most informative observations. However, modern methods require a high computational budget due to processing the same observations multiple times through the autoencoder transformers.
+As a remedy, we introduce a novel approach to AVE called TOken REcycling (TORE). It divides the encoder into extractor and aggregator components. The extractor processes each observation separately, enabling the reuse of tokens passed to the aggregator. Moreover, to further reduce the computations, we decrease the decoder to only one block.
+Through extensive experiments, we demonstrate that TORE outperforms state-of-the-art methods while reducing computational overhead by up to 90%.
+
+SECTION: 1Introduction
+
+In Active Visual Exploration (AVE)[22], the agent selects consecutive observations based on a combination of learned policies and environmental cues to optimize information gain and task performance. It is essential in various applications assuming changing environments, such as rescue operations by drones[24].
+
+Modern methods of AVE[22,9]utilize Vision Transformers (ViT)[5], which have profoundly reshaped computer vision by delivering efficiency on par with Convolutional Neural Networks (CNN)[16]. The key advantage of ViTs is their ability to handle incomplete inputs, in contrast to CNNs, which require data imputation before further analysis[25]. However, ViTs require a high computational budget[3], which is problematic because AVE usually operates under strict resource constraints. Moreover, methods such as AME[22]and SimGlim[12]execute a full forward pass on all available observations, each time a new observation is collected.
+
+One possible way to overcome this issue would be to replace ViTs in AVE with their efficient counterparts based on token pruning[30,41]or architecture modifications[16,3]. However, they are not directly applicable to the AVE setup. Token pruning removes uninformative tokens but requires a global glance of the whole scene, which in AVE is yet to be discovered. Meanwhile, the architecture modifications limit the quadratic growth of self-attention computations but require structured and complete observations (full image, see Section 5.3 for more details), making the resulting model unsuitable for AVE purposes.
+
+To address the computational inefficiency of the modern AVE methods while preserving their ability to process unstructured and incomplete observations, we introduce the TOken REcycling (TORE) method. It divides ViT into two parts:extractorandaggregator(see Figure1). Theextractorprocesses glimpses separately, generatingmidway tokensthat are cached. Theaggregatorcombines themidway tokensand returns a prediction. This way, the results of computations made by theextractorare reused, substantially reducing the computational burden compared to previous AVE methods.
+Additionally, we advocate for using a lightweight decoder since perfect image reconstruction is unnecessary to achieve satisfactory classification.
+
+By conducting comprehensive experiments, we demonstrate that TORE significantly cuts computational overhead by up to 90% with improved accuracy compared to the state-of-the-art methods for AVE. Furthermore, employing thorough ablations and analysis, we motivate our architectural decisions and show the trade-off between efficiency and precision. The code is available athttps://github.com/jano1906/TokenRecycling.
+
+Our contributions can be summarized as follows:
+
+We introduce TORE, an efficient method for Active Visual Exploration, which substantially reduces the computational burden.
+
+We propose a training strategy with a random sampling of glimpses, increasing the model’s generalizability.
+
+We conduct extensive experiments on AVE benchmarks showing the accuracy-efficiency trade-off.
+
+SECTION: 2Related Works
+
+AVE involves an agent guiding its view to successively improve internal representations of the observed world[1,10], what can be seen in the context of simultaneous localization and mapping (SLAM)[27]. In this context, the selection strategies for successive observations (exploration) play a crucial role. Multiple approaches are proposed to address this challenge, such as image reconstruction techniques[10,14,34], dedicated exploration models[28,29,12], the utilization of self-attention mechanisms[33], and the analysis of entropy[22]. AVE has also been explored in the context of segmentation[35]and 3D vision[11].
+
+Our work contributes to this landscape by introducing a novel approach dedicated to AVE that recycles computations within a transformer-based architecture.
+
+Recent advancements in computer vision show that the increase in model accuracy is often related to the increase in its computational needs. That is why a lot of research is done to reduce the amount of computations and at the same time preserve the high fidelity of the model. One research branch is focused on efficient training techniques, including continual learning[20,31], domain adaptation[37,38], and fine-tuning[7,17]. Another one on reducing the inference computations of models, such as early exits[23,39], dedicated to a given problem models, e.g., in medical imaging[26], and efficient architectures[32,36].
+
+In the scope of this work, we are particularly interested in methods assuring efficient ViT inference. Approaches aiming at the reduction of ViT’s computational needs propose token pruning[30,42,41], low-rank factorization[43], limiting self-attention to non-overlapping local windows[18], scaling attention mechanism with sequence length[2], grouping attention layers into local and global information exchange layes[3,16], and replacing fully-connected layers with a star-shaped topology[6].
+
+Our method (TORE) aligns with recent trends aimed at enhancing the computational efficiency of Vision Transformers. Specifically, we modify the ViTs’ forward pass to optimize for Active Visual Exploration because current efficient architectures are not well-suited for processing incomplete and unstructured inputs found in the AVE task.
+
+SECTION: 3Method
+
+TORE aims to reduce the computational budget in the AVE solution based on Vision Transformers (ViT) by reusing tokens. Therefore, to make this paper self-contained, we start this section by recalling ViT and AVE. After that, we describe our method and its training policy.
+
+Transformer modelof depthconsists of:
+
+tokenizer,
+
+transformer blocks, for,
+
+prediction head.
+
+whereis an input domain (i.e. set of images),is an output domain (i.e. logits), andis a representation space. For a given, tokenizergenerates a token set that contains[CLS], a special global information token denoted as, and, a set of remaining patch-corresponding tokens.
+
+Suppose that inputconsists ofglimpses which we receive sequentially, ie.and at time, the glimpsesforare available. In such case, we are interested in predictionsrecomputed each time when a new glimpseis selected, for. The consecutive glimpses are selected with aselection policy.
+
+SECTION: 3.1TOken REcycling (TORE)
+
+As presented in Figure2, we divide the transformerinto two pathsextractorandaggregator:
+
+where a parameteris the number of transformer blocks assigned toextractor, whileaggregatoris built from remainingblocks.
+Given a sample, theextractorproducesmidway tokens, which we denote as. We define the TORE Forward Pass (TORE FP) with parameterat timeas
+
+where
+
+Therefore, we apply theextractorto each input glimpse. Then, we combine themidway tokensby averagingtokens and taking the union over glimpse-corresponding tokens. The final output is produced with theaggregator.
+
+To efficiently compute the Eq.2, we cache outcomes of already calculated forward passes at times. We update the cache as follows:
+
+and then calculate the prediction as:
+
+This way, the consecutive values ofare computed by processing eachwith theextractoronly once. It is in contrast to ViT’s original forward pass where at each timestepa full collection of inputsis processed by the network.
+
+We adopt the AME[22]policy to guide the glimpse selection in sequential prediction during inference. To pick glimpseat the time, the policy utilizes an additional transformer-based reconstruction decoder. It is fed with embeddings of previously chosen glimpses, and mask embeddings corresponding to the missing glimpses as in original MAE[8]work. The embeddings are obtained from the last block of theaggregator, before applying the prediction head.
+
+Besides the reconstructed image, the decoder also provides attention mapfrom each headin its last transformer block, used to calculate the entropy mapwith the following formula:
+
+whereis a row-wise Shannon entropy calculated for attention matrix.
+
+After zeroing entries ofcorresponding to the already chosen glimpses, AME selects the new glimpse that has the highest value in. Intuitively, the policy picks the glimpse with the highest reconstruction uncertainty, assuming it is the most informative for the prediction.
+
+Contrary to the AME[22], our reconstruction decoder used to calculate the entropy map is tiny. It has only 1 transformer block with 4 heads and 128 hidden dimensions, instead of 8 blocks with 16 heads and 512 hidden dimensions used originally[8,22].
+
+Our training samplecomprisesrandomly picked image glimpses, a whole image, and a label. It is in contrast to AME[22], which uses the entropy map to select the glimpsesat the training time as well as at the inference time. The number of glimpsesis fixed for all samples and set to occupyof the whole image.
+
+For each training batch ofsuch triplets, we sample the size of theextractorfrom the uniform distribution, as illustrated in Figure3. Next, we perform a forward pass ofto get class predictionand reconstructed image, for. Finally, we compute loss functioncombining cross-entropy classification lossand root-mean-squared error reconstruction loss:
+
+whereis a weighting factor,denotes-th pixel of imageandis the total number of pixels.
+
+In consequence, we obtain a single model that reliably works for multiple values ofduring inference, making the method flexible. This property allows us to balance accuracy and efficiency on demand, i.e., by increasing theextractorsize, we can reduce computations but decrease the model’s accuracy.
+
+SECTION: 4Experimental Setup
+
+SECTION: 4.1Implementation Details
+
+We implement theextractor-aggregatorframework using the transformerbased on the ViT–B architecture consisting ofblocks. The model is initialized with MAE[8]weights pretrained on ImageNet-1k[4]. The originally learned positional encodings are replaced with sinusoidal ones, following implementation introduced in AME[22]. Our lightweight decoder is a downsized modification of the MAE decoder with randomly initialized weights. Both networks usepixel-sized tokens.
+
+All models are trained for a maximum ofepochs, stopping if validation loss does not improve for consecutiveepochs. We select weights achieving the lowest validation loss. The batch sizeequals. The optimizer of our choice is AdamW[19]with beta values ofand, epsilon of, and weight decay of. The learning rate, dynamically adjusted via the cosine scheduler with a minimum value of, is initialized at. We use the same data augmentations as in AME[22], namely theandwith scale in range.
+
+SECTION: 4.2Active Visual Exploration
+
+We test our approach on SUN360[40], CIFAR100[15], Food101[13]and Flowers102[21]datasets. SUN360 is a scene recognition dataset with 26 classes, containing both indoor and outdoor images captured with 360∘camera, making a suitable evaluation dataset for vision algorithms dedicated to robotics applications. The other considered datasets are object-centric image classification datasets with 100, 101, and 102 classes respectively. We keep nativeresolution for the SUN360 dataset for a fair comparison to the baselines and resize images from the other datasets toresolution. As the SUN360 dataset does not provide a predefined train-test split, we divide the dataset into train-test with a ratio of 9:1 based on image index, following the methodology used in[22,33]. For the other datasets, we use the original train-test split.
+
+During training and evaluation, we sample non-overlappingtoken-sized glimpses, which in total cover aboutof an input image (8 glimpses for SUN360 and 12 glimpses for the other datasets). When training, we sample the glimpses uniformly at random. During evaluation, we sample the glimpses according to the chosen policy.
+
+We follow the evaluation protocol introduced in[22]for all experiments in the AVE setup.
+
+SECTION: 5Results
+
+In this section, we present the results for two tasks within Active Visual Exploration: image classification and reconstruction. Subsequently, we conduct thorough ablations and analysis of our TORE method.
+
+Before delving into the metrics for these tasks, we illustrate how AVE is performed at selected timesteps, as depicted in Figure4. It can be observed that the entropy map of the reconstruction decoder guides the model in a way tailored to each sample. As the model observes a larger portion of relevant input, it is more certain of a given prediction.
+
+SECTION: 5.1Classification
+
+TORE exhibits superior performance in the classification task compared to other AVE methods, as demonstrated in Table1. Our approach achieves notable reductions in computations of up to 90% for SUN360128×256and 80% for the other datasets while maintaining state-of-the-art accuracy. Particularly noteworthy is that our method with a ViT-B backbone outperforms AME utilizing a ViT-L backbone. To ensure a fair comparison, we present the accuracy of AME employing a ViT-B encoder and its original decoder size.
+
+The incorporation of a lightweight decoder and a random glimpse selection policy during training significantly enhances the classification task’s performance while concurrently reducing the exploration’s computational costs. Additionally, theextractor-aggregatorframework for the ViT backbone in TORE provides flexibility through variousvalues, allowing prioritization of either higher accuracy or improved resource utilization.
+
+SECTION: 5.2Reconstruction
+
+As our method focuses on the classification task, the reconstruction can be seen solely as an auxiliary task. In Table2, we present the reconstruction RMSE of our method compared to other state-of-the-art approaches. Interestingly, the performance of a model on the reconstruction task within the AVE setup does not necessarily correlate with its classification performance. Despite the significant reduction in reconstruction capabilities due to the use of a lightweight decoder in TORE, our model outperforms the other methods as evidenced in Table1.
+We include examples of reconstructed images in the Supplement.
+
+SECTION: 5.3Ablations and analysis
+
+Firstly, we examine the analysis of architectural choices and their impact on the model’s performance concerning classification accuracy and computational costs. Subsequently, we explore how randomized choice ofduring training enableseffective and flexible accuracy-efficiency tradeoff. Following this, we assess the model’s effectiveness throughout the exploration process. Then, we investigate how the TORE forward pass influences exploration in AVE. Finally, we compare the efficiency and accuracy ofand EfficientFormer[16], and we provide an analysis of why EfficientFormer cannot be easily incorporated into the AVE setup.
+
+Table3presents the impact of various components of the TORE method on its performance. The results underscore the necessity of all components for achieving the best-performing model. Training with the random glimpse selection policy enhances accuracy by 10% while the utilization of a lightweight decoder reduces the FLOPs requirement for AVE by threefold and additionally improves accuracy by 4%.
+
+Note that, we examine the model’s prediction accuracy forin the TORE forward pass, where the model operates similarly to the original ViT, and for, where the model operates within theextractor-aggregatorframework. In the latter case, we setfor SUN360 andfor CIFAR100, as they achieve comparable classification performance to AME as presented in Table1.
+
+The results in Table4reveal that the training schema with randomizedvalues enables the model to robustly conserve classification performance for greater values ofwith only marginal performance decrease in the base case (). Notably, the single model trained with randomsampling outperforms dedicated models trained for specific values of.
+
+We record model predictions at each timestep of exploration and report its accuracy. We conduct this experiment for each value ofand plot the gathered results in Figure5. The accuracy consistently improves with the increasing number of exploration steps and decreasing value of, and ranges from 60% to 80% at the 12th step on the CIFAR100 dataset.
+
+In Active Visual Exploration, the model performance relies on two components: the predictive power of the model and the selected glimpses during exploration. We analyze the impact of those two components by analyzing the model accuracy on sets of patches gathered by different exploration processes.
+
+In the first case, we measure model accuracy with the original ViT forward pass () on glimpses gathered by a model operating inextractor-aggregatorframework with differentvalues, see upper row of Figure6. We observe that glimpses selected using entropy maps are of similar quality for alland better than the randomly chosen ones.
+
+In the second case, we measure the accuracy of the model operating inextractor-aggregatorframework with different values ofon glimpses gathered by a model using the original ViT forward pass (), see the bottom row in Figure6.
+We observe that for all values of, the model achieves higher accuracy on glimpses selected based on entropy maps than the ones chosen at random. For comparison, we plot the results for TOREκ, which predicts and gathers glimpses inextractor-aggregatorframework using the same values of. Note that the accuracy of TORE is almost the same as the accuracy of a model predicting on glimpses gathered with.
+
+Results in both cases show that the model using TORE forward pass can utilize the entropy maps of the reconstruction decoder effectively. Additionally, the value ofdoes not significantly impact the quality of chosen patches. We conclude that the TORE forward pass is well suited for Active Visual Exploration with policies based on the properties of the attention map.
+
+Reducing computational costs for Vision Transformers (ViTs) can be achieved by designing efficient ViT architectures[3,16]. However, AVE is a specific setup that processes incomplete and unstructured input, requiring data imputation for efficient ViT variants due to their altered attention mechanisms. Traditional ViT architectures, on the other hand, are advantageous as they can process only the available image patches at any given time without requiring data imputation.
+
+To demonstrate thatis more efficient than computationally effective ViT versions, we trained the EfficientFormer-V2-L (EF) in the same manner as. This means that we use a small reconstruction decoder and a random glimpse selection policy during training, with exploration based on the entropy of attention maps (AME). The only difference is that EF processes the same number of tokens in each iteration. Those tokens that are not discovered through the exploration are imputed as black. This ensures that the input is of a fixed size for computation and allows a fair comparison.
+
+The results in Table5indicate that TORE outperforms EF on 3 out of 4 evaluated datasets and requires fewer FLOPS. Even with, TORE is more efficient because it uses only visible tokens instead of a fully-sized imputed image at each exploration step.
+
+SECTION: 6Conclusions and future works
+
+In this work, we introduce the TOken REcycling (TORE) approach for enhancing efficiency in Active Visual Exploration tasks. It involves an efficient sequential inference that divides the ViT backbone into two components:extractorandaggregator. Through the concept of splitting the inference into two paths, we can fully utilize the potential of pretrained models. Additionally, we propose the use of a lightweight decoder in AVE, demonstrating that reduced reconstruction performance does not necessarily compromise the model’s accuracy. Finally, we propose a training schema aimed at improving the model’s downstream performance. As a result, TORE significantly reduces the computational workload while maintaining or even enhancing accuracy in Active Visual Exploration tasks.
+
+In future research, we aim to explore further reductions in computations, such as modifying theaggregatorby integrating an attention-pooling mechanism. Additionally, we plan to refine the proposed framework by incorporating early exits to further alleviate the computational burden.
+
+The primary limitation of the study lies in the fixed nature of the image divisions and masks used in the experiments, constrained by the size of the image patches in the ViT model. However, in future work, we will explore the impact of more random patch sizes on the model to better understand the model’s behavior.
+
+This work impacts the fields of embodied AI, robot vision, and efficient machine learning. It shows the potential of a straightforward yet powerful modification in the forward pass and training of ViTs, significantly reducing the computational load of large models and enabling efficient computations on devices such as drones.
+
+SECTION: Acknowledgements
+
+The work of Jan Olszewski and Mateusz Pach was funded by the National Science Centre (Poland) grant no. 2022/47/B/ST6/03397. Dawid Rymarczyk was supported by the National Science Centre (Poland), grant no. 2022/45/N/ST6/04147. The work of Bartosz Zieliński was supported by the National Science Centre (Poland), grant no. 2023/50/E/ST6/00469.
+
+We gratefully acknowledge Polish high-performance computing infrastructure PLGrid (HPC Centers: ACK Cyfronet AGH) for providing computer facilities and support within
+computational grant no. PLG/2023/016555.
+
+Some experiments were performed on servers purchased with funds from a grant from the Priority Research Area (Artificial Intelligence Computing Center Core Facility) under the Strategic Programme Excellence Initiative at Jagiellonian University.
+
+SECTION: References
+
+SECTION: TORE: Token Recycling in Vision Transformers for Efficient Active Visual Exploration – Supplement
+
+We provide examples of full exploration trajectories performed by our method as illustrated in7. Although image reconstruction is of poor quality, it is sufficient to guide the exploration process and results in the high accuracy of our method on the AVE task.
+
+Additionally, we provide the source code to reproduce the results presented in the paper.

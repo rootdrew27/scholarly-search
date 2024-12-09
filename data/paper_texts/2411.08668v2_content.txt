@@ -1,0 +1,439 @@
+SECTION: A Machine Learning Algorithm for Finite-Horizon
+Stochastic Control Problems in Economics††thanks:Xianhua Peng is partially supported by the Natural Science Foundation of Shenzhen (Grant No. JCYJ20190813104607549) and the National Natural Science Foundation of China (Grant No. 72150003). The paper was previously entitled “EM Algorithm and Stochastic Control."
+
+-0.2cm-0.2cm
+We propose a machine learning algorithm for solving finite-horizon stochastic control problems based on a deep neural network representation of the optimal policy functions. The algorithm has three features: (1) It can solve high-dimensional (e.g., over 100 dimensions) and finite-horizon time-inhomogeneous stochastic control problems. (2) It has a monotonicity of performance improvement in each iteration, leading to good convergence properties. (3) It does not rely on the Bellman equation. To demonstrate the efficiency of the algorithm, it is applied to solve various finite-horizon time-inhomogeneous problems including recursive utility optimization under a stochastic volatility model, a multi-sector stochastic growth, and optimal control under a dynamic stochastic integration of climate and economy model with eight-dimensional state vectors and 600 time periods.
+
+Keywords: machine learning, deep learning, stochastic control, multi-sector stochastic growth, climate and economy model, stochastic volatility, climate change
+
+JEL classification: C61, E32, G11, L12
+
+SECTION: 1Introduction
+
+Stochastic control problems are widely used in macroeconomics (e.g., the study of stochastic growth and real business cycle), microeconomics (e.g., utility maximization problem), and finance (e.g., portfolio choices and optimal execution).
+Indeed, there is a large literature on stochastic control in economics. For example,Stokey, Lucas and Prescott (1989)describe many economic models using stochastic control, including economic growth, resource extraction, principal-agent problems, business investment, asset pricing, etc.Hansen and Sargent (2013)give detailed discussions on stochastic control problems in which
+the Bellman equations can be solved analytically, especially problems with quadratic objective functions and linear transition functions.Ljungqvist and Sargent (2018)discuss dynamic programming methods and their applications to a variety of problems in economics.Miao (2020)gives a comprehensive introduction to the analytical and numerical tools for solving stochastic control problems in economics.
+
+Despite the previous efforts, three significant obstacles remain: (i) Many stochastic control problems in economics are finite-horizon time-inhomogeneous problems, which may be more difficult than the related infinite horizon problem, as the optimal control policies at different time periods are different.
+(ii) Due to the curse of dimensionality, it is generally difficult to numerically solve stochastic control problems in high dimensions and for problems with complicated stochastic dynamics.
+(iii) If the utility function in the control problem is not time-separable, then such a problem may not have the Bellman equation.
+
+To overcome these difficulties, we propose a machine learning algorithm, the Monotonic Monte Carlo Control (MMCC) algorithm,
+to solve high-dimensional, finite time horizon, and time-inhomogeneous stochastic control problems without using dynamic programming principles. The MMCC algorithm can be implemented using a deep neural network representation of the policy functions where the parameters of the neural networks can be learned by stochastic gradient descent approach.
+In each round of training, the algorithm first generates sample paths of the states and controls by Monte Carlo simulation, and then
+updates the control policies in each time period sequentially in a backward direction.
+Therefore, The MMCC algorithm has a monotonicity of performance improvement in each iteration step, leading to good convergence properties.
+The algorithm does not require the Bellman equation, does not require the utility function to be time-separable, and allows general stochastic dynamics of the evolution of states.
+We demonstrate the effectiveness of the MMCC algorithm by solving various high-dimensional (e.g., over 100-dimensional) stochastic control problems including portfolio selection under a stochastic volatility model, multi-sector stochastic growth, and optimal control under a dynamic stochastic integration of climate and economy model with 8-dimensional state vectors and 600 time periods.
+
+SECTION: 1.1Literature Review
+
+Judd (1998)andMiranda and Fackler (2002)provide a comprehensive treatment of traditional numerical methods such as value function iteration for stochastic control problems in economics.
+Recently, some grid point-based and grid point-free machine learning methods have been proposed for solving discrete-time dynamic economic models.
+
+First, for infinite-horizon and representative-agent (RA) problems,Lepetyuk, Maliar and Maliar (2020)employ supervised neural networks to learn the policy function at grid points defined through unsupervised clustering analysis, thereby using a grid-based method.
+Within the functional iteration framework, supervised learning is typically applied. For example,Renner and Scheidegger (2018)andScheidegger and Bilionis (2019)use Gaussian process regression to approximate the value function;Valaitis and Villa (2024)use neural networks to approximate the expectation term in the Euler equation. Outside the framework of functional iteration,Maliar, Maliar and Winant (2021)provide a unified unsupervised framework encompassing three optimization strategies: maximizing lifetime reward, minimizing equilibrium-condition error (i.e., Euler-equation error), and minimizing Bellman-equation error. In the case of Euler-equation error minimization,Pascal (2024)generalizes the Monte Carlo operator inMaliar, Maliar and Winant (2021). Additionally, in the case of continuous-time infinite-horizon RA problems,Duarte, Duarte and Silva (2024)use two neural networks to approximate the policy and value function and adopt supervised learning to train the two neural networks to solve the Hamilton-Jacobi-Bellman (HJB) equation.
+
+For infinite-horizon and heterogeneous-agent (HA) problems, grid-free methods based on simulation are proposed.Maliar, Maliar and Winant (2021)demonstrate the effectiveness of their grid-free framework by solving two representative-agent models and one heterogeneous-agent model(Krusell and Smith,1998).
+Additionally,Han, Yang and E (2022)employ both supervised and unsupervised learning using two neural networks in a grid-free manner, with unsupervised learning applied to policy function approximation and supervised learning to value function approximation. They essentially aim to maximize lifetime reward and then evaluate their method based on Bellman-equation error.
+Moreover,Hall-Hoffarth (2023)minimizes the error of equilibrium conditions to solve a heterogeneous-agent New Keynesian (HANK) model. In the case of continuous-time infinite-horizon HA problems,Huang (2023)focuses on the probabilistic formulation of economic models and uses deep learning to solve the system of forward-backward stochastic differential equations corresponding to the model. Subsequently,Huang (2024)employs the probabilistic approach to solve a continuous-time version ofKrusell and Smith (1998)and an asset pricing model with search-and-bargaining frictions.
+
+For finite-horizon problems, existing literature focuses on solving overlapping generations models by grid-free methods. For example,Duarte, Fonseca, Goodman and Parker (2021)solve a life-cycle model by maximizing lifetime reward;Azinovic, Gaegauf and Scheidegger (2022)andAzinovic and Jan Žemlička (2023)solve an overlapping generations model by minimizing the error of equilibrium conditions. In particular,Azinovic and Jan Žemlička (2023)introduce a market clear layer to enforce the economic constraints.
+
+This paper complements the existing literature in four aspects: (i) The proposed MMCC algorithm is a grid point-free (i.e., simulation-based) algorithm, which avoids the curse of dimensionality and enables us to handle high dimensional problems (e.g., 100 dimensions).
+In this regard, our algorithm is closely related to the problem of American option pricing using simulation (see, e.g.,Longstaff and Schwartz (2001),Tsitsiklis and Van Roy (2001), andBroadie and Glasserman (1997,2004),Glasserman (2004, Ch. 8)). (ii) The MMCC algorithm differs from existing grid point-free methods in how network parameters update. In each round of iteration, the MMCC algorithm updates the neural networks of the control policies at different time periods sequentially in a backward manner. In contrast, all neural network parameters are updated simultaneously in existing grid point-free methods.
+(iii) The MMCC algorithm has a monotonicity of performance improvement at each iteration, while many existing algorithms do not have such a property. (iv) The MMCC algorithm does not use the Euler equation or Bellman equation; in contrast, many numerical algorithms and grid point-free algorithms in the literature rely on the Euler equation, Bellman equation, or their approximation.
+(v) The MMCC algorithm can solve problems with time-inseparable utility functions, which may not have Bellman equations.
+
+Besides the economic literature, there is a large body of literature on applied mathematics and applied probability in stochastic control. In particular,Yong and Zhou (1999)andFlemming and Soner (2006)provide an in-depth discussion on continuous time stochastic control problems and their applications.Kushner and Dupuis (2001)give an excellent survey of numerical methods for solving continuous time stochastic control problems by using Markov chains. There have also been many studies on the numerical solutions to continuous time stochastic control problems in mathematical finance.111See, e.g.,Zhang (2004),Bouchard and Touzi (2004),Chassagneux (2014),Chassagneux and Richou (2016),Crisan, Manolarakis and Touzi (2010),Gobet, Lemor and Warin (2005),Gobet and Turkedjiev (2016,2017),Henry-Labordere, Tan and Touzi (2014),Henry-Labordère, Oudjane, Tan, Touzi and Warin (2019),Kharroubi, Langrené and Pham (2015),Kharroubi, Langrené and Pham (2014), andGuo, Zhang and Zhuo (2015).Most of these studies focus on particular stochastic processes, e.g., discretized diffusion processes or Lévy processes, but our MMCC algorithm can be applied to general stochastic processes. Moreover, our method is a simulation-based method, suitable for high-dimensional problems.
+
+Approximate dynamic programming (ADP) has been developed222ADP has also evolved under the name of reinforcement learning in computer science (see, e.g.,Sutton and Barto (1998)).for dealing with three sources of curses of dimensionality: high dimensionality of state space, control policy space, and random shock space; see the books byPowell (2011)andBertsekas (2012).
+ADP algorithms can be broadly classified into two categories: value iteration and policy iteration.333Many ADP algorithms focus on infinite time horizon problems where the optimal value
+function and policy are stationary. In contrast, our MMCC algorithm focuses on finite time horizon problems where neither the optimal value function nor the optimal policy is stationary.Most ADP algorithms are value iteration algorithms,
+which approximate the value function by employing the Bellman equation.444Value function iteration is closely related to the duality approach for stochastic dynamic programming; see, e.g.,Brown, Smith and Sun (2010),Brown and Smith (2014),Brown and Haugh (2017), andChen, Ma, Liu and Yu (2024).As an alternative, a policy iteration algorithm keeps track of
+the policy instead of the value function. At each period, a value function is calculated based on a policy estimated previously and then improved within the policy space.
+However, the value iteration and policy iteration ADP algorithms may not have a monotonic improvement of the value function at each iteration.
+The MMCC algorithm is related to but is fundamentally different from the policy iteration ADP algorithms mainly in that: (i) The MMCC algorithm does not use the Bellman equation; (ii) The MMCC algorithm has a monotonic improvement of the value function at each iteration; (iii) The MMCC algorithm can be applied to general control problems in which the objective functions may not be time-separable.
+
+Deep neural networks were first used inHan and E (2016)to solve stochastic control problems. They solve finite-horizon problems by approximating the time-dependent controls as feedforward neural networks at each time period; see further extensions on solving partial differential equations and stochastic differential equations inE, Han and Jentzen (2017)andBeck, E and Jentzen (2019). Additionally,Reppen, Soner and Tissot-Daguette (2023)leverage this algorithm to solve high-dimensional problems in American and Bermudan option pricing.Huré, Pham, Bachouch and Langrené (2021)propose solving finite-horizon stochastic control problems based on dynamic programming (i.e., the Bellman equation). They use two neural networks at each time period: one for representing the control policy and the other for representing the value function; see further numerical applications of this algorithm inBachouch, Huré, Langrené and Pham (2021).
+The MMCC algorithm differs from these papers in two aspects: (i) The MMCC algorithm leads to monotonic improvement of the value function in each iteration, while these algorithms do not.
+(ii) We provide applications of the MMCC algorithm to solve various economic problems such as multi-sector stochastic growth and the social cost of carbon emission problem.
+
+The literature on Markov decision processes mainly concerns multi-period stochastic control problems with a finite state space or a finite control space. There are also simulation-based algorithms for Markov decision processes; see, e.g., the books byChang, Hu, Fu and Marcus (2013)andGosavi (2015)for comprehensive review and discussion. The main differences between these algorithms and our MMCC algorithm are: (i) The MMCC algorithm has monotonicity in each iteration; (ii) The MMCC algorithm does not use the Bellman equation.
+
+The rest of the paper is organized as follows. The algorithm is proposed in Section2, and in Section3we show that the algorithm improves the objective function monotonically in each iteration and hence has good convergence properties. In Section4, we propose an implementation of the algorithm via deep neural network approximation of the policy functions.
+To update the policy functions, one can use stochastic gradient descent
+in each iteration. The applications of the MMCC algorithm to solve the recursive utility optimization problem under a stochastic volatility model,
+multi-sector stochastic growth problem, and the problem of the social cost of carbon are given in Sections5,6, and7respectively.
+
+SECTION: 2The MMCC Algorithm
+
+SECTION: 2.1The Setting of the Problem
+
+We consider a general finite time horizon stochastic control problem, withperiods fromto.
+Letbe the dimension of the control policy and letbe the dimension of the state.
+At the-th period the decision maker observes the stateand then chooses a-dimensional control, the sigma field generated by. Hence,
+the policyis adapted to the information available up to periodand can be represented as a function of. The initial stateis given at period.
+The stateis determined by,, and random shock by the following state evolution equation
+
+whereis the state evolution function andis the random vector denoting the random shock in theth period.
+Path dependence (i.e.,may depend on statesfor some) can be accommodated by including auxiliary
+variables in.
+The state evolution dynamics in (1) is a general one, which is not restricted to discretized diffusion processes or Lévy
+processes.
+
+The goal is to find the optimal control policy.
+For, we assume that the control policy can be represented as
+
+whereis a function andis the vector of parameters for theth period.
+
+The policy functionis to be determined and can be represented by a deep neural network with parameter.
+More precisely, consider a deep neural network withhidden layers, then the functioncan be written a composite function
+
+whereis an affine function andis a nonlinear activation function, such as the rectified linear unit.
+
+In the case of deep neural networks, the control problem amounts to finding the affine functions,, and. This is possible by using stochastic gradient descent algorithms such as Adam(Kingma and Ba,2015)if the stochastic gradient of the objective function can be found analytically.
+
+At period 0, the decision maker wishes to choose the optimal controland the sequence of control parameters, which determines the sequence of controls, to maximize the expectation of his or her utility
+
+whereis a subset ofwith;is the utility function of the decision maker in theth period. It is worth noting that the utility function in the first period can include utility at period.
+
+A control problem more general than the problem (3) is given by
+
+whereis a general utility function that may not be time-separable as the one in (3). For simplicity of exposition, we will present our MMCC algorithm for the problem (3); however, the MMCC algorithm also applies to the general problem (5); see AppendixCfor details.
+
+For simplicity of notation, we denoteand denote
+the objective function of problem (3) by
+
+In general, the expectation in (7) cannot be evaluated in closed form, and hencedoes not have an analytical form.
+
+SECTION: 2.2Description of the MMCC Algorithm
+
+The MMCC algorithm is an iterative algorithm for solving (3), involving multiple rounds of the back-to-front updates, that updates the control policy at a given time period by optimizing the objective function with respect to the control policy at that time period only, and with
+the control policies at all other periods fixed at their most up-to-date status in the iteration of the algorithm.
+
+More precisely, suppose that after theth iteration, the control policy parameter is. In theth iteration, the MMCC algorithm updatesto beby the updating rule:
+
+whereis a point-to-set map on(i.e.,maps a point into a subset of) that represents the updating rule.
+At each time period, the algorithm updatesto beand then moves backward to update; at last, the algorithm updatesto be.
+
+Next, we specify the precise updating rule in (8). In theth iteration, before updating the control parameter at period, the control policy parameter is. Then, at period, the MMCC algorithm updatesto besuch that
+
+which can be easily shown to be equivalent to ((a));
+see AppendixAfor a detailed proof.
+Therefore, suchthat satisfies (2.2) can be obtained by finding a suboptimal (optimal) solution to (12).
+
+Similarly, at period 0, beforeis updated, the control policy parameter is. Then, the MMCC algorithm updatesto besuch that
+
+Algorithm1summarizes the MMCC algorithm for solving problem (3).
+
+Initializeand.
+
+Iterateuntil some stopping criteria are met. In theth iteration, updatetoby moving backwards fromtoas follows:
+
+Move backward fromto. At each period, updateto besuch that
+
+Suchcan be set as a suboptimal (optimal) solution to the problem
+
+where.
+
+At period, updateto besuch that
+
+Suchcan be set as a suboptimal (optimal) solution to the problem
+
+where.
+
+Two remarks are in order: (i) In the MMCC algorithm when we updatetoor updatetoif no improvement of the objective function can be found, we simply setor set.
+(ii) Because the MMCC algorithm does not use the Bellman equation, it
+can be applied to general control problems.
+
+The intuition of the MMCC algorithm is also related to
+the block coordinate descent (BCD) algorithms, in which the coordinates are divided into blocks and only one block of coordinates is updated at each sub-step of iterations in a cyclic order. However, the details of the two algorithms differ significantly:
+(i) In essence, the MMCC algorithm attempts to update control policies in the control policy spaces (e.g., in the space of deep neural networks) rather than the Euclidean space. Consequently, all the parametersassociated with the control policyare updated simultaneously, rather than block-wise one by one as in BCD. This is similar to the relationship between the classical EM (Expectation-Maximization) algorithm555See, e.g.,Dempster, Laird and Rubin (1977),Meng and Rubin (1993),
+andLange (2010, Chap. 13), among others.
+For discussion on the connection between reinforcement learning and the EM algorithm, seeDayan and Hinton (1997).and BCD; in fact,Neal and Hinton (1999)show that the EM algorithm can be viewed as a generalized BCD searching in the functional space of probability distribution functions rather than in the space of real numbers.
+(ii) BCD methods are used for maximizing deterministic objective functions, but the MMCC algorithm is used for maximizing the expectation of a random utility function (i.e., (7)), which generally cannot be evaluated analytically. That is why we have to employ simulation and stochastic optimization to implement the MMCC algorithm (see Section4).
+(iii) The MMCC algorithm is more flexible in the optimization requirement.
+Unlike the BCD algorithms, the MMCC algorithm does not update the control parameter based on the gradient of the objective function, mainly because in the problems solvable by the MMCC algorithm typically neither the objective function (i.e., (7)) nor the gradient of the objective function can be evaluated analytically.
+(iv) The convergence of the MMCC algorithm holds under weaker conditions. Indeed, the convergence of the BCD algorithms is obtained based on various assumptions on the objective function such as that the objective function is convex or is the sum of a smooth function and a convex separable function or satisfies certain separability and regularity conditions;666See, e.g.,Luo and Tseng (1992),Bertsekas (2016, Chap. 3.7),Tseung (2001)andWright (2015).In contrast, the proof of convergence of the MMCC algorithm is similar to that of the EM algorithm, as inWu (1983), which does not need such assumptions on the objective function. See Section3for details.
+(v) Unlike some BCD algorithms, the MMCC algorithm
+does not require updating the control parameter to be the exact minimizer of the subproblem ((12) or (14)).
+(vi) The setting of the MMCC algorithm is quite different from BCD. Indeed, the MMCC is implemented via deep neural network representation of policy functions, and the parameters can be updated using stochastic gradient descent.
+
+SECTION: 3Convergence Analysis
+
+The convergence properties of the MMCC algorithm are similar to those of the EM algorithm.
+First, the MMCC algorithm has monotonicity in each iteration. Second, under mild assumptions, the sequence of objective function values generated by the iteration of the MMCC algorithm converges to a stationary value (i.e., objective function value evaluated at a stationary point) or a local maximum value. Third, the sequence of control parameters generated by the iteration of the MMCC algorithm converges to a stationary point or a local maximum point under some additional regularity conditions.
+
+SECTION: 3.1Monotonicity
+
+The objective functiondefined in (7) monotonically increases in each iteration of the MMCC algorithm, i.e. for each,
+
+See AppendixB.1.
+∎
+
+SECTION: 3.2Convergence of the Value Function to a Stationary Value or a Local Maximum Value
+
+Letbe the sequence of control parameters generated by the MMCC algorithm. In this subsection, we consider the issue of the convergence ofto a stationary value or a local maximum value. We make the following mild assumptions on the objective functiondefined in (7):
+
+The assumption (17) is needed to define stationary points of.
+
+Suppose the objective functionsatisfies (16) and (17). Then,
+
+By (15) and (18),converges monotonically to some. However, it is not guaranteed thatis a local maximum
+ofon. Indeed, if the objective functionhas several local maxima and stationary points, which type of points the sequence generated by the MMCC algorithm converges to depends on the choice of the starting point; this is also true in the case of the EM algorithm.
+
+A mapfrom points ofto subsets ofis called a point-to-set map on(Wu (1983)). Letbe the point-to-set map of the MMCC algorithm defined in (8). Define
+
+(Convergence of the value function).
+Suppose the objective functionsatisfies conditions (16) and (17). Letbe the sequence generated byin the MMCC algorithm.
+
+(1) Suppose that
+
+Then, all the limit points ofare stationary points (resp. local maxima) of, andconverges monotonically tofor some(resp.).
+
+(2) Suppose that at each iterationin the MMCC algorithm and for all,andare the optimal solutions to the problems
+(12) and (14) respectively. Then, all the limit points ofare stationary points ofandconverges monotonically tofor some.
+
+See AppendixB.2.
+∎
+
+SECTION: 3.3Convergence of the Control Policy to a Stationary Point or a Local Maximum Point
+
+Letandbe defined in (19) and (20) respectively. Under the conditions of Theorem3.2,and all the limit points ofare in(resp.). This does not imply the convergence ofto a point.
+However, the following theorem provides sufficient conditions under which.
+
+(Convergence of the control policy).
+Letbe an instance of an MMCC algorithm satisfying the conditions of Theorem3.2, and letbe the limit of.
+
+(1) If(resp.), thenas.
+
+(2) Ifas, then, all the limit points ofare in a connected and compact subset of(resp.).
+In particular, if(resp.) is discrete, i.e., its only connected components are singletons, thenconverges to somein(resp.).
+
+See AppendixB.3.
+∎
+
+SECTION: 4An Implementation of the MMCC Algorithm
+
+SECTION: 4.1Implementing the MMCC Algorithm by Simulation
+
+In the MMCC algorithm, we need to find a suboptimal (optimal) solution to the problems
+(12) and (14).
+In practice, the expectation in the objective functions of these problems may not be evaluated analytically.
+We propose solving these problems using stochastic gradient descent algorithms such as Adam for deep neural networks. At each iteration of the MMCC algorithm, sample paths are simulated using the current policy, and then a Monte Carlo optimization algorithm is applied to find updates of the control policy at each period to improve the objective function.
+
+More precisely, at the beginning of theth iteration, we first simulatei.i.d. (independently and identically distributed) sample paths of the statesaccording to the control parameter, which are obtained at the end of theth iteration. We denote these sample paths as
+
+Furthermore, we divide thesesample paths intominibatches, each containingsample paths. Let the sample paths in theth minibatch be denoted aswhere.
+
+In step 2(a) of Algorithm1, for theth minibatch, the expectation in the objective function of (12) is equal to
+
+where(see (4)) and
+
+is a simulated sample path that starts fromand then follows the control parameter. For each minibatch, the MMCC algorithm uses
+
+as a realization ofand applies Adam algorithm to update the parameteronce.
+Hence, at each iterationof the MMCC algorithm, in order to update the parameter, we only need to simulatesample paths of the states during periodto period, i.e.,where.
+
+Similarly, in step 2(b) of Algorithm1, for theth minibatch, the expectation in (14) is equal to
+
+wherearei.i.d. sample paths ofthat are simulated starting fromand then following the control parameters. The MMCC algorithm uses
+
+as a realization ofbased on theth minibatch when solving the problem (14).
+
+At each iterationand for each time stepin the algorithm, when the Adam algorithm is used for maximizing (4.1) and (4.1), we update the parameterstimes by usingminibatches of sample. Then, the computational cost of solving the problems
+(12) and (14) are respectivelyand. Hence, the computational cost of each iteration of the MMCC algorithm is.
+
+SECTION: 4.2A Numerical Example: A Forward-Backward Stochastic Differential Equation
+
+There are intrinsic links between recursive utilities and forward-backward stochastic differential equations (FBSDEs); in addition, there are also connections between three mathematical concepts, namely FBSDEs, stochastic control, and semi-linear PDEs. See, e.g.,El Karoui, Peng and Quenez (1997),Shroder and Skiadas (1999),Kharroubi and Pham (2015)andPham (2015).
+
+In this subsection, we shall first
+give a brief and nontechnical outline of the key connections between the
+three, which will be used later when we numerically solve portfolio choice
+for recursive utilities under stochastic volatility. Then we shall give an example where an FBSDE with 100 dimensions can be solved analytically so that we have a benchmark to demonstrate the effectiveness of the MMCC algorithm.
+
+Consider a stochastic control problem
+
+where the dynamics ofandare given by
+
+wheremeans transpose andis a-dimensional Brownian
+motion. Note that this is a non-standard control problem, as the initial
+valueis also a control variable. It can be shown that under mild
+conditions, the value of the control problem is zero; in fact, this control
+has a natural interpretation in option pricing,is the initial option
+price and theis the hedging strategy. Under mild conditions, the solution is given by
+
+The optimal control () in (26) is
+linked to a semi-linear PDE
+
+with the terminal conditionvia
+
+where,, andmeans the trace, Hessian
+matrix, and gradient operator, respectively. The optimal objective function value is 0.
+
+We discretizeinto. The discretized control problem is
+
+subject to the dynamics
+
+whereapproximates;is a neural network approximation to the gradient function, andis the parameter of the network.
+
+Now take a special case in the above definition withwhereis the identity matrix,whereis a-dimensional vector with all entries equal to 0, thenin (28).
+With a particular choice,
+(29) reduces to
+
+The stochastic control in (26) now becomes
+
+In particular, the Itô’s formula implies that the solution of the
+semi-linear PDE is given by
+
+and the optimalis
+
+seeChassagneux and Richou (2016)andE, Han and Jentzen (2017)for details.
+
+In the numerical examples, we choose,,,, and. We discretize the time intervalintoequal subintervals with ending points denoted as. The control policy at timein the discretized problem is. For each, we use a feed-forward neural network with parameterto approximate the control policy function. The neural network has six layers, where the input and output layers have 100 neurons and each of the four hidden layers has 110, 120, 120, and 110 neurons respectively. The nonlinear activation function of each layer is the rectified linear function. The minibatch size used in optimizing the neural network parameters is 64.
+
+Figure1shows the objective function values of the MMCC algorithm defined in (26). The MMCC algorithm converges after 3 iterations. It usessample paths in the simulation anditerations in the Adam algorithm. The initial learning rate of the Adam algorithm is set to be 0.01. It takes about 1.5 hours for each iteration under a Python implementation of the MMCC algorithm based on TensorFlow. The optimal objective value obtained by the MMCC algorithm is 0.0229 (with a standard error of 0.0313). The standard error is equal to the sample standard deviation of thesamples of the objective function in (26) divided by. The theoretical optimal objective function value is 0. Figure2shows the value ofin the control problem (30) of the MMCC algorithm. The optimal valueobtained by the MMCC algorithm is. The theoretically optimal valueis 4.5901.
+
+SECTION: 5Application 1: Recursive Utility with Stochastic Volatility
+
+In this section, we consider maximizing the recursive utility inEpstein and Zin (1989)under
+stochastic volatility models. Consider a market with two assets, a money
+market accountwith a fixed risk-free rate,
+
+and a stockwith a stochastic volatility modeled by
+
+whereandare two independent standard Brownian motions.
+In the Heston model(Heston,1993),
+
+In the inverse Heston model(Chacko and Viceira,2005),
+
+Supposeis the proportion of the investor’s wealth invested in the stock at time, andis the consumption rate at time. Then, the dynamics of total wealthof the investor are given by
+
+Consider a recursive utilitydefined as
+
+Note that the Epstein-Zin recursive utility is given by, when,,
+
+and when,
+
+Chacko and Viceira (2005)derives an analytical solution for the casefor infinite horizon () under the inverse Heston model.Kraft, Seifried and Steffensen (2013)solves the case
+
+with finiteunder both the Heston model and the inverse Heston model777Some numerical methods based on a fixed point iteration are discussed inKraft, Seifried and Steffensen (2017), though neither the Heston model nor the inverse
+Heston model is covered as their conditions (A1) and (A2) fail to hold..
+
+In this section, we shall solve the problem completely for arbitrary, under both the Heston and inverse Heston model, using the MMCC algorithm
+by using a connection between an FBSDE and a semi-linear PDE associated with
+the recursive utility. Indeed, by the HJB equation, it can be shown (see
+equations (4.3)-(4.5) inKraft, Seifried and Steffensen (2013)) that the value function is given by
+
+and the optimal control policies are given by
+
+Note that whenand, then. Heresolves a semi-linear PDE
+
+with the terminal condition, where
+
+By the connection with FBSDE discussed in Section4.2, we know that we need
+to solve a stochastic control problem
+
+subject to the dynamics
+
+whereis a standard one-dimensional Brownian motion starting from 0.
+Then
+
+We solve Heston’s model forand discretizeinto 120 time periods. In the numerical example, we choose,,,,,,,. The neural network forhas four layers, where the input layer and the output layer have 1 neuron and the two hidden layers have 120 neurons.
+The nonlinear activation function of each layer is the rectified linear function and the minibatch size in the Adam algorithm is 512.
+We usesample paths in the simulation anditerations in the Adam algorithm.
+The MMCC algorithm converged after 8 iterations. It takes 36 minutes for each iteration. Figure3shows the objective function value in the iteration. The optimal objective value obtained by the MMCC algorithm is 2.4145e-6 (with a standard error of 1.4150e-7). The theoretical optimal objective function value is 0.
+Figure4shows the value offorin the iteration. The valueobtained by the MMCC algorithm is. The exact value offoris 5.6150.
+
+SECTION: 6Application 2: Multi-Sector Stochastic Growth
+
+SECTION: 6.1Problem Formulation
+
+Starting fromBrock and Mirman (1972), stochastic growth models play a fundamental role in macroeconomics, especially in
+the models related to real business cycle
+(see e.g.,Kydland and Prescott (1982),Long and Plosser (1983)).
+In the literature, this is typically studied assuming an infinite time horizon with one sector economy,
+under which a stationary solution can be computed. In particular,
+a log-linear linear-quadratic (LQ) approximation (see, e.g.,Christiano (1990)) is used to approximate
+the objective function, which transforms the problem into a well-studied
+linear-quadratic programming problem.
+
+By using the MMCC algorithm, we can solve a more general multi-sector stochastic growth model with a finite time horizon, constant relative risk aversion (CRRA) utility, and general capital depreciation.
+There are significant differences between
+the finite time horizon and infinite time horizon problem.
+
+Consider a multi-sector model withcommodities. The control variables
+are, the labor time input allocated to the production of commodity, and, the quantity of commodityallocated for the
+production of commodity. The objective is
+
+whereis the consumption of theth commodity andis the
+amount of leisure time consumed, subject to the state dynamics
+
+where the strictly positive stochastic noiseis an observable time
+homogeneous Markov process;,, andare given strictly positive constants;.
+
+Whenand,(i.e. all the utility functions are
+logarithm), the model becomes the model inLong and Plosser (1983).
+In this case, the optimal feedback control policies are given by
+
+where
+
+SECTION: 6.2Numerical Results
+
+We will compare the objective function value obtained by the MMCC algorithm with that obtained by the optimal policy for the infinite horizon problem given in (38) and (39). The control policy at periodiswhich has a dimension of,. The state variable at timeiswith dimension. For each, we use a feed-forward neural network with parameterto approximate the control policy function. The neural network has four layers, where the input layer and the output layer haveandneurons, respectively. The two hidden layers haveneurons. The nonlinear activation function of the first two layers is the rectified linear function, and the activation function of the output layer is a linear combination ofsoftmax functions, which is used to impose the constraints in (35) and (36).
+
+As in the numerical example ofLong and Plosser (1983), we chooseandas defined inLong and Plosser (1983). The parameters in the model dynamics are specified as,,,, andis i.i.d. as a standard normal distribution acrossand.
+
+Figure5shows the objective function values of the MMCC algorithm for the case of. The MMCC algorithm converged after 9 iterations. It usessample paths in the simulation anditerations in the Adam algorithm. The initial learning rate of the Adam algorithm is set to be 0.01. The minibatch size used in optimizing the neural network parameters is 64. It takes 4 minutes for each iteration under a Python implementation of the MMCC algorithm based on TensorFlow. The optimal objective value obtained by the MMCC algorithm is(with a standard error of 0.024). The standard error is equal to the sample standard deviation of thesamples of the objective function in (34) divided by. The objective function value obtained by the optimal solution for the infinite horizon problem is.
+
+Figure6shows the objective function values of the MMCC algorithm for the case of.
+The MMCC algorithm converged after 9 iterations. It takes 18 minutes for each iteration. The optimal objective value obtained by the MMCC algorithm is(with a standard error of 0.045), while the objective value obtained by the optimal solution for the infinite horizon problem is.
+
+Figure7shows the objective function values of the MMCC algorithm for the case of.
+The MMCC algorithm converged after 3 iterations. It takes 78 minutes for each iteration. The optimal objective value obtained by the MMCC algorithm is(with a standard error of 0.029), while the objective value obtained by the optimal solution for the infinite horizon problem is.
+
+SECTION: 7Application 3: Social Cost of Carbon
+
+Cai and Lontzek (2019)develop a framework of dynamic stochastic integration of climate and economy (DSICE) and show that the uncertainty about future economic and climate conditions substantially affects the choice of policies for managing the interaction between climate and economy. The DSICE model generalizes the commonly used dynamic integrated model of climate and the economy (DICE) model(Nordhaus,2008)by allowing for economic risks and climate risks.
+
+SECTION: 7.1Problem Formulation
+
+The DSICE model consists of the climate model and the economic model. The climate model has three parts: the carbon system, the temperature system, and other climate conditions called tipping elements.
+
+There are two sources for carbon emissions at each time: an industrial source,, related to economic production activities, and
+an exogenous source,, arising from biological processes on the ground. The total emission at timeis The carbon concentration in the world at timeis,
+where the three components represent respectively the mass of carbon in the atmosphere, upper levels of the ocean, and lower levels of the ocean.
+
+The impact of carbon emissions on carbon concentration is represented by the linear dynamical system
+
+whereis the rate at which carbon diffuses from levelto level, whererepresent the atmosphere, upper ocean, and lower ocean, respectively.
+
+The temperature system at timeconsists of the temperatures of atmosphereand the ocean, i.e.,The temperature system is governed by the diffusion of heat and evolves according to
+
+whereare the heat diffusion rates;represents coefficients of heating due to radioactive forcing;is the rate of cooling arising from infrared radiation to space. The
+total radioactive forcing at timeis
+
+whereis the pre-industrial atmospheric carbon concentration,is the radioactive forcing parameter, andis an exogenous process given by
+
+Tipping staterepresents some irreversible change in the climate system and is modeled by a discrete state Markov chain whose transition probabilities depend on the vector of climate states. Specifically,stays at its initial value 0 until the tipping event is triggered, and thenenters one of three discrete-state Markov chainswith equal probability.
+The transition process is represented as
+
+whereis one serially independent stochastic process.
+
+In the absence of climate damage, the gross world production is the Cobb-Douglas production function
+
+whereis the world capital stock at time;is the world population in millions at time;(Nordhaus,2008);is productivity at time, decomposed into the product of a deterministic trendand a stochastic productivity state.
+The DSICE model specifies a time-dependent, finite-state Markov chain forwith parameter values implying conditional and unconditional moments of consumption processes observed in market data. The Markov transition processes are denoted
+
+where, andare two serially independent stochastic processes.
+
+In the DSICE model, the output
+is affected by the climate through the temperatureand the tipping state. More precisely, the output under the impact of climate is assumed to be
+
+in whichis the impact of tipping stateon productivity.
+
+The social planner can mitigate emissions by choosing a mitigation factor,. Then, the industrial carbon emission at yearequals
+
+FollowingNordhaus (2008), the cost of mitigation levelis

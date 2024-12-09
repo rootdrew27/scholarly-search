@@ -1,0 +1,143 @@
+SECTION: TransAdapter: Vision Transformer for Feature-Centric Unsupervised Domain Adaptation
+
+Unsupervised Domain Adaptation (UDA) aims to utilize labeled data from a source domain to solve tasks in an unlabeled target domain, often hindered by significant domain gaps. Traditional CNN-based methods struggle to fully capture complex domain relationships, motivating the shift to vision transformers like the Swin Transformer, which excel in modeling both local and global dependencies. In this work, we propose a novel UDA approach leveraging the Swin Transformer with three key modules. A Graph Domain Discriminator enhances domain alignment by capturing inter-pixel correlations through graph convolutions and entropy-based attention differentiation. An Adaptive Double Attention module combines Windows and Shifted Windows attention with dynamic reweighting to align long-range and local features effectively. Finally, a Cross-Feature Transform modifies Swin Transformer blocks to improve generalization across domains. Extensive benchmarks confirm the state-of-the-art performance of our versatile method, which requires no task-specific alignment modules, establishing its adaptability to diverse applications. our code available atenesdoruk/TransAdapter.
+
+KeywordsDomain AdaptationUnsupervised learningTransformer
+
+SECTION: 1Introduction
+
+Deep neural networks (DNNs) have significantly advanced computer vision, excelling in diverse tasks[Wang et al.(2022b),Qian et al.(2021),Jiang et al.(2022),Tan et al.(2019),Chen et al.(2021),Jiang et al.(2021)]. However, their dependence on large labeled datasets imposes high costs and time constraints[Csurka(2017),Zhao et al.(2020),Zhang et al.(2020),Oza et al.(2021)]. Unsupervised Domain Adaptation (UDA) addresses this challenge by enabling knowledge transfer from labeled source domains to unlabeled target domains, tackling domain shifts[Bousmalis et al.(2017),Kuroki et al.(2019),Wilson & Cook(2020)Wilson and Cook,VS et al.(2021)].
+
+Traditional UDA methods, relying on Convolutional Neural Networks (CNNs), learn domain-invariant features to reduce domain discrepancies through adversarial training and feature normalization[Kang et al.(2019),Zhang et al.(2019),Jiang et al.(2020),Li et al.(2021)]. However, CNNs struggle with complex domain shifts and long-range dependencies, limiting cross-domain generalization[Morerio et al.(2020),Jiang et al.(2020)].
+
+Transformers, widely adopted in NLP[Vaswani et al.(2017),Devlin et al.(2018)]and computer vision[Dosovitskiy et al.(2020),Han et al.(2020),He et al.(2021),Khan et al.(2021)], offer revolutionary feature learning capabilities. The Swin Transformer[Liu et al.(2021b)], known for its hierarchical structure and shift-window mechanism, achieves success but struggles with long-range dependencies due to its localized attention. This limitation, critical for UDA, along with its reliance on large-scale pretraining and fixed partitioning, hampers generalization to domain-specific nuances and significant shifts.
+
+To overcome these limitations, this work introduces TransAdapter, a novel framework for UDA that enhances the Swin Transformer by integrating three innovative modules: Graph Domain Discriminator, Adaptive Double Attention module, and Cross Feature Transform module. These modules address traditional limitations by improving feature alignment and enhancing generalization across domains.
+
+Contributions of this paper are summarized as follows:
+
+Our Graph Domain Discriminator: Unlike CNNs, which focus on local spatial correlations, this discriminator uses a Graph Convolutional Network (GCN) to model non-Euclidean relationships between features. By employing an adjacency matrix based on cosine similarity, it captures both shallow and deep feature dependencies in a scale-invariant manner. This enables holistic domain alignment at individual feature and relational levels, improving feature transferability across domains.
+
+The Adaptive Double Attention module simultaneously processes window and shifted window attention features, effectively capturing long-range dependencies crucial for robust domain adaptation. An attention reweighting mechanism emphasizes significant features, while an entropy matrix generated using Graph Domain Discriminator features guides domain alignment. This matrix highlights domain-invariant patterns, enhancing feature transferability.
+
+The Cross-Feature Transform module applies dynamic, bidirectional feature transformations between source and target domains using gating attention. By balancing directional contributions through cross-attention and gating mechanisms, it bridges domain gaps effectively. Pairwise feature distances combined with gating outputs ensure adaptive feature alignment and improved generalization across datasets.
+
+We utilize CutMix and MixUp as pixelwise feature transform strategies on source data, guided by high-confidence pseudo-labels generated from a Swin-Base model.
+
+Integrating these modules within the Swin Transformer, TransAdapter effectively addresses UDA challenges by leveraging transformers to handle domain shifts, long-range dependencies, and domain-specific nuances, setting a new standard for domain adaptation in vision tasks.
+
+SECTION: 2Related Work
+
+SECTION: 2.1Unsupervised Domain Adaptation (UDA) and Transfer Learning
+
+Unsupervised Domain Adaptation (UDA) within transfer learning focuses on learning transferable knowledge that generalizes across domains with varying data distributions. The primary challenge is addressing domain shift—the discrepancy in probability distributions between source and target domains. Early UDA methods, such as Deep Domain Confusion (DDC), minimized the maximum mean discrepancy (MMD) to learn domain-invariant characteristics[Tzeng et al.(2014a)Tzeng, Hoffman, Saenko, and Darrell]. Long et al.[Long et al.(2015b)Long, Cao, Wang, and Jordan]enhanced this by embedding hidden representations in a reproducing kernel Hilbert space (RKHS) and applying a multiple-kernel variant of MMD for more effective domain distance measurement. Hidden representations refer to the activations within layers of a neural network, capturing hierarchical features of input data.Long et al.[Long et al.(2017)Long, Zhu, Wang, and Jordan]later aligned the joint distributions of multiple domain-specific layers across domains using a joint maximum mean discrepancy (JMMD) metric. Adversarial learning methods, inspired by GANs, also gained popularity.
+
+SECTION: 2.2UDA with Vision Transformers
+
+Herath et al.[Herath et al.(2023)Herath, Wang, and Huang]proposed an energy-based self-training and normalization approach for UDA, leveraging energy-based learning to improve instance selection on unlabeled target domains. Their method aligns and normalizes energy scores to learn domain-invariant representations, achieving superior performance on benchmarks like DomainNet, Office-Home, and VISDA2017. Sanyal et al.[Sanyal et al.(2023)Sanyal, Gupta, and Roy]introduced Domain-Specificity Inducing Transformers for Source-Free Domain Adaptation, using vision transformers in privacy-oriented source-free settings. Their approach, leveraging Domain-Representative Inputs and novel domain tokens, achieves state-of-the-art performance across single-source, multi-source, and multi-target benchmarks. Alijani et al.[Alijani et al.(2024)Alijani, Zhou, and Wang]categorized vision transformers’ role in domain adaptation and generalization into feature-level, instance-level, model-level, and hybrid adaptations, highlighting their robustness to distribution shifts. Du et al.[Du et al.(2024)Du, Li, and Zhao]introduced Domain-Agnostic Mutual Prompting for UDA, leveraging pre-trained vision-language models to address limitations of traditional UDA methods by utilizing rich semantic knowledge and handling complex domain shifts effectively. These studies highlight the growing importance of vision transformers in UDA, offering innovative solutions for domain shifts and enhancing generalization across domains.
+
+SECTION: 3Method
+
+Before demonstrating how our method reduces the domain gap in domain-adaptive vision transformer, we first outline the problem formulation. Letrepresent a set oflabeled samples in the source domain, whereare the input samples andare their corresponding class labels. In the target domain, we have, consisting ofunlabeled samples,, with no labels. The objective in this unsupervised domain adaptation task is to develop a classifier that generalizes across domains using bothand.
+
+SECTION: 3.1Adaptive Double Attention
+
+The Adaptive Double Attention (ADA) module, shown in Figure2, introduces an entropy-guided mechanism to address domain alignment challenges in unsupervised domain adaptation (UDA), particularly for long-range dependencies. While existing architectures, such as vanilla ViTs and Swin Transformers, model local and global dependencies, they lack effective mechanisms for domain alignment. ADA resolves this by integrating feature correction, double attention mechanisms, and entropy-guided reweighting, dynamically aligning source and target domain representations.
+
+A key feature of ADA is entropy-guided reweighting, integrated directly into the attention process. The entropy, calculated from outputs of a graph domain discriminator, prioritizes transferable features while suppressing domain-specific ones:
+
+The graph domain discriminator processes key and shifted key features, generating outputsand. Lower entropy indicates better alignment, while higher entropy signals domain-specific noise. Entropy values dynamically reweight the attention scores:
+
+The reweighted scores are concatenated, normalized with the softmax function, and combined with the value vectors:
+
+To further minimize domain discrepancies, ADA employs a feature correction step before attention. Inspired by prior work, this correction block modifies target features by incorporating a correction term, implemented using two fully connected layers with ReLU activations. This ensures harmonized inputs for attention mechanisms. Window attention captures fine-grained spatial details within local regions, while shifted window attention models global dependencies. ADA integrates these mechanisms through cross-attention, where queries from window attention interact with keys from shifted attention, unifying local and global dependencies.
+
+The final output of the adaptive attention mechanism,, is computed as follows:
+
+Here,is the input to the transformer block,is the adaptive attention output, andis the final block output. Residual connections and layer normalization stabilize learning and ensure efficient gradient flow.
+
+By combining entropy-guided reweighting with dual attention mechanisms, the ADA module prioritizes transferable features, aligning long-range dependencies effectively. This robust approach addresses the limitations of existing architectures like Swin Transformers, enhancing domain alignment and improving generalization across diverse domains.
+
+SECTION: 3.2Graph Domain Discriminator
+
+Graph convolutions in the domain discriminator explicitly model inter-sample relationships, critical for domain alignment. Unlike methods like DANN[Ganin & Lempitsky(2015)Ganin and Lempitsky], which process samples independently, graph convolutions operate on an adjacency matrix encoding pairwise relationships between source and target samples. This allows theGraph Domain Discriminator (GDD)to leverage global and local topological dependencies, enabling a nuanced understanding of domain shifts.
+
+The adjacency matrix, central to GDD, is constructed using cosine similarities between learnable projections of sample features:
+
+whereandare the projected features of samplesand. This matrix enables GDD to capture inter-sample dependencies across domains, which are essential for modeling domain shifts that often involve subtle feature variations. By propagating relational information across samples, the adjacency matrix allows GDD to consider both individual domain-specific characteristics and structural interactions, fostering a more comprehensive domain alignment.
+
+The GDD employs three graph convolutional layers with ReLU activation to aggregate information from sample neighbors, enriching domain-shared feature representations. A pooling operation after the first layer reduces dimensionality while emphasizing salient features. By leveraging local features from the-th transformer block and global features from the-th block, GDD achieves hierarchical alignment of domain representations.
+
+To promote domain invariance, a Gradient Reversal Layer (GRL) is incorporated after the graph convolutional layers, facilitating a min-max optimization process. This setup enables the domain discriminator to minimize domain-specific biases while guiding the feature extractor to generate domain-invariant features. By simultaneously modeling global feature distributions and fine-grained inter-domain relationships, GDD achieves robust domain alignment, improving the adaptability of the shared feature space.
+
+SECTION: 3.3Cross Feature Transform
+
+The proposed Cross Feature Transform (CFT) module enhances domain adaptation within the Transformer architecture by facilitating effective feature alignment between source and target domains. Unlike static methods, the CFT module is applied dynamically after a randomly selected transformer block in each iteration, providing a robust feature transformation approach and reducing the likelihood of overfitting[Sun et al.(2022)Sun, Lu, Zhang, and Ling]. The general architecture of the CFT module is illustrated in Figure4.
+
+Central to the CFT module are bidirectional cross-attention mechanisms, which optimize feature transferability between domains, enabling implicit mixing of features. This enhances the model’s ability to learn domain-invariant representations, thereby improving generalization to the target domain[Wang et al.(2022a)Wang, Guo, and Zhang]. The computation of source-to-target attention featuresand target-to-source attention featuresis performed as follows:
+
+To refine feature alignment, the CFT module incorporates a gating mechanism using a learnable parameter, balancing contributions from both directions:
+
+whereis the sigmoid function. This adaptive formulation allows prioritization of source-to-target or target-to-source transformations based on data context.
+
+The pairwise distance between features is computed and combined with the gating attention output:
+
+Here,represents the pairwise distance,the gating attention output, andis the target feature added as a shortcut.
+
+SECTION: 3.4Pixel-Wise Feature Transform with Pseudo Labeling
+
+We employ CutMix[Yun et al.(2019)Yun, Han, Oh, Chun, Choe, and Yoo]and MixUp[Zhang(2017)]as pixel-wise transformation strategies on raw images to improve feature transferability between domains. Although these methods generally necessitate labeled data, our unsupervised domain adaptation task operates without ground truth labels in the target domain. To tackle this issue, we generate pseudo-labels for the target data using a Swin-Base model trained on the source domain. To reduce noise in these pseudo-labels, we implement a confidence threshold based on the model’s accuracy, retaining only predictions that exceed this threshold for the transformation operations. These transformation are applied solely to the source data, as our network incorporates a Cross Feature Transform (CFT) module that enhances feature transferability between domains, thus diminishing the necessity for direct transformation on the target data. The pixel-wise CutMix and MixUp operations, guided by high-confidence pseudo-labels, are shown in Figure1.
+
+SECTION: 4Experiments
+
+SECTION: 4.1Datasets
+
+TheOffice-31dataset[Saenko et al.(2010)Saenko, Kulis, Fritz, and Darrell]contains 4,652 images across 31 categories from three domains: Amazon (A), DSLR (D), and Webcam (W). Images were sourced from Amazon.com or captured in office settings using a DSLR or webcam.
+
+TheOffice-Homedataset[Venkateswara et al.(2017)Venkateswara, Eusebio, Chakraborty, and Panchanathan]includes four domains: Artistic (Ar), Clip Art (Cl), Product (Pr), and Real-World (Rw), with 65 categories per domain, offering diverse evaluation scenarios.
+
+TheVisDA-2017dataset[Peng et al.(2017)Peng, Usman, Kaushik, Hoffman, Wang, and Saenko], designed for synthesis-to-real tasks, includes 12 categories. The source domain contains 152,397 synthetic renderings, while the target domain has 55,388 real-world images.
+
+TheDomainNetdataset[Peng et al.(2019)Peng, Bai, Xia, Huang, Saenko, and Wang], the largest UDA benchmark, comprises approximately 0.6 million images from six domains: Clipart (Clp), Infograph (Inf), Painting (Pnt), Quickdraw (Qdr), Real (Rel), and Sketch (Skt), covering 345 categories for challenging multi-source and single-source adaptation tasks.
+
+SECTION: 4.2Implementation Details
+
+For all domain adaptation (DA) tasks, we utilize the Swin model, pretrained on the ImageNet dataset[Deng et al.(2009)Deng, Dong, Socher, Li, Li, and Fei-Fei], as the backbone network in our proposed TransAdapter framework. Additionally, we construct two model variants:TransAdapter-SandTransAdapter-B, derived respectively from Swin-S and Swin-B backbones, integrating 12 dual transformer blocks from their corresponding Swin architectures within the TransAdapter framework. The models are optimized using the Stochastic Gradient Descent (SGD) algorithm[Bottou(2010)], with a momentum of 0.9 and a weight decay parameter of. We employ a base learning rate offor the Office-31 and Office-Home datasets, while a lower learning rate ofis applied for the VisDA-2017 dataset. The learning rate follows a warmup cosine scheduler, gradually increasing during the initial training phase and subsequently decaying throughout the remaining iterations. Across all datasets, the batch size is consistently set to 32, and the models are trained overiterations. The hyperparametersandin the TransAdapter method are set toand, respectively, for all DA tasks, as shown in Equation11.
+
+SECTION: 4.3Objective Function
+
+The domain adaptive model optimizes a combined objective function comprising cross-entropy loss for classification, local adaptation loss (strong alignment), and global adaptation loss (weak alignment). The classification loss for the labeled source domain is:
+
+wheredenotes last transformer block output,is the ground truth for the source domain, andCErepresents cross-entropy loss.
+
+For adaptation, local and global losses are computed as averages over source and target domains:
+
+whereand.denotes the output of the second transformer block for local alignment and the output of the last transformer block for global alignment.represents the focal loss function designed to address class imbalance.
+
+The total loss is:
+
+whereandare weighting coefficients.
+
+SECTION: 4.4Ablation Study
+
+Table3presents the ablation study results, demonstrating the impact of each proposed module in our model. Adding the Graph Domain Discriminator (GDA) improves domain alignment by modeling complex feature relationships, resulting in a performance boost across all datasets, with notable gains on VisDA-2017 () and DomainNet (). Introducing Pixelwise Transform further enhances performance by leveraging high-confidence pseudo-labels for effective feature augmentation, yielding an additional improvement oftoacross datasets. The Cross-Feature Transform (CFT) module significantly bridges domain gaps through dynamic, bidirectional feature transformations, leading to remarkable gains, particularly on VisDA-2017 () and DomainNet ().
+
+CNN vs GCN Based Discriminator.The results in Table3demonstrate the advantage of GDA, which employs a Graph Convolutional Network (GCN) to model complex, non-Euclidean relationships using an adjacency matrix based on cosine similarity. Unlike CNNs, which focus on local spatial dependencies, GDA captures global context and non-local feature correlations for comprehensive domain alignment. This approach achieves notable improvements on challenging datasets like VisDA-2017 (+3.6%) and DomainNet (+3.4%), highlighting GDA’s effectiveness in addressing significant domain shifts in diverse and complex scenarios.
+
+Visualization.Figure5shows t-SNE visualizations of domain discrepancies using final transformer block features from TransAdapter-B. Adding the GDD on Swin-Base model reduces gaps by modeling complex feature relationships, while Pixelwise Transform enhances alignment through pseudo-label-guided augmentation. The CFT dynamically bridges domain gaps, resulting in more cohesive feature distributions. The complete TransAdapter-B after adding ADA achieves the most compact and well-aligned clusters, effectively minimizing domain discrepancies.
+
+SECTION: 4.5External Comparison
+
+VisDA-2017.Table4summarizes the performance of methods on the VisDA-2017 dataset across ResNet, DeiT, Swin, and ViT backbones. TransAdapter demonstrates competitive results, often outperforming state-of-the-art methods. With the Swin-S backbone, TransAdapter-S achieves 87.1%, surpassing Swin-S (70.8%) and Swin-B (73.9%) while approaching BCAT-B (89.2%). With Swin-B, TransAdapter-B achieves 91.2%, outperforming BCAT-B (89.2%) and PMTrans-B (88.0%). TransAdapter-B also achieves leading accuracy in categories such as bicycle (94.1%), house (98.9%), motorcycle (98.1%), person (87.1%), plant (96.8%), and truck (67.6%).
+
+Office-Home.Table1highlights TransAdapter’s state-of-the-art performance on the Office-Home dataset. With the Swin-S backbone, TransAdapter-S achieves 86.3%, significantly outperforming Swin-S (76.1%) and approaching BCAT (86.6%). With Swin-B, TransAdapter-B achieves 89.4%, surpassing BCAT (86.6%) and PMTrans-B (89.0%), while leading in categories such as "AC" (93.5%), "PC" (94.3%), "AP" (91.3%), "RR" (92.8%), and "CR" (81.1%).
+
+Office-31.Table5presents the results on the Office-31 dataset. With the Swin-S backbone, TransAdapter-S achieves 90.2%, significantly surpassing Swin-S (86.1%) and achieving competitive performance against CDTrans-S (90.4%). With Swin-B, TransAdapter-B achieves a state-of-the-art average accuracy of 95.5%, outperforming BCAT-B (95.0%) and PMTrans-B (95.3%). It secures the highest accuracy in tasks such as(99.9%),(88.3%), and(87.2%), while achieving 100% accuracy in several tasks, demonstrating its adaptability and robustness.
+
+DomainNet.Table2compares TransAdapter with state-of-the-art methods on the DomainNet dataset across six domains: clipart (clp), infograph (inf), painting (pnt), quickdraw (qdr), real (rel), and sketch (skt). TransAdapter achieves the highest average accuracy of 53.7%, significantly surpassing CDTrans (45.2%) and SSRT (45.2%). It excels in challenging domain pairs, such as(63.9%),(62.5%), and(42.2%), and achieves leading results in individual domains such as clipart (55.8%) and real (54.4%). These results demonstrate TransAdapter’s ability to handle diverse domain shifts, establishing it as a state-of-the-art UDA solution.
+
+SECTION: 5Conclusion
+
+In this paper, we introduce TransAdapter, a novel framework that leverages the Swin Transformer for Unsupervised Domain Adaptation (UDA). Our approach features three specialized modules: a graph domain discriminator, adaptive double attention, and cross-feature transform, which enhance the Swin Transformer’s ability to capture both shallow and deep features while improving long-range dependency modeling. Experimental results on standard UDA benchmarks show that TransAdapter significantly outperforms existing methods and demonstrates robustness against domain shifts. However, the combined use of window and shifted window attention may increase computational complexity, and our current implementation lacks task-specific adaptation mechanisms for detection and segmentation. Future work will focus on extending the model for these applications and exploring ways to reduce computational complexity while maintaining long-range dependency modeling.
+
+SECTION: References

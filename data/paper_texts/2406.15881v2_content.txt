@@ -1,0 +1,698 @@
+SECTION: Fast Tree-Field Integrators: From Low Displacement Rank to Topological Transformers
+
+We present a new class of fast polylog-linear algorithms based on the theory of structured matrices (in particularlow displacement rank) for integrating tensor fields defined on weighted trees. Several applications of the resultingfast tree-field integrators(FTFIs) are presented, including (a) approximation of graph metrics with tree metrics, (b) graph classification, (c) modeling on meshes, and finally (d)Topological Transformers(TTs)(Choromanski et al.,2022)for images. For Topological Transformers, we propose new relative position encoding (RPE) masking mechanisms with as few asthreeextra learnable parameters per Transformer layer, leading to1.0-1.5%+accuracy gains. Importantly, most of FTFIs areexactmethods, thus numerically equivalent to their brute-force counterparts. When applied to graphs with thousands of nodes, those exact algorithms provide5.7-13xspeedups. We also provide an extensive theoretical analysis of our methods.
+
+SECTION: 1Introduction
+
+Matrix-vector multiplication remains a key computational block of virtually all modern machine learning (ML) algorithms.
+For this reason, decades of research have been dedicated towards making this fundamental operation more efficient.
+One approach to achieve this goal is through efficient hardware design, e.g., using modern GPU and TPU accelerators(Abadi et al.,2016; Yu et al.,2022,2020).
+The alternative method involves developing algorithms for efficient matrix-vector multiplication by leveraging either (1) sparse matrices(Wang,2021; Beniamini et al.,2020), or (2) structured dense matrices(Thomas et al.,2018; Chandrasekaran et al.,2018).
+These algorithms can be applied in modern neural network systems, where weights are pruned to encourage sparsity(Blalock et al.,2020)or they can be parameterized with structured matrices(Sindhwani et al.,2015).
+
+In this work, we aim to accelerate multiplications with a
+large class of matrices, that we refer to as-distance matrices, which play an important role in several ML algorithms.
+Consider a matrix, wherestands for the shortest-path distance between the-th and-th vertex of an undirected graph.
+Herestands for the set of vertices (nodes),denotes the set of edges,maps them to their positive weights,
+and.
+We calla-distance matrix in. Note that if, thenis the Shortest Path Kernel matrix.
+
+The product(where) represents a scalar field onobtained by discretely integrating the field defined by. In this integration, a new field value at a vertexis calculated by averaging the old field values at all vertices, weighted according to the function. This integration can be extended to general tensor fields by replacing vectorwith a tensor:
+
+We refer to the above procedure as the-integration of a fieldon. We will use the termsgraph field integration(GFI) andmultiplication with-distance matricesinterchangeably throughout the paper. When the graph,, is a tree, we call this procedure (Eq.1)tree field integration.
+Next, we highlight several applications that rely on multiplications with-distance matrices,.
+
+Interpolation on manifolds:This task involves predicting unseen values on a manifold from a set of known values. For example, predicting the velocities of all points on a flag with known velocities for a few points(Pfaff et al.,2021). For a discretized manifold, the interpolated values can be obtained using a weighted average using graph field integration (Eq.1).
+
+Optimal Transport (OT):A popular method used to solve the entropic OT problem(Peyré and Cuturi,2019)is the Sinkhorn algorithm(Eckstein and Nutz,2022). Sinkhorn relies on multiplications withcost matrices, which are special cases of-distance matrices for metric spaces induced by shortest-path distances in graphs. This can be efficiently solved using graph field integration.
+
+Topological Transformers (TTs):Topological Transformers(Choromanski et al.,2022)are extensions of traditional Transformers(Vaswani et al.,2017)for graph inputs. TTs modify the 1-D relative positional encoding (RPE) using “mask matrices", which are-distance matrices. We show how these matrices can be efficiently integrated into the attention mechanism (Sec.4.4).
+
+In the above applications, apart from the graph field integration step, the bottleneck lies in the process of explicitly materializing the-distance matrix. Naively performing the integration in Eq1consists of two steps:(a)computing the-distance matrix,, which requirestime in the worst case (which we callpreprocessing), and(b)performing the multiplication takestime. This is prohibitively expensive while using large graphs.
+
+In this paper, we introduce a new class of fast polylog-linear algorithms for graph field integration that uses low displacement rank (LDR) matrices(Thomas et al.,2018; Chandrasekaran et al.,2018). To summarize, our primary contributions are given below:
+
+We provide the firstexactpolylog-linear multiplication algorithms calledFast Tree-Field Integrators(FTFIs), for general weighted trees and
+a rich class of maps, including rational, trigonometric, exponential and exponentiated quadratic functions (Sec.3.2).
+
+We show how Fast Tree-Field Integrators can be applied to support fast computations on general graphs by approximating graph metrics with tree metrics (Sec.4).
+
+We show that FTFIs are5.7-10xfaster than baseline graph field integration methods for large-scale graphs (Sec.4.1and4.2).
+
+We showcase the efficacy of FTFIs in several applications including graph classification (Sec.4), interpolation on meshes (Sec.4.2), and Topological Vision Transformers (TVTs) (Sec.4.4). For TVTs, we propose new relative position encoding (RPE) masking mechanisms by introducing onlythreeextra learnable parameters, which leads to1.0-1.5%accuracy gains. We provide an exhaustive evaluation on Vision Performers (25models on multiple datasets). Some of our best models use exponentiated quadratic functions, which has not been applied in this context before.
+
+For completeness, we also propose approximate FTFI extensions viaNon-Uniform FFT(NU-FFT)(Kircheis et al.,2023)and random Fourier features (RFFs)(Rahimi and Recht,2007)(Sec.A.2).
+
+SECTION: 2Related work
+
+Efficient graph field integration (Eq.1) has been studied by prior works for different classes of matrices. For example,Al-Mohy and Higham (2011)considered exponentiated adjacency matrix-vector multiplication,Spielman and Teng (2012)targeted symmetric diagonally dominant matrices (e.g., Laplacian),Arrigo et al. (2018)analyzed matrices that are power series of random walk kernels. In contrast to these approaches,Saad and Schultz (1986)proposed general iterative methods for solving certain linear systems using Arnoldi’s iterations. However, These iterative methods can suffer from convergence issues.Williams (2007)showed that it is possible to pre-process any boolean matrix to achieve sub-quadratic matrix-vector multiplication.
+
+The general problem of computing the action of a matrix on a vector, where the matrix is the graph kernel, in sub-quadratic time is intractable, except for a few special cases(Al-Mohy and Higham,2011; Choromanski et al.,2023). In this work, we embed the graphunder consideration in a tree (replacing the graph metric by the underlyingtree metric). Then, we leverage the tree structure to approximate the action of the kernel on a given vector by providingexactintegration on a tree.
+
+Previous works(Bartal et al.,2022,2019; Abraham et al.,2008; Bartal,1998)have used the theory oftree metrics(TMs) in several applications in mathematics and computer science.
+TMs are widely used to embed a complex metric space (e.g., a Riemannian manifold) into a more tractable one, while approximately preserving (all or most of the) pairwise distances. They find applications in distributed & online algorithms(Khan et al.,2008; Bubeck et al.,2018), biology(Mossel,2007), vision, robotics(Athitsos and Sclaroff,2003), and ML (e.g., metric spaces’ regression(Gottlieb et al.,2011)).
+
+Applying tree metrics (TM) to compute approximateis a natural approach to scale up matrix multiplications.
+If a TM approximates the metric space well, then the derived embeddings should have low distortion. However, in the worst-case scenario, this is not true for deterministictree embeddings.
+A natural alternative is to sample trees from probabilistic distributions, which are shown to provide logarithmic distortion in expectation(Fakcharoenphol et al.,2004b; Bartal et al.,2022).
+This can be further improved to constant distortion for certain classes of metrics, e.g., celebratedsnowflake metics(Leeb,2016). For graph metrics defined by shortest-path distances, there exist spanning trees providing constant average distortion (over all pairs of nodes). These spanning trees can be constructed asnear minimum weight spanning trees(Bartal et al.,2016).
+Unfortunately, explicit application ofanytree metric still requirestime (impractical for large) to:(1)compute all shortest-path distances via the breadth-first-search algorithm (BFS), even if sub-quadratic methods were used to construct a tree (e.g. minimum spanning tree),(2)store the matrix, and(3)perform matrix-vector multiplications. We provide more details about work related to graph field integration in AppendixB.
+
+SECTION: 3Fast Tree-Field Integrators (FTFI)
+
+In this section, we present our approach for performing efficient field integration on a tree, which we callfast tree field integrator. We begin by introducing the concept of integrator trees (ITs), which is a specialized decomposition of a tree using the theory ofbalanced separators(Sec3.1). Subsequently, we leverage these integrator trees to execute efficient integration on a tree via adivide-and-conquer algorithm(Sec3.2).
+
+SECTION: 3.1IntegratorTrees (ITs) - preliminaries
+
+To support fast integration for various tensor fieldsdefined on a given input tree, we first design a special data structure that we refer to as anIntegratorTree(IT). An object of this type is constructed only once per, regardless of the number of tensor fields used.
+An IT is a rooted binary tree. To avoid confusion, we will refer to its vertices asnodes, reserving termverticesfor those of. Each node of IT corresponds to the induced sub-treeof. For every non-leaf node corresponding to some, apivotpointalong with two sub-trees:andare constructed. The following needs to be satisfied:
+
+for,
+
+(denotes the number of vertices).
+
+The next lemma shows that every treewithhas the above decomposition and it can be efficiently found.
+
+Ifis a tree with, thenadmits a decomposition
+(given above and it can be constructed inlineartime.
+
+The algorithmic proof is provided in AppendixA.1and uses standard tools from the theory of balanced separators.
+
+Theleft childof the non-leaf node forcorresponds toand theright childto. In addition to these two pointers, a non-leaf node also contains eight extra fields, partitioned into two groups, one corresponding to its left child and one to its right children.
+The fields corresponding to the left child are as follows:
+
+Left-ids:an array of the ids (in) of those vertices that are in, mapping the ids of vertices into the original ids in(each sub-tree uses consecutive numbers fromas ids locally).
+
+Left-d:an array of different shortest-pathdistances from the pivot point to the vertices in.
+
+Left-id-d:an array mapping the ids of vertices (in) to the indices in left-d of their corresponding distances from the pivot point.
+
+Left-s:a corresponding array of the ordered sub-sets of ids (in) of vertices within a particular distance from the pivot point.
+
+Fields corresponding to the right child are defined similarly.
+The leaf nodes of the IT consist only of the-transformed (element-wise) distance matricesfor their corresponding sub-trees (see: Fig1). In principle, the leaf nodes of IT correspond to sub-trees with less thanvertices each. In practice, we choose higher, for more efficient integration (see: discussion in Sec.4.1).
+
+From what we have said so far, it is clear that an IT can be constructed by applyingbreadth first search(BFS) and the linear algorithmic procedure for constructing the decomposition from Lemma3.1. Note that every vertex of the input tree appears in the logarithmic number of nodes in the IT since the size of the sub-tree is at mostthe size of its parent in IT. We conclude that IT for the given input treecan be computed intime, wherestands for the number of verticesof.
+
+SECTION: 3.2Integrating with IntegratorTrees
+
+We are ready to explain how ITs allow us to efficiently integrate any given tensor fielddefined onfor a wide class of function. We will apply adivide-and-conquerstrategy.
+
+We start in the root node of IT. If that node is a leaf then the-transformed distance matrix is stored and can be directly used for matrix-tensor multiplication. If this node is not a leaf, then it encodes the decomposition. Take some. Note that the valueof the new field inafter-integration is given as follows for:
+
+To compute the new values of the field for nodes, one needs to:
+
+Compute the contribution to it from(-terms). This can be done simply by applying Eq.2recursively for, which
+means traversing to the left child of the root.
+
+Add the so-calledcross-termscontributions coming from the vertices of(-terms).
+
+The key observation is that the latter (cross-term) contributions can be retrieved simply by computing, where: (1)withandbeing the sizes of the node’s left-d and right-d arrays respectively., and (2) Letwhererefers to the size of the subset. Thenis defined as follows:
+
+Given the structure of IT, tensorcan be computed in linear time. Note that the following holds:
+
+where.
+Analogous analysis can be derived for, with matrixreplacing.
+Thus the overall time complexity of the cross-terms computations is determined by the algorithm for matrix-tensor multiplications with matricesand.
+
+Matricesare of the form:for some sequences,and.
+
+A functionis-cordial(or:cordialifis not specified), if there existssuch that matrix-vector multiplication with a matrixcan be conducted in timefor every,.
+
+Next, we demonstrate the importance of cordial functions in our FTFI framework.
+
+Ifis-cordial then-integration for the general weighted tree ofvertices can be conducted in time.
+
+Denote bytime complexity for running FTFI on the-vertex tree. We have the following recursive formula for, where:
+
+This is implied by the fact that: (1) the size of each sub-tree is at mostthe size of its parent, (2) the computation across left and right children is dominated by multiplications with matricesand. The solution of this recursion leads to the statement.
+∎
+
+Next, we show some practical implications of Lemma3.3,
+where tree weights arecompletely arbitrary.
+Additional results are given in Sec.A.2.3.
+
+We claim that every rationalis-cordial for any. We will use Lemma 1 from(Cabello,2022)stating that: given any set ofrational functionsand, one can compute thevaluesin time(by applying FFT). For a given vector, it thus suffices to define:and that lemma can be applied to efficiently compute. We conclude that for any,-integration can be conducted intime for-vertex weighted trees and any rational(see also: Sec.4.3, Sec.4.2, Sec.4.4).
+
+The above result on rational functions clearly applies also to polynomial, but here we can do better. We show thatis-cordial. Assume that. We have:, where matrixis defined as an outer-product of two vectors:and. Thus eachsupports linear matrix-vector multiplication (via associativity property). The proof is completed, sinceis a constant. We conclude that-integration can be conducted intime for-vertex weighted trees and any polynomial(see: Fig.2and Fig9).
+
+Take. Thenis an outer-product of two vectors:and. The remaining analysis and conclusion is thus the same as for the polynomial case (see also: Sec.4.4).
+
+(is a constant) We claim thatis-cordial. In that setting, matrixsatisfies:and thus is aCauchy-likeLDR, supporting fastmatrix-vector multiplication(Victor Y. Pan,2000). We conclude that-integration can be conducted intime for-vertex weighted trees and(see: Fig.2).
+
+Now matrixcan be re-written as, whereandare diagonal, with diagonal entries given by sequencesandrespectively, and furthermoreis thegeneralized Vandermonde matrix(GVM) (using arbitrary nonnegative integers as exponents). It is defined as:, whereand. As in the previous case, the embedding trick can be applied, but we will use it only for columns. That effectively leads to the completion of the set of exponentsto the set of consecutive integers starting fromand a regular Vandermonde matrix, that supportsmatrix-vector multiplication, replacing GVM. The benefit of this embedding, as compared to the previous one, is that even though it still increases the number of columns by a multiplicative factor of, the number of rows does not change. Therefore, for, substantial computational speedups are achieved (see: Sec.4.4).
+
+SECTION: 4Experiments
+
+In this section, we outline the experimental setup and report the performance of FTFI across various settings. For all the experiments, we only consider minimum spanning tree (MST) as an approximation of our graph. Specifically, we design experiments to answer these research questions:
+
+How efficient are FTFIs for tree field integration?
+
+How does the approximation quality of FTFI compare to other integration algorithms?
+
+How can we further improve the approximation quality in FTFI?
+
+How can we use FTFI in real-world large-scale settings?
+
+SECTION: 4.1Runtime Efficiency of FTFI
+
+The main goal of this experiment is to evaluate the speedups obtained by FTFI as compared to brute-force tree field integrator (BTFI) i.e. the explicit calculation of Eq1on a tree.
+We consider two classes of graphs:(a)synthetic, obtained from a path-graph by adding random edges and(b)mesh graphsfrom
+Thingi10K(Zhou and Jacobson,2016)dataset. For BTFI, we compute the MST and then integrate a random scalar fieldon the vertices of the MST. Since BTFI & FTFI are numerically equivalent, we report the pre-processing time and integration as a function of vertex count () in Fig.3. We observe that FTFI achieves up to13xspeedups for 20K-vertex meshes and5.7x+ for synthetic graphs with over 10K vertices compared to BTFI.
+
+SECTION: 4.2Approximation Quality of FTFI
+
+We evaluate the approximation quality achieved by FTFI across a wide range of graph-based tasks.
+
+Interpolation on meshes.We compare the efficiency of FTFI with baselines on thenormal vector prediction task.
+Every node of the considered meshwith a vertex-set, is associated with a locationand a vertex normal. For each mesh, we randomly select a subsetwithand mask out their vertex normals (set as zero vectors). The interpolation task involves predicting the vertex normals of each masked nodeas:where, withbeing the shortest path distance between nodeand, andis a rational function.
+We perform a grid search to set hyperparameterfor each mesh and report the result with the highest cosine similarity between predicted and ground truth vertex normals, averaged over all the nodes.
+We run tests on40 meshesof the 3D-printed objects with a wide range of sizes from theThingi10Kdataset (details inSectionD.3).
+We compare FTFI with BTFI, low-distortion tree-based algorithms such as Bartal Trees(Bartal,1996)and FRT trees(Fakcharoenphol et al.,2004a)alongside the state-of-the-art method for graph-field integration, the Separator Factorization (SF) algorithm(Choromanski et al.,2023). We also compare against the baseline BGFI which entails explicitly materializing the kernel matrix ofand then performing matrix tensor multiplication with a tensor fielddefined by the’s.
+
+Preprocessing involves building specific tree structures (FRT, Bartal), calculating the kernel matrices (BGFI, BTFI), or creating specialized data structures (SF, FTFI) for efficient later use. The first two plots in
+Fig.4shows the pre-processing time and cosine similarity for various algorithms applied to meshes of different sizes.
+FTFI is the fastest in terms of pre-processing time and achieves competitive performance in terms of cosine similarity (between predicted and actual vertex normals) when compared with the SF algorithm while being numerically equivalent to BTFI.
+FTFI is a few orders of magnitude faster than BTFI and the tree-based methods while maintaining accuracy.
+
+Graph classification.Graph kernels have been widely used for graph classification tasks in previous works(Kriege et al.,2020; Nikolentzos et al.,2021).
+We compare the classification results obtained using the approximate kernel from FTFI with those from the exact SP kernel.
+In this setting, we use the Shortest Path (SP) kernel,.
+We perform experiments on a wide range of bioinformatics and social networks datasets likeD&D,Mutag,Reddit,Imdb, among others. We follow(de Lara and Pineau,2018)and construct the graph feature for both kernels by using the smallesteigenvalues (is a hyperparameter). This feature set is then used for classification, using a random forest classifier. We observe that FTFI achieves significant speed improvements while achieving similar accuracy compared to its brute-force counterpart, BGFI (see Fig.5). We provide more details about the experimental setup and baselines AppendixD.4. We also report additional experiments on meshes and point clouds in AppendixD.1.
+
+SECTION: 4.3Improving approximation quality with learnable-distance matrices
+
+We propose to further improve the approximation quality of FTFI by learning a-distance matrix on metrics derived from the MST. As an application, we choosegeneral graph metrics, where our goal is to learn the shortest-path distancebetween a given pair of nodesin a graph. Given a-distance matrix and tree-derived metricthe objective is to learn a mapping to minimize
+
+Rather than using a fixed, we parameterize and train it. We consider rational function:
+
+whereare trainable parameters.
+
+Training dataset. For a graph, we randomly sample vertices. The training dataset consists of tuples of the form:, whereare randomly sampled vertices. Each data point can be constructed in time, or evenif weights are in(Thorup,1997).
+
+Final evaluation. To evaluate the quality of the approximation, we compute the relative Frobenius norm error:, wherestands for theFrobenius norm,is a tree for a given graphandis an identity function (see: our notation from Sec.1). It quantifies how closely the distance matrix ofis approximated by the-distance
+matrix of. Computingis expensive and our training does not rely on it. Our empirical results show that the relative error,, can be substantially improved by using the light-weight MSE training loss (defined in Eq.6).
+
+We report the evaluation error for these experiments in Fig.6(with additional results in Fig.8in the Appendix). We observe that a rational function with quadratic numerator and denominator provides strong performance across different graphs. We notice that increasing the training set todata points does not have a substantial impact on the final error. Estimating the coefficients ofprovides approximation improvements across all graphs in as few as40 training steps.
+
+These above results show that tree-based estimators are expressive enough to emulate integration on arbitrary graphs. This expressive power can be further enhanced by pairing them with “nonlinear" functions. Thus, they explain why the presented techniques are relevant for general graphs.
+
+SECTION: 4.4Large Scale Transformer Experiments using FTFI
+
+For large-scale applications of FTFI, we select Topological Vision Transformers (TopViT),(Choromanski et al.,2022), and leverage it for efficient
+incorporation of masking within ViTs. We provide detailed description of masked Transformers in AppendixC.
+
+Topological Vision Transformers with trees :We propose an extension to TopViT that seamlessly integrates FTFI. In this extension, we model the mask matrix as an-distance matrix (with learnable) defined on the minimum spanning tree (MST) obtained from the 2D grid graph image encoding, where vertices correspond to different patches.
+We parameterizeas.
+We use the linear attention mechanism introduced in Performers(Choromanski et al.,2021), where the attention kernel is written as:for a deterministic, applied element-wise.
+We experiment with different values of hyperparameters,,and cross-heads parameter sharing strategies as shown in Table1(synced indicates that RPE-parameters are shared across different attention heads).
+
+We run experiments on ImageNet and Places365 datasets using ViT-B/16 (see Table1).
+For all the kernels, our variants beat the baselines. For, the best variant applies an exponentiated quadratic function, for which we apply Vandermonde matrices (see: discussion in Sec.3.2.1). Our best variant across all kernels (78.79%) provides2%accuracy gains over the best baseline (76.76%). In the synced setting, we use onlythreeextra learnable parameters per layer (shared in all attention heads across all layers) and obtain1-1.5%accuracy gains. In the asynced setting, we use a small set ofextra learnable parameters per layer (3 extra parameters per head).
+Overall, we observe that FTFI improves the approximation quality within Transformers with a minimal number of parameters. We provide additional discussions on the ViT results for ImageNet in AppendixD.5.1and for Places365 in AppendixD.5.2.
+
+Additional results on the I-Naturalist dataset, where we outperform various low-rank attention baselines, are provided in AppendixD.5.3.
+
+We scale our experiments to run on the larger ViT-L architectures and evaluate on ImageNet. In this setting, we use RPE mechanism withand(that provided strong performance in previous experiments) and asynced strategy. We observe that FTFI provides7%accuracy improvement (see: Fig.7).
+
+Further results on Video Transformer (ViViT)(Arnab et al.,2021)are provided in AppendixD.6. We also provide additional experiments including Gromov-Wasserstein distance computation(Vayer et al.,2018)(see Sec.D.2), along with code pointers (AppendixD).
+
+SECTION: 5Conclusion
+
+We provided a new class of algorithms for fast and exact integration of tensor fields defined on weighted trees, relying on the theory of structured (in particular low displacement rank) matrices. We showed how those algorithms can be applied for accurate integration on general graphs, in particular via their minimum weight spanning trees. We presented several applications of the presented methods, from graph classification and interpolation on meshes, through graph metric approximation to Topological Vision Transformers. Our methods provide significant (5-13x) speedups while maintaining the quality of their exact counterparts.
+
+SECTION: 6Author Contributions
+
+KC conceived the idea behind FTFI, proved the theoretical results, implemented FTFI algorithm and ran the vision experiments in this paper. AS integrated the FTFI algorithm in the GW style algorithms and ran some graph and point cloud classification tasks. SBRC ran graph classification experiments as well as experiments on the CUBES dataset. HL ran the experiments on the meshes. AD helped develop methods, and along with TS and SC acted as senior advisors for the project. All authors contributed to the writing of the manuscript.
+
+SECTION: References
+
+SECTION: Appendix ATheoretical results
+
+In this section, we provide proofs of all theoretical results in the paper.
+
+SECTION: A.1Proof of Lemma3.1
+
+We will apply Lemma 7.19 from[Cygan et al.,2015](that we provide also below for reader’s convenience) and its algorithmic proof. We refer toCygan et al. [2015]for a definition of the related graph terms.
+
+Assume thatis a graph of treewidth at most, and consider a nonnegative weight functionon the vertices of. Then inthere exists a-balanced separatorof size at most.
+
+Note first that for each rooted tree, we can compute the size of each of its rooted sub-trees (and store it in the root of the sub-tree) in the linear time, simply by applying dynamic programming. We can now apply the above lemma for the treewith the weight function that assigns weightfor each vertex. By following its algorithmic proof (and using breadth first search for tree exploration), we can obtain a nodeand sub-treesrooted in vertices connected with, with the following properties:
+
+,
+
+forand wherestands for the set size.
+
+We then choose the first indexsuch that. Note that such an indexexists andbecause of the above and the fact that our tree has at least six vertices. We define asa sub-tree ofinduced by the set:and bya sub-tree ofinduced by the set:.
+Note that the triplesatisfies the requirements of Lemma3.1. That completes the proof.
+∎
+
+SECTION: A.2Fast Approximate Tree-Field Integrators
+
+If matricesfrom Sec.3.2.1do not support fast matrix-vector multiplication, the question arises whether fast approximate procedures can be applied.
+
+Assume that the Fourier Transform (FT) ofexists and denote it by. Note thatis the inverse FT ofand can be re-written asTherefore, the following holds:
+
+We conclude that for any probabilistic distributiononwith pdf,can be re-written as:, where randomis given as:forand. Thus matrixcan be unbiasedly approximated as:for,with rows given byandrespectively. Matrix-vector productcan be then unbiasedly approximated asand computed in time. For, substantial computational gains are obtained. In particular, if, the approximate-integration is conducted in time. Note thatcontrols estimator’s variance, thus decreasingincreases the error.
+
+We will now propose a closely-related method, that relies on the non-uniform FFT (NU-FFT).111See[Greengard and Lee,2004]for an excellent introduction.
+
+Denote:for a given. Define:, whereis given as:, and furthermore: (1)is adelta-Diracfunction, (2). Our goal is to efficiently evaluate functionin points:.
+
+Assume that the inverse FT ofexists and denote it by. Note thatis the FT ofand can be written as:. Sinceis also a convolution ofand,is a product of the inverse FTs:andrespectively. Therefore, we can write:, where. Now, functioncan be evaluated foras follows: (1) a quadrature method is applied to obtain points:(and corresponding weights) for the approximate computation of the integral defining, (2) the NU-FFT is applied to computesimultaneously in those points in polylog-linear time, (3) given pre-computed(and the quadrature weights), NU-FFT is applied again to compute quadrature-based approximation of.
+
+The-integration process applying this method runs in polylog-linear time since the computation oftakes polylog-linear time. A prominent application isgiven as:, withbeing a renormalized indicator of belonging to interval.
+In this setting, the integral definingis thus limited to. Interestingly, forwe can also apply methods from Sec.3.2.1(see: our discussion below on the trigonometric case).
+
+Note that a Hadamard (element-wise) product of two outer-product matrices is itself an outer-product matrix. Using the analysis from the polynomial and exponential cases, we conclude thatis a sum of a constant number of terms, each being an outer-product matrix. Thus the same conclusion follows.
+
+Ifthen it can be re-written as:. Observe that the cordiality property is preserved under linear combination of the finite number of cordial functions. We can thus conclude that analogous results as the above forcan be derived for. That is also the case forthat can be re-written as:. In both cases, we extend the domain fromto, but this does not affect the analysis.
+
+So far we have not put any restrictions on the tree weights.
+If we restrict all weights to be the same (without loss of generality, equal to one),
+then the problem becomes easier. In this case for any function, matricesandare Hankel[Brent,2010](constant on each anti-diagonal and belonging to LDR class).
+Then, matrix-vector multiplication can be done in.
+The analysis from the proof of Lemma3.3forcan be repeated. We conclude that-integration can be conducted intime for-vertex unweighted trees and any. This was already proven in[Choromanski et al.,2022].
+
+Assume that tree weights take values of the form:for some. Then, matricesanddo not need to be Hankel, but can be embedded into Hankel matrices with rows/columns corresponding to distancesfrom the pivot, whereandis the largest distance between a vertex and the pivot.
+Tensorcan also be padded into a larger one with extra rows/columns (corresponding to unrealized distances) set to zero. Ifis constant, the asymptotic time complexity remains the same as in the previous case, but the algorithm might not be practical since the number of rows and columns grows by a multiplicative factor of. For certain non-cordial, the algorithm can be modified for potential gains.
+
+SECTION: Appendix BAdditional Related Work
+
+In this section we provide additional related works. One of the methods to tackle this problem is via iterative methods[Koutis et al.,2012]like Arnoldi iteration[Arnoldi,1951], Conjugate Gradient[Shewchuk,1994]and the celebrated Spielman-Teng algorithm[Spielman and Teng,2012]for symmetric diagonally dominant (SDD) matrices. There are a number of extensions and variations of the above methods[Blelloch et al.,2011, Boman et al.,2008, Christiano et al.,2010, Koutis and Miller,2007, Spielman and Teng,2008, Daitch and Spielman,2008, Koutis and Miller,2008].They mainly take into account the structure of the matrix (SDD)[Koutis et al.,2010,2011a,2012], embedding of a graph into low stretch spanning trees[Elkin et al.,2005], graph sparsification[Spielman and Teng,2010]and the choice of a goodpre-conditioner[Maggs et al.,2003, Koutis et al.,2011b].
+We want to emphasize that the research on low stretch trees for general graphs is orthogonal to the main topic of this work. In our manuscript, we show in particular how to conduct efficient integration on arbitrary trees. Thus our work can be naturally combined with those algorithms to leverage all the above low stretch tree constructions for a better approximation of the graph’s metric.
+
+The other class of method comes from the celebrated work of[Al-Mohy and Higham,2011]and there are a number of extensions of this work[Kloster and Gleich,2023, Al-Mohy and Higham,2010, Moore,2011, Moler and Van Loan,2003, Auckenthaler et al.,2010].
+
+Another class of methods is via sampling, where one samples a subset of a large matrix, which is then used to approximate the matrix-vector multiplication (i.e. Monte Carlo sampling) methods[Drineas et al.,2006, Drineas and Kannan,2001, Acebron,2019, Acebron et al.,2019, Benzi et al.,2017, Martinsson,2019].
+
+We note that none of these methods are directly applicable in our cases as our-matrix is neither Hermitian or SDD. The randomized algorithms are harder to use in the setting of training of a neural network. Moreover our method isexactontrees, where all the above methods are approximations.
+
+SECTION: Appendix CTopological Transformers
+
+Input:Query/key matrices:, value matrix, mask, procedurecalculating(or its approximation) for the input, kernel feature map:.denotes vectorization.Output:Masked low-rank attention embeddings using.1. Compute matrices,with rows defined as:,, where/stands for the ith row of/.2.,fordenoting ith column of.3. Output the embeddingof the ith tokens as:, whereis the ith row ofanddevectorizes its input back to.
+
+We now recall the formulation of general masked transformers.
+
+Let us denote bythe number of input tokens. The attention used in a regular Transformer linearly projects their representations into three learnable matrices,calledqueries,keysandvaluesrespectively.
+
+General masked attentionis given by the following equation, whereis themask matrix, andis the so-calledmasked attention matrix(MAM):
+which is defined as:
+
+wheredenotes the element-wise (Hadamard) matrix product,is some kernel function andis a kernel matrix defined as:for therowofand the jth rowofrespectively.
+We callthe unmasked attention matrix (UAM). Note that whenis the softmax function, we recover the well-known attention mechanism in Transformers.
+
+Hereis the all-ones vector of length, andis a diagonal matrix with the input vector as the diagonal. The time complexity of computing (9) is.
+
+If the kerneladmits (at least in expectation) a dot-product decomposition, i.e.for some mapping:(and some).is called a(random) feature map(RFM) for.
+Forwith rows given asandrespectively,
+RFM-based kernel linearization leads directly to the efficient unmasked attention mechanism of the form:
+
+Herestands for the approximate attention and brackets indicate the order of computations. Such a mechanism is characterized by time complexityas opposed tofor regular attention. If, computational gains are obtained.
+
+The central question in[Choromanski et al.,2022]was how to incorporate the masking in the linear attention as above. Note that in this caseis never materialized. Building on the work of[Luo et al.,2021], the authors[Choromanski et al.,2022]propose a general algorithm that efficiently implements masked linear attention.
+
+In this work, we use different mappings(see Table1). Our key contribution in this work is to propose a novel mask matrixand the implementation of a fast matrix multiplication by. The above result then allows us to construct novel classes of Topological Transformers.
+
+SECTION: Appendix DExperimental Details and Additional Experiments
+
+In this section, we provide additional details regarding the experimental setup and present additional results from our experiments. Our code is available athttps://github.com/brcsomnath/FastTreeIntegrator. Specifically, we provide there the code for: (1) our algorithm leveraging IntegratorTree data structure (depicted in Fig1), (2) adaptation to the Gromov-Wasserstein-type computation, (3) graph classification and (4) experiments on interpolation on meshes.
+
+SECTION: D.1Additional experiments for graph metric approximation with-distance matrices
+
+We present additional results for the training loss, relative Frobenius Norm Error (), for more samples from the Thingi10K dataset (to complement the results in Fig.6). In Fig.9, we observe that in most cases having rational functions with higher polynomial degrees results in lower training loss.
+
+We also perform similar experiments for graph classification on the CUBES datasetHanocka et al. [2019]. Specifically, we investigate how the polynomial degree affects the graph classification performance in Fig.9(left). We observe that increasing the polynomial degree improves the classification accuracy up to a certain degree. For the same dataset, we also compute the training loss for different polynomial degrees in Fig.9(right). Similarly, we observe that higher-degree rational functions achieve lower training loss for fitting the polynomial coefficients.
+
+Moreover, we benchmark FTFI on ModelNet10[Wu et al.,2015], a dataset for 3D Point Cloud (PC) classification. For each PC, we create an-neighborhood-graph and use FTFI for graph classification
+The Shortest Path kernel achieves an accuracy of, whereas our FTFI with the degree-2 polynomial improves the accuracy to% (% relative improvement over the baseline), similar to the observation in9.
+
+SECTION: D.2Integration of FTFI into GW-style algorithms
+
+Wasserstein distance has found many uses in ML, particularly due to it’s principled approach to compare probability distributions. Gromov WassersteinMémoli [2011]discrepancy is an extension of Wasserstein distance to graph structured data, with a lot of downstream applications like graph clustering and classification. Inspired by the work of[Choromanski et al.,2023], we follow the exact same procedure in the integration of FTFI in the conditional gradient algorithm. The FTFI can be injected seamlessly in place of the Fast Matrix Multiplication (FMM) algorithms in Algorithm 2 and Algorithm 3 (see[Choromanski et al.,2023]).
+
+Our method GW-FTFI run consistently-x faster than the baseline methods using the Shortest Path kernel, withno dropin accuracy in computing the associated costs (Figure10). The plots shown are obtained by averaging overseeds and random trees of various sizes. For the baseline experiments, we use the implementation from the POT library[Flamary et al.,2021].
+
+SECTION: D.3Interpolation on Meshes
+
+In this section, we present implementation details for the mesh interpolation experiments inSection4.2. All experiments were run on a computer with an i9-12900k CPU and 64GB memory.
+
+In the vertex normal prediction task inSection4.2, we choose 40 meshes for 3D-printed objects with a wide range of size from the Thingi10K[Zhou and Jacobson,2016]dataset with the File IDs:
+
+[60246, 85580, 40179, 964933, 1624039, 91657, 79183, 82407, 40172, 65414, 90431, 74449, 73464, 230349, 40171, 61193, 77938, 375276, 39463, 110793, 368622, 37326, 42435, 1514901, 65282, 116878, 550964, 409624, 101902, 73410, 87602, 255172, 98480, 57140, 285606, 96123, 203289, 87601, 409629, 37384, 57084]
+
+For both our FTFI and the baseline BFFI methods, we do a grid-search over the hyper-parameterfor each mesh and report the pre-processing time associated with the hyper-parameter(s) that give(s) us the best cosine similarity.
+
+SECTION: D.4Additional Details on Graph Classification
+
+We conduct graph classification experiments on a wide range of benchmark datasets. We report the dataset statistics for the graph classification datasets in Table2. More details about the datasets are available inMorris et al. [2020]. To evaluate the performance of the different kernels, we employ the
+framework proposed by[Errica et al.,2020]. In particular, 10-fold cross-validation is used
+to obtain an estimate of the generalization performance of our method and the baseline method. We repeat this cross validation experiment 5 times to get a robust estimation and report the standard deviation for each setup.
+
+To obtain graph features, we follow the approach presented in[de Lara and Pineau,2018]. In this setting, we obtain the-smallest eigenvalues from the approximated kernel from FTFI and forward these features to a random forest classifier for classification. For BGFI, we perform the same process obtaining the-smallest eigenvalues from the exact shortest kernel. FTFI achieves similar performance to the BGFI while being significantly faster. We tune the hyperparameterindependently for each method.
+
+In Table4, we report the results for a wide range of baselines and compare FTFI. We observe that FTFI achieves competitive performance among various strong kernel-based classification baseline approaches. Note that FTFI results are not directly comparable with other approaches, as FTFI constructs an intra-graph kernel while other methods use inter-graph kernels. Despite the aforementioned considerations, we contend that positioning our results within the broader framework of alternative methodologies demonstrates that FTFI remains a compelling approach, owing to its speed and comparable classification accuracy.
+
+SECTION: D.5Additional details on experiments for Topological transformers
+
+In this subsection, we provide additional training details for our image classification tasks. Table5and table6present the architectural as well as the training details.
+
+We train the ViT models starting from their pretrained checkpoint (pretrained on ImageNet-21k). We replace the dense attention in ViT by the Performer attention (see Equation10). We use Algorithm1to efficiently incorporate the mask matrixin the attention mechanism.
+
+We have already provided comparison with SOTA efficient-attention methods: low-rank attention Transformers in Sec 4.4, quality-wise. On standard ImageNet benchmark, our best Transformer with FTFI provide 78.15accuracy, as compared to 76.37of the best low-rank -attention variant (obtained by testing three different linear variants). That gives 1.78accuracy improvement with only 3 extra trainable parameters per head (36 extra trainable parameters per layer). We have also run the experiments with cosFormer. It achieved 76.3accuracy (consistent with what is reported in the literature, see [8]), lower than both: our method and the best tested low-rank attention variant. The RF-Gate-Gaussian achieved 76.35accuracy, which is is still lower than both: FTFI and the best tested low-rank attention variant.
+
+We have also conducted tests on another challenging dataset: Places365. In the paper, we report 1.71accuracy improvement over low-rank attention Transformer (56.51accuracy vs 54.8accuracy). For the rebuttal, we also run the experiment with cosFormer which achieved 55.4accuracy (consistent with what is reported in the literature, see: [8]). This is still 0.93behind our method. The RF-Gate-Gaussian achieved accuracy 55.1, lower than this of cosFormer.
+
+I-naturalist is yet another challenging dataset, with 10K classes, diverse image quality and significant class imbalance. Transformer with FTFI provides 1accuracy improvement over its regular low-rank attention counterpart and the cosFormer. Furthermore, FTFI achieved 0.8improvement over RF-Gate-Gaussian. The convergence of the FTFI variant is 20-23faster than this of its regular low-rank attention counterpart, the cosFormer and RF-Gate-Gaussian.
+
+SECTION: D.6Video Vision Transformer
+
+ViViT ([Arnab et al.,2021]) is a novel architecture that adapts the Vision Transformer (ViT) for video processing. It efficiently handles the spatiotemporal dimensions of video data by factorizing the input and applying attention mechanisms across both space and time. This allows ViViT to capture complex motion patterns and long-range dependencies in videos.
+
+Applying FTFI with a topological masking mechanism to the ViViT architecture (factorized Transformer model variant, trained from scratch, as described inArnab et al. [2021]) results in aabsolute improvement on the Kinetics dataset ([Kay et al.,2017]). The experimental setup followsArnab et al. [2021]. To the best of our knowledge, this is the first application of Topological Transformers to video data.
+
+SECTION: Appendix EBroader Impact
+
+We do believe that the potential impact of this work is significant, as providing both: (a) theoretical advancements in structural graph theory as well as (b) practical applications in (1) designing computationally efficient Transformers leveraging topological inductive priors, (2) graph classification and (3) interpolation on manifolds. The core problem of fast multiplication with-distance matrices plays an important role in various fields: physical sciences, chemistry, and network sciences. Our main contributions are algorithmic, with no clear negative side effects. While used in the context of Transformers, they should be though applied cautiously due to the nontrivial carbon emission footprint associated with training large Transformer models.
+
+SECTION: Appendix FLimitations
+
+Currently, FTFI can be applied on general graphs via certain classes of trees defined on these graphs (e.g. spanning trees), with low-distortion trees being more preferable. It would be interesting to see whether the main concepts used in the FTFI algorithm (such as the theory of balanced separators) can be directly incorporated into efficient and exact algorithms operating on general graphs (or general sparse graphs that appear in most machine learning applications). Determining general conditions on the classes of graphs and functionsunder consideration that are sufficient for exact sub-quadratic time integration is yet another important problem for future work.
+
+SECTION: NeurIPS Paper Checklist
+
+Claims
+
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope?
+
+Answer:[Yes]
+
+Justification: We give detailed explanations of our contributions in the introduction (page 2).
+
+Guidelines:
+
+The answer NA means that the abstract and introduction do not include the claims made in the paper.
+
+The abstract and/or introduction should clearly state the claims made, including the contributions made in the paper and important assumptions and limitations. A No or NA answer to this question will not be perceived well by the reviewers.
+
+The claims made should match theoretical and experimental results, and reflect how much the results can be expected to generalize to other settings.
+
+It is fine to include aspirational goals as motivation as long as it is clear that these goals are not attained by the paper.
+
+Limitations
+
+Question: Does the paper discuss the limitations of the work performed by the authors?
+
+Answer:[Yes]
+
+Justification: The limitations are clearly explained in AppendixF
+
+Guidelines:
+
+The answer NA means that the paper has no limitation while the answer No means that the paper has limitations, but those are not discussed in the paper.
+
+The authors are encouraged to create a separate "Limitations" section in their paper.
+
+The paper should point out any strong assumptions and how robust the results are to violations of these assumptions (e.g., independence assumptions, noiseless settings, model well-specification, asymptotic approximations only holding locally). The authors should reflect on how these assumptions might be violated in practice and what the implications would be.
+
+The authors should reflect on the scope of the claims made, e.g., if the approach was only tested on a few datasets or with a few runs. In general, empirical results often depend on implicit assumptions, which should be articulated.
+
+The authors should reflect on the factors that influence the performance of the approach. For example, a facial recognition algorithm may perform poorly when image resolution is low or images are taken in low lighting. Or a speech-to-text system might not be used reliably to provide closed captions for online lectures because it fails to handle technical jargon.
+
+The authors should discuss the computational efficiency of the proposed algorithms and how they scale with dataset size.
+
+If applicable, the authors should discuss possible limitations of their approach to address problems of privacy and fairness.
+
+While the authors might fear that complete honesty about limitations might be used by reviewers as grounds for rejection, a worse outcome might be that reviewers discover limitations that aren’t acknowledged in the paper. The authors should use their best judgment and recognize that individual actions in favor of transparency play an important role in developing norms that preserve the integrity of the community. Reviewers will be specifically instructed to not penalize honesty concerning limitations.
+
+Theory Assumptions and Proofs
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof?
+
+Answer:[Yes]
+
+Justification: We introduce the notion of our algorithm Fast Tree Field Integrator in section3. We describe the main algorithm in detail and introduce the technical (theoretical) results. The proofs of these results can be found in AppendixA.
+
+Guidelines:
+
+The answer NA means that the paper does not include theoretical results.
+
+All the theorems, formulas, and proofs in the paper should be numbered and cross-referenced.
+
+All assumptions should be clearly stated or referenced in the statement of any theorems.
+
+The proofs can either appear in the main paper or the supplemental material, but if they appear in the supplemental material, the authors are encouraged to provide a short proof sketch to provide intuition.
+
+Inversely, any informal proof provided in the core of the paper should be complemented by formal proofs provided in appendix or supplemental material.
+
+Theorems and Lemmas that the proof relies upon should be properly referenced.
+
+Experimental Result Reproducibility
+
+Question: Does the paper fully disclose all the information needed to reproduce the main experimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)?
+
+Answer:[Yes]
+
+Justification: Training details to replicate each experiment are in the AppendixD.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+If the paper includes experiments, a No answer to this question will not be perceived well by the reviewers: Making the paper reproducible is important, regardless of whether the code and data are provided or not.
+
+If the contribution is a dataset and/or model, the authors should describe the steps taken to make their results reproducible or verifiable.
+
+Depending on the contribution, reproducibility can be accomplished in various ways. For example, if the contribution is a novel architecture, describing the architecture fully might suffice, or if the contribution is a specific model and empirical evaluation, it may be necessary to either make it possible for others to replicate the model with the same dataset, or provide access to the model. In general. releasing code and data is often one good way to accomplish this, but reproducibility can also be provided via detailed instructions for how to replicate the results, access to a hosted model (e.g., in the case of a large language model), releasing of a model checkpoint, or other means that are appropriate to the research performed.
+
+While NeurIPS does not require releasing code, the conference does require all submissions to provide some reasonable avenue for reproducibility, which may depend on the nature of the contribution. For example
+
+If the contribution is primarily a new algorithm, the paper should make it clear how to reproduce that algorithm.
+
+If the contribution is primarily a new model architecture, the paper should describe the architecture clearly and fully.
+
+If the contribution is a new model (e.g., a large language model), then there should either be a way to access this model for reproducing the results or a way to reproduce the model (e.g., with an open-source dataset or instructions for how to construct the dataset).
+
+We recognize that reproducibility may be tricky in some cases, in which case authors are welcome to describe the particular way they provide for reproducibility. In the case of closed-source models, it may be that access to the model is limited in some way (e.g., to registered users), but it should be possible for other researchers to have some path to reproducing or verifying the results.
+
+Open access to data and code
+
+Question: Does the paper provide open access to the data and code, with sufficient instructions to faithfully reproduce the main experimental results, as described in supplemental material?
+
+Answer:[Yes]
+
+Justification: We provide the code as well as details to run our experiments in AppendixD.
+
+Guidelines:
+
+The answer NA means that paper does not include experiments requiring code.
+
+Please see the NeurIPS code and data submission guidelines (https://nips.cc/public/guides/CodeSubmissionPolicy) for more details.
+
+While we encourage the release of code and data, we understand that this might not be possible, so “No” is an acceptable answer. Papers cannot be rejected simply for not including code, unless this is central to the contribution (e.g., for a new open-source benchmark).
+
+The instructions should contain the exact command and environment needed to run to reproduce the results. See the NeurIPS code and data submission guidelines (https://nips.cc/public/guides/CodeSubmissionPolicy) for more details.
+
+The authors should provide instructions on data access and preparation, including how to access the raw data, preprocessed data, intermediate data, and generated data, etc.
+
+The authors should provide scripts to reproduce all experimental results for the new proposed method and baselines. If only a subset of experiments are reproducible, they should state which ones are omitted from the script and why.
+
+At submission time, to preserve anonymity, the authors should release anonymized versions (if applicable).
+
+Providing as much information as possible in supplemental material (appended to the paper) is recommended, but including URLs to data and code is permitted.
+
+Experimental Setting/Details
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperparameters, how they were chosen, type of optimizer, etc.) necessary to understand the results?
+
+Answer:[Yes]
+
+Justification: All details are presented in Sec4and AppendixD.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The experimental setting should be presented in the core of the paper to a level of detail that is necessary to appreciate the results and make sense of them.
+
+The full details can be provided either with the code, in appendix, or as supplemental material.
+
+Experiment Statistical Significance
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments?
+
+Answer:[Yes]
+
+Justification: All experiments in the paper except for the ones using large Transformer models have been run multiple times using various random seeds and we report the relevant statistics. The experiments using Transformers are too expensive to run multiple times as the experiments are run on a huge dataset like ImageNet.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The authors should answer "Yes" if the results are accompanied by error bars, confidence intervals, or statistical significance tests, at least for the experiments that support the main claims of the paper.
+
+The factors of variability that the error bars are capturing should be clearly stated (for example, train/test split, initialization, random drawing of some parameter, or overall run with given experimental conditions).
+
+The method for calculating the error bars should be explained (closed form formula, call to a library function, bootstrap, etc.)
+
+The assumptions made should be given (e.g., Normally distributed errors).
+
+It should be clear whether the error bar is the standard deviation or the standard error of the mean.
+
+It is OK to report 1-sigma error bars, but one should state it. The authors should preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis of Normality of errors is not verified.
+
+For asymmetric distributions, the authors should be careful not to show in tables or figures symmetric error bars that would yield results that are out of range (e.g. negative error rates).
+
+If error bars are reported in tables or plots, The authors should explain in the text how they were calculated and reference the corresponding figures or tables in the text.
+
+Experiments Compute Resources
+
+Question: For each experiment, does the paper provide sufficient information on the computer resources (type of compute workers, memory, time of execution) needed to reproduce the experiments?
+
+Answer:[Yes]
+
+Justification: We report the compute resources used in AppendixD.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The paper should indicate the type of compute workers CPU or GPU, internal cluster, or cloud provider, including relevant memory and storage.
+
+The paper should provide the amount of compute required for each of the individual experimental runs as well as estimate the total compute.
+
+The paper should disclose whether the full research project required more compute than the experiments reported in the paper (e.g., preliminary or failed experiments that didn’t make it into the paper).
+
+Code Of Ethics
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethicshttps://neurips.cc/public/EthicsGuidelines?
+
+Answer:[Yes]
+
+Justification: All authors have reviewed the NeurIPS code of ethics and the research conform to the code.
+
+Guidelines:
+
+The answer NA means that the authors have not reviewed the NeurIPS Code of Ethics.
+
+If the authors answer No, they should explain the special circumstances that require a deviation from the Code of Ethics.
+
+The authors should make sure to preserve anonymity (e.g., if there is a special consideration due to laws or regulations in their jurisdiction).
+
+Broader Impacts
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed?
+
+Answer:[Yes]
+
+Justification: The broader impacts of our work is detailed in AppendixE.
+
+Guidelines:
+
+The answer NA means that there is no societal impact of the work performed.
+
+If the authors answer NA or No, they should explain why their work has no societal impact or why the paper does not address societal impact.
+
+Examples of negative societal impacts include potential malicious or unintended uses (e.g., disinformation, generating fake profiles, surveillance), fairness considerations (e.g., deployment of technologies that could make decisions that unfairly impact specific groups), privacy considerations, and security considerations.
+
+The conference expects that many papers will be foundational research and not tied to particular applications, let alone deployments. However, if there is a direct path to any negative applications, the authors should point it out. For example, it is legitimate to point out that an improvement in the quality of generative models could be used to generate deepfakes for disinformation. On the other hand, it is not needed to point out that a generic algorithm for optimizing neural networks could enable people to train models that generate Deepfakes faster.
+
+The authors should consider possible harms that could arise when the technology is being used as intended and functioning correctly, harms that could arise when the technology is being used as intended but gives incorrect results, and harms following from (intentional or unintentional) misuse of the technology.
+
+If there are negative societal impacts, the authors could also discuss possible mitigation strategies (e.g., gated release of models, providing defenses in addition to attacks, mechanisms for monitoring misuse, mechanisms to monitor how a system learns from feedback over time, improving the efficiency and accessibility of ML).
+
+Safeguards
+
+Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pretrained language models, image generators, or scraped datasets)?
+
+Answer:[N/A]
+
+Justification: Our paper is theoretical in nature and we are not releasing any new models or data.
+
+Guidelines:
+
+The answer NA means that the paper poses no such risks.
+
+Released models that have a high risk for misuse or dual-use should be released with necessary safeguards to allow for controlled use of the model, for example by requiring that users adhere to usage guidelines or restrictions to access the model or implementing safety filters.
+
+Datasets that have been scraped from the Internet could pose safety risks. The authors should describe how they avoided releasing unsafe images.
+
+We recognize that providing effective safeguards is challenging, and many papers do not require this, but we encourage authors to take this into account and make a best faith effort.
+
+Licenses for existing assets
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected?
+
+Answer:[Yes]
+
+Justification: We have properly cited all the papers that introduced various algorithms and data that are used in this work.
+
+Guidelines:
+
+The answer NA means that the paper does not use existing assets.
+
+The authors should cite the original paper that produced the code package or dataset.
+
+The authors should state which version of the asset is used and, if possible, include a URL.
+
+The name of the license (e.g., CC-BY 4.0) should be included for each asset.
+
+For scraped data from a particular source (e.g., website), the copyright and terms of service of that source should be provided.
+
+If assets are released, the license, copyright information, and terms of use in the package should be provided. For popular datasets,paperswithcode.com/datasetshas curated licenses for some datasets. Their licensing guide can help determine the license of a dataset.
+
+For existing datasets that are re-packaged, both the original license and the license of the derived asset (if it has changed) should be provided.
+
+If this information is not available online, the authors are encouraged to reach out to the asset’s creators.
+
+New Assets
+
+Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets?
+
+Answer:[Yes]
+
+Justification: We release the code for the main algorithm. The usage is detailed in the anonymous github repo.
+
+Guidelines:
+
+The answer NA means that the paper does not release new assets.
+
+Researchers should communicate the details of the dataset/code/model as part of their submissions via structured templates. This includes details about training, license, limitations, etc.
+
+The paper should discuss whether and how consent was obtained from people whose asset is used.
+
+At submission time, remember to anonymize your assets (if applicable). You can either create an anonymized URL or include an anonymized zip file.
+
+Crowdsourcing and Research with Human Subjects
+
+Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)?
+
+Answer:[N/A]
+
+Justification: We do not conduct any research that involves crowd sourcing or with human subjects.
+
+Guidelines:
+
+The answer NA means that the paper does not involve crowdsourcing nor research with human subjects.
+
+Including this information in the supplemental material is fine, but if the main contribution of the paper involves human subjects, then as much detail as possible should be included in the main paper.
+
+According to the NeurIPS Code of Ethics, workers involved in data collection, curation, or other labor should be paid at least the minimum wage in the country of the data collector.
+
+Institutional Review Board (IRB) Approvals or Equivalent for Research with Human Subjects
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained?
+
+Answer:[N/A]
+
+Justification: Our paper does not involve crowd sourcing nor research with human subjects.
+
+Guidelines:
+
+The answer NA means that the paper does not involve crowdsourcing nor research with human subjects.
+
+Depending on the country in which research is conducted, IRB approval (or equivalent) may be required for any human subjects research. If you obtained IRB approval, you should clearly state this in the paper.
+
+We recognize that the procedures for this may vary significantly between institutions and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the guidelines for their institution.
+
+For initial submissions, do not include any information that would break anonymity (if applicable), such as the institution conducting the review.

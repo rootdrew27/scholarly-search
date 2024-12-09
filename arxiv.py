@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
+import json
+
+DATA_DIR = Path('./data')
 
 @dataclass
 class ArxivPaper:
@@ -201,7 +204,7 @@ def process_papers_for_term(
     )
     
     # Create text directory if it doesn't exist
-    text_path = Path(text_dir)
+    text_path = DATA_DIR / text_dir
     text_path.mkdir(exist_ok=True)
     
     results = []
@@ -283,7 +286,8 @@ if __name__ == "__main__":
     search_terms = [
         'ti:"machine learning"',
         'ti:"transformers"',
-        'ti:"vision transformers"'
+        'ti:"vision transformers"',
+        'ti:"deep learning"'
     ]
     
     results = process_multiple_search_terms(
@@ -293,12 +297,19 @@ if __name__ == "__main__":
         save_text=True,
         cache_dir="paper_cache"
     )
-    
+
+    with open(DATA_DIR/'paper_info.json', 'r') as f:
+        info = json.load(f)
+
+    with open(DATA_DIR/'paper_info.json', 'w') as f:
+        info.extend(results.items())
+        json.dump(info, f)
+
     # Print results summary
     for term, papers in results.items():
         print(f"\n=== Results for {term} ===")
         print(f"Found {len(papers)} papers")
-        
+
         for paper in papers:
             print("\n" + "="*80)
             print(f"Title: {paper['title']}")

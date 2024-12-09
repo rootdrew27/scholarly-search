@@ -1,0 +1,729 @@
+SECTION: Slicing Vision Transformer for Flexible Inference
+
+Vision Transformers (ViT) is known for its scalability.
+In this work, we target to scale down a ViT to fit in an environment with dynamic-changing resource constraints.
+We observe that smaller ViTs are intrinsically the sub-networks of a larger ViT with different widths.
+Thus, we propose a general framework, namedScala, to enable a single network to represent multiple smaller ViTs with flexible inference capability, which aligns with the inherent design of ViT to vary from widths.
+Concretely, Scala activates several subnets during training, introduces Isolated Activation to disentangle the smallest sub-network from other subnets, and leverages Scale Coordination to ensure each sub-network receives simplified, steady, and accurate learning objectives.
+Comprehensive empirical validations on different tasks demonstrate that with only one-shot training, Scala learns slimmable representation without modifying the original ViT structure and matches the performance of Separate Training.
+Compared with the prior art, Scala achieves
+an average improvement of 1.6% on ImageNet-1K with fewer parameters.
+Code is available athere.
+
+SECTION: 1Introduction
+
+Vision Transformers (ViTs)[9]are renowned for its scalability and various avenues[41,5,7]have been explored to scale up ViT models.
+To tailor ViTs to run on devices with limited resources,
+some recent progress[36,35]utilize knowledge distillation[13]to scale down ViT.
+Particularly,
+DeiT[29]introduces two smaller variants of DeiT-B: DeiT-Ti and DeiT-S
+which have been widely used in resource-limited applications.
+Although these small ViTs exhibit enhanced efficiency,
+they lack the flexibility to implement customized adjustments that accommodate dynamically changing resource constraints in real-world scenarios,
+e.g., the computation budget of mobile phones depends on the energy level (low-power mode) and number of running apps.
+Consequently, the standard Separate Training (ST) protocol trains models with different sizes separately to provide a spectrum of options with diversified performance and computation.
+ST requires repetitive training procedures to produce multiple model choices,
+and the challenge is amplified for
+foundation models[26,24,17].
+From users’ perspective, they are only offered limited model choices,
+that might not cater to all scenarios.
+
+Analyzing the architectures of ViT-Ti/S/B,
+we observe that these ViTs
+are the same architecture with the only difference in the number of embedding dimensions
+(we ignore the difference in the number of heads as it does not impact the overall model size),
+indicating smaller ViTs are intrinsically the sub-networks of larger model with different widths (see Fig.2).
+This suggests that a large ViT can be transformed to represent small models by uniformly slicing the weight matrix at each layer.
+Given a width ratio, we adjust the size of the network by this single hyperparameter,
+allowing a single ViT to represent multiple small variants with the weights of those sub-networks shared in a nested nature,
+e.g., ViT-B (=0.25) equals ViT-Ti and ViT-B (=0.5) corresponds to ViT-S.
+In this manner, we empower ViTs for flexible inference capability,
+and we aim to slice a ViT within a broad slicing bound and fine-grained slicing granularity so that the diversity and number of sub-networks can be ensured for higher flexibility.
+This problem is non-trivial as fully training all the sub-networks within a constrained budget is nearly infeasible. Consequently, it is quite challenging for these subnets to match the performance of separate training.
+
+Although various approaches have delved into slicing deep networks for flexible inference, the problem we target to resolve,
+i.e., uniformly slicing ViTs within a large slicing bound and fine-grained slicing granularity,
+is intrinsically different from others in three perspectives:
+(1) slicing strategy: as shown in Fig.2(i), the supernet training techniques[2,38,4]in NAS usually slice through multiple dimensions with a small slicing bound, resulting in irregularities in model architectures
+and a minor computational adjustment space.
+(2) slicing granularity: recent width slicing approaches[14,18]either slice specific portions of the network or utilize a considerably large slicing granularity, leading to a limited number of models produced.
+(3) network architecture: US-Net[37]shares a similar vision with us but it has only demonstrated success in the CNN architecture.
+
+It is crucial to note the fundamental differences between slicing CNN and ViT:
+(1) vanilla small ViTs such as ViT-Ti/S/B, are inherently designed to vary based on widths, aligning with our approach.
+Conversely, many CNNs are structured to vary from depths, like ResNet-18/34[12], and slicing them by width brings unconventional architectures.
+(2) slimmable CNN necessitates calibration[39,37]for each sub-network pre-inference due to Batch Normalization[15],
+unlike slimmable ViTs that can be directly utilized for evaluation.
+(3) the transformer architecture[33]has wider applications than CNN in this era, e.g., MAE[11], CLIP[26], DINOv2[24], LLMs[31,32,1].
+Nevertheless, ViTs have much less image-specific inductive bias than CNN and
+their slimmable ability remains unclear.
+As shown in Fig.2, we empirically implement US-Net on ViT-S and observe substantial performance gaps at most width ratios compared to ST, indicating that the available solution of uniform slicing does not work well on the transformer architecture.
+
+To investigate the underlying causes of this phenomenon, we conduct analyses in Sec.3which are briefly summarized in two folds:
+(1) ViTs display minimal interpolation ability, indicating that the optimization of intermediate subnets falls notably short compared to Separate Training (ST);
+(2) sustained activation of the smallest sub-network poses a negative effect on other subnets, which affects the overall performance as their weights are shared in a nested nature.
+To resolve these issues, we propose a general framework, namedScala, to enforce ViTs to learn slimmable representation.
+Specifically,
+we propose Isolated Activation to disentangle the representation of the smallest sub-network from other subnets while still preserving the lower bound performance.
+Besides, we present Scale Coordination to ensure each subnet receives simplified, steady, and accurate learning objectives.
+In this manner, the slimmable ViT can be transformed into multiple smaller variants during inference and match the performance of ST.
+
+Compared to ST which trains all the subnets individually, Scala reduces the storage and training costs remarkably since the weights of smaller ViTs are shared with the full model and we only need one-shot training without extending the training duration.
+Further, Scala has a very large slicing bound and fine-grained slicing granularity, enabling diverse sub-network choices during evaluation.
+In this way, the delivered system can make tailored adjustments that accommodate dynamically changing resource constraints in real-world scenarios, promising the application on edge devices.
+Compared with the prior art SN-Net[25]which supports flexible inference on ViTs, Scala clearly outperforms it under different computation with fewer parameters.
+Moreover, Scala matches the performance of ST on various tasks without modifying the network architecture,
+demonstrating its generalizability and potential to replace ST as a new training paradigm.
+The contributions are summarized as follows:
+
+Although slicing ViTs exhibits multiple advantages, we provide detailed analysis and practical insights into the slimmable ability between different architectures (Sec.3and Tab.2) and find slicing the ViT architecture to be the most challenging problem.
+
+We propose a general frameworkScalato enable ViTs to learn slimmable representation for flexible inference.
+We present Isolated Activation to disentangle the representation of the smallest subnet and Scale Coordination to ensure each subnet receives simplified, steady, and accurate signals.
+
+Comprehensive experiments on different tasks demonstrate that Scala, requiring only one-shot training, outperforms prior art and matches the performance of ST, substantially reduces the memory requirements of storing multiple models.
+
+SECTION: 2Related Work
+
+Scaling Up ViTs.Like Transfromer[33]in NLP, scalability and performance improvements in ViTs[9]have been a central focus of recent research.
+Specifically,
+strategies have been explored to scale the depth of ViT[46,30]and it is scaled to even larger sizes with almost 2 billion parameters and reaches new state-of-the-art results[41].
+Afterward, ViTs have been scaled up to 4 billion[5]and 22 billion[7]parameters with extraordinary performance and enormous costs.
+
+Scaling Down ViTs.The advent of ViTs has also sparked interest in scaling down these models.
+Techniques such as knowledge distillation[13]have been explored to reduce the ViT model size[36,35].
+For example, DeiT[29]presents smaller ViTs with 5M parameters.
+Additionally, researchers have explored quantization methods[22,21]to further compress ViTs for deployment on edge devices.
+Unfortunately, these static models cannot make customized adjustments for resource-changing environments in real scenarios.
+
+Slimmable Neural Network.The derivation of multiple smaller models from a single network has been previously explored but most works focus on the CNN structure.
+Slimmable Networks[39,37]and its variants[34,3,10]train a shared network which adapts the width to accommodate the resource constraints during inference.
+Later, this idea is adapted into two-stage NAS methods[2,38,4]for supernet training.
+The supernet is scaled at multiple dimensions with a small computation change, in contrast to our work where we only scale the width dimension with a large slicing bound.
+SN-Net[25]is a recently proposed method that constructs a supernet with several pre-trained models and inserts linear layers to build dynamic routes for flexible inference.
+Recently, several of these techniques have been extended to Transformer architecture[14,18], while they either scale part of the network or the slicing granularity is large which means they could only deliver very few models in the end.
+Differing from the previous works, our method is the first work to scale the ViT structure with large slicing bound and small slicing granularity which is intrinsically a more challenging problem.
+
+SECTION: 3Revisiting Slicing in Vision Transformer
+
+Due to the excessive costs of
+constantly activating all the sub-networks during training,
+the sandwich rule is proposed in US-Net[37]to train the slimmable network at the smallest width, largest width, and 2 random intermediate widths in each iteration so that the performance of the lower bound and upper bound are guaranteed.
+Although the intermediate sub-networks are optimized less frequently compared to Separate Training (ST), US-Net manages to achieve comparable performance with ST on the CNN architecture.
+To have a better understanding of the distinction between CNN and ViT,
+we apply US-Net to MobileNetV2[28], a CNN, and DeiT-S[29], a ViT, but constantly activate four sub-networks with the width ratio ofat each iteration.
+Subsequently, we evaluate the pre-trained models at both inboundand outboundunseen width ratios to evaluate their interpolation and extrapolation abilities, respectively.
+Shown in Fig.4,
+CNN exhibits moderate interpolation and extrapolation capabilities by achieving acceptable performance at previously unobserved widths during training.
+In stark contrast, ViT fails entirely at unseen widths, suggesting that optimizing larger sub-networks does not directly benefit the performance of smaller ViTs, even though their weights are shared in a nested nature.
+
+We analyze the results from the expected training epochs for each sub-network.
+Letrepresent the total number of networks to be delivered,
+whereinintermediate sub-networks are included, and according to the sandwich rule, two of these are randomly sampled during each iteration.
+Formally, the expected training epochs for the intermediate networkscan be expressed as:
+
+whereis the number of training epochs for the full model
+and it suggests that the optimization of most sub-networks falls notably short compared to ST.
+As ViT has demonstrated minimal interpolation ability at unseen widths compared to CNN,
+each sub-network within the slimmable ViT requires optimal utilization of every training iteration to achieve satisfactory performance.
+Nevertheless, the smallest subnet is constantly activated during training according to the sandwich rule and we hypothesize that the over-emphasis of the smallest sub-network, often exhibits the worse performance, may increase the training difficulty of other subnets as their weights are shared in a nested nature.
+To validate it, we implement US-Net[37]on DeiT-S without constantly activating the smallest sub-network.
+Fig.4verifies our hypothesis showing an accuracy drop at the smallest subnet but a significant performance improvement at other width ratios.
+
+SECTION: 4Scala
+
+We first introduce the training and inference paradigms of Scala.
+Then, we describe Isolated Activation which disentangles the smallest subnet from other sub-networks while maintaining the lower bound performance.
+Further, we present Scale Coordination to ensure each subnet receives simplified, accurate, and steady learning objectives.
+Without any modification to the architecture, we deliver a general framework Scala which could be easily built on existing methods.
+
+SECTION: 4.1Framework
+
+Our goal is to build a general framework that makes a ViTslimmable, i.e., the delivered network can be transformed into different small variants for flexible inference.
+First, we introduce a hyperparameterto denote the width ratio of the sub-network.
+Based on our analysis in Fig.4, ViTs have minimal interpolation ability, which suggests that all subnets have to be individually optimized to achieve decent performance.
+Following the sandwich rule[37], we sample the smallest, largest(), and 2 random intermediate width ratios,at each iteration during training.
+The corresponding sub-networks are:,,and.
+and we accumulate the gradients of those subnets at each iteration.
+At the inference stage, the networkis evaluated at an arbitrary width ratio that has been optimized during training by adjusting.
+
+SECTION: 4.2Isolated Activation
+
+Illustrated in Sec.3, constant activation of the smallest sub-networkensures its own accuracy at the cost of other subnets’ performance.
+This is a dilemma as there is a significant accuracy drop ofif we do not constantly activate it (see Fig.4), otherwise, the performance of other sub-networks are severely limited.
+To alleviate this issue, we propose Isolated Activation to disentangle the representation offrom other sub-networks while still constantly activating it.
+It not only ensures the performance of the lower bound but facilitates the optimization of other subnets as well.
+
+Formally, given the learnable weightof a random layer in ViT (stands for the output, input channel number,represents the height and width of the convolution kernel,for fully connected layers), the weight ofwhereis selected as:
+
+In contrast, the smallest sub-networkis activated as:
+
+where we slice the weights in a reverse direction so that we disentangle the representation offrom other sub-networks.
+With this simple but critical design, we not only ensure the performance ofwith constant activation, but also alleviate the negative effects it brings.
+
+SECTION: 4.3Scale Coordination
+
+We present the training strategy of Scala in this section.
+We follow the setting of DeiT[29]to train the full modelwith knowledge distillation and introduce a distillation token for knowledge transfer between sub-networks.
+As our goal is to scale down a given networkto multiple smaller variants, we simply choose the pre-trained model itselfas the external teacher for the full networkto facilitate training.
+To optimize the sub-networks at different scales, we present the Scale Coordination training strategy,
+which is composed of three techniques: Progressive Knowledge Transfer, Stable Sampling, and Noisy Calibration, to ensure that each subnet receives simplified, accurate, and steady learning objectives.
+
+Progressive Knowledge Transfer.Given an input image, the activated sub-networkproduces two predictions:
+
+whereanddenote the prediction generated by the classification and distillation head, respectively.
+As we activate multiple sub-networks:,,andat each iteration during training, our idea is to utilize the predictions of the larger network to facilitate the optimization of smaller subnets.
+
+Given the sorted width ratio list, we utilize the KL divergence[19]loss to progressively distill the knowledge of the larger network into the smaller one:
+
+whererepresents the number of classes,anddenotes the index ofin.
+Instead of usingas the optimization target for all smaller networks, we ensure each subnet receives simplified learning objective as small subnet have large capacity gap compared to(e.g.,is almost 16 times larger thanif) and minimizing their KL loss complicates the optimization process and leads to inferior performance.
+With Progressive Knowledge Transfer, we simplify the optimization objective for small sub-networks by utilizingandas the teacher assistants to fill the gap betweenandand train them in a one-shot manner.
+
+Stable Sampling.As the knowledge is gradually transferred from the larger network to the smaller one, the two intermediate networks serve as the bridge to connectand, asis the student ofandis the teacher of.
+Therefore, we need to carefully control the width ratiosandto prevent the obvious model capacity variation.
+
+Concretely, we introduce the slicing granularityand
+the number of networkswe can deliver (including the full model) with a single ViT is denoted as:
+
+Then, we divide the slicing boundinto two smaller ones:
+
+whereand,will be the random integer sampled from the uniform distribution,, respectively. Thus,andare defined as:
+
+and we ensure the model capacity gap between the four networks is stable and secure the learning objective for each subnet is steady.
+
+Noise Calibration.Although all the subnets receive guidance from larger networks, a notable issue is that the predictions from the teacher are not always accurate, sometimes even noisy, especially at the early training stage.
+To avoid the noisy signal dominating the optimization direction, we first calculate the Cross-Entropy loss by:
+
+whererepresents the one-hot label for class. Then, we calibrate the noise by combining the KL divergence loss and Cross-Entropy loss:
+
+whereis a hyperparameter used to balance the two losses and we empirically letin our implementations.
+By doing so, we mitigate the negative effects brought by the noisy predictions of the teacher model and ensure each subnet is guided by the accurate learning objectives.
+
+SECTION: 5Experiments
+
+We validate Scala with the plain ViT structure DeiT[29].
+We first analyze of the main property of Scala
+and compare our method with the state-of-the-art method SN-Net[25]and Separate Training (ST) at a larger scale.
+Moreover, we examine the transferability of Scala and its application on Semantic Segmentation.
+Finally, we provide ablations to validate the efficacy of our designs.
+
+SECTION: 5.1Experiment Settings
+
+All the object recognition experiments are carried out on ImageNet-1K[8].
+We follow the training recipe of DeiT[29]and conduct the experiments on 4 V100 GPUs.
+For Scala, we set,, andso that we could enable a single ViT to represent 13 different networks () with a large slicing bound (i.e.,is almost 16 times larger than).
+
+SECTION: 5.2Proof-of-Concept
+
+In this part, we conduct experiments over DeiT-S[29]for 100-epoch training to prove the concept.
+
+Comparison with scaling baselines.We compare Scala with multiple scaling baselines, including:
+(1) AutoFormer[4]: we apply this ViT-based supernet training method into our setting to scale through width;
+(2) US-Net[37]: the prior work that obtains similar performance with ST over the CNN structure;
+(3) Separate Training (ST): we repetitively train the model with different widths from scratch and evaluate them individually.
+Tab.1shows that AutoFormer lags behind Scala remarkably as we target to scale in a wider range.
+US-Net shows significantly worse performance compared to ST which indicates that scaling down ViT is a more challenging problem compared to the CNN architecture.
+Nevertheless, Scala achieves better performance compared to ST at all width ratios with one-shot training, reducing the storage costs of saving multiple models observably.
+
+Slicing Granularity and Bound.Fig.6shows the results of various slicing granularity.
+First, Scala outperforms ST with differentand the advantage at small width ratios is more obvious, which promises its application on edge devices.
+Moreover, it is shown that less fine-grained granularityresults in better overall performance with the same slicing bound as the expected training epochsfor intermediate subnets increase correspondingly.
+We further conduct experiments with differentwhile fixingandto study the effect of the slicing bound.
+Fig.6shows that smaller bounds lead to markedly better performance and it further verifies that slicing through a large bound is intrinsically more difficult, which distinguishes Scala from the supernet training methods[2,38,4]in NAS.
+
+Application on Hybrid Structures.We experiment Scala on the CNN-ViT hybrid architecture Uniformer-S[20].
+As Uniformer contains Batch Normalization (BN)[15]which cannot be directly evaluated after slicing because of normalization shifting[39], we calibrate the statistics of BN before inference following[37].
+Shown in Fig.8, Uniformer-S is scaled down to 13 different variants with better performance compared to ST, demonstrating the generalization ability of Scala.
+However, performing BN calibration at each width ratio requires considerable extra effort.
+This highlights the benefit of ViT, as Layer Normalization (LN) allows direct evaluation without additional operations.
+
+Application on Lightweight Structures.We further validate Scala on lightweight structure Uniformer-XS[20]which integrates the design of token pruning and train these methods for 150 epochs. Shown in Fig.8, Scala still matches the performance of ST and exhibits a significant advantage at small width ratios, which promises its application on edge devices with a limited budget.
+
+Fast Interpolation of Slimmable Representation.Training models with different slicing granularityfrom scratch is time-consuming and here we show that the slimmable representation of certain granularity can be scaled to others with a small amount of training epochs.
+Specifically, we train the model with the originalfor 70 epochs and decrease the value ofin the last 30 epochs to deliver more sub-networks for higher inference flexibility.
+Fig.10shows the results of fast interpolation are similar to those trained from scratch and the newly appeared sub-networks are quickly interpolated to achieve decent performance.
+We further increasefor sub-networks with higher performance and the phenomenon shown in Fig.10is similar to down interpolation.
+Besides, we observe that the accuracy of abandoned sub-networks gradually decreases but they maintain the performance to a great extent.
+
+Slimmable Ability across Architectures.We examine the slimmable ability of different architectures in Tab.2by applying Scala on different architectures and evaluating these networks at unseen width ratios to explore the interpolation ability.
+CNN exhibits very strong interpolation ability as the performance at unseen widths lies in the range of trained width ratios.
+In contrast, CNN-ViT and ViT suffer from remarkable performance decreases to different extents
+and ViT achieves almost zero accuracy which further validates that the problem we target to solve, i.e., slicing ViT, is the most challenging one.
+
+SECTION: 5.3Comparisons over Extended Training
+
+In this section, we perform training over DeiT-B[29]for 300-epoch training following the standard protocol on ImageNet-1K[8]to compare with the state-of-the-art.
+
+Comparisons with state-of-the-art.SN-Net[25]is state-of-the-art work that supports flexible inference on ViT.
+Specifically, it utilizes several pre-trained models (e.g., DeiT-Ti/S/B) to construct a supernet and inserts additional layers to build dynamic routes for flexible inference.
+Shown in Tab.5.2, we empirically compare Scala with SN-Net over DeiT-B following the standard 300-epoch training protocol[29].
+Scala obtains similar performance with SN-Net at large width ratios and clearly outperforms it at small computational budgets.
+Besides, SN-Net has to preserve the parameters of multiple models and additional layers, while Scala only needs to keep the weights of the full network.
+When adopting the stronger teacher network[27]as SN-Net does, Scala outperforms SN-Net with an average improvement of 1.6across all width ratios.
+
+Comparisons with Separate Training.In Tab.5.2, we compare with ST on DeiT-B[29]with longer training process, i.e., 300-epoch training, wherecorresponds to DeiT-Ti, DeiT-S and DeiT-B, respectively.
+Scala exhibits a clear advantage atand matches the performance of ST exceptdue to significantly less training time.
+When, we can achieve similar performance atwith 40training epochs of ST.
+Further reducingto 4, resulting in the constant activation of the two intermediate networks, allows us to consistently outperform ST at all width ratios. This substantiates the effectiveness of Scala and the slimmable representation.
+
+SECTION: 5.4Transferability
+
+To assess the transferability of Scala, we employ DeiT-B[29]as the backbone for a 300-epoch pre-training on ImageNet-1K and leverage the foundation model DINOv2-B[24]as the teacher network to inherit good behaviors.
+Our study aims to address two key questions:
+
+Whether the slimmable representation can be transferred to downstream tasks?As depicted in Fig.11(a), Scala consistently outperforms Separate Training (ST) across all width ratios, despite the intermediate sub-networks being trained for approximately 55 epochs.
+After that, we conduct linear probing on video recognition dataset UCF101 with 8 evenly sampled frames and average their features for the final prediction.
+For the classification head added on Scala, we make it slimmable to fit the features with various dimensions and follow the same training protocol as in object recognition. In Fig.11(b), two notable observations emerge:
+(1)
+Scala consistently outperforms ST across different width ratios on the UCF101 dataset, implying the great transferability of the slimmable representation;
+(2) Scala retains its slimmable ability when applied to a new task and exhibits promising performance across a wide slicing range (10141 GFLOPs), promising its application on other downstream tasks.
+
+Whether the generalization ability can be maintained in the slimmable representation?Inspired by the work[43]which replicates the success of vision foundation models on ImageNet-1K, we remove all the Cross-Entropy losses during training to alleviate the dataset bias issue and inherit the strong generalization ability of the teacher network DINOv2. Then we conduct linear probing on 12 fine-grained classification datasets following the setup in DINOv2. Tab.5shows that Scala significantly outperforms DeiT variants on the average performance of fine-grained classification which suggests that Scala indeed inherits the fruitful knowledge from DINOv2 with remarkable improvement in its generalization ability. Moreover, the improvement over DeiT does not decrease when we scale down the width ratios during inference and it indicates that Scala maintains the flexible inference capability very well even though it contains more knowledge than before.
+
+Aircraft
+
+Cal101
+
+Cars
+
+C10
+
+C100
+
+DTD
+
+Flowers
+
+Food
+
+Pets
+
+SUN
+
+VOC
+
+CUB
+
+Average
+
+SECTION: 5.5Dense Prediction
+
+In previous sections, we have validated the effectiveness of Scala on classification tasks, we further examine whether the slimmable representation could be transferred for dense prediction task like semantic segmentation. We utilize the pre-trained model Uniformer-S[20]drawn from Fig.8, which has a hierarchical design and is obtained by 100-epoch training (our results lag behind official results where the backbone is trained for 300 epochs), and equip it with Semantic FPN[16].
+To compare with Separate Training (ST), we extract four subnets from Scala (Uniformer-S) and train them separately.
+Shown in Tab.5.6, Scala outperforms ST at all widths which verifies the slimmable representation benefits the downstream tasks.
+Note that we do not scale the decoder as it involves extra designs and is out of the scope of this work.
+However, we show that the slimmable representation can be generalized to semantic segmentation as feature extractors because the feature maps are spatially intact,
+promising its application as an end-to-end slimmable framework on dense prediction tasks.
+
+SECTION: 5.6Ablation Study
+
+We conduct ablation to examine the effectiveness of our designs in Tab.5.6.
+First, we build Scala without Isolated Activation so that the smallest sub-network will entangle with others and it shows an obvious performance drop at all width ratios.
+Then, we remove Progressive Knowledge Transfer (PKT) and pass the knowledge fromto smaller subnets through classification token following US-Net[37].
+It shows much worse performance, especially at small ratios, which proves the strength of PKT as it implicitly introduces some teacher assistants to simplify the optimization objective for small sub-networks.
+Further, we random sample the width ratios ofandbetweenand compare it with Stable Sampling (SS).
+The results are slightly inferior to SS which suggests SS is helpful in securing the steady learning objective for each sub-network.
+Finally, we remove Noise Calibration (NC) from Scala and only use the predictions from larger networks to guide the small subnets.
+It shows remarkable performance drops at small width ratios, where the noise from the teacher network is most obvious, demonstrating the effectiveness of NC in calibrating the noise and providing accurate signals for sub-networks.
+
+SECTION: 6Conclusion and Limitations
+
+In this paper, we observed that smaller ViTs are intrinsically the sub-networks of a large ViT with different width ratios.
+However, slicing ViT is very challenging due to its poor interpolation ability.
+To address this issue, we proposed Scala to enable a single network to represent multiple smaller variants with flexible inference capability.
+Specifically, we proposed Isolated Activation to disentangle the representation of the smallest subnet from others and presented Scale Coordination to ensure the sub-network receives simplified, steady, and accurate learning objectives.
+Extensive experiments on different tasks prove that Scala, requiring only one-shot training,
+outperforms the state-of-the-art method under different computations
+and matches the performance of Separate Training with significantly fewer parameters,
+promising the potential as a new training paradigm.
+
+One limitation of Scala is the longer training time compared to
+conventional supervised learning of a single model, attributable to the activation of multiple subnets during training.
+Nevertheless, our training time is obviously less than separately training all the sub-networks.
+In the future, we aim to enhance the training efficiency of Scala.
+
+SECTION: References
+
+SECTION: Appendix AAppendix
+
+SECTION: A.1Implementation Details
+
+For Separate Training (ST), we follow the exact training strategy of the official DeiT[29]and Uniformer[20]setting.
+We use random horizontal flipping, random erasing[44], Mixup[42], CutMix[40], and RandAugment[6]for data augmentation. AdamW[23]is utilized as the optimizer with a momentum of 0.9 and
+a weight decay of 0.05. We set the learning rate to 1e-3 and decay with a cosine shape.
+The models are trained on 4 V100 and 8 A100 GPUs with a total batch size of 1024.
+We adopt Exponential Moving Average (EMA) following the official setting.
+
+While we utilize the pre-trained ST model () as the teacher forto facilitate training as mentioned in the Scale Coordination section in the main paper, we adopt a larger learning rate (2e-3) and mild data augmentation (reduce the magnitude for RandAugment[6]to 1 and turn off repeated augmentation) because Scale Coordination already regularizes the network training strongly.
+At every training iteration, we activate four sub-networks separately based on Stable Sampling and accumulate their gradients for backpropagation.
+The rest hyperparameters are set as the same as those in Separate Training.
+
+SECTION: A.2Slimmable Ability of Vanilla Representation
+
+Tab.1shows that ViT is not slimmable if we directly evaluate the vanilla pre-trained model at other widths.
+Here, we further explore the slimmable ability of vanilla representation and fine-tune the vanilla pre-trained model with Scala.
+Tab.8shows that fine-tuning obtains obviously worse performance at small width ratios compared to training from scratch, which denotes that the vanilla representation is not slimmable and is essentially different from the slimmable representation.
+
+SECTION: A.3Larger Slicing Bound
+
+As discussed in the main text, the slicing bound has a huge impact on the performance of Scala.
+Here we further expand the slicing bound fromto.
+As shown in Fig.12, Scala suffers from an obvious performance drop atas it is not constantly activated in the new setting.
+Nevertheless, our method still manages to outperform ST at all width ratios and shows a significant advantage at the smallest ratio.
+
+SECTION: A.4Longer Training Process
+
+Previous experiments validate that Scala achieves achieves performance comparable to that of Separate Training (ST) on DeiT-B[29]in the 300-epoch training setting, even though the intermediate sub-networks training time is much less.
+We further extend the training process to 400 epochs in this section and the results are shown in Tab.9.
+The overall performance at various width ratios is improved with longer training and Scala () outperforms ST at all widths even though the expected training epochs for intermediate sub-networks are still much less than ST.
+
+SECTION: A.5More Ablation Studies on Activation Method
+
+We validated the effectiveness of Isolated Activation by removing this component and we further conduct more ablation studies on the activation methods where the designs are illustrated in Fig.13.
+As shown in Tab.10, choice (b) leads to slightly better performance at, but the performance drops atsignificantly as it is entangled withand the over-emphasize ofadversely affect its performance.
+On the other hand, choice (c) results in a similar performance at, but the accuracy decreases significantly atwhich further verifies our hypothesis thatshould be isolated to reduce its negative impact on other sub-networks.
+
+SECTION: A.6Verification of Slimmable Ability
+
+In the main text, we found that ViT has the minimal interpolation ability compared to the CNN structure.
+This suggests that optimizing larger sub-networks does not directly contribute to the performance improvement of smaller variants, even though their weights are shared in a nested nature.
+A further question is, whether ViT can still maintain the slimmable ability for the unseen width ratios during training.
+
+To verify this point, we respectively fix the width ratios ofto 0.8125 and 0.4375 during training, so that only one sub-network is optimized at each range.
+Fig.14shows that the accuracy of unseen sub-networks is very low due to the lack of interpolation ability.
+Nevertheless, the performance at other width ratios remains similar to the default setting even though their weights are shared with each other.
+This indicates that the correlation between sub-networks in ViT is weak and further highlights how challenging this problem is.
+
+SECTION: A.7Comparisons with Distillation Baselines
+
+While we have shown that Scala outperforms baseline methods US-Net[37]and Separate Training (ST), we further compare Scala with much stronger baselines, by adding an external teacher to their full network during training.
+Specifically, we adopt the pre-trained full model from ST as the teacher and conduct knowledge distillation for models with different widths separately.
+Tab.11shows that ST+KD exhibits similar performance at larger width ratios with Scala, despite that Scala clearly outperforms ST+KD at smaller widths, promising its application on edge devices.
+Although obtaining a better full model, US-Net+KD exhibits worse performance at smaller width ratios because it utilizes the full network as the teacher for all subnets and this phenomenon verifies our motivation of proposing Progressive Knowledge Transfer.
+
+SECTION: A.8Comparisons in Training Time
+
+Assuming to deliver 13 models in the end, we compare the training time (100 Epoch) of Scala with US-Net[37], Separate Training on 8 A100 GPUs. The difference between US-Net and Scala is not large as the transformer architecture has been well-optimized on GPU and we do observe a significant time gap between Scala and Separate Training as they have to train 13 models iteratively. Moreover, Scala can be configured to deliver 25 models without an increase in training time as we sample 4 networks at each iteration in all scenarios which further highlights our strengths.
+
+SECTION: A.9Comparisons with MatFormer
+
+MatFormer[18]only slices the FFN block in the transformer architecture so it offers a minor computational adjustment space and we adapt their method on DeiT-S to compare with Scala. Fig.15shows that Scala achieves comparable performance with it (better in most cases) whenwith a larger adjustment scope.
+
+SECTION: NeurIPS Paper Checklist
+
+Claims
+
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope?
+
+Answer:[Yes]
+
+Justification: Our contribution is to enable ViT to become slimmable during inference which is described in the abstract and introduction.
+
+Guidelines:
+
+The answer NA means that the abstract and introduction do not include the claims made in the paper.
+
+The abstract and/or introduction should clearly state the claims made, including the contributions made in the paper and important assumptions and limitations. A No or NA answer to this question will not be perceived well by the reviewers.
+
+The claims made should match theoretical and experimental results, and reflect how much the results can be expected to generalize to other settings.
+
+It is fine to include aspirational goals as motivation as long as it is clear that these goals are not attained by the paper.
+
+Limitations
+
+Question: Does the paper discuss the limitations of the work performed by the authors?
+
+Answer:[Yes]
+
+Justification: See conclusion.
+
+Guidelines:
+
+The answer NA means that the paper has no limitation while the answer No means that the paper has limitations, but those are not discussed in the paper.
+
+The authors are encouraged to create a separate "Limitations" section in their paper.
+
+The paper should point out any strong assumptions and how robust the results are to violations of these assumptions (e.g., independence assumptions, noiseless settings, model well-specification, asymptotic approximations only holding locally). The authors should reflect on how these assumptions might be violated in practice and what the implications would be.
+
+The authors should reflect on the scope of the claims made, e.g., if the approach was only tested on a few datasets or with a few runs. In general, empirical results often depend on implicit assumptions, which should be articulated.
+
+The authors should reflect on the factors that influence the performance of the approach. For example, a facial recognition algorithm may perform poorly when image resolution is low or images are taken in low lighting. Or a speech-to-text system might not be used reliably to provide closed captions for online lectures because it fails to handle technical jargon.
+
+The authors should discuss the computational efficiency of the proposed algorithms and how they scale with dataset size.
+
+If applicable, the authors should discuss possible limitations of their approach to address problems of privacy and fairness.
+
+While the authors might fear that complete honesty about limitations might be used by reviewers as grounds for rejection, a worse outcome might be that reviewers discover limitations that aren’t acknowledged in the paper. The authors should use their best judgment and recognize that individual actions in favor of transparency play an important role in developing norms that preserve the integrity of the community. Reviewers will be specifically instructed to not penalize honesty concerning limitations.
+
+Theory Assumptions and Proofs
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof?
+
+Answer:[N/A]
+
+Justification: We do not have theory included.
+
+Guidelines:
+
+The answer NA means that the paper does not include theoretical results.
+
+All the theorems, formulas, and proofs in the paper should be numbered and cross-referenced.
+
+All assumptions should be clearly stated or referenced in the statement of any theorems.
+
+The proofs can either appear in the main paper or the supplemental material, but if they appear in the supplemental material, the authors are encouraged to provide a short proof sketch to provide intuition.
+
+Inversely, any informal proof provided in the core of the paper should be complemented by formal proofs provided in appendix or supplemental material.
+
+Theorems and Lemmas that the proof relies upon should be properly referenced.
+
+Experimental Result Reproducibility
+
+Question: Does the paper fully disclose all the information needed to reproduce the main experimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)?
+
+Answer:[Yes]
+
+Justification: We have included the implementation details in the main text and appendix.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+If the paper includes experiments, a No answer to this question will not be perceived well by the reviewers: Making the paper reproducible is important, regardless of whether the code and data are provided or not.
+
+If the contribution is a dataset and/or model, the authors should describe the steps taken to make their results reproducible or verifiable.
+
+Depending on the contribution, reproducibility can be accomplished in various ways. For example, if the contribution is a novel architecture, describing the architecture fully might suffice, or if the contribution is a specific model and empirical evaluation, it may be necessary to either make it possible for others to replicate the model with the same dataset, or provide access to the model. In general. releasing code and data is often one good way to accomplish this, but reproducibility can also be provided via detailed instructions for how to replicate the results, access to a hosted model (e.g., in the case of a large language model), releasing of a model checkpoint, or other means that are appropriate to the research performed.
+
+While NeurIPS does not require releasing code, the conference does require all submissions to provide some reasonable avenue for reproducibility, which may depend on the nature of the contribution. For example
+
+If the contribution is primarily a new algorithm, the paper should make it clear how to reproduce that algorithm.
+
+If the contribution is primarily a new model architecture, the paper should describe the architecture clearly and fully.
+
+If the contribution is a new model (e.g., a large language model), then there should either be a way to access this model for reproducing the results or a way to reproduce the model (e.g., with an open-source dataset or instructions for how to construct the dataset).
+
+We recognize that reproducibility may be tricky in some cases, in which case authors are welcome to describe the particular way they provide for reproducibility. In the case of closed-source models, it may be that access to the model is limited in some way (e.g., to registered users), but it should be possible for other researchers to have some path to reproducing or verifying the results.
+
+Open access to data and code
+
+Question: Does the paper provide open access to the data and code, with sufficient instructions to faithfully reproduce the main experimental results, as described in supplemental material?
+
+Answer:[Yes]
+
+Justification: We have included the details and will release the code soon.
+
+Guidelines:
+
+The answer NA means that paper does not include experiments requiring code.
+
+Please see the NeurIPS code and data submission guidelines (https://nips.cc/public/guides/CodeSubmissionPolicy) for more details.
+
+While we encourage the release of code and data, we understand that this might not be possible, so “No” is an acceptable answer. Papers cannot be rejected simply for not including code, unless this is central to the contribution (e.g., for a new open-source benchmark).
+
+The instructions should contain the exact command and environment needed to run to reproduce the results. See the NeurIPS code and data submission guidelines (https://nips.cc/public/guides/CodeSubmissionPolicy) for more details.
+
+The authors should provide instructions on data access and preparation, including how to access the raw data, preprocessed data, intermediate data, and generated data, etc.
+
+The authors should provide scripts to reproduce all experimental results for the new proposed method and baselines. If only a subset of experiments are reproducible, they should state which ones are omitted from the script and why.
+
+At submission time, to preserve anonymity, the authors should release anonymized versions (if applicable).
+
+Providing as much information as possible in supplemental material (appended to the paper) is recommended, but including URLs to data and code is permitted.
+
+Experimental Setting/Details
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperparameters, how they were chosen, type of optimizer, etc.) necessary to understand the results?
+
+Answer:[Yes]
+
+Justification: We conduct experiments following the standard protocol and include the details.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The experimental setting should be presented in the core of the paper to a level of detail that is necessary to appreciate the results and make sense of them.
+
+The full details can be provided either with the code, in appendix, or as supplemental material.
+
+Experiment Statistical Significance
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments?
+
+Answer:[No]
+
+Justification: Repeating experiments on ImageNet requires lots of resources.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The authors should answer "Yes" if the results are accompanied by error bars, confidence intervals, or statistical significance tests, at least for the experiments that support the main claims of the paper.
+
+The factors of variability that the error bars are capturing should be clearly stated (for example, train/test split, initialization, random drawing of some parameter, or overall run with given experimental conditions).
+
+The method for calculating the error bars should be explained (closed form formula, call to a library function, bootstrap, etc.)
+
+The assumptions made should be given (e.g., Normally distributed errors).
+
+It should be clear whether the error bar is the standard deviation or the standard error of the mean.
+
+It is OK to report 1-sigma error bars, but one should state it. The authors should preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis of Normality of errors is not verified.
+
+For asymmetric distributions, the authors should be careful not to show in tables or figures symmetric error bars that would yield results that are out of range (e.g. negative error rates).
+
+If error bars are reported in tables or plots, The authors should explain in the text how they were calculated and reference the corresponding figures or tables in the text.
+
+Experiments Compute Resources
+
+Question: For each experiment, does the paper provide sufficient information on the computer resources (type of compute workers, memory, time of execution) needed to reproduce the experiments?
+
+Answer:[Yes]
+
+Justification: We have provided details of our computing resources in the appendix.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The paper should indicate the type of compute workers CPU or GPU, internal cluster, or cloud provider, including relevant memory and storage.
+
+The paper should provide the amount of compute required for each of the individual experimental runs as well as estimate the total compute.
+
+The paper should disclose whether the full research project required more compute than the experiments reported in the paper (e.g., preliminary or failed experiments that didn’t make it into the paper).
+
+Code Of Ethics
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethicshttps://neurips.cc/public/EthicsGuidelines?
+
+Answer:[Yes]
+
+Justification: We have read and follow the rules.
+
+Guidelines:
+
+The answer NA means that the authors have not reviewed the NeurIPS Code of Ethics.
+
+If the authors answer No, they should explain the special circumstances that require a deviation from the Code of Ethics.
+
+The authors should make sure to preserve anonymity (e.g., if there is a special consideration due to laws or regulations in their jurisdiction).
+
+Broader Impacts
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed?
+
+Answer:[N/A]
+
+Justification: There is no societal impact.
+
+Guidelines:
+
+The answer NA means that there is no societal impact of the work performed.
+
+If the authors answer NA or No, they should explain why their work has no societal impact or why the paper does not address societal impact.
+
+Examples of negative societal impacts include potential malicious or unintended uses (e.g., disinformation, generating fake profiles, surveillance), fairness considerations (e.g., deployment of technologies that could make decisions that unfairly impact specific groups), privacy considerations, and security considerations.
+
+The conference expects that many papers will be foundational research and not tied to particular applications, let alone deployments. However, if there is a direct path to any negative applications, the authors should point it out. For example, it is legitimate to point out that an improvement in the quality of generative models could be used to generate deepfakes for disinformation. On the other hand, it is not needed to point out that a generic algorithm for optimizing neural networks could enable people to train models that generate Deepfakes faster.
+
+The authors should consider possible harms that could arise when the technology is being used as intended and functioning correctly, harms that could arise when the technology is being used as intended but gives incorrect results, and harms following from (intentional or unintentional) misuse of the technology.
+
+If there are negative societal impacts, the authors could also discuss possible mitigation strategies (e.g., gated release of models, providing defenses in addition to attacks, mechanisms for monitoring misuse, mechanisms to monitor how a system learns from feedback over time, improving the efficiency and accessibility of ML).
+
+Safeguards
+
+Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pretrained language models, image generators, or scraped datasets)?
+
+Answer:[N/A]
+
+Justification: Our work has no such risks.
+
+Guidelines:
+
+The answer NA means that the paper poses no such risks.
+
+Released models that have a high risk for misuse or dual-use should be released with necessary safeguards to allow for controlled use of the model, for example by requiring that users adhere to usage guidelines or restrictions to access the model or implementing safety filters.
+
+Datasets that have been scraped from the Internet could pose safety risks. The authors should describe how they avoided releasing unsafe images.
+
+We recognize that providing effective safeguards is challenging, and many papers do not require this, but we encourage authors to take this into account and make a best faith effort.
+
+Licenses for existing assets
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected?
+
+Answer:[Yes]
+
+Justification: We have cited the papers that created the datasets.
+
+Guidelines:
+
+The answer NA means that the paper does not use existing assets.
+
+The authors should cite the original paper that produced the code package or dataset.
+
+The authors should state which version of the asset is used and, if possible, include a URL.
+
+The name of the license (e.g., CC-BY 4.0) should be included for each asset.
+
+For scraped data from a particular source (e.g., website), the copyright and terms of service of that source should be provided.
+
+If assets are released, the license, copyright information, and terms of use in the package should be provided. For popular datasets,paperswithcode.com/datasetshas curated licenses for some datasets. Their licensing guide can help determine the license of a dataset.
+
+For existing datasets that are re-packaged, both the original license and the license of the derived asset (if it has changed) should be provided.
+
+If this information is not available online, the authors are encouraged to reach out to the asset’s creators.
+
+New Assets
+
+Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets?
+
+Answer:[N/A]
+
+Justification: We do not release new assets.
+
+Guidelines:
+
+The answer NA means that the paper does not release new assets.
+
+Researchers should communicate the details of the dataset/code/model as part of their submissions via structured templates. This includes details about training, license, limitations, etc.
+
+The paper should discuss whether and how consent was obtained from people whose asset is used.
+
+At submission time, remember to anonymize your assets (if applicable). You can either create an anonymized URL or include an anonymized zip file.
+
+Crowdsourcing and Research with Human Subjects
+
+Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)?
+
+Answer:[N/A]
+
+Justification: Our paper does not involve crowdsourcing nor research with human subjects.
+
+Guidelines:
+
+The answer NA means that the paper does not involve crowdsourcing nor research with human subjects.
+
+Including this information in the supplemental material is fine, but if the main contribution of the paper involves human subjects, then as much detail as possible should be included in the main paper.
+
+According to the NeurIPS Code of Ethics, workers involved in data collection, curation, or other labor should be paid at least the minimum wage in the country of the data collector.
+
+Institutional Review Board (IRB) Approvals or Equivalent for Research with Human Subjects
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained?
+
+Answer:[N/A]
+
+Justification: Our paper does not involve crowdsourcing nor research with human subjects.
+
+Guidelines:
+
+The answer NA means that the paper does not involve crowdsourcing nor research with human subjects.
+
+Depending on the country in which research is conducted, IRB approval (or equivalent) may be required for any human subjects research. If you obtained IRB approval, you should clearly state this in the paper.
+
+We recognize that the procedures for this may vary significantly between institutions and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the guidelines for their institution.
+
+For initial submissions, do not include any information that would break anonymity (if applicable), such as the institution conducting the review.

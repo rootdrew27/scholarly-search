@@ -1,0 +1,203 @@
+SECTION: UniForm: A Reuse Attention Mechanism for Efficient Transformers on Resource-Constrained Edge Devices
+
+Transformer-based architectures have demonstrated remarkable success across various domains, but their deployment on edge devices remains challenging due to high memory and computational demands. In this paper, we introduce a novel Reuse Attention mechanism, tailored for efficient memory access and computational optimization, enabling seamless operation on resource-constrained platforms without compromising performance. Unlike traditional multi-head attention (MHA), which redundantly computes separate attention matrices for each head, Reuse Attention consolidates these computations into a shared attention matrix, significantly reducing memory overhead and computational complexity. Comprehensive experiments on ImageNet-1K and downstream tasks show that the proposed UniForm models leveraging Reuse Attention achieve state-of-the-art imagenet classification accuracy while outperforming existing attention mechanisms, such as Linear Attention and Flash Attention, in inference speed and memory scalability. Notably, UniForm-l achieves a 76.7% Top-1 accuracy on ImageNet-1K with 21.8ms inference time on edge devices like the Jetson AGX Orin, representing up to a 5x speedup over competing benchmark methods. These results demonstrate the versatility of Reuse Attention across high-performance GPUs and edge platforms, paving the way for broader real-time applications.
+
+SECTION: 1Introduction
+
+Recent advances in neural network architectures have been dominated by Transformers, which excel in capturing intricate dependencies across various domains, including natural language processing (NLP), computer vision, and speech recognition. Transformers have proven their worth in large-scale tasks such as image classification, object detection, and language modeling. Vision Transformers (ViTs), in particular, have significantly advanced computer vision, taking inspiration from the breakthroughs seen in large language models (LLMs) such as GPT and Llama.
+However, the impressive performance of these models comes at the cost of increased computational and memory demands, which pose significant challenges for latency-sensitive and real-time applications, particularly on edge devices with limited resources.
+
+Edge deployment, such as on devices like Raspberry Pi and Jetson Nano, introduces unique constraints, including limited memory, low energy consumption, and strict real-time processing requirements. The high computational and memory overhead of ViTs and other Transformer-based models makes it difficult to meet these constraints. Even though optimized GPU systems like NVIDIA A100 provide high throughput, the resource disparity between high-end GPUs and edge devices results in a significant performance gap during inference.
+
+To address these challenges, several optimization approaches such as model pruning, quantization, and Neural Architecture Search (NAS) have been explored to optimize models for edge deployment
+However, these techniques often fall short of addressing the non-linear relationship between model complexity and inference time on resource-constrained platforms. This non-linearity has been well-documented in studies such as MCUNet and Neural Architecture Search for Efficient Edge Inference, which highlight that models designed for GPUs often fail to scale efficiently to edge environments[30,9]. This gap emphasizes the need for models designed specifically for edge hardware.
+
+In response to these challenges, we propose a simple yet efficient reuse attention mechanism that is specifically designed to address the constraints of edge devices while maintaining the scalability and accuracy of ViTs. Unlike traditional attention mechanisms, which calculate the attention matrix for each head, our method reuses the attention matrix across multiple attention heads within a layer. This significantly reduces redundant computations and minimizes memory accesses, a crucial improvement for memory-bound edge devices. This approach is particularly advantageous in real-time, latency-sensitive applications, offering higher inference speeds and reduced memory usage. Despite the optimizations, our reuse attention mechanism can also maintain competitive performance on tasks like object detection and segmentation, ensuring its applicability across different downstream tasks.
+
+In summary, our contributions are threefold:
+
+Efficient Attention MechanismWe propose a simple yet efficient attention mechanism that calculates the attention matrix once per layer, significantly reducing redundant calculations and memory access. This innovation enables more efficient processing on memory-constrained edge devices while maintaining computational rigor, thus addressing the growing demand for real-time, low-latency AI applications.
+
+Improved Throughput on Diverse HardwareOur method demonstrates significant improvements in throughput across diverse hardwares, ranging from high-performance GPUs to resource-constrained edge devices. Unlike conventional attention mechanisms, our approach scales gracefully without compromising on Top-1 accuracy, outperforming many state-of-the-art (SOTA) models.
+
+Versatility in Downstream TasksWe extend the applicability of Reuse Attention to downstream tasks like object detection and segmentation. This versatility shows its practical utility in real-world applications while maintaining computational efficiency.
+
+SECTION: 2Backgrounds
+
+Deploying Transformers on edge devices presents unique challenges due to the limited computational and memory resources available in these environments. This section highlights three major bottlenecks: (1) memory bottlenecks from multi-head attention (MHA), (2) computational inefficiencies and redundancy in traditional attention modules, and (3) the performance gap between high-performance GPUs and resource-constrained edge devices. These challenges have a significant impact on the scalability and real-time deployment of ViTs, underscoring the need for optimized transformer architectures that can effectively operate in low-resource environments while maintaining performance.
+
+SECTION: 2.1Memory Bottlenecks
+
+Attention mechanisms, particularly multi-head attention (MHA), are foundational to the success of Transformer-based models, including Vision Transformers (ViTs) as well as Large Language Models, enabling them to capture long-range dependencies and global relationships in input data[37]. However, MHA introduces significant memory bottlenecks, especially in resource-constrained environments like edge devices[18]. The core issue lies in the memory-intensive operations involved in attention modules, such as softmax calculations and matrix multiplications, which require frequent memory access to intermediate results and output storage, placing high demands on memory bandwidth[16].
+The frequent data movement between memory and compute units significantly increases memory traffic as the input sequence size grows, which leads to slower inference times for real-time applications.
+
+High-performance GPUs, such as the NVIDIA H100 with 3.35 TB/s bandwidth, are well-equipped to handle the memory demands of transformer models, particularly multi-head attention (MHA). In contrast, edge devices like the Raspberry Pi 3B, with about 197 times less bandwidth (17 GB/s), struggle significantly as shown in Fig.2. The low memory bandwidth in edge devices forces frequent memory I/O operations, increasing memory traffic and leading to performance bottlenecks like cache misses, especially during repetitive MHA operations. This negatively impacts inference speed as the processor repeatedly accesses slower memory[17,16]. Previous studies have shown that these memory inefficiencies can be mitigated through optimizations such as FlashAttention, which reduces unnecessary memory transfers, minimizing latency and improving throughput on low-resource hardware[10,7]
+
+SECTION: 2.2Computation and Parameter Optimization
+
+Computational inefficiencies in traditional MHA modules, particularly in resource-constrained environments, present a significant challenge. Each attention head computes its attention map independently, leading to redundant and resource-intensive operations as the number of heads increases. Studies have shown that many attention maps across different heads exhibit substantial similarity, suggesting that not all computations are necessary[21]. Furthermore, Michel et al.[27]demonstrate that transformer models often rely on only a subset of heads, with many contributing minimally to the final output. This underscores the diminishing returns of additional heads and highlights the potential benefits of simplified architectures, such as single-head attention or reduced multi-head configurations, which strike a better balance between computational efficiency and performance.
+
+Moreover, parameter efficiency is equally critical, particularly for edge device deployments. Research on ViT pruning[39]reveals redundancy in the Query and Key components of the attention module across layers, while the Value component consistently retains essential information. This finding suggests that selectively pruning or simplifying the Query and Key components while preserving the Value can significantly reduce parameter overhead. Such optimizations lead to improved memory and computational efficiency without compromising performance, enabling more practical and efficient transformer designs for deployment in low-power environments.
+
+SECTION: 2.3Performance Gap between High-performance GPUs vs. Edge Devices
+
+The increasing complexity of Transformer-based models, such as Vision Transformers (ViTs), highlights the growing need for more efficient mechanisms, especially when deploying models across a variety of hardware platforms. A distinct performance gap exists between high-performance GPUs and Edge-devices, primarily due to the computational and memory demands of conventional attention mechanisms. While high-performance GPUs can manage these demands, Edge-devices face significant challenges due to limited computational power and memory bandwidth, making efficient deployment difficult.
+
+High-performance GPUs, equipped with High Bandwidth Memory (HBM), can efficiently handle these demands, processing large sequences with minimal latency. For example, the H100 offers a memory bandwidth of 3.35 TB/s, which is approximately 197 times greater than the Raspberry Pi 3B, allowing it to smoothly manage increasing token counts. In contrast, Edge-devices, such as the Jetson Nano with LPDDR memory (25.6 GB/s), are heavily constrained by lower memory bandwidth and compute capacity (see Figure2). As the number of tokens increases, memory access in conventional attention mechanisms grows exponentially, overwhelming these devices. This results in frequent cache misses, increased latency, and overall inefficiency when handling multi-head attention (MHA) operations, which require frequent memory input/output (I/O) actions.
+
+Our experiments clearly validated this performance gap as shown in Figure3. By evaluating the memory access and arithmetic intensity of attention modules across devices—from high-end GPUs such as the H100 and A100 to Edge-devices like the Jetson Nano and Raspberry Pi—we observed that when token counts reached 1024 or higher, memory access became the primary bottleneck for Edge-devices. While high-performance GPUs continued to perform well under these conditions, Edge-devices experienced significant slowdowns due to their limited resources. Additionally, the increased number of memory accesses led to frequent cache misses, further degrading performance, underscoring the need for specialized optimizations in attention mechanisms. Without addressing these memory bandwidth constraints, deploying Transformer-based models on Edge-devices for real-time or large-scale input processing remains a major challenge.
+
+SECTION: 2.4Related Works: Comparative Analysis of Attention Mechanisms
+
+Building on the identified three primary bottlenecks, we evaluate popular attention mechanisms (i.e., Original Attention, Linear Attention, Cascaded Group Attention, and Flash Attention) alongside our proposed Reuse Attention approach, focusing on four key metrics: model performance, GPU efficiency, edge efficiency, and memory scalability (see Table3).
+
+Conventional attention mechanisms, though delivering robust model performance, impose substantial computational and memory demands. These demands scale sharply with increased token counts, model depth, and the number of heads, ultimately constraining efficiency on both GPUs and edge devices. This limitation has been a well-documented obstacle in scaling Transformer models to edge environments[37,33,7].
+
+Linear Attention improves GPU and edge efficiency by reducing computational complexity. However, this simplification often sacrifices accuracy, as it struggles to capture complex dependencies required for tasks like language modeling. Consequently, Linear Attention may be less suitable for high-precision applications where performance is critical[15,32,13,25].
+
+Cascaded Group Attention achieves high accuracy, but its grouped computations reduce efficiency on edge devices, where limited parallelism and bandwidth lead to significant performance drops. Prior work has highlighted the resource constraints that prevent grouped attention mechanisms from reaching optimal efficiency on hardware-limited platforms[21].
+
+Flash Attention enhances GPU efficiency by employing block-wise computation to reduce memory I/O, but it still encounters training instability and demands significant memory bandwidth, particularly at higher embedding dimensions, which limits its practicality on SRAM-limited edge devices[7,11].
+
+In contrast, our proposed Reuse Attention significantly reduces memory and computational demands by reusing the attention matrix across heads and employing multi-scale value processing. This design achieves high accuracy while enhancing efficiency on both GPUs and edge devices, making it a viable option for real-world edge deployments. Preliminary results show that Reuse Attention retains accuracy comparable to conventional attention but with a reduced resource footprint, aligning with findings in recent efforts to optimize attention mechanisms for constrained environments.
+
+SECTION: 3Proposed Method
+
+In this section, we introduce the Reuse Attention Mechanism with Multi-Scale Value Processing, a simple yet efficient approach designed to mitigate the computational and memory bottlenecks of the conventional Multi-Head Attention (MHA) mechanism in Transformers. Our method focuses on reducing redundant computations and minimizing memory access overhead, which are critical factors affecting inference speed and efficiency on edge devices. By reusing the attention matrix across all heads and incorporating multi-scale processing in the value projections, our approach enhances both computational efficiency and representational diversity.
+
+SECTION: 3.1Redundancy in Query and Key Components
+
+Studies have observed that attention maps exhibit high similarities across different heads, leading to computational redundancy[21]. This redundancy suggests that computing separate attention matrices for each head may be unnecessary. Additionally, Mehta et al. demonstrated that using synthetic or fixed attention patterns can maintain or even improve performance, aligning with our motivation to reuse the attention matrix[26].
+
+SECTION: 3.2Importance of Value Projections
+
+Recent research exploring the pruning of various structural components of Vision Transformers indicates that reducing the dimensionality of the Value projections leads to greater performance degradation compared to reducing the dimensions of the Query and Key projections[39]. This suggests that the Value projections potentially encode more crucial information for the model’s performance. Therefore, we maintain the original dimensionality of the Value projections while reusing the attention matrix to enhance efficiency without compromising expressiveness.
+
+SECTION: 3.3Enhancing Representational Diversity with Multi-Scale Processing
+
+Our multi-scale Value processing is inspired by the effectiveness of multi-scale convolutional strategies, such as MixConv[36]and Inception modules[35]. Each Value projection undergoes depthwise convolution with a unique kernel size, enabling each head to capture features at different receptive fields. This design improves the model’s ability to learn rich and diverse representations essential for complex tasks, particularly in edge environments where efficiency and flexibility are crucial.
+
+SECTION: 3.4Reuse Attention: Overview and Computational Steps
+
+Our Reuse Attention Mechanism with Multi-Scale Value Processing is a streamlined approach designed to address the inefficiencies in conventional attention architectures. By reusing a single attention matrix across all heads and incorporating multi-scale processing within Value projections, our method reduces computational redundancy and minimizes memory overhead, enhancing efficiency on edge devices
+
+Figure4illustrates the architectural differences between prominent attention mechanisms, highlighting how Queries, Keys, and Values are handled across architectures compared to our proposed method.
+
+Multi-Head Attention (DeiT):
+This configuration employs independent Query, Key, and Value projections for each head, which allows diverse representations but introduces high memory and computational demands, especially with increased heads or token counts. Recent studies highlight that the growing number of heads in Multi-Head Attention exacerbates memory and compute constraints, limiting its scalability[5]
+
+Grouped-Query Attention (Llama 3):
+In this approach, Queries are grouped, with each group sharing a representative Key-Value pair. While this setup reduces resource requirements, it may sacrifice specificity within groups, as each Key-Value pair must represent a range of Queries. This trade-off has been explored as a means to improve efficiency without entirely sacrificing representational power, although some group configurations can hinder task-specific performance[1].
+
+Multi-Query Attention: This method goes further by consolidating queries with a single Key-Value pair to improve efficiency, but its capacity to capture diverse structures is restricted. These methods face inherent trade-offs between performance and efficiency, and they lack scalability, especially in edge environments with limited resources, particularly when dealing with high-dimensional embeddings[2].
+
+To address the limitations of existing attention mechanisms, we proposeReuse Attentionwith Multi-Scale Value Processing, which reduces redundant computations and minimizes memory access overhead while preserving the expressive power of MHA. Our Reuse Attention mechanism leverages a unified attention matrix shared across all heads and introduces multi-scale processing in the value projections, thereby maintaining efficiency and enhancing the model’s representational capacity, especially for edge deployment.
+
+Our Reuse Attention mechanism maximizes computational efficiency by creating a single attention matrix shared across all heads. Given an input, we compute the shared Query and Key projections as follows:
+
+The shared attention matrixis then calculated using:
+
+wherecaptures the global attention across the entire dimension.
+
+Though the matrix multiplication complexity remains, the proposed method significantly reduces memory I/O operations by eliminating the need to separately compute attention matrices for each head. In traditional multi-head attention, each head computes its own attention matrix, resulting in redundant memory accesses and increased I/O overhead. By reusing a single attention matrixacross all heads, our method reduces the total amount of data that needs to be read from and written to memory, thereby improving memory efficiency.
+
+Recent research demonstrated that minimizing memory transfers between compute units and memory banks can drastically improve efficiency on memory-bound hardware[7]. By reusingacross all heads, our approach parallels the memory efficiency strategies of Flash Attention, which minimizes bandwidth requirements through reduced memory transfers, effectively lowering memory traffic, and computational overhead per head. This design addresses a key limitation in transformer architectures by significantly decreasing memory I/O without increasing computational complexity, thereby enhancing throughput on memory-constrained devices[28,21,43].
+
+Each head in the Reuse Attention Mechanism processes its Value projection using depthwise convolutions with unique kernel sizes, enabling multi-scale feature extraction:
+
+By applying depthwise convolutions with varying kernel sizesacross heads, our method captures multi-scale contextual information. Smaller kernels focus on fine-grained details, while larger kernels encompass broader context. This approach allows each head to extract features at different scales without increasing the memory I/O, as the convolution operations are performed locally within the Value projections. Inspired by studies[36,39], which demonstrated the effectiveness of multi-scale convolutions in capturing spatial hierarchies, our approach further improves representational diversity across scales. This multi-scale processing enables a richer representation without requiring additional memory bandwidth, aligning well with insights on optimizing model expressiveness through hierarchical representation without inflating parameter size or memory requirements.
+
+By reusing the unified attention matrixacross all heads, the Reuse Attention Mechanism achieves a significant reduction in redundant memory operations:
+
+Unlike conventional attention, which calculates separate attention matrices per head, our method reuses the samefor all heads, thus avoiding repeated memory access patterns and reducing the total memory bandwidth required. This reuse strategy is akin to techniques in recent research like that of Ribar et al.[31]in LLMs and Shim et al.[34]in speech recognition, which illustrate how minimizing repeated memory accesses can lead to substantial performance gains in constrained environments. Our approach ensures that the high memory bandwidth demand seen in conventional MHA is alleviated, aligning with recent findings on optimizing memory efficiency in transformers.
+
+Finally, the outputs from each head are concatenated to form the final output:
+
+This aggregation leverages the multi-scale, memory-efficient representations from each head, preserving high expressiveness without overburdening memory resources. By reducing memory transfers and managing bandwidth effectively, our method provides significant improvements in memory efficiency, which is crucial for edge applications with limited memory resources. This aligns well with insights from existing studies on transformer efficiency for edge applications.
+
+SECTION: 3.5UniForm Network Architectures
+
+The UniForm Network is constructed around the concept of Reuse Attention, with its architecture illustrated in Fig.5. Similar to previous Like previous hierarchical backbones[22,21,38,14,12], UniForm follows a progressive design that operates in three stages. Across these stages, the channel dimensions, the depth, and the number of attention headsare incrementally increased to accommodate different levels of feature abstraction.
+
+In the first stage, we introduce overlapping patch embedding to transform 1616 input patches into tokens of dimension. This method enhances the model’s capacity for low-level visual representation learning, capturing finer details with minimal computational overhead. The UniForm Network then builds upon these tokens through a series of UniForm Blocks, stacking them within ach stage while reducing the token count by a factor of 4 via downsampling layers. The downsampling in resolution is inspired by the efficiency of hierarchical architectures which maintain spatial relationships while progressively reducing computational complexity[22,21]
+
+We employ depthwise convolution (DWConv) and feedforward network (FFN) layers sequentially before and after attention modules to balance local feature extraction and global context understanding efficiently. This combination reduces computational complexity while capturing both low-level and high-level representations. The use of DWConv and FFN layers around attention is a proven technique from prior researches, enhancing model performance by optimizing the flow of information without the high cost of full self-attention[21,19,4]. The architecture is highly scalable, supporting Tiny, Small, Medium, and Large variants (as shown in Table4), with each variant adjusting the number of channels, attention heads, and depth to meet varying task complexities and computational constraints. UniForm also introduces Reuse Attention blocks, which reuse intermediate features across stages, reducing computational costs without sacrificing accuracy. This modular design enhances flexibility, allowing the network to adapt seamlessly to different patch sizes and resolutions.
+
+SECTION: 4Experimental Results
+
+SECTION: 4.1Implementation Details
+
+We conduct image classification experiments on ImageNet-1K[8]. The models are buit with PyTorch 2.3.0[29]and MMPreTrain 1.2.0[6], and trained from scratch for 300 epochs on 2 NVIDIA A100 GPUs using AdamW optimizer[24]and cosine annealing learning rate scheduler[23]. We set the total batchsize as 512. The input images are resized and randomly cropped into 224224. The initial learning rate is 0.001 with weight decay of 0.025. We include some augmentation and regularization strategies in training, including Mixup[41], Cutmix[40], and
+random erasing[44].
+
+Additionally, we evaluate the throughput across different hardware plateforms.
+
+For GPU, throughput is measured on an NVIDIA A100, with a batch size of 2048 for a fair comparison across models.
+
+For CPU, we measure the runtime on an Intel Xeon Gold 6426Y @ 2.50 GHz processor using a batch size of 16 and single-thread execution following the methodology based on[12].
+
+In contrast to prior works, we also extensively emphasize the evaluation on the inference performance on various edge devices. These include popular multiple versions of theJetson(Nano, Xavier, Tx2, Nx, and AGX Orin) and multiple versions of theRaspberry Pi(2B, 3B, 3B Plus, 4B, and 5). All models are tested with a batch size of 16 and run in single-thread mode to maintain consistency. This evaluation demonstrates the practicality of each model in edge computing environments, where resource constraints are significantly more stringent than on server-grade hardware.
+
+Moreover, we evaluate the transferability of the UniForm model to downstream tasks. For image classification, we fine-tune the models for 300 epochs following[42]with similar hyperparameter settings. For instance segmentation on the COCO dataset[20], we use Mask RCNN and train for 12 epochs (1schedule) with the same settings as[22]using the MMDetection framework[3].
+
+SECTION: 4.2Image Classification
+
+The UniForm models (Tiny, Small, Medium, and Large) consistently outperform state-of-the-art (SOTA) models across a range of sizes, delivering both higher accuracy and superior throughput in Fig.1and Tab.5. When compared to traditional CNN-based models like ShuffleNetV2 and MobileNetV3, as well as modern Transformer-based models like EfficientViT and EdgeNeXt, UniForm-s achieves 70.1% Top-1 accuracy, significantly outperforming MobileNetV3-small (67.4%), EfficientViT-M1 (68.4%), MobileViT-XXS (69.0%), and ShuffleNetV2 1.0x (69.4%) while also offering a higher throughput on CPU (231 images/s) as well as GPU (50,582 images/s vs. 41,965 images/s for MobileNetV3-small and 47,045 images/s for EfficientViT-M1). Furthermore, UniForm outperforms models from other architecture families, including MLP-based models like Mixer-B/16 and fusion-based models like EdgeNeXt. UniForm-l, for example, achieves 76.7% accuracy with a throughput of 25,356 images/s on GPU, significantly faster than Mixer-L/16 (688 images/s) and ViG-Ti (1,406 images/s), all while delivering higher accuracy than both.
+
+This trend is evident across all UniForm variants, demonstrating that UniForm not only provides better accuracy but also achieves faster throughput on both GPU and CPU compared to other models of similar sizes, making it highly efficient for both large-scale and edge-device environments.
+
+The results presented in Table6showcase the inference speed of UniForm variants compared to state-of-the-art CNN and ViT models across a wide range of edge devices. The key takeaway from these findings is UniForm’s exceptional performance, consistently achieving faster inference times while maintaining competitive accuracy across different edge-devices.
+
+Across all edge devices, UniForm significantly outperforms its counterparts in terms of inference speed. For example, UniForm-t demonstrates a 5x improvement in speed on the Jetson-Nano (11.9ms) compared to EfficientViT-M0 (56.8ms) while also providing a higher Top-1 accuracy (66.0% vs. 63.2%). This trend continues with UniForm-s and UniForm-m, both showing notable improvements in inference times across all Raspberry Pi versions and Jetson devices when compared to models like MobileNetV3 and EdgeNeXt. On the RaspberryPi4B, UniForm-t (19.4ms) is significantly faster than MobileNetV3-small (33.3ms) and EfficientViT-M1 (400.3ms). This highlights its versatility for deployment in resource-constrained environments where power efficiency and speed are critical, providing a viable solution for deploying advanced vision models in real-world edge scenarios..
+
+UniForm excels at balancing accuracy and speed on edge devices, outperforming both CNN-based models like MobileNetV3 and ShuffleNetV2, as well as Transformer-based models like EfficientViT and DeiT-Tiny. For instance, UniForm-l achieves the highest accuracy (76.7%) with significantly faster inference times on devices like the Jetson AGX Orin (2.4ms) compared to other Transformer models.
+
+SECTION: 4.3Downstream Tasks
+
+We validated the effectiveness of UniForm models on several downstream tasks, focusing on image classification and instance segmentation to showcase the model’s adaptability and competitive edge over state-of-the-art architectures.
+
+We evaluate UniForm across several image classification benchmarks, including CIFAR-10, CIFAR-100, Flowers-102, and Oxford-IIIT Pet. UniForm consistently demonstrates competitive top-1 accuracy across these datasets, maintaining a balance between inference speed and performance. The results show that UniForm efficiently handles different dataset scales, particularly excelling in datasets like Flowers-102 and Oxford-IIIT Pet. This suggests that UniForm transfers well to smaller, fine-grained classification tasks while preserving throughput on both edge devices and traditional GPUs.
+
+For instance segmentation, UniForm is tested on object detection tasks using the COCO dataset. When paired with Mask R-CNN, UniForm demonstrates robust performance, achieving competitive segmentation results while maintaining efficient inference on edge devices. This evaluation is essential in environments where high-resolution dense prediction tasks must operate under constrained resources.
+
+Inference Speed Improvement: Achieved up to a 30% reduction in inference time on edge devices like Raspberry Pi and Jetson Nano compared to the traditional attention mechanism.
+
+Memory Usage Reduction: Observed a substantial decrease in memory consumption, enabling deployment on devices with stringent memory constraints.
+
+Maintained Accuracy: Demonstrated comparable performance on benchmark datasets such as ImageNet, with negligible loss in Top-1 accuracy.
+
+Generalization to Downstream Tasks: Successfully applied our method to tasks like object detection and segmentation, achieving performance gains without additional modifications.
+
+Top-1 Accuracy
+
+Jetson-Nano
+
+RaspberryPi4B
+
+RaspberryPi3B Plus
+
+RaspberryPi3B
+
+RaspberryPi2B
+
+Jetson-Xavier
+
+Jetson-Tx2
+
+Jetson-Nx
+
+RaspberryPi5
+
+Jetson AGX Orin
+
+SECTION: 4.4Ablation study
+
+In this section, we ablate
+
+Impact of Reuse Attention on Interpretability and Inference EfficiencyWe compare the proposed UniForm model with Reuse Attention against Swin-T and UniForm without Reuse Attention (i.e., with standard attention). As shown in Fig.7, the CAM visualizations demonstrate that UniForm with Reuse Attention preserves strong interpretability, effectively highlighting relevant regions, similar to Swin-T and the UniForm variant without Reuse Attention. Despite the architectural simplicity of UniForm with Reuse Attention, it maintains comparable interpretability while significantly improving inference time, making it more efficient for real-time applications. This showcases the advantage of Reuse Attention, balancing between interpretability and computational efficiency.
+
+SECTION: 5Conclusions
+
+Our Reuse Attention Mechanism offers a simple yet effective solution to the computational and memory inefficiencies of the traditional attention mechanism in Transformers. By leveraging the redundancy in Query and Key components and minimizing memory access operations, we address the critical limitations that hinder the deployment of ViTs on edge devices. This approach not only reduces computational overhead but also aligns with the need for optimizing memory access patterns, directly impacting inference speed and efficiency. Our method demonstrates that significant performance improvements can be achieved through straightforward modifications, paving the way for more practical applications of Transformers in resource-constrained environments.
+
+SECTION: References

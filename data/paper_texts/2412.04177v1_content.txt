@@ -1,0 +1,356 @@
+SECTION: Fixed-Mean Gaussian Processes forPost-hocBayesian Deep Learning
+
+Recently, there has been an increasing interest in performingpost-hocuncertainty estimation about the predictions of pre-trained deep neural networks (DNNs).
+Given a pre-trained DNN via back-propagation, these methods enhance the original network by adding output confidence measures, such as error bars, without compromising its initial accuracy.
+In this context, we introduce a novel family of sparse variational Gaussian processes (GPs), where the posterior mean is fixed to any continuous function when using a universal kernel.
+Specifically, we fix the mean of this GP to the output of the pre-trained DNN, allowing our approach to effectively fit the GP’s predictive variances to estimate the
+DNN prediction uncertainty. Our approach leverages variational inference (VI) for efficient stochastic optimization, with training costs that remain independent of the number of training points, scaling efficiently to large datasets such as ImageNet.
+The proposed method, called fixed mean GP (FMGP), is architecture-agnostic, relying solely on the pre-trained model’s outputs to adjust the predictive variances.
+Experimental results demonstrate that FMGP improves both uncertainty estimation and computational efficiency when compared to state-of-the-art methods.
+
+SECTION: IIntroduction
+
+Over the last years, deep neural networks (DNNs) have become thede-factosolution for a range of pattern recognition problems due to their ability to model deterministic connections and obtain state-of-the-art generalization performance[18]. However, DNNs suffer from significant disadvantages such as poorly calibrated probabilistic forecasts[17]and poor reasoning ability in scenarios demanding model uncertainty[5]. These issues are critical in risk-sensitive situations, s.a. autonomous driving[23]or healthcare[28].
+
+Bayesian neural networks (BNNs) have successfully addressed the aforementioned issues in small-scale problems[34,39,16]. However, employing these models in practical scenarios remains challenging, as they typically involve high-dimensional, multi-modal posterior distributions over the space of neural network parameters. Moreover, due to the intractability of the calculations required, the exact posterior in large BNNs is generally approximated through diverse inference techniques, including variational inference (VI)[5], Markov chain Monte Carlo (MCMC)[7]and the Laplace approximation (LA)[35,43], among others. Nevertheless, empirical results often reveal a loss in predictive performance compared to simple DNNs trained via back-propagation[52].
+
+Recently, approaches based on the Linearized Laplace Approximation (LLA)[21],
+which applies the Laplace Approximation to a linearized version of the DNN w.r.t. its parameters, have gained significant popularity. Theirpost-hocnature ensures that model performance is preserved. Specifically, LLA methods enhance the output of the DNN with the corresponding error bars that quantify prediction uncertainty. Notwithstanding, they demand computing the Jacobian of the DNN w.r.t. the parameters for each input of the training dataset, which is computationally expensive. Consequently, LLA methods often lack the scalability needed to be applied to large models and/or datasets.
+
+In this work, we introduce a new family of sparse Gaussian processes (GPs), calledfixed-mean Gaussian processes(FMGPs). This approach leverages the dual representation of GPs in the Reproducing Kernel Hilbert Space (RKHS) and the concept ofdecoupledinducing points for sparse GPs[8]. Specifically, by employing an universal kernel, our method enables fixing the posterior mean to any given continuous function. Then, it learns the corresponding posterior covariances of the model. As a result, the posterior mean can be set equal to the output of a high-performing DNN pre-trained via back-propagation. VI is then used to stochastically optimize the GP’s predictive variances, providing useful error bars around the DNN’s predictions. The proposed method, FMGP, effectivelyconverts any pre-trained DNN into a Bayesian DNNthrough function-space inference. The two main advantages of this approach are: (i) it is scalable to large neural networks, as it avoids requiring DNN Jacobians and is less affected by the number of DNN parameters, and (ii) it leverages function-space inference for improved uncertainty estimation.
+
+The main benefit of using FMGP is itspost-hocnature, where the pre-trained model predictions are preserved as the posterior mean of the GP, ensuring high performance. Additionally, compared to otherpost-hocapproaches, the key advantage of FMGP is its architecture-agnostic design, as it relies solely on the DNN’s outputs to accurately learn the predictive variances. This contrasts with methods such as LLA and its variants[11,42], or mean-field approaches based on VI and fine-tuning[12], which become computationally prohibitive for very large models due to requiring (i) high-dimensional DNN Jacobians or (ii) direct interaction with the parameters of the DNN. Further details on these methods and their differences with respect to FMGP are provided in SectionIV.
+
+Fig.1illustrates the predictive distributions obtained by different methods on a toy 1-dimensional regression problem. We observe that the predictive distribution of FMGP closely resembles that of Hamiltonian Monte Carlo (HMC), which is considered the gold standard for this simple problem (note that HMC does not scale to large problems). In contrast, the predictive distributions of other methods from the literature either significantly underestimate or overestimate the predictive variance in some regions of the input space. Further details about this experiment are provided in SectionV-A.
+
+SECTION: Contributions
+
+We (i) define FMGP as a family of GPs that can be used to perform uncertainty estimation in
+pre-trained DNN without losing prediction performance; and (ii) show how VI can be used to stochastically fit predictive variances and optimize hyper-parameters. This results in apost-hocmethod that is independent of the network structure or architecture (e.g., it does not require computing DNN Jacobians). Furthermore, (iii) we show the scalability of FMGP at training and test time across multiple regression and classification problems, including ResNet[18]models, with millions of parameters, and the ImageNet dataset, featuring thousands of class labels and millions of data instances[46]. Finally, (iv) we illustrate the utility of FMGP in apractical datasetscenario using QM9[45]for feature prediction in the context of molecules.
+
+SECTION: IIBackground
+
+We aim to infer an unknown function, based on noisy
+observationsat known locations. Deep learning (DL) tackles this by defining a neural network architecture that corresponds to a set of functions, specified by a set of parameters. The underlying assumption is that, ifis large enough, some element inwill closely approximate. That is,s.t.. DL optimizesvia back-propagation, using the observed data to find. Nevertheless, despite its success in various tasks[49], DL methods generally lack proper output uncertainty estimation, often resulting in over-confident predictions in regions without training data, where the uncertainty aroundis expected to be larger.
+
+In Bayesian inference, the observationsare related to the target function evaluationsthrough a likelihood function. In regression settings, where, the likelihood is often a homoscedastic Gaussian with variance. In classification, where, the likelihood is categorical with class probabilities given bye.g.a softmax activation function, meaningrepresents a set of multi-output functions, one per class label.
+
+Bayesian neural networks (BNNs) follow a probabilistic framework[35], placing a prior over the network parametersand computing the Bayesian posteriorfor predictions. Due to the non-linear nature of DNNs, calculating the posterior analytically is intractable. Therefore, most methods rely on an approximate posterior, used to estimate predictions via Monte Carlo sampling, whereandrepresents the number of Monte Carlo samples. This allows effectively capturing the uncertainty in the model’s predictions[4].
+
+In this work, rather than following the Bayesian approach in the space of parameters, we take on afunction-spaceperspective. This involves placing a prior directly over the space of functionsand constructing an approximate posterior for the target functionto make predictions. These predictions can be computed exactly in regression settings using GP posteriors. In the case of classification problems, given an approximate GP posterior, they have to be approximated via Monte Carlo sampling.
+
+SECTION: II-AGaussian Processes
+
+Gaussian processes (GPs) are statistically defined as an infinite collection of random variables such that any finite subset is jointly Gaussian. They are fully specified via mean and covariance functions. From this definition, GPs can be interpreted as distributions over the function space or, more precisely, over the set of evaluations of functions. Consider a function. We say thatfollows a GP defined by a mean functionand covariance (or kernel) function,i.e.,, if, for any finite set of input points, the set of function evaluationsfollows a multi-variate Gaussian distribution with meanand covariance matrix. That is,.
+
+SECTION: II-BDual formulation of Gaussian Processes in RKHS
+
+A Reproducing Kernel Hilbert Space (RKHS)is a Hilbert space of functions with the reproducing property, that is,such thatit verifies that, whereis the inner product on. By Moore–Aronszajn theorem[2], ifis a positive definite kernel on, then, there exists a unique Hilbert space of functions onfor whichis a reproducing kernel. More precisely, letbe the linear span ofondefined as
+
+By Moore–Aronszajn theorem, the closure of, named asis a Hilbert space verifying the reproducing property with.
+
+Ahas a dual representation as a Gaussian measure in a Banach space that contains the RKHS of its kernel function[20,8]. More precisely, consider a zero-mean GP prior withand the RKHS defined by the kernelassociated to the GP. For anyand a linear semi-definite positive
+operatorassociated to,i.e,, we can define a new GP with mean functionand kernel functiongiven by
+
+We useas an abuse of notation to denote such Gaussian measure in the Banach space, withas the set of these measures:
+
+As a result, there is a correspondence between GPsand Gaussian measuresin a Banach spacethat contains the samples of the GP and in whichis dense[20,9].
+
+The zero-mean GP prioris obtained from the dual-formulation using. Furthermore, given a set
+of observationsfrom a regression task with Gaussian noise,
+the GP posterior is obtained from the (posterior) Gaussian measurewhere:
+
+withand.
+
+With this construction, we aim to define a family of Gaussian measures in, whose corresponding GP verifies that. This means that the corresponding GP mean will match the output of the pre-trained neural network. Then, VI can be used to find an optimal Gaussian measure within such family.
+
+SECTION: II-CUniversal Kernels
+
+Following[37], we introduce the notion ofuniversal kernelsas kernel functions whose linear span can approximate any continuous function in a compact set. Given a kernel functionand its corresponding RKHS, assume that the kernel is continuous on. Letbe a fixed but arbitrary compact subset ofand, as usual, letdenote the space of all continuous real-valued functions fromtoequipped with infinity norm, which reduces to amaximum normin the compact set.
+
+The space ofkernel sectionsis defined as, which consists of the set of all continuous functionswhich are limits of linear combinations ofunder the infinity norm.
+
+A kernel function is said to be universal if for any compact subsetof the input space, the kernel sectionis dense inwith the infinity norm. That is, for anyand any, there existssuch that.
+
+From the above definition, ifis universal,and, there exists a set ofscalar valuesand input space points, such that
+
+and hence,
+
+Intuitively, a universal kernel can approximate any continuous function in a compact set via linear combinations of kernel evaluations. As the approximation improves (i.e.decreases), the number of termsneeded in the linear combination increases.
+
+The squared-exponential kernel with hyper-parameters, with, defined as
+
+is a universal kernel[37].
+
+SECTION: IIIFixed-Mean Gaussian Processes
+
+Here, we present a novel family of GPs,Fixed-Mean Gaussian Processes(FMGPs). This family of function-space distributions is defined using the dual formulation of sparse variational GPs,
+which are introduced next.
+
+SECTION: III-ASparse Variational Gaussian Processes
+
+Sparse Variational GPs (SVGPs)[48]approximate the GP posterior using a GP parameterized byinducing points, with each, and associated process values. Specifically,
+
+where,andis fixed
+to the GP predictive distribution.
+
+Following[8], consider a restriction of the dual GP formulation introduced in SectionII-B,
+where the mean and covariance dual elements (and) must satisfy the linear structure:
+
+where,such thatand. This defines a family of Gaussian measuressuch that
+
+where we have omittedandfromnotation for simplicity as more sub-indexes will be used later.
+
+A SVGP withhas a dual representation inwhereand.
+
+Consequence of settingandin (10) and (11).
+∎
+
+By definition, if, then, as in standard variational sparse GPs. However, in practice, and for scalability reasons,and. This leads to the issue of finding the measure inthat isclosestto. In this regard, variational inference (VI) can be used to minimize the KL divergence between Gaussian measures[8]and hence, to compute theoptimalvariational measure as:
+
+wherecan be computed in closed form
+with,i.e., the GP prior. Namely,
+
+with. After optimizing (13), one gets a Gaussian measurethat corresponds to the SVGP in[48]. See[8]for further details about this.
+
+SECTION: III-BDecoupled Basis
+
+In[9], the authors propose to generalizeso thatandare defined using different sets of inducing points. Letandbe two sets of inducing points, for the mean and the variance respectively, of sizesand. The generalized dual representation is then defined as:
+
+This decoupled parameterization is a clear generalization from standard SVGPs and cannot be obtained using the approach of[48]unless.
+The decoupled space of Gaussian measures is now:
+
+where it is verified that. As shown in[8], VI can be
+used to find the optimalin this parametric family. That is,
+
+where the KL term, with, is:
+
+withand.
+
+The parameters for the mean of the variational distribution,i.e.,and, and the ones for the variance,i.e.,and, are separated in (18) and (19). Therefore, they can be independently optimized in practice.
+
+SECTION: III-CFixed-Mean Variational Family
+
+Given a universal kernel, we now use the decoupled family of distributions to show that the mean function can befixedto any continuous function in compact subsets.
+
+Letbe any compact subset of the input space. If the kernel isuniversal, for any function, there exists, a set of inducing locations, and scalar valuessuch that
+
+verifies.
+
+Direct consequence of the definition of universal kernels applied to the dual formulation of SVGPs.
+∎
+
+As a result, given an error rate, we can set the posterior mean of a decoupled GP toany continuous function in any compact set of the input space. More precisely, we can use the decoupled formulation of GPs tofixthe posterior mean to the outputof a given pre-trained DNN.
+
+For any compact subset of the input space, continuous function, errorand universal kernel, the set of-mean Gaussian measuresis defined as
+
+whereverifies.
+
+Thus, for any, the corresponding GPverifies that
+
+We will refer to this set of GPs as fixed-mean Gaussian processes (FMGPs).
+
+By Proposition5, it is clear that for any, it is verified thatand its
+corresponding set of FMGPs exists. Again, VI can be used to find the optimalfrom this parametric family.
+That is,
+
+where the KL term is, setting:
+
+Note now, however, that onlyandneed to be optimized.
+We refer to the method that solves (26) asfixed-mean Gaussian process(FMGP).
+
+Parameterizingwithresults in
+an expression for the posterior covariances in (25) equivalent to the expression for the posterior
+covariances in the SVGP[48]. Furthermore, (25) verifies that the posterior
+covariances are less confident than the prior covariances[9].
+
+Fig.2shows a set representation of the different families of Gaussian measures
+considered in this section. We observe that, in which there are different inducing
+points for the mean and the covariances, is the largest family. This family includes
+both, in which there is only a single set of inducing points for the mean and the covariances,
+and, in which the posterior mean is fixed to approximateinwith error at most. Note that there could potentially
+be some overlap between the Gaussian measures inand in.
+
+SECTION: III-DApplication toPost-hocBayesian Deep Learning
+
+FMGP enables the conversion of DNN into approximate Bayesian models while
+maintaining the DNN output as the predictive mean. The process is straightforward and can
+be summarized as follows:
+
+Given a pre-trained model, choose a parametric family of kernels that defines an RKHS and a family of Gaussian measures,e.g.squared exponential kernels.
+
+Ensure that there exists a compact setwhere inputs are expected. The parametric family of Gaussian measuresexists for any.
+
+Initialize a measure in this family,e.g.initializeusing K-Means[32]andas the identity matrix.
+
+Perform VI to optimize the variational measure (and), along with the kernel hyper-parametersand the noise variance, using (26). The predictive variance is computed as in (25), and, ifis large andsmall, the predictive meanapproximates the pre-trained model. Thus, in practice,can be replaced byin the computations.
+
+SECTION: III-ERegularization and Loss Function
+
+In standard sparse GPs, tuning hyper-parameters involves balancing the fit of the mean
+to the training data versus reducing the model’s predictive variance. However, FMGPs
+fix the predictive mean, which eliminates this trade-off. Thus, the kernel hyper-parametersonly adjust the predictive variance without affecting the mean. Consequently,
+optimizingby maximizing the VI ELBO in (26) can lead to undesirable
+solutions where the predictive variance is set to zero. To address this, we introduce a regularization
+technique using an extra variational Gaussian measure. More precisely, we consider
+an extra auxiliary Gaussian measurethat shares’s parameters
+(,and the kernel hyper-parameters)
+but also incorporatesandas additional parameters for its predictive mean. This leads us to the loss function:
+
+with.
+This loss function implies that the predictive variances must account
+for training data under two predictive means: the pre-trained one,, and the
+one defined by. Additionally,cannot be adjusted solely
+to fit the variances, as it also affects’s predictive mean.
+
+Moreover, the use of-divergences for approximate inference has been widely explored[19,6,50,44], with findings indicating that
+values ofenhance predictive mean estimation,
+whileimprove predictive distributions, reflected in higher
+test log-likelihood performance. Thus, instead of minimizing, our
+objective is changed using a generalized view of VI[25]to minimize the-divergence betweenand,
+in an approximate way, for[29]. This can be
+achieved by changing the data-dependent term of the loss:
+
+where now the expectation is inside the logarithm function.
+
+Mini-batch Optimization.The objective in (III-E) supports mini-batch optimization with a cost in:
+
+whereis a mini-batch of points. The expectation can be computed in closed-form
+in regression. In classification, an approximation is available via the softmax method
+in[10].
+
+SECTION: III-FLimitations
+
+FMGP is limited by three factors:
+
+Computing the predictive distribution at each training iteration involves inverting,
+with cubic cost in the number of inducing points. Therefore, FMGP cannot accommodate a very large number of inducing points.
+However, as shown in the experiments, this number can be set to a very low value, such as, even for classification tasks with a thousand classes.
+
+FMGP requires additional optimization steps compared to otherpost-hocapproximations,e.g.,[11]. However, these other methods often rely
+on visitingevery training pointto compute specific updates. As a result, FMGP training can be faster in large datasets featuring millions of instances such as ImageNet.
+
+The construction of FMGP requires choosing a (parametric) kernel. This is both an advantage,
+as it may better capture the underlying data patterns in the modelling process, and a disadvantage, as it may be difficult to efficiently use an effective kernel in some tasks, such as image classification.
+
+SECTION: IVRelated Work
+
+Due to itspost-hocnature, FMGP is highly related to the Linearized Laplace Approximation (LLA)
+for DL. In[33], the Laplace Approximation (LA) was introduced by applying it to small DNNs. LA simply approximates the DNN posterior in parameter space with a Gaussian centered at its mode matching the posterior Hessian. LA can be made more scalable by considering a Generalized Gauss-Newton (GGN) approximation of the Hessian at the mode, which is equivalent to linearizing the DNN. When this linearization is used at prediction time, LA becomes apost-hocmethod known as LLA[43]. Moreover, LLA addresses the under-fitting issues associated with LA[27].
+Despite this, the GGN approximate Hessian of LLA is still intractable in real problems and has to be further approximated using,e.g., Kronecker factored (KFAC) approximations. Recently, many approaches have been developed to make LLA more scalable and accurate, trying to match LLA with the GGN approximate Hessian, including Nyströn approximations[11], variational approaches[42,47]or sample-based approximations[1].
+
+Among LLA methods, FMGP is most closely related to Variational LLA (VaLLA)[42]. VaLLA interprets the intractable LLA approximation as a GP[24,21], which is possible due to the DNN linearization. Then, it uses a VI sparse GP to approximate the posterior variances. If the Neural Tangent Kernel (NTK) is considered (which is simply given by the DNN Jacobian,i.e.), VaLLA can be recovered as a specific case of the FMGP formulation under certain hypotheses.
+The key differences between FMGP and VaLLA are: (i) FMGP does not rely on the NTK, which allows it to make use of more suitable kernels for specific tasks. Furthermore, the NTK demands computing the Jacobian of the neural network at each iteration, which drastically increases prediction costs, making it impractical to apply VaLLA to large problems (e.g.ImageNet). Furthermore, as we will see in the experiments, the FMGP kernel flexibility allows both for enhanced predictive distributions as well as more efficiently computed predictions.
+(ii) FMGP does not rely on a LLA approximation. Therefore, LLA with the GGN Hessian approximation need not beoptimalunder this framework. (iii) The NTK kernel is not guaranteed to beuniversal, and VaLLA relies on the hypothesis that the DNN outputis in, which may not be the case. (iv) VaLLA does not consider a regularization technique to avoid over-fitting, requiring early-stopping and a validation set. In short, VaLLA is constructed by performing a variational approximation to the GP resulting from LLA. By contrast, FMGP uses VI to find the optimal measure within a set of Gaussian measures with a fixed mean.
+
+In[11], the authors propose a Nyström approximation of the GGN Hessian approximation of LLA usingpoints chosen at random from the training set. The method, called ELLA, has cost. ELLA also requires computing the costly Jacobian vectors required in VaLLA, but does not need their gradients. Unlike VaLLA, the Nyström approximation needs to visit each instance in the training set. However, as stated in[11], ELLA suffers from over-fitting. Again, an early-stopping strategy using a validation set is proposed to alleviate it. In this case, ELLA only considers a subset of the training data. ELLA does not allow for hyper-parameter optimization, unlike VaLLA. The prior variancemust be tuned using grid search and a validation set, increasing the required training time significantly.
+
+Samples from LLA’s corresponding GP posterior can be efficiently computed using stochastic optimization, without inverting the kernel matrix[30,1]. This approach avoids LLA’scost. However, this method does not provide an estimate of the log-marginal likelihood for hyper-parameter optimization. Thus, in[1]it is proposed to use theEM-algorithmfor this task, where samples are generated (E-step) and hyper-parameters are optimized afterwards (M-step) iteratively. This significantly increases training cost, as generating a single sample is as expensive as fitting the original DNN on the full data. A limitation of this approach is that in[1]only classification problems are considered and there is empirical evidence showing that VaLLA is faster and gives better results.
+
+Another GP-based approach for obtaining prediction uncertainty in the context of DNNs is the Spectral-normalized Neural Gaussian Process (SNGP)[31], which replaces the last layer of the DNN with a GP. SNGP allows to either (i) fine-tune a pre-trained DNN model, or (ii) train a full DNN model from scratch. We compare results with the former in our experiments. However, we have observed that replacing the last layer with a GP does not keep the predictive mean as the output of the pre-trained DNN and often results in a drop in prediction performance. This is also observed in[31].
+
+Another simple option to transform a pre-trained DNN model to a Bayesian one is to consider a mean-field VI approximation of the DNN posterior where the means are initialized to the pre-trained optimal solution weights and kept fixed. This is known asmean-field VI fine-tuning[12]and, as demonstrated in our experiments, it can achieve good results in terms of both prediction performance and uncertainty estimation. However, this method demands full training of the variance of each weight, which can be very costly and may require several training epochs. Furthermore, this method provides no closed-form predictive distribution. It relies on generating Monte Carlo samples to make predictions. As a result, further approximations must be considered to reduce the training time, such asFlipout Trick[51]. Even though these techniques successfully reduce the training time, the required Monte Carlo samples significantly increase prediction time.
+
+SECTION: VExperiments
+
+We compare our proposed method, FMGP, with other methods including: last-layer LLA with and without KFAC approximation, ELLA[11], VaLLA[42], a mean-field VI fine-tuning approach[12]and SNGP[31]. FMGP and VaLLA useinducing points, as in[42]. ELLA employsrandom points andrandom features as in[12]. All the timed experiments are executed on a Nvidia A100 graphic card. Finally, an implementation of FMGP is publicly available athttps://github.com/Ludvins/FixedMeanGaussianProcesses.
+
+SECTION: V-ASynthetic Experiment
+
+The experiment in Fig.1illustrates the predictive distributions of commonly used Bayesian approaches on the synthetic 1-dimensional dataset from[22]. It compares the predictive distribution of FMGPs against other methods, including the pre-trained DNN with optimized Gaussian noise (MAP), the linearized Laplace approximation (LLA) with prior precision and Gaussian noise optimized to maximize the marginal likelihood estimate, mean-field VI (MFVI) fine-tuning of the pre-trained model with Gaussian noise optimized on the training data, a GP with a squared exponential kernel and hyper-parameters that maximize the marginal likelihood, and Hamiltonian Monte Carlo (HMC) using a uniform prior for the variance of both the Gaussian noise and the Gaussian prior over the DNN’s weights.
+
+In this simple problem, HMC’s predictions serve as thegold standardfor assessing the predictive variances of other methods. Note, however, that HMC does not scale to large problems. Fig.1shows that MAP and MFVI tend to underestimate the predictive variance, while LLA tends to overestimate it by interpolating between data clusters. On the other hand, FMGP and the GP produce predictive variances comparable to those of HMC, with the GP yielding slightly larger variances.
+
+However, the GP’s predictive mean does not align with the DNN output (given by the predictive mean of the MAP output) and suffers from a prior mean reversion problem, where the GP mean reverts to the prior mean between the second and third point clusters, which is expected to worsen the resulting predictive performance. Moreover, the GP does not scale well to large problems. By contrast, FMGP not only produces predictive variances similar to those of HMC but also retains the predictive mean equal to the DNN’s output, which is expected to result in improved prediction accuracy.
+
+SECTION: V-BRegression Problems
+
+As part of the experimental evaluation, we consider three different large regression datasets:
+
+TheYeardataset[3]withinstances andfeatures. The data is divided as: the firstinstances as train subset and the followingfor validation. The rest of instances are taken for the test set.
+
+TheUS flight delay (Airline)dataset[13]. Following[42], we use the firstinstances for training, the followinginstances for validation and the nextfor testing. Here,features are considered:month,day of the month,day of the week,plane age,air time,distance,arrival timeanddeparture time.
+
+TheTaxi dataset, with data recorded on January, 2023[41]. For this dataset,attributes are considered:time of day,day of week,day of month,month,PULocationID,DOLocationID,distanceandduration; while the predictive variable is theprice. Following[42], we filter trips shorter than 10 seconds and larger than 5 hours, resulting inmillion instances. The firstis used as train data, the nextas validation data, and the lastas testing data.
+
+In all experiments, a pre-trained 3-layer DNN with 200 units withtanhactivations is employed, following[42].
+ELLA is trained withoutearly-stoppingas over-fitting is not observed in these regression problems. Hyper-parameters are
+chosen using a grid search and the validation set. FMGP employs the squared-exponential kernel with hyper-parameters
+given by kernel amplitude and one length scale per input feature. MAP results are obtained by learning the optimal Gaussian
+noise using a validation set. A last-layer Kronecker approximation is used for LLA.
+
+Fig.3shows average results for each method over 5 different random seeds. We measure the quality of
+the predictive distribution in terms of the negative log likelihood (NLL), the continuous
+ranked probability score (CRPS)[15]and a centered quantile metric (CQM)[42].
+Intuitively, CRPS can be understood as a generalization of the mean absolute error to predictive distributions. CQM measures
+thedifferencebetween the models quantiles and the data quantiles under the same predictive mean, which is always the
+case here for each method. CQM is like a generalization of expected calibration error for regression problems. It is defined as:
+
+where,andis the CDF of a Gaussian with meanand variance, specified by each model’s predictive distribution.
+
+Fig.3shows that FMGP performs best according to all three metrics (the lower the better), where the biggest
+difference is obtained in terms of CQM. As a result, we can argue that FMGP provides better uncertainty estimates (in terms of NLL)
+and calibration (both in terms of CRPS and CQM) compared to state-of-the-art LLA variants in regression settings.
+
+SECTION: V-CCIFAR10 Dataset and ResNet Architectures
+
+We perform experiments with various ResNets architectures[18]on the CIFAR10 dataset[26].
+To facilitate reproducibility, the considered pre-trained models are publicly available and accessible athttps://github.com/chenyaofo/pytorch-cifar-models. The considered models are ResNet20 (parameters), ResNet32 (parameters), ResNet44 (parameters) and ResNet56 (parameters). Following[11]and[42], ELLA and VaLLA use as validation set a data-augmented subset oftraining points from the train set.
+This validation set is obtained by performing random image crops of the training images of sizes in.
+
+In multi-class classification problems, the kernel used in FMGP should model dependencies among the different DNN outputs, one per each class label. Therefore, we employ the following simple kernel in FMGP in that setting:
+
+which includes a p.s. matrixto model output dependencies,
+a squared exponential kernel in the input space, and a linear kernel plus noise in the high-level features, that correspond to the output of the pre-trained model up to the second-to-last layer. The trainable hyper-parameters are the squared exponential amplitude and length scales of the RBF kernel (one per input feature), along with the matrix, parameterized by its Cholesky decomposition. This simple kernel gives good results in our experiments. More sophisticated kernels are possible, potentially leading to even better results. The inducing points are randomly assigned to a class label.
+
+Fig.4shows the negative log-likelihood (NLL), expected calibration error (ECE), and Brier score of each method. Furthermore, we also report the out-of-distribution AUC of each method
+in a binary classification problem with the SVHN dataset as the out-of-distribution data[40]. In each method, we use predictive entropy as the threshold for classification between in and out-of-distribution. The training and evaluation times for each method are also reported. Recent work[38]shows how different uncertainty quantification metrics tend toclusterand the importance of measuring prediction uncertainty using as many as possible. Accuracy is not shown here as most methods barely change the pre-trained DNN accuracy. Notwithstanding, it is worth mentioning that SNGP tends to lower the accuracy of the model, as shown in[31], while MFVI tends to increase it slightly, as noticed in[11]and[42].
+
+Fig.4shows that FMGP, MFVI, VaLLA and ELLA provide the highest performance in terms
+of NLL and Brier scores (the lower the better). However, in terms of ECE (also the lower the better),
+SNGP, VaLLA and FMGP provide better-calibrated uncertainties. As a result, FMGP and VaLLA seem to
+provide better uncertainty quantification with better-calibrated predictive distributions.
+However, for out-of-distribution detection, the best AUC is obtained by MFVI, ELLA, VaLLA and SNGP.
+Fig.5shows histograms of the entropy of the predictive distribution of each
+method for each type of test data (in and out-of distribution). We believe the poor results of FMGP
+in this task are due to the kernel choice. More sophisticated kernels may improve FMGP’s results in this setting as well.
+
+Regarding training time, Fig.4shows that last-layer LLA approaches are the fastest to train, with VaLLA being the slowest method. At prediction time, SNGP, last-layer LLA and FMGP are quite similar to the pre-trained model. By contrast, VaLLA, ELLA and MFVI take larger prediction times. In VaLLA and ELLA this is due to the computation of the Jacobians, while in MFVI this due to Monte-Carlo sampling. Since FMGP is agnostic of the pre-trained model architecture, it only uses the DNN’s predictions. Therefore, we also pre-computed all the model outputs and used them directly when training FMGP and making predictions using this model. As a result, a second bar is shown for FMGP indicating the training and evaluation time when pre-computing the outputs for both training and evaluation sets. In such a setting, the speed-up of FMGP is approximatelyfor training time andfor evaluation time.
+
+Regarding predictive robustness, in Fig.6we show the NLL and ECE of each method on rotated images of the CIFAR10 test set, as in[42]. These results indicate that FMGP is the most robust method in terms of NLL, while it lies around the middle ground in terms of ECE. ELLA and VaLLA achieve the best results in this regard.
+
+SECTION: V-DImageNet Dataset and Extra ResNet Architectures
+
+We perform experiments with more ResNets architectures[18]on the ImageNet 1k dataset[46]. This dataset hasdifferent classes and over 1 million data instances. As pre-trained models, we considered those from TorchVision[36]available athttps://pytorch.org/vision/main/models/resnet.html. Specifically, the considered models are ResNet18 (parameters), ResNet34 (parameters), ResNet50 (parameters), ResNet101 (parameters) and ResNet152 (parameters). Importantly, due to the size of the DNNs and dataset, many methods became infeasible in these experiments. Specifically, LLA cannot be used even with last-layer approximations due to memory limitations. Furthermore, Monte Carlo sampling for MFVI testing takes longer than 1 day for models larger than ResNet18. For this reason, MFVI is only tested on the ResNet18 architecture. SNGP is not evaluated as it requires a training time of several days on the smallest architecture.
+
+TableIshows the results obtained for each method on each ResNet architecture.
+The best method is highlighted in red and the second-to-best method is highlighted in green. We observe that, overall, FMGP obtains the best performance (NLL and ECE) while remaining the second-to-best in terms of computational time, only behind the MAP solution for the bigger models. As an additional detail, ELLA’s validation set is computed using the same data-augmentation strategy proposed in[11].
+
+Our results for ELLA are slightly different from those reported in[11]since ELLA’s performance highly depends on the particular data augmentation performed to create the validation set. Despite using the same hyper-parameters for this step, using the current PyTorch versions leads to different results.
+
+SECTION: V-EProtein Feature Prediction Dataset
+
+QM9 is a dataset which provides quantum chemical properties (at DFT level) for a
+relevant, consistent, and comprehensive chemical space of aroundsmall organic
+molecules[45]. In this experiment, we train a small convolutional neural network with message passing following the Torch-Geometric[14]tutorial available athttps://github.com/pyg-team/pytorch_geometric/blob/master/examples/qm9_nn_conv.py.
+The model is trained to make predictions on thedipole momenttarget.
+
+In this regression experiment, the input space consists of molecules’ graphs and not the usual tabular data considered in supervised learning. Therefore, in each method evaluated, we considered the model up to the last two linear functions to be a feature embedding of the graphs and assumed the data live in such embedding space. We used the firstdata instances for testing, the followingdata instances for validation, and the restinstances for training. Here, ELLA is also trained withoutearly-stoppingand the hyper-parameters are chosen using a grid search on the validation set. FMGP employs the squared-exponential kernel with hyper-parameters including the amplitude parameter and one length scale per dimension. MAP results are obtained by estimating the Gaussian noise on the validation set.
+
+The results obtained are displayed in TableIIfor MAP, last-layer Kronecker LLA, ELLA and FMGP in terms of the negative log-likelihood (NLL) and CRPS. We report average results acrossrepetitions of the experiments. The best result is again highlighted in red and the second-best result in green. We observe that FMGP provides the best performance (the smaller the better) in terms of both NLL and CRPS among the considered methods.
+
+SECTION: VIConclusions
+
+In this work, we have introduced a method called fixed-mean GP (FMGP). FMGP leverages a family of variational distributions derived from the dual formulation of sparse GPs. This family corresponds to GPs where the predictive mean is fixed to any continuous function when using a universal kernel. Specifically, we set the continuous function to be the output of a pre-trained DNN. In this case, FMGP becomes apost-hocmethod that, given a pre-trained DNN, outputs error bars estimating the confidence of the DNN in its predictions. FMGP is both easy and efficient to train.
+
+As demonstrated in our experiments, FMGP excels at computing error bars for pre-trained DNNs with a large number of parameters, across a wide variety of performance metrics, on extensive datasets, handling millions of training instances, parameters, and thousands of output dimensions. Furthermore, FMGP is applicable to a broad range of problems, including regression and classification tasks, where stochastic optimization enables sub-linear training costs with respect to the number of training instances.
+
+Compared to otherpost-hocstate-of-the-art methods for uncertainty estimation, FMGP provides robust predictive distributions with minimal evaluation time. This efficiency stems from FMGP relying solely on the outputs of the pre-trained DNN, without depending on its architecture or requiring the computation of DNN Jacobians, unlike related Linearized Laplace Approximation methods.
+
+SECTION: Acknowledgments
+
+The authors acknowledge financial support from project PID2022-139856NB-I00 funded by MCIN/ AEI / 10.13039/501100011033 / FEDER, UE and from the Autonomous Community of Madrid (ELLIS Unit Madrid). They also acknowledge the use of the facilities of Centro de Computación Científica, UAM.
+
+SECTION: References
+
+SECTION: VIIBiography Section

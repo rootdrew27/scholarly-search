@@ -1,0 +1,191 @@
+SECTION: Beyond Grids: Exploring Elastic Input Sampling for Vision Transformers
+
+Vision transformers have excelled in various computer vision tasks but mostly rely on rigid input sampling using a fixed-size grid of patches. It limits their applicability in real-world problems, such as active visual exploration, where patches have various scales and positions.
+Our paper addresses this limitation by formalizing the concept of input elasticity for vision transformers and introducing an evaluation protocol for measuring this elasticity.
+Moreover, we propose modifications to the transformer architecture and training regime, which increase its elasticity.
+Through extensive experimentation, we spotlight opportunities and challenges associated with such architecture.
+
+SECTION: 1Introduction
+
+Vision Transformers (ViT)[8]achieve state-of-the-art results in many computer vision applications[4,33,13]. They cut the image into a regular grid of non-overlapping patches and pass them as tokens to attention modules that exchange information between them. Many variations of the algorithm were created[5,21,25,32], including cross modal[1]and long-term memory[31]solutions.
+
+Nevertheless, almost all transformer-based methods assume that input tokens form a regular grid ofpixel patches, limiting their applicability in real-life problems. For example, in Active Visual Exploration (AVE)[20], in which an agent has to navigate an environment by actively choosing successive observations while having a restricted field of view. AVE is commonly encountered in robotic applications, where an agent must localize dangers as quickly as possible based on incomplete images and observations of various scales and positions.
+
+In this paper, we will consider two research questions. First, we ask if the standard ViT architectures are resilient to input perturbations that commonly occur in the vision tasks of embodied AI, such as AVE. For this purpose, we introduce an evaluation protocol that measures three necessary types of input elasticity a good model should showcase:scale elasticity,position elasticity, andmissing data elasticity.
+We use this protocol to measure the input elasticity of common ViT architectures. Then, we move on to the second question: How can ViT input elasticity be increased by modifying model architecture and a training policy? We propose architectural and training modifications, namedElasticViT111Our code is available at:https://github.com/apardyl/beyondgrids, to increase the elasticity.
+
+We hope this work will draw the attention of the machine learning community to the important topic of input sampling strategies. It is crucial because, according to recent studies[2], accommodating alternative patch resolutions can significantly impact the algorithm’s real-life performance. We can summarize our contributions as follows:
+
+We formalize the notion of input elasticity for vision transformers and provide a comprehensive evaluation protocol to assess it.
+
+We propose modifications to the vision transformer architecture and training policy, including a novelPatchMixaugmentation, that increase elasticity.
+
+We show that elastic sampling strategies can boost transformers’ performance, especially for significantly limited input data.
+
+SECTION: 2Related Work
+
+Vision Transformers (ViTs).Vision transformer introduced in[8]is a versatile method due to its state-of-the-art performance obtained for many visual tasks[26]. Swin[19]modifies the attention mechanism to increase the locality of information exchange between tokens. AViT[5]demonstrates how transformer neural networks can be dynamically scaled. Pyramid ViT[28]implements a multi-scale feature extraction model using ViT, inspired by previous work on convolutional neural networks. Vision Longformer[36]uses a token-based input format that enables seamless addition of global context tokens and control of the computation complexity. Other positional encoding methods for vision transformers were studied in[6,22,12].
+
+ViT sampling strategies.Many works explore the possibility of using different grid resolutions as ViT inputs. Some perform different grid scale sampling during training[14,30], and others introduce position and patch encoding rescaling tricks[2]. They usually improve ViT’s accuracy across grids with varying resolutions and constant patches or when using native resolution grid sampling with a variable number of patches in a batch[7].
+
+ViTs applications.Initially, vision transformers were used in classical computer vision tasks, like object detection[4]and semantic segmentation[13]. However, as the field matures, the models are being deployed in real-world scenarios[15], where it is often necessary to understand input to the model as a collection of images captured from multiple views, each contributing partial information about a scene rather than a single image. Active visual exploration[11,20]is one possible setup of such a real-world scenario. While performing the tasks, robots or drones often capture images that cover only part of the scene and rarely come in grid-aligned format with consistent scale. Therefore, it is crucial to provide higher input elasticity. Some of them were already considered, like ViT resiliency to missing data[10]has already been conducted[25,18,32], but their cumulative effect on performance is unknown.
+
+SECTION: 3Evaluation protocol
+
+In this section, we first define three types of model elasticity corresponding to configurations that occur in embodied robotics data, and then we propose the evaluation protocol, which we implement by applying perturbations to the input sampling procedure. We use the protocol to rank the models by their overall elasticity.
+
+SECTION: 3.1Elasticities
+
+We define modelelasticityas resilience to particular forms of input data configurations that can occur in real-life applications.
+
+Scale elasticityis defined as resilience to the relative scale change across image tokens processed by the model.
+Standard ViT algorithm uses fixed patch size and normalizes the size of each input image, while recent works allow for the use of native image resolution[7]or different sampling grid sizes[2].
+We generalize the concept of scale elasticity to include varying scales of patches sampled from a single image. We measure it by sampling each patch individually and resampling it to the input token’s standardsize. Note that this implementation might introducemissing datato the input as shown in Fig.2.
+
+Positional elasticityconstitutes the resilience to positional change in input patches. Vanilla ViT is always trained with a rigid grid sampling even though, except for standard ViT positional encoding, the architecture does not require this.
+We measure the positional elasticity by sampling image patches at the dense pixel-level resolution in contrast to the usual coarse grid-level resolution. Note that this sampling procedure might introducemissing dataas in Fig.2.
+
+Missing data elasticityrepresents the resilience to missing image parts at the input.
+Regular ViT assumes complete knowledge of the image, while many derivative works mask or remove a portion of input tokens[10,21].
+In this work, we extend the concept of missing data to take into account situations where the tokens create an overlap of their receptive fields and do not cover the whole image area at the same time. Such overlapping might occur after patch scales or position perturbations, as shown in Fig.2. However, to measure the individual impact of missing data on model performance, independent of position and scale change, we drop a subset of grid-aligned patches from the input.
+
+SECTION: 3.2Protocol
+
+The evaluation pipeline aims to assess the model elasticity by analyzing its resistance to changes in input sampling strategies. For this purpose, we create a set of patches based on the input image and then process this set through three perturbation functions corresponding to three considered elasticities. We use the perturbed set as a transformer input and report its performance. We provide conclusions on model elasticity by analyzing the performance obtained for different types of perturbations.
+
+To strictly define the evaluation pipeline, let us consider imagefor which we generate setof patches, whereanddenote the top-left corner’s coordinates, andrepresents the relative scale (i.e. for a native patch of resolution, we sample a patchand rescale it bilinearly to size). Initially, the coordinatesandare from the regular grid and. However, in the next step, we perturb them with three functions (presented in Fig.2) corresponding to the considered elasticities:
+
+- introduces the scale perturbations, sampling theparameter of every patchindependently and uniformly from range.
+
+- applies positional perturbation, modifyingandparameters of each patch, independently moving them by offsets sampled uniformly from range, whereis the size of the patch.
+
+- adds missing data perturbations, dropping outpatches fromrandomly with equal probability.
+
+Mathematically, this process can be described as follows:
+
+A disturbed set of patchesis used as an input of the transformer to test its elasticity. Elasticity is high if the predictions forare as good as those obtained for.
+
+SECTION: 4Elastic ViT
+
+In this section, we introduce a modification of the vision transformer architecture[8]for elastic input.
+
+SECTION: 4.1Position and scale encoding
+
+Standard ViT[8]implementations utilize learnable positional embeddings. This is feasible because the grid sampling limits the number of possible patch positions. Unfortunately, such embeddings are not attainable with variable position and scale sampling. Each patch can be sampled at an arbitrary pixel position and with an arbitrary scale in elastic sampling. Therefore, the number of possible positions to be encoded is significantly larger. Consequently, we used a four-dimensional modification of the sine-cosine positional encoding of the original transformer model[27]. Let us recall the one-dimensional version of the sine-cosine encoding (is the length of the embedding andthe-th element of it):
+
+To encode the position of a patch, we separately encode the pixel coordinates of the patch upper-left and lower-right corner () and concatenate resultant embedding vectors.
+
+Finally, we modify the input of a ViT to accept a set of cropped patches and a list of patch coordinates instead of a full image. The coordinates are used to generate positional encoding embeddings for each patch, allowing for continuous positional space.
+
+SECTION: 4.2Augmented training
+
+We propose a training regime modification for greater elasticity. As our baseline, we use the augmentation regime introduced in[26], as it allows training the model on the ImageNet-1k[23]dataset without using any additional pre-training. We denote a ViT model trained with our modified regime asElasticViTin the following sections. A standard model trained without introduced elasticity is denoted asViTfor comparison.
+
+First, we introduce the elasticity functions into the augmentation pipeline. During training we use(random patch sampling size in rangeto),(no patch dropout),(unrestricted random patch positions). The native patch resolution (i.e., the resolutions all patches are rescaled to after sampling) is set to, and the native (scale = 1) image size is. We useimage resolution in the augmentation pipeline to accommodate for variable scale when required.
+
+Second, we observe that the CutMix[34]augmentation used in[26]is not optimal with the input elasticity we introduce. As our sampling strategy may change the proportions of images mixed by CutMix due to patch overlap, we must recalculate the mixed labels after applying elasticity functions to match the actual proportions of mixed images. Therefore, we replace it with PatchMix, a custom but comparable augmentation dedicated to ElasticViT. Similarly to TokenMix[17], it mixes patches after sampling. However, contrary to TokenMix it is not dependant on standard grid sampling, and can take full advantage of the models ability to process arbitrary sampled patches (see Fig.3and supplementary materials). Moreover, we modify the MixUp[35]augmentation, performing it after applying perturbations to patch sampling and ensuring that both sequences of patches to be mixed have the same patch scales element-wise.
+
+SECTION: 4.3Experimental setup
+
+We conduct experiments on a variety of state-of-the-art models with comparable parameter counts, differing in architecture or training policy. Namely, we evaluate our ElasticViT, ViT from DeiT III[26], and MAE[10], all based on ViT-B architecture, and further Swin-B[19], and PVT-v2-B5[29]. All models were trained on ImageNet-1k[23].
+
+As the tested models significantly differ in architecture, we provide the implementation details of the missing data and position perturbations. The scale perturbation is implemented by patch resampling, independent of the model.
+
+Because ElasticViT, MAE, and DeiT III model build on original[8]ViT architecture, we implement the action ofby removing the tokens from input entirely. Contrary to Swin and PVT, where attention mechanisms and positional encodings are more involved. For those models, we implement the action ofas zero-value masking of input tokens.
+
+In all experiments, the magnitude of patch displacement is less than half of the patch size. Therefore, because Swin and PVT use relative positional encoding andis implemented via patch masking, we implement the action ofby stitching sampled and masked patches into an image of the original size. Each patch is aligned to the nearest corresponding position in the grid.
+ViT from DeiT III and MAE use learned discrete-valued absolute positional encoding. Therefore, we encode the sampled patch position with an embedding corresponding to the position nearest to the patch.
+ElasticViT accepts continuous-valued positions, therefore we provide the model with true patch coordinates.
+
+The experiments were performed on ImageNet-1k classification task. We report our results with bothclassification accuracyand thenumber of tokensused to achieve given results.
+All training experiments were run usingNVIDIA A100 GPUs. ElasticViT was trained for 800 epochs using the same training parameters as in[26]. For other models we used checkpoints provided by their authors.
+
+To analyses transfer learning capabilities, we fine-tuned the above models for the MS COCO 2014[16], Pascal VOC 2007[9]and ColonCancer[24]datasets forepochs. Only the final fully-connected classification head was trained using standard grid sampling as in standard ViT. The training regime from[26]was used, excluding the utilization of MixUp and CutMix augmentations. We report the mean class average precision scores.
+
+SECTION: 5Research questions
+
+Our goal was to investigate the resilience of transformers to input perturbations. For this purpose, we conducted extensive experiments, divided into six groups. The first three correspond to individual perturbations. The fourth group relates to their combinations. The fifth focuses on fundamental sampling strategies. In the sixth group, we examine a training trade-off between elasticity and base accuracy. Finally, in the last group we look into transferability of resilience to other datasets. All of them are described in the following subsections.
+
+SECTION: 5.1Scale elasticity
+
+We maintain a consistent grid layout while introducing scale changes to each patch. The number of patches remains unchanged, but the perturbation inherently introduces overlapping or missing data to the input. This process is visually represented in Fig.2asScale Elasticity. The outcomes are illustrated in Fig.4(a).
+
+Is ViT robust with respect to scale?All baseline models significantly decrease in accuracy when patch scale changes. Notably, the best-performing baseline model is the original supervised ViT while the worst are PVT and Swin.
+
+Does applying randomized patch sampling in training improve scale elasticity at inference?Ours ElasticViT despite having lower accuracy than other models at the base point (vs.of ViTs), due to high resilience to input scale variations, maintains its performance even at the ends of the measured spectrum and eventually outperforms all the other models.
+
+SECTION: 5.2Missing data elasticity
+
+Missing data can be simulated by adding perturbations to the input token set so part of the image is not represented by any of the cut patches. The patch scale experiment (Fig.4(a)) introduced missing data aspects due to changing the scale of the patches, but it was a byproduct of other types of perturbations. We use a patch dropout scheme to isolate only the missing data aspect and call it themissing dataexperiment.
+The perturbation is depicted in Fig2. The results can be seen in Fig.4(b).
+
+How does input dropout affect ViT performance?Introducing dropout results in a consistent decline in the accuracy of all models, being increasingly noticeable as the percentage of dropped tokens increases.
+The best-performing baseline model is MAE, which is expected as it was trained on an image reconstruction task. The PVT significantly stands out from the other models, even from Swin, for which an identical dropout scheme was implemented and which has sparse attention too.
+
+Do elastic perturbations during training enhance performance when dealing with missing data?ElasticViT exhibits a comparable behavior to the baselines when it comes to missing data, displaying a decline in performance as the token count decreases. Nevertheless, the rate of accuracy loss is gentler. Notably, ElasticViT surpasses MAE performance after the removal of 75% of tokens.
+This is significant because in the training the ElasticViT always accepted the full token count, contrary to MAE, which was trained to reconstruct the image from the 25% of input tokens.
+
+SECTION: 5.3Positional elasticity
+
+Elastic vision transformers should not be limited to accepting only rigid sets of patch positions. Inpatch positionexperiment, we introduce a concept called "patch shake" – a randomized shift in the position of the original patches from a grid by a specified percentage of the patch size. ElasticViT’s positional embeddings readily adapt to these positional changes. However, for the other models, we had to modify their positional embeddings to make this experiment viable. We encode each patch with embedding corresponding to the grid layout position being nearest to the patch. The patch shake operation is illustrated in Fig.2. The outcomes can be observed in Fig.4(c).
+
+Is ViT elastic to positional perturbations?Patch shake results in a minor accuracy reduction for all the models except PVT. It’s important to note that patch shake can inherently introduce missing data and overlap perturbations. Therefore, this experiment doesn’t isolate which specific perturbation has the most substantial impact on performance. Nonetheless, it’s worth considering that the classification task might be inherently position agnostic, as ImageNet classification could be efficiently accomplished by treating patches as "bags of words" without explicit positional context.
+
+Does training with randomized sampling improve positional elasticity?Like the missing data experiment (Sec.5.2), ElasticViT exhibits greater resilience to patch shake than the baselines. ElasticViT outperforms all models but MAE when the patch positions are shaken by approximately 40% of the patch size.
+Notably, the accuracy of ElasticViT remained almost constant with respect to the increase of patch shake, while the second-best model in this regard (MAE) lost 2 p.p. of accuracy.
+
+SECTION: 5.4Combining perturbations
+
+We conduct a series of tests by combining the previously introduced input perturbations to assess their collective impact on performance. The scaling ranges for perturbation parameters are the same as in the earlier experiments. The objective is to determine whether ElasticViT’s resilience will continue to outperform that of the original ViT in more complex scenarios.
+
+How does positional elasticity combine with missing data elasticity?Inpatch position & missing dataexperiment, we introduce a combination of dropout and shake perturbations, and the results are depicted in Fig.5(a).
+Notably, the detrimental effect on ViT’s performance closely aligns with the summed impact of shake and dropout when performed independently.
+This lets ElasticViT surpass MAE at the 60% dropout threshold, instead of 75% as in themissing data4(b)experiment.
+
+What is the interaction between positional elasticity and scale data elasticity?Inpatch position & patch scaleexperiment, we combine the zoom perturbation with the shake perturbation. The results are shown in Fig.5(b). The ratio of performance decline between ViT and ElasticViT remained consistent with that reported in the previous experiment for patches twice as large. However, as patches became smaller, the performance gap between both algorithms widened. In the most altered scenario, ElasticViT outperforms ViT with a nearly 20 percentage point lead.
+
+How does scale elasticity combine with missing data elasticity?Inmissing data & patch scaleexperiment, we combine dropout with patch scale change, and the results are illustrated in Fig.5(c). The outcomes resemble those of the grid zoom experiment (Sec.5.1) but exhibit a more pronounced negative impact of the perturbations. ElasticViT begins to outperform ViT at approximately the midway point of the perturbation intensity scale.
+
+SECTION: 5.5Patch sampling strategies
+
+The elastic features demonstrated by ElasticViT create an opportunity to apply a multi-scale approach to partitioning images into patches of different scales in a non-uniform manner. Given the results obtained in the grid experiments, there’s a possibility that this approach can lead to performance improvement without sacrificing accuracy compared to standard grid sampling (referred to asGRID).
+
+First, we test a hypothesis that, for the ImageNet, the central portion of an image might carry more significance than its periphery. To explore this, we iteratively divide the patches closest to the center of the image into four smaller patches. We refer to this algorithm asCENTRAL, see Fig.6. The rationale is that smaller patches offer a higher sampling resolution and introduce more data into the input, potentially leading to improved accuracy. The CENTRAL algorithm is designed so that the neutral point corresponds to a token count of 196, which aligns with the original ViT grid ofand a single scale. Lower values in this context result in larger patches near the image periphery, while higher values position smaller patches toward the center.
+
+Next, we extend on the previous experiment, analyzing if an adaptive patch sampling strategy can improve the results, especially in low patch count scenarios. We create a toy adaptive sampling algorithm, which we refer to asEDGE, based on the Canny edge detector[3]. The method starts by computing a bitmap of edges with a largevalue for the detector. The map is then divided intopatches, which are then sorted by their sums over the bitmap. Then, the algorithm iteratively divides a patch with the highest sum larger than the minimal size of, into 4 new patches, which are added to the list, preserving the order. The algorithm is repeated until the number of patches reaches the target. Visualization of EDGE is presented in Fig.6.
+
+Does using higher resolution of the grid in the center improve accuracy?Our findings for the CENTRAL algorithm are presented in Fig.7. In the case of the vanilla ViT model, we observed issues with resilience to scale changes. Depending on the non-standard scale content of the input dataset, ViT results can be either negatively or positively influenced by the CENTRAL algorithm. Conversely, when considering ElasticViT, the differences are significantly reduced, and there is a higher likelihood that CENTRAL sampling leads to improved model performance.
+
+Can adaptive patch size sampling perform better?The results of this experiment are presented in Fig.7for the ElasticViT model. We observe, that EDGE performs significantly better than both GRID and CENTRAL algorithms in low patch count scenarios (less than 64 patches). When limited to 25 patches, it achieves overimprovement compared to ElasticViT andover standard ViT, increasing toand(accordingly) when only 16 patches can be sampled. Consequently, we claim that even very simple adaptive patch sampling methods can reduce the number of tokens needed to achieve targeted performance.
+
+SECTION: 5.6Trade-offs
+
+This section explores a training trade-off for elastic sampling. Further experiments on trade-off in inference are provided in supplementary materials.
+
+What is the tradeoff between accuracy and elastic training?A consistent pattern emerges in all our experiments comparing ViT and ElasticViT: ViT generally exhibits higher accuracy than ElasticViT when evaluated under the original, unperturbed grid sampling scenario. However, as we introduce perturbations into the evaluation, ElasticViT can surpass ViT. Earlier we performed experiments that juxtapose classical single-scale grid training against a fully randomized sampling method of ElasticViT, representing two extremes in the spectrum.
+
+Fig.8illustrates the results of training with mixed simple grid sampling (standard ViT training) and a fully randomized setup (ElasticViT training regime, see4). The evaluation was conducted by applying all three perturbation variants at the same time.
+
+The findings reveal that for simple grid evaluation, elastic training has a relatively minor negative impact on accuracy. However, in the case of randomized evaluation that requires elasticity, even with only 15% of the training data containing randomized patches, there is a substantial gain of more than ten percentage points in accuracy. This implies that in practical applications, fine-tuning the network can be accomplished using just a fraction of perturbed input data while having minimal repercussions on baseline (simple grid) accuracy. Yet, this approach offers increased resilience to perturbations, demonstrating the practical utility of elastic inputs in the training process.
+
+SECTION: 5.7Transfer Learning
+
+We evaluate elasticity of models pre-trained on the ImageNet-1k dataset and fine-tuned to the target tasks.
+
+Does elasticity capabilities transfer to other datasets?An important question that remains to be answered is whether the elasticity capabilities observed on the ImageNet-1k dataset transfer to other datasets and tasks. We analyze this problem on the matter of multi-label classification of the MS COCO 2014 dataset as described in Sec.4.3. We perform evaluation applying all three perturbations (see Sec.3) at the same time. Results of this experiment are presented in Fig.9, PVT, Swin and MAE perform the best when no perturbation are introduced. However, ElasticViT exhibits the best consistency in results across all perturbation range. The standard ViT model performs the worst, even without any perturbations, indicating worse generalization capabilities. Results for VOC and ColonCancer are provided in supplementary materials.
+
+SECTION: 6Conclusions
+
+This study examines Vision Transformers (ViT) and their adaptability to varying input sampling strategies required in real-world applications. We introduce an evaluation protocol to assess ViT’s resistance to input perturbations, including scale, missing data, and positional changes.
+
+Standard ViT models prove to be vulnerable to these perturbations, displaying a significant performance drop due to potential overfitting during training. In contrast, the modified ViT we proposed exhibits better resilience thanks to randomized training, maintaining or improving performance in various scenarios, see overall comparison in Fig. 8 of the supplementary material.
+
+Our experiments also explore adaptive patch sampling using CENTRAL and EDGE algorithms, which ElasticViT benefits from, particularly in scenarios with fewer patches. Adaptive patch sampling efficiently reduces token requirements while preserving target performance.
+
+Future work in this area should focus on refining the adaptive patch sampling strategies and further investigating the trade-offs between downscaling input tokens and patch dropout under computational constraints. Additionally, research should aim to apply these findings to real-world applications, enhancing transformer models’ adaptability in practical contexts.
+
+SECTION: Acknowledgments
+
+This paper has been supported by the Horizon Europe Programme (HORIZON-CL4-2022-HUMAN-02) under the project "ELIAS: European Lighthouse of AI for Sustainability", GA no. 101120237, and by National Science Centre, Poland (grant no. 2023/49/N/ST6/02465, 2022/47/B/ST6/03397, 2022/45/B/ST6/02817, and 2023/50/E/ST6/00469). Some experiments were performed on servers purchased with funds from a grant from the Priority Research Area (Artificial Intelligence Computing Center Core Facility) under the Strategic Programme Excellence Initiative at Jagiellonian University. We gratefully acknowledge Polish high-performance computing infrastructure PLGrid (HPC Center: ACK Cyfronet AGH) for providing computer facilities and support within computational grant no. PLG/2024/017483.
+
+SECTION: References

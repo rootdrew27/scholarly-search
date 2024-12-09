@@ -1,0 +1,408 @@
+SECTION: Stabilizing and Solving Inverse Problems using Data and Machine Learning
+
+We consider an inverse problem involving the reconstruction of the solution to a nonlinear partial differential equation (PDE) with unknown boundary conditions. Instead of direct boundary data, we are provided with a large dataset of boundary observations for typical solutions (collective data) and a bulk measurement of a specific realization. To leverage this collective data, we first compress the boundary data using proper orthogonal decomposition (POD) in a linear expansion. Next, we identify a possible nonlinear low-dimensional structure in the expansion coefficients using an auto-encoder, which provides a parametrization of the dataset in a lower-dimensional latent space. We then train a neural network to map the latent variables representing the boundary data to the solution of the PDE. Finally, we solve the inverse problem by optimizing a data-fitting term over the latent space.
+
+We analyze the underlying stabilized finite element method in the linear setting and establish optimal error estimates in theand-norms. The nonlinear problem is then studied numerically, demonstrating the effectiveness of our approach.
+
+SECTION: 1Introduction
+
+Technological advances have led to measurement resolution and precision improvements, shifting the paradigm from data scarcity to abundance. While these data can potentially improve the reliability of computational predictions, it still needs to be determined how to consistently merge the data with physical models in the form of partial differential equations (PDE). In particular, if the PDE problem is ill-posed, as is typical for data assimilation problems, a delicate balancing problem of data accuracy and regularization strength has to be solved. If the data is inaccurate, the PDE problem requires strong regularization; however, if the data is accurate, such a strong regularization will destroy the accuracy of the approximation of the PDE. Another question is how to use different types of data. Some large data sets, consisting of historical data of events similar to the one under study, can be available. In contrast, a small set of measurements characterizes the particular realization we want to model computationally. In this case, the former data set measures the “experience” of the physical phenomenon, while the latter gives information on the current event to be predicted.
+
+This is the situation that we wish to address in the present work. The objective is to construct a computational method that combines machine learning techniques for the data handling parts and hybrid network/finite element methods for the approximation in physical space. First, the large data set is mapped to a lower dimensional manifold using an auto-encoder or some other technique for finding low dimensional structures such as singular value decomposition or manifold learning. Then, we train a network to reproduce the solution map from the lower dimensional set to the finite element space. Finally, this reduced order model solves a non-linear inverse problem under the a priori assumption that the solution resides in a neighborhood of the lower dimensional manifold.
+
+To ensure an underpinning of the developed methods, we consider the case of a unique continuation problem for a non-linear elliptic operator. That is, given some interior measurement (or measurements on the part of the boundary), a solution is reconstructed despite lacking boundary data on the part of the boundary. Such problems are notoriously ill-posed, and using only the event data set, it is known that the accuracy of any approximation in the whole domain cannot be guaranteed due to the poor global stability[1]. Indeed, in general, stability is no better than logarithmic. This means that for perturbations of order, the error must be expected to be of orderwith. In interior subdomains stability is of Hölder type, meaning that the same perturbation gives rise to anerror. Computational methods can have, at best, rates that reflect this stability of the continuous problem[8]. A convenient a priori assumption is that the missing data of the approximate solution is in a-neighbourhood of a finite-dimensional space,, whereis the smallest distance from the solution toin some suitable topology. In this case, it is known that the stability is Lipschitz; that is, the problem has similar stability properties to a well-posed problem, and finite element methods can be designed with optimal convergence up to the data approximation error. For linear model problems discretized using piecewise affine finite element methods with mesh parameter, one can prove the error bound[9],
+
+Here,is a constant that depends on the dimension of the data set, the geometry of the available event data, and the smoothness of the exact solution. In particular,typically grows exponentially in.
+
+Since the size ofmust be kept down, there is a clear disadvantage in using the full large dataset. Indeed, forsufficiently large, the experience data will have no effect. Instead, we wish to identify a lower-dimensional structure in the high-dimensional dataset, a lower-dimensional manifold such that the data resides in a-neighbourhood of the manifold. For this task, one may use proper orthogonal decomposition in the linear case or neural network auto-encoders in the general case.
+
+In the linear case, the data fitting problem reduces to a linear system; however, an ill-conditioned optimization problem has to be solved in the nonlinear case, leading to repeated solutions of linearized finite element systems. To improve the efficiency of this step, we propose to train a network to encode the data to an FE map, giving fast evaluation of finite element approximations without solving the finite element system in the optimization.
+
+The approach is analyzed in the linear case with error estimates for a stabilized FEM using the reduced order model.
+
+We prove that the inverse problem with boundary data in a finite-dimensional setis stable and design a method that reconstructs the solution using the reduced order basis with the same dimension as. We proved optimal error bounds in the-norm for this method, where the constant of the error bound grows exponentially with the dimension of.
+
+In the situation where a large set of perturbed random data,, from the setis available, we develop a practical method for the solution of the severely ill-posed inverse problem of unique continuation, leveraging the large dataset to improve the stability properties. In order to handle non-linearity in the PDE-operator and data efficiently we adopt machine learning algorithms. The machine learning techniques are used for the following two subproblems:
+
+Identification of the latent spacefromto find the smallest possible space for the inverse identification.
+
+Construction of the solution map
+
+which approximates the Galerkin approximation of
+
+whereis the non-linear PDE in question.
+
+The performance of the combined finite element/machine learning approach is assessed against some academic data assimilation problems.
+
+The inverse problem we consider herein is of unique continuation type. There are many types of methods for this type of problem. In the framework we consider the earliest works considered quasi-reversibility[3]. The stabilized method we consider for unique continuation was first proposed in[4,5]and[6]. More recent works use residual minimization in dual norm[11,13,7]. The optimal error estimates for unique continuation with a trace in a finite dimensional space was first considered for Dirichlet trace in[9]and for Neumann trace in[10]. The idea of combining unique continuation in finite dimensional space with collective data was first proposed in[19,2]using linear algebra methods for the compression and direct solution of the linear unique continuation problem. Low rank solvers for the solution of inverse problems have also been designed in[26]using proper orthogonal decomposition.
+
+In recent years, significant advancements have been made in utilizing machine learning for solving PDEs and efficiently representing the solutions or deriving reduced order models[16,20,29,23,27,30]. These developments are very useful in the context of inverse problems, where they have been utilized in both data- and model-driven inverse problems[24,25,21,18,17,15,12].
+
+In Section 2, we introduce the model problem and the finite element discretization; in Section 3, we present and prove stability and error estimates; in Section 4, we develop a machine learning-based approach for solving the inverse problem; in Section 5, we present several numerical examples illustrating the performance of the method for various complexity of the given
+set of boundary data; and in Section 6 we summarize our findings and discuss future research directions.
+
+SECTION: 2Inverse Problem and Finite Element Method
+
+SECTION: 2.1Inverse Problem
+
+Letbe a domain in,a subdomain, and consider the minimization problem
+
+whereis a nonlinear second order differential operator andis an observation of the solution in the subdomain.
+Note that we do not have access to boundary conditions for the partial differential equation; we only know thatin, and
+thus, the problem is, in general, ill-posed.
+
+Assume that we have access to a dataset
+
+of observed Dirichlet data at the boundary. The datasetmay have different properties, but here we will assume
+that is of the form
+
+whereare bounded intervals and. Below we will also consider access to a finite setof samples from,
+
+Includingas a constraint leads to
+
+A schematic illustration of a problem of form (2.5) is given in Figure1.
+
+SECTION: 2.2Finite Element Method
+
+Letbe a finite element space on a quasi-uniform partitionofinto shape regular elements with mesh
+parameterand assume that there is an interpolation operatorand a constant such that for all,
+
+for. Hereis the union of all elements that share a node with.
+
+The finite element discretization of (2.5) takes the form
+
+where.
+
+SECTION: 3Analysis for a Linear Model Problem
+
+In this section, we present theoretical results for a linear model problem. We show that the finite dimensionality leads to a well-posed continuous problem, which may, however, have insufficient stability that may cause problems in the corresponding discrete problem. We, therefore, introduce a stabilized formulation that retains the stability properties from the continuous problem, and then we prove error estimates.
+
+SECTION: 3.1The Continuous Problem
+
+Consider the linear model problem
+
+whereand
+
+where the functionsare linearly independent
+on. Then with
+
+we may expressas the linear combination
+
+whereis the coefficient vector. The inverse problem (2.1) is then equivalent to
+computing the-projection ofon,
+
+This is a finite-dimensional problem, and therefore, existence follows from uniqueness.
+To prove uniqueness consider two solutionsand, we then have
+
+and takinggives
+
+By unique continuation for harmonic functions, we conclude thatis zero on the boundary and
+thereforesince the setis linearly independent on. It follows thatis linearly independent onand by
+finite dimensionality, there is a constant such that
+
+Note, however, that the constant may be huge, reflecting the often near
+ill-posed nature of an inverse problem.
+
+SECTION: 3.2The Discrete Problem
+
+In practice, only an approximation of the basisis available,
+since we observe data on the boundary and must solve for an approximate basis.
+Assuming that we compute an approximate basisusing
+Nitsche’s method with continuous piecewise linears, defined on a triangulationof,
+
+where the forms are defined by
+
+withthe given Dirichlet data on, we have the error estimates
+
+provided the regularity estimateholds, which is the case for convex or smooth domains.
+
+Next, we define the operators
+
+to represent linear combinations given coefficient vectors. By composingandwith the coefficient extraction operator, we note thatforandfor. We also note thatis the Galerkin
+approximation defined by (3.9) of, sinceis the Galerkin approximation
+offor, and we have the error estimate
+
+The estimate (3.15) follows directly using the Cauchy-Schwarz inequality and
+the error estimates (3.12) for the approximate basis
+
+with.
+
+Now if we proceed as in (3.5) with the modesreplaced by the approximate
+modes, we can not directly use the same argument as in the continuous case to show that there
+is a unique solution since the discrete method does not possess the unique continuation property, and it doesn’t
+appear easy to quantify how small the mesh size must be to guarantee that the bound (3.8) holds
+onas discussed in Remark3.1.
+
+Note that the constant in (3.8) is
+characterized by the Rayleigh quotient
+
+and for the corresponding discrete estimate
+
+we instead have the constant
+
+Using the triangle inequality and the error estimate (3.12) we have
+
+and thus we may conclude that
+
+forwithsmall enough. Thus forsmall enough the discrete bound (3.19) holds but we note that the
+precise characterization of how smallhas to be appears difficult.
+
+To handle this difficulty, let us instead consider the stabilized form
+
+where
+
+controls the error at the boundary, andis the standard
+normal gradient jump penalty term
+
+whereis the interior faces in the mesh. In the implementation, we estimate
+the-norm by
+
+where, withthe unit normal tois the tangent derivative at.
+
+SECTION: 3.3Error Estimates
+
+Our first result is that the additional stabilization terms inensure that we have stability for the discrete problem
+similar to (3.8) that holds for the exact problem.
+
+Letbe defined by (3.23). Then, there is a constant such that
+
+Proof.Forwe get by using the stability (3.8) on, adding
+and subtracting, and employing the triangle inequality,
+
+where we finally used the identity, which holds since. Next, we bound the
+the second term using the stabilizing terms in. To that end, we observe that we have the orthogonality
+
+since the discrete basis is, a Galerkin projection (3.9) of the exact basis with respect to the Nitsche form.
+Using the dual problem
+
+we obtain
+
+whereis the interpolation operator and we used the standard trace inequalityforon element.
+Finally, using the elliptic regularity, we get
+
+which combined with (3.28) directly gives the desired estimate.
+∎
+
+Define the stabilized projection,
+
+We then have the following error estimate for the stabilized projection with approximate basis functions.
+
+Letbe defined by (3.5) andbe defined by
+(3.37). Then, there is a constant such that,
+
+Proof of Proposition3.1.Using the triangle inequality
+
+Here the first term can be directly estimated using (3.15),
+
+since forwe haveand using the stability estimate (3.8) followed by
+(3.5) we get
+
+For the second term, we first note that the stabilization termsandvanish onso that
+
+We then have for any,
+
+where we used (3.42) in (3.42); the definition (3.5)
+ofto subtractin (3.46); the stability (3.27);
+the boundsand.
+Thus, we conclude that
+
+which combined with (3.39) and (3.40) concludes the proof.
+∎
+
+We finally prove the following global result,
+
+Letbe defined by (3.5) andbe defined by
+(3.37). Then, there is a constant depending on higher order Sobolev spaces ofsuch that,
+
+Proof.With, we have
+
+By norm equivalence on discrete spaces we have
+
+Sincethere holds using (3.8),
+
+By Proposition3.1there holds
+
+For the second term we have using (3.15),
+
+Similarly we have
+
+We conclude the proof by using the bound
+
+∎
+
+Observe that the stabilization is never explicitly used in order to obtain error estimates. Indeed its only role is to ensure the boundwithout condition on the mesh. On the other hand, due to the stabilization, it appears hard to obtain-error estimates. If indeed the mesh is so fine that the optimization problem is well posed without stabilization, then we obtain error bounds in a similar fashion, both for the-norm and the-norm.
+
+Letbe the unit disc. Then the solutions toare of the form
+
+whereare the standard polar coordinates. Letbe the disc centered at the origin with radius. We note that whenbecomes large, the modes become small in the disc, and therefore,
+the inverse problem becomes increasingly ill-posed, for instance, the constant in an estimate of the type
+
+scales like
+
+and thus becomes arbitrarily large whenbecomes large. But, if we, from observations, can conclude that only modes withfor someare present, then the stability is controlled. Note also that the stability is directly related to where the discis placed. If it is located close to the boundary, the stability improves.
+
+SECTION: 4Methods Based on Machine Learning
+
+We develop a method for efficiently solving the inverse problem (2.5) with access to sampled datausing machine learning techniques. The main approach is:
+
+Construct a parametrization of the data set by first approximately expanding the samples in a finite series of functions, for instance, using Proper Orthogonal Decomposition, and secondly using an autoencoder to find a possible nonlinear low dimensional structure in the coefficients.
+
+Use operator learning to construct an approximation of the finite element solution operator that maps the expansion coefficients to the finite element solution.
+
+Composing the decoder, which maps the latent space to expansion coefficients with the solution network, we obtain a differentiable mapping that can be used to solve the inverse problem efficiently.
+
+SECTION: 4.1Processing the Boundary Data
+
+To assimilate the data setin a method for solving the extension problem, we seek to construct a differentiable parametrization of. To that end, we first use Proper Orthogonal Decomposition (POD) to represent the data in a POD
+basis,
+
+where. We introduce the mapping
+
+where. We also need the reconstruction operator
+
+We have
+
+and we note that the operatoris invertible
+and differentiable.
+
+Next, we seek to find a possible nonlinear low dimensional structure in the POD coefficients using an autoencoder
+
+trained to minimize the loss
+
+See Figure2(a)for a schematic illustration.
+Hereis the latent space with dimension. If there is a low dimensional structure, we may often takesignificantly lower than.
+
+SECTION: 4.2Operator Learning
+
+Next, we discretize the problem using finite elements
+and train a network
+
+which approximates the Galerkin approximation of
+
+see Figure2(b). The output of the network is the finite element degrees of freedom (DoFs). For the training of the network we use the energy functionalcorresponding to the differential operatoras the foundation for the loss function. Lettingdenote the expectation operator andan arbitrary probability distribution, the loss function that we minimize during training is
+
+If there is no corresponding energy functional, one can instead minimize the residual of the finite element problem. It should be noted though, that assembling the residual instead of the energy has a greater computational cost and that the residual is not as easily and naturally decomposed into its local contributions as the energy. For technical details about network architecture and training used in this work, we refer to the example section5.2.
+
+SECTION: 4.3Inverse Problem
+
+Finally, composing the maps, we get a solution operator
+
+that maps the latent space into approximate finite element solutions to the partial differential equation
+
+see Figure2(c).
+
+This mapping is differentiable and can be directly used to
+rewrite the optimization problem as an unconstrained problem
+in the form
+
+where we note that the constraint is fulfilled by construction.
+
+SECTION: 5Examples
+
+We consider three examples of the inverse minimization problem ordered in increased nonlinearity. The first is a fully linear case with a linear differential operator and linear boundary data. In the second example, we consider a nonlinear operator with linear data. The final example is a fully nonlinear case with both operator and data being nonlinear. The examples demonstrate how each introduced nonlinearity may be treated with machine learning methods.
+
+The implementation used for the examples is based on the code presented in[28]which is publicly available athttps://github.com/nmwsharp/neural-physics-subspaces. The GPU computations were performed on the Alvis cluster provided by NAISS (See Acknowledgements).
+
+SECTION: 5.1Linear Operator with Linear Data
+
+We start with the fully linear case which we will build upon in the later examples. To construct a linear synthetic data set, we may pick a
+set of functionsand consider
+
+where. Note that we require the boundary data to be bounded. Alternatively, we can also consider taking the
+convex hull of the basis functions, which corresponds to requiring that
+
+Given nodal samples of such functions, we may apply principal component analysis (PCA) to estimate a set of basis functions and use them to
+parametrize the data set. More precisely, assume we observe the boundary
+data in the nodal points at the boundary. Letbe the matrix where each observation forms a row. Then, computing the eigenvectors to the symmetric
+matrixprovides estimates of the basis.
+
+Here, we consider two-dimensional examples. We letbe the unit square centered at the origin and generate four structured uniform triangular meshes of varying sizes: 10x10, 28x28, 82x82, and 244x244. The synthetic data set of boundary nodal values is in turn generated from the perturbed truncated Fourier series
+
+whereis the circumference ofandis the counter-clockwise distance along the boundary starting from the point where the boundary crosses the first coordinate axis. We sample unperturbed coefficientsand perturbations. For each of the four meshes, we consider two values of the number of coefficients used to describe the boundary conditions;and. We generate 1000 functions of the type (5.3) for each of the eight cases. Then, for every case, we compute a POD basisfor the boundary using PCA on the data set. Unsurprisingly, the number of significant singular values turns out to be the numberused in each case.
+
+We use the POD boundary basis to compute an interior basis by solving Laplace’s equation with the finite element method (FEM). We take the discrete spaceto simply be the space of piecewise linear finite elements on the triangle mesh considered. The FEM interior basisis computed by: For each, findsuch thatand
+
+In Figure3, the significant POD boundary basis functions, together with their corresponding FEM interior basis functions, are presented for the case withand the 82x82 mesh.
+
+We may now use the fact that Laplace’s equation is linear to superpose the FEM interior basis functions in a linear combination. This enables us to solve a linear inverse minimization problem over the coefficients in the linear combination. We present a demonstration of this process for the case withand the 82x82 mesh in Figure4.
+
+SECTION: 5.2Nonlinear Operator with Linear Data
+
+We again consider the linear data sets from the previous section, but here together with anonlineardifferential operator. Because of the nonlinearity, we cannot use the FEM interior basis and the superposition principle as in the fully linear case. Instead, we use a neural network to approximate the solution operator, i.e., the inverse of the nonlinear differential operator. The solution is still in the form of a finite element function, so the output of the network gives an approximation of the finite element solution. The input to the network is POD-coefficients corresponding to the same POD boundary basis functions as in the linear case in the previous section. We use the following nonlinear energy functional as the foundation for the loss function during training of the network.
+
+This functional corresponds to the nonlinear differential operator whose inverse (the solution operator) we want to approximate with the neural network. We use a simple multilayer perceptron (MLP) network architecture with 4 hidden layers of the same width X and an output layer of width O representing the finite element DoFs. For standard P1 elements considered here it is simply the finite element function’s nodal values. We use the exponential linear unit (ELU) as the activation function in the 4 hidden layers and no activation function in the last layer. A schematic illustration of this network is provided in Figure2(b).
+
+In each iteration during the training, we pick a fixed number (referred to as the batch size) of randomly selected coefficient vectors and use them to compute an average loss. The coefficient values are picked from. The optimization is performed with the Adam optimizer where we performiterations with a decreasing learning rate. The learning rate starts at 1e-4, and after every 250k iterations, it is decreased by a factor of 0.5.
+
+To measure the well-trainedness of the network, we, as an initial guiding measure, use the zero energy, i.e., the value of the computed energy using the output from the network when an all zero vector is given as input. This, of course, corresponds to homogeneous Dirichlet boundary conditions and gives that the solutionand thus that. We also perform more rigorous studies of well-trainedness by computing the actual finite element solution with FEniCS[22]and comparing it to the network approximation. This is done by computing their average norm difference over 1000 problems, where for each problem we randomly select a coefficient vector with values from. The difference is computed in both the-norm (-seminorm) and the-norm. We also compute both the absolute and the relative norm differences, where the relative norm difference is the absolute difference divided by the norm of the finite element solution.
+
+For the numerical examples we have again considered the two different coefficient vector lengths (9 and 21) and the four meshes from the linear case in the previous section. The network architectures and batch sizes used during training are given in Table1.
+
+The hyperparameter values for the problem sizes have been obtained by trial and error. In Table2, we present training info for the four mesh sizes for coefficient vector lengthand. The training has been performed on a single A100 GPU. For the largest mesh case (244x244), we have not been able to train with all elements present in the energy functional loss function (It has resulted in a NaN loss function value). To make it work, we have employed the trick of randomly selecting a fixed number of elements for every input vector during training, and only considering the energy functional contribution from those elements. The number of elements used is denoted “Els” in Table2.
+
+With these neural networks we may solve the inverse minimization problem over the coefficient space. In Figure5, a demonstration of this process is presented for the case of 21 input coefficients and the 244x244 mesh, i.e., the neural network whose training info is presented in the last row of Table2(b).
+
+SECTION: 5.3Nonlinear Operator with Nonlinear Data
+
+We consider the same nonlinear differential operator with the same neural networks as in the previous section but here we add complexity by introducing an underlying nonlinear dependence on the input coefficients to the network. To construct such a nonlinear dependence we may pick a smooth function, whereis a parameter domain inand
+consider boundary data of the form
+
+whereis some small probabilistic noise andis a set of samples from the parameter spaceequipped with a probability measure. In this case, we expect an autoencoder with a latent spaceof at least the same dimension asto perform well.
+
+We consider a simple polynomial example where the coefficientsdepend on the parameter variablesas
+
+Here the matricesand their entries are randomly sampled from a uniform distribution. The perturbationsare sampled from a normal distribution.
+
+For the numerical results we take,and sample matrix entries fromwhich are then held fixed. To generate coefficient vectors, we sample parameter variablesand perturbations. We consider two cases: the linear case withand the quadratic case with. To get a sense of what the data look like, we plot the coefficients as functions of the parameters for both cases in Figure6.
+
+We analyze data generated for the linear case with PCA and data generated for the quadratic case with both PCA and autoencoders. The results are shown in Figure7.
+
+We consider a more advanced nonlinear example where the coefficientsdepend on the parameter variablesas
+
+Here we havenumber of equidistant Gaussian bell curves indexed bywhere each coefficient is assigned exactly one bell curve with midpointand exactly one parameteraccording toand, respectively. The perturbationsare sampled from a normal distribution.
+
+For the numerical results we takeand sample perturbations. We consider four cases:
+
+withand
+
+withand
+
+withand
+
+withand
+
+The coefficients, PCA results and autoencoder results are shown in Figure8. For the autoencoder results we have used MLPs with 5 layers with the middle layer being the latent layer. The latent layer width has been varied and the hidden layer widths have all been fixed at 64. The activation function ELU has been applied to all layers except the last.
+
+From the Gaussian data examples presented in Figure8we note something interesting. If the number of bell curvesis divisible by the latent dimension, the PCA suggests that the underlying structure has dimension. Ifisnotdivisible by, the PCA instead suggests that this dimension is. In the third example with results presented in Figure8(c), we have. Here the PCA suggests that the underlying dimension is 21, whereas the corresponding autoencoder study suggests that a reduction down to 9 dimensions could provide the same improvement as a reduction down to 17.
+
+In light of the above, we may take the autoencoder with latent layer width = 9 from this case and connect its decoder to the input of the operator network for the 244x244 mesh with 21 input coefficients. We may thus solve the inverse minimization problem over a 9 dimensional latent space instead of a 21 dimensional coefficient space. We present a demonstration of this process in Figure9.
+
+SECTION: 6Conclusions
+
+The regularization of severely ill-posed inverse problems using large data sets and stabilized finite element methods was considered and shown to be feasible both for linear and non-linear problems. In the linear case, a fairly complete theory for the approach exists, and herein, we complemented previous work with the design and analysis of a reduced-order model. In the linear case, a combination of POD for the data reduction and reduced model method for the PDE-solution was shown to be a rigorous and robust approach that effectively can improve stability from logarithmic to linear in the case where the data is drawn from some finite dimensional space of moderate dimension. To extend the ideas to non-linear problems we introduced a machine learning framework, both for the data compression and the reduced model. After successful training, this resulted in a very efficient method for the solution of the non-linear inverse problem. The main observations were the following:
+
+The combination of analysis of the inverse problem, numerical analysis of finite element reconstruction methods, and data compression techniques allows for the design of robust and accurate methods in the linear case.
+
+Measured data can be used to improve stability, provided a latent data set of moderate size can be extracted from the data cloud.
+
+Machine learning can be used to leverage the observations in the linear case to non-linear inverse problems and data assimilation and results in fast and stable reconstruction methods.
+
+The main open questions are related to how the accuracy of the machine learning approach can be assessed and controlled through network design and training. For recent work in this direction, we refer to[14].
+
+This research was supported in part by the Swedish Research
+Council Grants No.  2021-04925, and the Swedish
+Research Programme Essence. EB acknowledges funding from EP/T033126/1 and EP/V050400/1.
+
+The GPU computations were enabled by resources provided by the National Academic Infrastructure for Supercomputing in Sweden (NAISS), partially funded by the Swedish Research Council through grant agreement no. 2022-06725.
+
+SECTION: References
+
+Authors’ addresses:
+
+Erik Burman,   Mathematics, University College London, UKe.burman@ucl.ac.uk
+
+Mats G. Larson,   Mathematics and Mathematical Statistics, Umeå University, Swedenmats.larson@umu.se
+
+Karl Larsson,   Mathematics and Mathematical Statistics, Umeå University, Swedenkarl.larsson@umu.se
+
+Carl Lundholm,   Mathematics and Mathematical Statistics, Umeå University, Swedencarl.lundholm@umu.se

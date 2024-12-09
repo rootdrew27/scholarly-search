@@ -1,0 +1,246 @@
+SECTION: DHIL-GT: Scalable Graph Transformerwith Decoupled Hierarchy Labeling
+
+Graph Transformer (GT) has recently emerged as a promising neural network architecture for learning graph-structured data. However, its global attention mechanism with quadratic complexity concerning the graph scale prevents wider application to large graphs. While current methods attempt to enhance GT scalability by altering model architecture or encoding hierarchical graph data, our analysis reveals that these models still suffer from the computational bottleneck related to graph-scale operations.
+In this work, we target the GT scalability issue and proposeDHIL-GT, a scalable Graph Transformer that simplifies network learning by fully decoupling the graph computation to a separate stage in advance.DHIL-GTeffectively retrieves hierarchical information by exploiting the graph labeling technique, as we show that the graph label hierarchy is more informative than plain adjacency by offering global connections while promoting locality, and is particularly suitable for handling complex graph patterns such as heterophily. We further design subgraph sampling and positional encoding schemes for precomputing model input on top of graph labels in an end-to-end manner. The training stage thus favorably removes graph-related computations, leading to ideal mini-batch capability and GPU utilization. Notably, the precomputation and training processes ofDHIL-GTachieve complexitieslinearto the number of graph edges and nodes, respectively.
+Extensive experiments demonstrate thatDHIL-GTis efficient in terms of computational boost and mini-batch capability over existing scalable Graph Transformer designs on large-scale benchmarks, while achieving top-tier effectiveness on both homophilous and heterophilous graphs.
+
+SECTION: 1.Introduction
+
+Graph Transformers characterize a family of neural networks that introduce the powerful Transformer architecture(Vaswani et al.,2017)to the realm of graph data learning. These models have garnered increasing research interest due to their unique applications and competitive performance(Ying et al.,2021; Wu et al.,2021; Hussain et al.,2022; Zhu et al.,2023b). Despite their achievements, vanilla GTs are highly limited to specific tasks because of the full-graph attention mechanism, which has computational complexity at least quadratic to the graph size, rendering it impractical for a single graph with more than thousands of nodes. Enhancing the scalability of GTs is thus a prominent task for enabling these models to handle a wider range of graph data on large scales.
+
+To scale up Graph Transformers, existing studies explore various strategies to retrieve and utilize graph data efficiently. One representative approach is to simplify the model architecture with a specialized attention module(Wu et al.,2022; Rampášek et al.,2022; Wu et al.,2023). The graph topology is conserved by the message-passing mechanism, which recognizes edge connections without the need for quadratic computation on all-pair node interactions. However, these modifications introduce another computational bottleneck of iterative graph propagation, which typically has an overhead linear to the edge size and remains challenging for scalable model training.
+An alternative line of works chooses to embed richer topological information as structured data through different graph processing techniques, such as adjacency-based spatial propagation(Chen et al.,2023; Kong et al.,2023), polynomial spectral transformation(Ma et al.,2023; Deng et al.,2024), and hierarchical graph coarsening(Zhang et al.,2022; Zhu et al.,2023a). Although these models offer a relatively scalable model training scheme, the graph-related operation still persists during their learning pipeline, leaving certain scalability and expressivity issues unsolved as detailed in our complexity analysis.
+
+TaxonomyBatchModelPrecompute TimeTrain TimeRAM Mem.GPU Mem.HeteroVanillaFBGraphormer(Ying et al.,2021)NGRPE(Park et al.,2022)NKernel-basedNSGraphGPS(Rampášek et al.,2022)YNodeFormer(Wu et al.,2022)–YDIFFormer(Wu et al.,2023)–NPolyNormer(Deng et al.,2024)–YHierarchicalRSNAGphormer(Chen et al.,2023)NPolyFormer(Ma et al.,2023)YANS-GT(Zhang et al.,2022)YGOAT(Kong et al.,2023)YHSGT(Zhu et al.,2023a)NDHIL-GT(ours)Y
+
+In this work, we proposeDHIL-GT, a scalable Graph Transformer withDecoupledHierarchyLabeling.
+By constructing a hierarchical graph label set consisting of node pair connections and distances, we showcase that all graph information necessary for GT learning can be fully decoupled and produced by an end-to-end pipeline before training. The precomputation procedure can be finished within a linearbound, while the iterative learning step is as simple as training normal Transformers withcomplexity, whereandare the numbers of graph edges and nodes, respectively. The two stages achieve theoretical complexities on par with respective state-of-the-art GTs, as well as a substantial boost in practice thanks to empirical acceleration strategies.
+
+OurDHIL-GTis based on the 2-hop labeling technique, which has been extensively studied with scalable algorithms for querying the shortest path distance (SPD) between nodes(Akiba et al.,2013; Yano et al.,2013; Akiba et al.,2015). By investigating its properties, we show that the graph labels construct a hierarchical representation of the graph topology, favorably containing both local and global graph connections. We design a novel subgraph token generation process to utilize the labels as informative input for GT. The data hierarchy benefits GT expressivity in modeling node-pair interactions beyond graph edges, which is superior in capturing graph knowledge under both homophily and heterophily compared to current locality-based GTs.
+In addition, the built graph labels also offer a simple and fast approach to query pair-wise distance as positional encoding.
+To this end, graph information is decently embedded into the precomputed data from different perspectives, and all computations concerning graph labels can be performed in a one-time manner with efficient implementation.
+The GT training stage only learns from the structured input data, which enjoys ideal scalability, including a simple mini-batch scheme and memory overhead free from the graph size.
+
+We summarize the contributions of this work as follows:
+
+We proposeDHIL-GTas a scalable Graph Transformer with decoupled graph computation and simple model training independent of graph operations. Both precomputation and learning stages achieve complexities onlylinearto the graph scale.
+
+We introduce an end-to-end precomputation pipeline forDHIL-GTbased on graph labeling, efficiently embedding graph information with informative hierarchy. Dedicated token generation, positional encoding, and model architectures are designed for representing hierarchical data at multiple levels.
+
+We conduct comprehensive experiments to evaluate the effectiveness and efficiency ofDHIL-GTagainst current Graph Transformers across large-scale homophilous and heterophilous graphs.DHIL-GTachieves top-tier accuracy and demonstrates competitive scalability regarding time and memory overhead.
+
+SECTION: 2.Related works
+
+Vanilla Graph Transformers.
+Early GTs(Dwivedi and Bresson,2020; Ying et al.,2021; Wu et al.,2021)are mainly proposed for graph-level learning tasks, typically involving small-scale graphs of less than a thousand nodes. Following the vanilla design, a wide range of positional encoding schemes have been invoked to the self-attention module to encode graph topology information, including graph proximity(Ying et al.,2021; Zhang et al.,2022; Chen et al.,2021), Laplacian eigenvectors(Dwivedi and Bresson,2020; Kreuzer et al.,2021; Hussain et al.,2022), and shortest path distance(Park et al.,2022; Chen et al.,2022; Zhao et al.,2023).
+
+As listed inTable1, the critical scalability bottleneck of these models lies in the straight-forward attention mechanism calculating all node-pair interactions in the graph, resultingcomplexity of both training time and memory. If there is positional encoding, additional preprocessing is also demanded withor even higher overhead.
+A naive solution is to randomly sample a subset of nodes and adopt mini-batch learning. However, it largely overlooks graph information and results in suboptimal performance.
+
+Kernel-based Graph Transformers.
+Kernelization is the method for modeling node-pair relations and replacing the vanilla self-attention scheme. For instance, NodeFormer(Wu et al.,2022)employs a kernel function based on random features, and GraphGPS(Rampášek et al.,2022)opts to incorporate topological representation. More expressive kernels are also developed, invoking depictions such as graph diffusion(Wu et al.,2023)and node permutation(Deng et al.,2024).
+
+Although kernelized GTs prevent the quadratic complexity, the nature of the kernel indicates that graph data needs to be iteratively accessed during learning, which is represented by thelearning overhead inTable1. When the graph scale is large, this term becomes dominant since the edge sizeis significantly larger than the node size. Hence, we argue that such a design is not sufficiently scalable.
+Another under-explored issue is the expressiveness of the neighborhood sampling (NS) strategy for forming node batches in kernel-based GTs. Similar to convolutional GNNs, NS is known to be subject to performance loss on complex graph signals due to its inductive bias on graph homophily(Breuer et al.,2020; Zheng et al.,2022).
+
+Hierarchical Graph Transformers.
+Recent advances reveal that it is possible to remove the full-graph attention and exploit the power of GTs to learn the latent node relations during learning. This is achieved by providing sufficient hierarchical context as input data with node-level identity. The key of this approach is crafting an effective embedding scheme to comply with GT expressivity. To realize this, NAGphormer(Chen et al.,2023), PolyFormer(Ma et al.,2023), and GOAT(Kong et al.,2023)look into representative features using adjacency propagation, spectral graph transformation, and feature space projection, respectively. ANS-GT(Zhang et al.,2022)builds graph hierarchy by adaptive graph sampling concerning subgraphs of size, while HSGT(Zhu et al.,2023a)leverages graph coarsening algorithms.
+
+Hierarchical GTs are applicable to mini-batching with random sampling (RS) as long as their graph embeddings are permutation invariant.
+Furthermore, since graph processing is independent of GT attention, it can be adequately improved with better algorithmic scalability. In most scenarios, the graph can be processed incomplexity in precomputation as shown inTable1. Nonetheless, we note that hierarchical models, except for NAGphormer and PolyFormer, still involve graph-level operations during training, which hinders GPU utilization and causes additional overhead.
+
+Scalable Convolutional GNNs.
+The scalability issue has also been extensively examined for Graph Neural Networks (GNNs) exploiting graph convolutions(Kipf and Welling,2017; Veličković et al.,2017). Similar to hierarchical GTs, decoupled models propose to separate the graph computation from iterative convolution and employ dedicated acceleration, exhibiting excellent scalability on some of the largest datasets with linear or even sub-linear complexity(Klicpera et al.,2019; Wu et al.,2019; Chen et al.,2020; Liao et al.,2022). It is also demonstrated that such strategy is capable of handling heterophily(Li et al.,2021; Wang and Zhang,2022; Liao et al.,2023). Graph simplification techniques including graph sampling(Chen et al.,2018; Chiang et al.,2019; Zou et al.,2019; Feng et al.,2022)and coarsening(Deng et al.,2020; Huang et al.,2021; Cai et al.,2021)approaches are also explored for reducing the graph scale at different hierarchy levels.
+Although the high-level idea of scaling up convolutional GNNs is helpful towards scalable GTs, Transformer-based models are unique in respect to their graph data utilization and architectural bottlenecks, and hence require specific designs for addressing their scalability issues.
+
+SECTION: 3.Preliminaries
+
+Graph Labeling.
+Consider a connected graphwithnodes andedges. The node attribute matrix is, whereis the dimension of input attributes.
+The neighborhood of a nodeis, and its degree.denotes a path from nodeto, and the shortest distanceis achieved by the path with least nodes.
+
+The graph labeling process assigns a labelto each node, which is a set of pairscontaining certain nodesand corresponding shortest distancesbetween the node pairs. The graph labels compose a 2-hop cover(Cohen et al.,2003)ofif for an arbitrary node pair, there existsand.
+Given an order of all nodes in, we denote each node by a unique indexand useto indicate that nodeprecedes nodein the sequence.
+
+Transformer Architecture.
+A Transformer layer(Vaswani et al.,2017)projects the input representation matrixinto three subspaces:
+
+where,,are the projection matrices.
+For a multi-head self-attention module withheads, each attention head possesses its own representations, and the outputacross all heads is calculated as:
+
+wheredenotes the matrix concatenation operation. In this paper, we set the projection dimension.
+It can be observed thatEqs.1and2for representations ofnodes lead totime and memory overhead. When it only applies to a batch ofnodes, the complexity is drastically reduced to.
+
+SECTION: 4.Hierarchy of Label Graph
+
+OurDHIL-GTaims to retrieve graph hierarchy information from graph labels consisting of node pair connections and distances. In this section, we first introduce the pruned landmark labeling algorithm to efficiently compute graph labels as a 2-hop cover. Then, we analyze that the labeling process favorably builds a graph hierarchy with several useful properties for representing implicit graph information beyond adjacency.
+
+SECTION: 4.1.Pruned Landmark Labeling
+
+Based on the concept of graph labeling inSection3, a straight-forward approach to build the graph labels is to traverse the whole graph for each node successively. This is, however, prohibitive due to the repetitive graph traversal procedure. Hence, we employ the Pruned Landmark Labeling (PLL) algorithm(Akiba et al.,2013), which constructs labels with a more efficient search space.
+
+The PLL algorithm is presented inAlgorithm1. It performs a pruned BFS for each node indexedtofollowing the given order. The algorithm is agnostic to the specific search order. In this work, we follow(Akiba et al.,2013)to adopt the descending order of node degrees for its satisfying performance while leaving other schemes for future exploration.
+
+The PLL is more efficient than full-graph traversal as it prevents the visit to nodesthat have been accessed and labeled with a shorter distanceto the current source node. Intuitively, during the early rounds of pruned BFS starting from nodeswith smaller indices, the traversal is less pruned and can reach a large portion of the graph. These nodes are regarded as landmarks with higher significance and are able to appear in a large number of node labelswherealong with the distance information. On the contrary, for latter nodes with higher indices, the pruned traversal constrains the visit to the local neighborhood.
+
+Thus, we reckon that the PLL process naturally builds a hierarchy embedded in the node labels. An exemplary illustration of a real-world graph is displayed inFigure1. The originalchameleongraph is heterophilous, i.e., connected nodes frequently belong to distinct classes. InFigure1(a), different classes are mixed in graph clusters, which pose a challenge for GTs to perform classification based on edge connections. In contrast, nodes in the graph marked by graph labels inFigure1(b)clearly form multiple densely connected clusters, exhibiting a distinct hierarchy. Certain classes can be intuitively identified from the hierarchy, which empirically demonstrates the effectiveness of our utilization of graph labeling.
+
+SECTION: 4.2.Label Graph Properties
+
+Then, we formulate the hierarchy in graph labels by defining a generated graph, namely thelabel graph, as, which is with directed and weighted edges. Its edge set depicts the elements in node labels computed by graph labeling, that an edgeif and only if, and the edge weight is exactly the distance in graph labels. The in- and out-neighborhoods based on edge directions areand, respectively.
+
+We then elaborate the following three hierarchical properties of the label graph generated byAlgorithm1. Corresponding running examples are given inFigure2. For simplicity, we assume that the original graphis undirected, while properties for a directedcan be acquired by separately considering two label setsandfor in- and out-edges in.
+
+For an edge, there iswhen, andwhen.
+
+Referring toAlgorithm1, when the current node isand,holds sinceis the direct neighbor of. Hence,is added to labelat this round, which is equivalent to adding edgeto. Similarly,holds when. For example, the edgeinFigure2(a)is represented by the directed edgeinFigure2(b).Property1implies that, i.e., the neighborhood of the original graph is also included in the label graph, and is further separated into two sets according to the relative order of neighboring nodes.
+
+For a shortest pathin, there isfor eachsatisfying.
+
+(Akiba et al.,2013)proves that there isforand. Therefore, considering shortest paths starting with nodeof a small index, i.e.,being a “landmark” node, then succeeding nodesin the path are connected toin. InFigure2(a), the shortest path betweenpassing noderesults in edgesandinFigure2(c), since nodesandare in the path and their indices are larger than node.
+When the order is determined by node degree, high-degree nodes appear in shortest paths more frequently, and consequently link to a majority of nodes, including those long-tailed low-degree nodes in.
+
+For a shortest pathin, if there isand, then.
+
+According to the property of shortest path, there is. Hence, the condition of line 8 inAlgorithm1is not met at the-th round when visiting. In other words, the traversal fromis pruned at the preceding node. By this means, the in-neighborhoodis limited in the local subgraph with shortest paths ending at landmarks.
+As shown inFigure2(d), the shortest path betweenpasses node, indicating thatare not directly connected since their distance can be acquired by edgesand. As a consequence, the neighborhood of nodeinis constrained by nodesand, preventing connections to more distant nodes such asor.
+
+SummarizingProperties1,2and3, the label graph preserves neighboring connections of the original graph, while establishing more connections to a minority set of global nodes as landmark. The hierarchy is built so that long-tailed nodes with high indices are usually located in local substructures separated by landmarks.
+Noticeably, since the label graph is deterministic, it can be computed byAlgorithm1in an individual stage in one time and used throughout graph learning iterations.
+
+SECTION: 5.Methodology
+
+In this section, we describe the design motivation and approach of theDHIL-GTmodel by respectively elaborating on the proposed modules in its precomputation and learning stages.Figure3illustrates the overview of theDHIL-GTpipeline.
+
+SECTION: 5.1.Subgraph Generation by Labeling
+
+Motivation: Hierarchical GT beyond adjacency.
+Canonical Graph Transformer models(Ying et al.,2021; Wu et al.,2022; Rampášek et al.,2022; Chen et al.,2023)generally utilize graph adjacency for composing the input sequence in graph representation learning. However, recent advances reveal that adjacency alone is insufficient to represent the implicit graph topology. GTs can be improved by modeling node connections not limited to explicit edges, and more hierarchical information benefits learning high-level knowledge on graph data(Zhang et al.,2022; Kong et al.,2023; Zhu et al.,2023a).
+
+Unlike existing hierarchical GTs relying on the original graph, we seek to retrieve structural information from the label graphgenerated byAlgorithm1. As showcased inSection4, the label graph hierarchy processes properties of maintaining local neighborhoods while adding global edges. This is preferable for Graph Transformers as it extends the receptive field beyond local neighbors described by graph adjacency and highlights those distant but important landmarks in the graph for attention modules on node connections. The hierarchical information is especially useful for complicated scenarios, such as heterophilous graphs, where the local graph topology may be distributive or even misleading. Moreover, the edge weight of the label graph, i.e., the shortest distance between node pairs of interest, can serve as a straightforward metric for evaluating relevance with the ego node.
+
+To leverage the label graph efficiently, we employ a decoupling scheme to prepare the labels and necessary data in a separate stage before training. The graph data is only processed in this precomputation stage and is prevented from being fully loaded onto GPU devices, which intrinsically reduces the GPU memory overhead and offers better scalability to large graphs.
+
+Sampling for Subgraph Tokens.Algorithm2describes the precomputation process inDHIL-GT. Given the input graph, we first build the graph labels by PLL as outlined inAlgorithm1. For each node, we generate a token for GT learning, which represents the neighborhood around the node in the label graph. Since the neighborhood size is variable, we convert it into a fixed-length subgraph tokenwithnodes by weighted sampling, as shown in lines 4-9 inAlgorithm2. Neighbors inandare sampled separately with different sizes, asSection4.2shows that these two sets contain nodes of differing importance. The distance to the ego nodeis used as the sampling weight, with hyperparameterscontrolling the relative importance. Note that under our sampling scheme, nodes not connected to the ego node will not appear in the token.
+
+Overall, the subgraph generation process produces a node list of lengthfor each node, representing its neighborhood in the label graph. The relative values of hyperparametersandcan be used to balance the ratio of in-neighbors and out-neighbors in, which correspond to local long-tailed nodes and distant landmark nodes in, respectively. Compared to canonical GT tokens representing the graph node in the context of the full graph,DHIL-GTonly relies on a small but informative subgraph of fixed size. When the graph scales up,DHIL-GTenjoys better scalability as its token size does not increase with the graph size.
+
+SECTION: 5.2.Fast Subgraph Positional Encoding
+
+Positional encoding is critical for GT expressivity to model inter-node relationship for graph learning. In our approach, positional encoding provides the relative identity of nodes within the subgraph hierarchy. We particularly employ shortest path distance (SPD) to token nodes as the positional encoding scheme inDHIL-GT, which is superior as it holds meaningful values for arbitrary node pairs regardless of locality. In comparison, other approaches such as graph proximity and eigenvectors are usually too sparse to provide identifiable information within sampled subgraphs.
+
+Conventionally, calculating SPD for positional encoding demandsor higher complexity as analyzed inTable1, which is not practical for large-scale scenarios. Thanks to the graph labeling computation, we are able to efficiently acquire SPD inside subgraphs.
+Recalling the definition of 2-hop cover inSection3, we exploit the following corollary, which ensures the SPD of any node pairs can be effectively acquired on top of PLL labels:
+
+For any node pair, the shortest path distance can be calculated by:
+
+where labelsare computed byAlgorithm1. Note that.
+
+The second part ofAlgorithm2in line 10-12 depicts the process of further reusing the label graph data structure for managing SPD within node-wise subgraphs. For node pairs of each subgraph, the SPDs are computed and stored as weighted edges that extend the label graph edge set.
+
+To employ SPD positional encoding, the transformer layer inEq.2is altered with a bias term:
+
+where the value of bias entry is a learnable parameter indexed by the node-pair SPD value.
+
+SECTION: 5.3.Model Architecture
+
+DHIL-GTenhances the GT architecture(Ying et al.,2021; Zhang et al.,2022)to fit the precomputed subgraphs and mini-batch training for large-scale representation learning. Apart from the SPD bias, we also design specific modules to adapt to subgraph hierarchical learning.
+For each node, given the subgraphproduced byAlgorithm2, input representations are retrieved from the node attributes based on the input node token as, wheredenotes node attributesfor all, andwith hidden dimension.
+
+For the-th Transformer layer, the representation is updated as:
+
+whereandstand for layer normalization and feed-forward network, respectively, anddenotes the multi-head self-attention architecture described byEqs.1,4and2.
+
+Lastly, a readout layer calculates node-wise attention over the-layer representation among nodes in the fixed-length token:
+
+which measures the correlation between ego node and its neighbors in the subgraph. The representation is then aggregated to the ego nodeas output:
+
+whereis the output classifier.
+
+Virtual Node.
+We add virtual nodes representing landmarks tosuch thatfor all nodes. It can be observed fromAlgorithm1that virtual nodes are added to everywithout affecting label construction and SPD query. During the learning stage, we set their attributes and attention bias to be learnable. This scheme actually generalizes the global virtual node utilized in(Ying et al.,2021), offering graph-level context to node-level representation during representation updates.
+
+Mini-batch Capability.
+Remarkably, throughout the Transformer learning stage ofDHIL-GT, input data including subgraph tokens, SPD bias, and node attributes are all readily prepared byAlgorithm2as described in previous subsections. For each node, only indexing operations are performed onandbased on the subgraph token, and no graph-scale computation is required during learning iterations. Therefore, mini-batch training forDHIL-GTcan be easily implemented by sampling batches of ego nodes, and only indexed strides ofandare loaded onto GPU devices.
+
+SmallchameleonsquirreltolokersPre.EpochInferMem.AccPre.EpochInferMem.AccPre.EpochInferMem.ROC AUCDIFFormer∗-0.090.380.5037.83±4.54-0.050.050.735.73±1.37-0.1685.80.8874.88±0.59PolyNormer∗-0.030.171.140.70±3.38-0.070.491.238.40±1.10-1.2715.59.479.39±0.50NAGphormer0.270.030.030.533.18±4.300.850.080.080.532.02±3.931.590.110.020.579.32±0.39ANS-GT11.21.980.782.841.19±0.6928.14.481.956.637.15±1.107162.373.4210.779.31±0.97GOAT1.990.340.440.435.02±1.156.660.370.580.630.78±0.9136.15.495.875.079.46±0.57HSGT∗0.010.340.730.332.28±2.430.010.420.740.434.32±0.512.627.768.1217.479.24±0.83DHIL-GT(ours)0.080.030.0054.543.63±2.340.350.680.015.737.16±0.571.90.170.027.279.86±0.47Largepenn94geniustwitch-gamerPre.EpochInferMem.AccPre.EpochInferMem.AccPre.EpochInferMem.AccDIFFormer∗-0.530.655.561.77±3.41-0.775.475.484.52±0.36-0.615.144.960.81±0.44PolyNormer∗-0.5818.46.379.87±0.06-0.772812.985.64±0.52-1.458921.464.72±0.65NAGphormer2376.142.132.374.45±0.60385.431.042.383.88±0.13161.920.392.361.92±0.19ANS-GT3889424.98.767.76±1.3234092374.958.767.76±1.3212924196.78.661.55±0.45GOAT1332331820.971.42±0.44266428398.980.12±2.323348376321.261.38±0.83HSGT∗121151109.367.77±0.27219811417.184.03±0.246823525311.261.60±0.09DHIL-GT(ours)31140.310.278.74±0.45525.40.337.091.06±0.471722.20.157.367.03±2.17Inference of these models is performed on the CPU in a full-batch manner due to their requirement of the whole graph.
+
+SECTION: 5.4.Complexity Analysis
+
+To characterize the model scalability, we consider the time and memory complexity ofDHIL-GTseparately in the precomputation and learning stages. In precomputation, the PLL labeling and sampling processAlgorithm1satisfies the analysis in(Akiba et al.,2013), entailing a complexity offor computing labels of all nodes.
+Regarding the positional encoding, a single SPD query followingCorollary1can be calculated intime within the subgraph. The query is performed at mosttimes for all nodes, which leads to anoverhead forin total. It is worth noting that the empirical number of queries is significantly smaller than the above bound, since the subgraphsare highly overlapped for neighboring nodes.
+The memory overhead for managing sampled tokens and features in RAM isand, respectively. Note that SPD values are stored as integers, which is more efficient than other positional encoding schemes.
+
+During model training, one epoch of-layer feature transformation on all nodes demandsoperations, while bias projection is performed withtime complexity. The GPU memory footprint for handling a batch of node representations and bias matrices isand, respectively, whereis the batch size. It can be observed that the training overhead is only determined by batch size and is free from the graph scale, ensuring favorable scalability for iterative GT updates.
+
+SECTION: 6.Experiments
+
+We comprehensively evaluate the performance ofDHIL-GTwith a wide range of datasets and baselines. InSection6.2, we highlight the model efficiency regarding time and memory overhead, as well as its effectiveness under both homophily and heterophily.Sections6.3and6.4provides in-depth insights into the effect ofDHIL-GTdesigns in exploiting graph hierarchy. Implementation details and full experimental results can be found inAppendixA.
+
+SECTION: 6.1.Experimental Settings
+
+Tasks and Datasets.
+We focus on the node classification task on 12 benchmark datasets in total covering both homophily(Sen et al.,2008; Shchur et al.,2018; Hu et al.,2020)and heterophily(Lim et al.,2021; Oleg Platonov et al.,2023), whose statistics are listed inTable5. Compared to conventional graph learning tasks used in GT studies, this task requires learning on large single graphs, which is suitable for assessing model scalability. We follow common data processing and evaluation protocols as detailed inSectionA.1.
+Evaluation is conducted on a server with 32 Intel Xeon CPUs (2.4GHz), an Nvidia A30 GPU (24GB memory), and 512GB RAM.
+
+Baselines.
+Since the scope of this work lies in the efficacy and efficiency enhancement of the GT architecture, we primarily compare against state-of-the-art Graph Transformer models with attention-based layers and mini-batch capability. Methods including DIFFormer(Wu et al.,2023)and PolyNormer(Deng et al.,2024)are considered as kernel-based approaches. NAGphormer(Chen et al.,2023), GOAT(Kong et al.,2023), HSGT(Zhu et al.,2023a), and ANS-GT(Zhang et al.,2022)stand for hierarchical GTs.
+
+Evaluation Metrics.
+We use ROC AUC as the efficacy metric ontolokersand classification accuracy on the other datasets. For efficiency evaluation, we notice that there is limited consensus due to the great variety in GT training schemes. Therefore, we attempt to employ a comprehensive evaluation considering both time and memory overhead for a fair comparison. Model speed is represented by the average training time per epoch and the inference time on the testing set. For models with graph precomputation, the time for this process is separately recorded. We also feature the GPU memory footprint, which is the scalability bottleneck.
+
+SECTION: 6.2.Performance Comparison
+
+Table2presents the efficacy and efficiency evaluation results on 6 heterophilous datasets, while metrics for 6 homophilous graphs can be found inTable4.
+As an overview,DHIL-GTdemonstrates fast computation speed and favorable mini-batch scalability throughout the learning process. It also reaches top-tier accuracy by outperforming the state-of-the-art GTs on multiple datasets.
+
+Time Efficiency.
+Benefiting from the decoupled architecture,DHIL-GTis powerful in achieving competitive speed with existing efficiency-oriented GT designs. For baselines with heavy precomputation overhead, including ANS-GT and GOAT,DHIL-GTshowcases speed improvements by orders of magnitude, with up toboost over ANS-GT ongenius. Aligned with our complexity analysis inSection2, the key impact factor ofDHIL-GTis the node sizeand is less affected byandcompared to precomputation in other methods.
+Meanwhile,DHIL-GTis capable of performing the fastest inference even on large-scale graphs, thanks to its simple model transformation without graph-scale operations. Its training speed is also on par with the best competitors, which usually exploit highly simplified architectures. In contrast, models including PolyNormer and HSGT suffer from longer learning times due to their iterative graph extraction and transformation.
+
+Memory Footprint.
+In modern computing platforms, GPU memory is usually highly constrained and becomes the scalability bottleneck for the resource-intensive graph learning.DHIL-GTexhibits efficient utilization of GPU for training with larger batch sizes while avoiding the out-of-memory issue. In comparison, drawbacks in several model designs prevent them from efficiently performing GPU computation, which stems from the adoption of graph operations. Notably, kernel-based models require full graph message-passing in their inference stage, which is largely prohibitive on GPUs and can only be conducted on CPUs. HSGT faces the similar issue caused by its graph coarsening module. We note that these solutions are less scalable and hinder the GPU utilization during training.
+In addition, ANS-GT typically demands high memory footprint for storing and adjusting its subgraphs, which exceeds the memory limit of our platform inTable4.
+
+Prediction Accuracy.DHIL-GTsuccessfully achieves significant accuracy improvement on several heterophily datasets such aschameleonandtwitch-gamer, while the performance on other heterophilous and homophilous datasets inTables2and4is also comparable with the state of the art. We attribute the performance gain to the application of the label graph hierarchy inDHIL-GT, which effectively addresses the heterophily issue of these graphs as analyzed inSection4. Since the label graph also preserves edges in the raw graph, the performance ofDHIL-GTis usually not lower than learning on the latter.
+In comparison, baseline methods without heterophily-oriented designs, including DIFFormer, NAGphormer, and HSGT, perform generally worse on these graphs. This is because their models tend to rely on the raw adjacency or even promote it with higher modularity. As a consequence, node connections retrieved by GT attention modules are restrained in the local neighborhood and fail to produce accurate classifications. On the other hand, while PolyNormer achieves remarkable accuracy on several heterophilous graphs thanks to its strong expressivity, its performance is largely suboptimal on homophilous graphs inTable4.
+
+SECTION: 6.3.Effect of Hyperparameters
+
+We then study the effectiveness of the label graph hierarchy inDHIL-GTfeaturing the subgraph generation process inFigure4, which displays the
+impact of sample sizeand sampling exponentscorresponding toAlgorithm2.
+Regarding the total subgraph size, it can be observed fromFigure4(a)that a reasonably largeis essential for effectively representing graph labels and achieving stable accuracy. In the main experiments, we uniformly adopt a constanttoken size across all datasets, as it is large enough to cover the neighborhood of most nodes while maintaining computational efficiency. As a reference, the average neighborhood size among all nodes is 16.0 onciteseerand 31.2 onchameleon.
+Within the fixed token length, an equal partition for in- and out-neighbors is preferable according toFigure4(a), where impact ofis shown when.
+
+Figure4(b)presents the result of changing the sampling weight factor. Forchameleon, in the plot, negative exponents favoring nodes with small SPD values are more advantageous to the model performance. Nonetheless, the variance is not significant as long as the subgraph effectively covers the neighborhood of the majority of nodes. We hence conclude thatAlgorithm2forDHIL-GTprecomputation does not require precise hyperparameter tuning.
+
+SECTION: 6.4.Ablation Study
+
+Table3examines the respective effectiveness of the hierarchical modules in theDHIL-GTnetwork architecture, where we separately present results on homophilous and heterophilous datasets. It can be observed that the model without SPD bias suffers the greatest accuracy drop, since topological information represented by positional encoding is necessary for GTs to retrieve the relative connection between nodes and gain performance improvement over learning plain node-level features.
+
+InDHIL-GT, the learnable virtual node representation is invoked to provide adaptive graph-level context before Transformer layers, while the attention-based node-wise readout module aims to distinguish nodes inside subgraphs and aggregate useful representation after encoder transformation. As shown inTable3, both modules achieve relatively higher accuracy improvements on the heterophilous graphchameleon, which validates that the proposed designs are particularly suitable for addressing the heterophily issue by recognizing hierarchical information.
+
+DatasetciteseerchameleonDHIL-GT74.91–43.63–Node Readout72.21-2.7038.76-4.87Virtual Node71.15-3.7637.08-6.55SPD Bias68.55-6.3636.52-7.11
+
+SECTION: 7.Conclusion
+
+In this work, we presentDHIL-GTfor leveraging decoupled graph hierarchy by graph labeling. Our analysis reveals that the label graph exhibits an informative hierarchy and enhances attention learning on the connections between nodes. Regarding efficiency, construction and distance query of the label graph can be accomplished withlinearcomplexity and are decoupled from iterative model training. Hence, the model benefits from scalability in computation speed and mini-batch training. Empirical evaluation showcases the superiority ofDHIL-GTespecially under heterophily.
+
+SmallcoraciteseerpubmedPre.EpochInferMem.AccPre.EpochInferMem.AccPre.EpochInferMem.AccDIFFormer∗-0.110.131.283.37±0.50-0.070.071.774.65±0.67-0.370.352.775.77±0.40PolyNormer∗-0.110.651.480.43±1.55-0.210.861.668.70±0.95-0.866.072.575.80±0.46NAGphormer0.680.010.060.576.96±0.731.260.010.380.562.26±2.103.050.010.040.578.46±1.01ANS-GT432.01.122.085.42±0.5259.911.654.2511.973.58±0.98529143.521.989.53±0.51GOAT10.10.250.932.578.26±0.1711.10.311.042.164.69±0.4357.40.341.615.377.76±0.97HSGT∗0.11.812.330.581.73±1.950.060.871.230.969.72±1.025.03.894.442488.86±0.46DHIL-GT(ours)0.420.050.00510.185.58±0.180.430.050.0069.674.91±0.642.60.250.059.489.80±0.48Largephysicsogbn-arxivogbn-magPre.EpochInferMem.AccPre.EpochInferMem.AccPre.EpochInferMem.AccDIFFormer∗-1.733.793.396.10±0.11-0.894.12.355.90±8.23-1.729.714.231.13±0.48PolyNormer∗-0.762.444.196.59±0.16-0.83117.273.24±0.13-2099222.332.42±0.15NAGphormer338.432.431.196.52±0.24184.360.792.367.85±0.178910.32.213.833.23±0.06ANS-GT220363.134.612.596.31±0.28162051092.7211.371.06±0.48---OOM-GOAT4513.712.28.796.24±0.15182348616.569.66±0.7326731161026.127.69±1.32HSGT∗1240.761.55.096.05±0.50164751420.368.30±0.3218258262912.633.51±1.15DHIL-GT(ours)170.480.0313.396.31±0.42642.020.185.569.17±0.33773914.50.166.733.74±0.24Inference of these models is performed on the CPU in a full-batch manner due to their requirement of the whole graph.
+
+SECTION: References
+
+SECTION: Appendix AAdditional Experiments
+
+SECTION: A.1.Detailed Experiment Settings
+
+Dataset Details.Table5displays the scales and heterophily status of graph datasets utilized in our work. Undirected edges twice in the table.chameleonandsquirrelare the filtered version from(Oleg Platonov et al.,2023), whileogbn-magis the homogeneous variant.
+We employ 60/20/20 random data splitting percentages for training, validation, and testing sets, respectively, except forogbn-mag, where the original split is used. Regarding efficacy metrics, ROC AUC is used ontolokersfollowing the original settings, and accuracy is used for the rest.
+
+Hyperparameters.
+Parameters regarding the precomputation stage for graph structures are discussed inSection6.3. For subgraph sampling, we perform parameter search for relative ratio of in/out neighbors represented byin rage. For sampling weights, we search their values in range.
+
+For network architectural hyperparameters, we useTransformer layers withheads andhidden dimension for ourDHIL-GTmodel across all experiments. The dropout rates for inputs (features and bias) and intermediate representation are 0.1 and 0.5, respectively. The AdamW optimizer is used with a learning rate of. The model is trained with 500 epochs with early stopping.
+Since baseline GTs employ different batching strategies, it is difficult to unify the batch size across all models. We set the batch size to the largest value in the available range without incurring out of memory exception on ourGPU, intending for a fair efficiency evaluation considering both learning speed and space.
+
+Hetero.DatasetNodesEdgesTrainHomo.chameleonsquirreltolokerspenn94geniustwitch-gamerHetero.coraciteseerpubmedphysics84155ogbn-arxivogbn-mag

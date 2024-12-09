@@ -1,6 +1,7 @@
 from pathlib import Path
 import numpy as np
 from sentence_transformers import SentenceTransformer, SimilarityFunction
+from sentence_transformers.models.Normalize import Normalize
 import logging
 import traceback
 import re
@@ -10,7 +11,8 @@ class EmbeddingLibrary():
         self.path_to_papers:Path = path_to_papers
         self.path_to_embs:Path = path_to_embs
         self.model = model
-        # if norm_embs: model.similarity_fn_name = SimilarityFunction.DOT # TODO Normalize embs
+        if norm_embs: model.similarity_fn_name = SimilarityFunction.DOT_PRODUCT
+        if isinstance(model._last_module(), Normalize): norm_embs = False # this prevents the model from normalizing twice
         self.emb_size = model.encode(['']).shape[-1]
         self.paper_embs = None
         self.paper_ids:list[str] = sorted([file.stem.replace('_content', '') for file in path_to_papers.iterdir() if file.name not in papers_to_skip])
@@ -38,12 +40,12 @@ class EmbeddingLibrary():
     def remove_citations(self, chunk):
         chunk = re.sub(r'\[(\d+[,]?)+\]([^\w\s])', r'\2', chunk) # for when punc follow cite
         chunk = re.sub(r'\[(\d+[,]?)+\](\w+)', r' \2', chunk) # for when chars follow cite
+        chunk = re.sub(r'\(\w+ et\.? al\.\)(\w+)', r'\1', chunk)
         return chunk
 
     def preprocess_paper(self, paper: str):
-
         title = re.search(r'SECTION:\s+[\d\.]*(.*)\n', paper, flags=re.IGNORECASE).group(1)
-        paper = re.sub(self.end_of_paper_regex, r'', paper)
+        paper = re.sub(self.end_of_paper_regex, r'', paper) # remove ending
         chunks = [
             self.remove_citations(self.remove_links(chunk))
             for sec in re.split(r'SECTION:\s+[\d\.]*.*\n', paper)
@@ -66,10 +68,16 @@ class EmbeddingLibrary():
         
         good_paper = True if n_secs > 4 and n_important_secs > 2 and has_title else False
         if not good_paper:
-            self.paper_ids.remove(file.name.replace('_content', ''))
+            self.paper_paths.remove(file)
+            self.paper_ids.remove(file.stem.replace('_content', ''))
 
         return good_paper
 
+    def update_paper_list(self):
+        for paper_path in self.paper_paths:
+            with open(paper_path, 'r', encoding='utf-8') as f:
+                paper = f.read()
+                self.is_paper_good(paper, paper_path)
 
     def set_paper_embs(self):
         if not isinstance(self.paper_embs, np.ndarray):
@@ -81,7 +89,14 @@ class EmbeddingLibrary():
             self.paper_embs = all_embs
         return
 
-    def multi_sec_embed(self, skip_existing:bool):
+    def prep_papers(self):
+        for file in self.paper_paths:
+                with open(file, 'r', encoding='utf-8') as f:
+                    paper = f.read()
+                    if not self.is_paper_good(paper, file): continue
+
+
+    def embed_papers(self, skip_existing:bool):
         try:
             if skip_existing:
                 existing_embs = [name.stem for name in self.path_to_embs.iterdir()]
@@ -108,7 +123,8 @@ class EmbeddingLibrary():
                         chunk_embs = self.model.encode(chunks, normalize_embeddings=self.norm_embs).reshape(-1, self.emb_size)
 
                         self.logger.info(f'END OF FILE - SAVING EMBEDDINGS FOR {file.name}\n')
-                        paper_emb = np.concatenate([title_emb, chunk_embs]).mean(axis=0).reshape(1, self.emb_size)
+                        paper_emb_mean = np.concatenate([title_emb, chunk_embs]).mean(axis=0)
+                        paper_emb = (paper_emb_mean / np.linalg.norm(paper_emb_mean)).reshape(-1, self.emb_size) # normalize paper emb
                         np.save(self.path_to_embs / file.stem.replace('_content', ''), paper_emb)
 
                 except Exception as ex:
@@ -117,6 +133,7 @@ class EmbeddingLibrary():
             assert self.paper_ids == [file.stem for file in sorted(self.path_to_embs.iterdir())], 'the paper IDs and the embeddings IDs must be in the same order.'
             self.set_paper_embs()
 
+            self.logger.info('Ending Embedding Process')
         except Exception as ex:
             self.logger.error('Error in Embedding Process: {ex}')
             raise ex

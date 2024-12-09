@@ -1,0 +1,306 @@
+SECTION: MVFormer: Diversifying Feature Normalization and Token Mixingfor Efficient Vision Transformers
+
+Active research is currently underway to enhance the efficiency of vision transformers (ViTs).
+Most studies have focused solely on effective token mixers, overlooking the potential relationship with normalization.
+To boost diverse feature learning, we propose two components: a normalization module called multi-view normalization (MVN) and a token mixer called multi-view token mixer (MVTM).
+The MVN integrates three differently normalized features via batch, layer, and instance normalization using a learnable weighted sum.
+Each normalization method outputs a different distribution, generating distinct features.
+Thus, the MVN is expected to offer diverse pattern information to the token mixer, resulting in beneficial synergy.
+The MVTM is a convolution-based multiscale token mixer with local, intermediate, and global filters, and it incorporates stage specificity by configuring various receptive fields for the token mixer at each stage, efficiently capturing ranges of visual patterns.
+We propose a novel ViT model, multi-vision transformer (MVFormer), adopting the MVN and MVTM in the MetaFormer block, the generalized ViT scheme.
+Our MVFormer outperforms state-of-the-art convolution-based ViTs on image classification,
+object detection, and instance and semantic segmentation with the same or lower parameters and MACs.
+Particularly, MVFormer variants, MVFormer-T, S, and B achieve 83.4%, 84.3%, and 84.6% top-1 accuracy, respectively, on ImageNet-1K benchmark.
+
+SECTION: 1Introduction
+
+Vision transformers (ViTs) have achieved great success in the computer vision field[9].
+
+Since self-attention in traditional transformers[46]has been in the spotlight, numerous studies have proposed various effective and efficient spatial mixing methods, referred to as token mixers, to improve or substitute self-attention.
+Some studies[4,10,54,22,50,19]have proposed attention-variant methods, such as Swin[26], to enhance the efficiency of traditional self-attention,
+whereas others[41,55,47,3]have proposed competitive non-attention token mixers.
+Among the currently available options, the convolutional operator has recently been applied in the transformer block.
+For example, the ConvNeXt[27]model is a milestone connecting convolution with ViT that modernizes the convolutional neural network (CNN)
+by introducing a transformer variant scheme.
+Recent studies have demonstrated the benefit of appropriate inductive bias in ViT[29,34], which has emerged as an ongoing research topic[55,7,44,11,60].
+
+MetaFormer[58,59]is an abstracted architecture scheme derived from the transformer, in which the token mixer is not specified.
+While token mixers have been the primary focus to ensure feature diversity, the other components in recent ViTs have generally been based on MetaFormer[48].
+Among these components, we concentrate on normalization.
+Batch normalization (BN)[18], layer normalization (LN)[1], and instance normalization (IN)[45]produce distinct distributions and different features due to their varying normalizing dimensions.
+Inspired by this, we conduct a simple visualization to observe the changes that occur when the differently normalized images are integrated, as illustrated in Fig.1.
+Each method emphasizes specific patterns in the input image. All these patterns are also visible in the composite image, which is an average of the three normalized images.
+Through this observation, we confirmed that integrating various normalizations can convey a diverse set of features with various distributions to the token mixer.
+
+In this work, we introduce a normalization module, multi-view normalization (MVN), to diversify feature learning.
+The MVN combines three differently normalized features via BN, LN, and IN, using a learnable weighted sum.
+In this manner, MVN can flexibly reflect the diverse specificities, such as batch-level, channel-level, and sample-level dependencies, providing various feature distributions to the token mixer and enabling it to use them adaptively.
+The experiments confirm that this simple mechanism significantly improves the performance with a negligible increase in parameters and computational costs.
+Moreover, MVN can be easily applied to existing ViTs and CNNs, such as Swin[26]and ConvNeXt[27], consistently improving their original performances.
+On top of that, experimental results strongly support the insight that the unique attributes of each normalization play meaningful roles in performance, and their appropriate combination creates beneficial synergy.
+
+In addition, to diversify the mixing range of token mixers further, we propose a convolutional token mixer, called the multi-view token mixer (MVTM).
+Similar to the latest convolution-based ViTs[11,60], the MVTM is a multiscale depthwise convolutional operator that employs multiple mixing filters channelwise with different receptive fields.
+Beyond the existing paradigm of bisecting local and global mixing filters, the MVTM consists of local, intermediate, and global mixing filters to enhance its mixing capacity.
+Furthermore, the MVTM introduces stage specificity, which varies the volume of each level of mixing filter and global mixing filter size differently depending on the preferred range of the receptive field at each stage to make stage-level multiscale token mixing efficient[29,58,59].
+
+We propose a novel convolution-based ViT, the multi-vision transformer (MVFormer), by adopting the MVN and MVTM in the MetaFormer block. The MVFormer addresses the existing demands of token mixers to capture diverse patterns from multiple perspectives, further extending it to normalization.
+Boosted by the enhanced capacity of the viewpoint, the MVFormer displays notable efficiency and effectiveness through extensive experiments.
+The MVFormer outperforms other existing convolution-based ViTs
+on image classification and downstream tasks, object detection, and instance and semantic segmentation,
+with equal or even fewer parameters and multiply-accumulates (MACs).
+Particularly, MVFormer-tiny (-T), small (S), and base (B), variants of the MVFormer, achieve state-of-the-art (SOTA) performance of 83.4%, 84.3%, and 84.6%, respectively, on the ImageNet-1K benchmark[8].
+The main contributions of this work are summarized as follows:
+
+We propose MVN, which integrates various normalized features to diversify feature learning, providing a range of feature distributions to the token mixer. It is the first study of a normalization integration paradigm in ViTs.
+The MVN significantly enhances performance with negligible increases in parameters and computational costs.
+
+We introduce MVTM, a multiscale convolutional token mixer, to better capture diverse spatial patterns.
+The MVTM also reflects stage specificity, setting the receptive field of the token mixer differently based on the preferred mixing scale at each stage, effectively exploiting the feature pyramid structure.
+
+By adopting MVN and MVTM in the MetaFormer block, we present MVFormer, surpassing the existing convolution-based ViTs on image classification, object detection, and instance and semantic segmentation with the same or even fewer parameters and MACs.
+
+SECTION: 2Related Work
+
+SECTION: 2.1Normalization for Computer Vision Tasks
+
+Normalization methods have been investigated as a key component of deep neural networks to enhance the training speed and stability. Typically, BN[18]plays a pivotal role in CNNs for vision-related tasks.
+However, its minibatch dependency has been demonstrated to cause performance degradation with a small batch size on several vision tasks, such as semantic segmentation[1].
+To improve this, several BN variants, such as batch renormalization[17], EvalNorm[39], MABN[53], and PowerNorm[37]have been proposed.
+The LN[1]first emerged in natural language processing (NLP) to address the summed input in recurrent neural networks.
+Compared to BN, LN calculates the channel statistics equally on all data points.
+As LN was adopted in the initial transformer, it has been employed in recent ViTs[9,43,26].
+Group normalization (GN) is a generalized LN that calculates grouped channel statistics.
+A previous study proposed modified LN (MLN), which equates GN with a single group, to improve the performance of PoolFormer[58].
+Additionally, a study has investigated the use of BN for ViTs[56],
+by inserting its parameters into the linear layer.
+IN[45]is widely used in style transfer, such as in AdaIN[16], which is a representative IN-variant to transplant the style information of input features.
+Moreover, spatially modulated normalization techniques, such as SPADE[30]and MoTo[33], were proposed to prevent information loss, and global response normalization (GRN)[52]aims to enhance the interchannel feature diversity.
+In contrast to these studies, we propose an initial paradigm of combining the existing normalization approaches in ViTs.
+
+SECTION: 2.2Vision Transformer with Token Mixer
+
+The success of the transformer in NLP led to its use in computer vision.
+Previous studies have reported the impressive performance of
+ViT[9]and DeiT[43]on image classification, and extended the application of the Swin transformer[26]to object detection and semantic segmentation. However, owing to the high computational cost of self-attention, studies have attempted to replace it with alternative token mixers.
+Accordingly, multilayer perceptron (MLP)-like token mixers[41,42,23,57,51]have emerged as a dominant approach that employs an MLP operator to mix spatial tokens.
+As another mainstream approach, depthwise convolution has been studied as a token mixer. The ConvNeXt[27]model applies the modernized paradigm of the CNN, completely substituting traditional self-attention in the transformer with depthwise convolution.
+Further, other studied models, such as FocalNet[55]and VAN[12], employ convolution-based attention mechanisms, enabling the model to capture input-dependent token interactions.
+The ConvFormer[59]model is the current SOTA convolution-based ViT, introducing the inverted separable convolution in MobileNetV2[35]as the token mixer.
+Recently, multiscale convolutional token mixers[11,60]have been introduced that employ multiple mixing paths parallelly to reflect local and global information effectively.
+This study applies an advanced multiscale depthwise convolution, employing an intermediate mixing filter and the concept of stage specificity.
+
+SECTION: 3Method
+
+SECTION: 3.1Preliminaries
+
+MetaFormer[58,59]is an abstracted general architecture of modern ViTs as presented in Fig.2(b).
+A batch of input images,, can be patchified into the patch embedding,, whereanddenote the batch size, height, and width of, respectively,andrepresent the embedding dimension ofand, respectively.
+In addition,corresponds to the patch size.
+The embedded featurepasses repeated MetaFormer blocks, and the output of each block,, is calculated as follows:
+
+The MetaFormer block consists of a token mixer subblock () and an MLP subblock (). Each subblock includes normalization (and) and a residual connection.
+Theis not specified, corresponding to certain spatial mixing modules, such as self-attention or convolution, anddenotes the two-layer feed-forward network with an activation function.
+This work follows the overall paradigm of MetaFormer, with ConvFormer[59]as the baseline.
+
+The BN[18], LN[1], and IN[45]are commonly used in vision architectures.
+Both BN and LN were proposed to accelerate model training, and IN was introduced for the image stylization method.
+Although these methods similarly normalize the feature distribution, their normalizing dimensions differ.
+Given an input feature, the output of each method is calculated as follows:
+
+whereandare the mean and standard deviation of, which is calculated based on the normalization dimensions indicated by the subscripts.
+The BN normalizes the feature distribution channelwise, whereas LN operates at the pixel level.
+Moreover, IN is similar to BN, as it normalizes sample-level spatial distributions. A channelwise affine transform commonly follows each output.
+
+SECTION: 3.2Multi-Vision Transformer
+
+This section, explains the details of the MVFormer.
+The overview of MVFormer is presented in Fig.2(a).
+
+Common normalization techniques, such as BN, LN, and IN, similarly normalize the input features; thus, they are considered substitutable options in a network. However, these techniques are distinguished by their normalizing dimensions, a crucial factor changing the output distribution.
+We expect this distribution variation to influence the overall feature learning to extract visual patterns. From the perspective of feature diversity, the model can explore the extended manifold, where all varied distributions are provided.
+Therefore, we propose a novel normalization integration paradigm to enhance performance by training the ViT on a diverse range of feature distributions.
+We designed a normalization module, MVN, which uses a learnable weighted summation of three normalized features obtained through BN, LN, and IN.
+Through this mechanism, MVN allows the model to capture unique specificities of each normalized feature simultaneously, enabling it to pass on more diverse features to the token mixer.
+
+The input featureis first transformed into, and, respectively, then summed with learnable weights.
+The resulting output feature, which is calculated as follows:
+
+where,, andare learnable parameters whose dimension sizes are equal to the embedding dimension of.
+To enable the model to search for the precise ratio of,, and,
+the affine transform is applied toat once instead of to each normalization method.
+In this manner, the MVN can flexibly explore the preferred combination of various normalized features with just a slight number of additional parameters and MACs.
+
+Recent studies on convonlution-based ViTs have presented notable performance. These studies used multiscale depthwise convolution[11,60], which diversifies its kernel size channelwise to add various spatial inductive biases.
+In practice, these studies have primarily been based on a dichotomous perspective of distinguishing only local and global mixing.
+In contrast to the attention mechanism, which dynamically adjusts weights based on input values, convolution operates as a static method, where filters slide in a data-independent manner.
+Consequently, the receptive field must be diversified to extract a wide range of visual patterns.
+From this viewpoint, we propose a three-scale convolutional token mixer, MVTM, consisting of local, global, and newly added intermediate mixing filters to capture the intermediate range of visual patterns between the local and global receptive fields.
+We expect this approach to mitigate the heterogeneity between local and global mixed features, and we elaborate on the robustness of the convolutional token mixer on the visual object scale.
+
+The MVTM is based on the inverted separable convolutional module of MobileNetV2[35], which is used as the token mixer in ConvFormer[59].
+For a normalized feature, the output featureis calculated as follows:
+
+whereanddenote the depthwise and pointwise convolutional layers, respectively, andindicates the activation function. Unlike the baseline that uses a 77 depthwise convolutional layer for, MVTM diversifies the receptive field ofas follows:
+
+First,is split into three channel-wise groups of,, and. Each of these groups denotes the channel-split features fromfor local, intermediate, and global mixing, where, anddenote their corresponding channels, respectively ().
+Those are individually input into,, and, which are token mixing depthwise convolutional layers with local, intermediate, and global kernel sizes, respectively; the kernel sizes inandare fixed as 33 and 77, respectively. As for, its kernel size is adjusted at each stage, as explained in the next paragraph.
+Finally, each mixed feature is concatenated channelwise.
+This mechanism endows the MVTM with the capability to capture multiple ranges of visual representations.
+
+Furthermore, MVTM introduces the concept of stage specificity.
+Recent ViTs primarily follow the feature pyramid structure that systemically downsizes the feature shape at the beginning of each stage[26,27,59,10].
+According to the previous studies on ViT architecture[29,58], it has been analytically and experimentally observed that
+employing local constraints on a token mixer is effective in the initial stages. In contrast, wide mixing for global token interaction is required in the late stages.
+This property has not been adopted in convolution-based ViTs, as a fixed kernel design is applied across all token mixing layers.
+
+For the first time, we adopted this paradigm to enable convolution-based ViT to capture various ranges of visual patterns efficiently.
+To implement this, we regulated two configurations of MVTM: 1) a channelwise ratio of three mixing filters and 2) the kernel size of the global mixing filter ().
+The former is to determine the predominant mixing scale of MVTM, and the latter is for rearranging the scope of global mixing with varying input shapes.
+In this manner, MVTM weights the preferred receptive field at each stage depending on the input.
+Table1details the configurations.
+
+In MVTM, as the stage number increases, we increase the channelwise ratio of local to global filters and decrease the size of the global mixing filter step by step. We expect the MVTM to captures a productive range of visual information efficiently at each stage.
+
+As introducing MVN and MVTM into the MetaFormer block, we propose the MVFormer block, as presented in Fig.2(c).
+In the MVFormer block, MVN first extracts various feature distributions. Based on this, MVTM explores diversified feature spaces for token mixing.
+In addition, by equally inserting MVN in the MLP subblock, we expect a particular beneficial interaction between them, similar to that in the token mixer subblock.
+We reformulated Eq.1and Eq.2as follows:
+
+where themodule is the same as in Eq.2.
+For the activation functions inand, StarReLU[59]is used.
+
+Considering the unique specificities of the three normalized features and multiple scale-mixed features with stage specificity, we propose an effective convolution-based ViT, MVFormer.
+The overall paradigm of MVFormer is the same with MetaFormer when introducing MVN and MVTM into the MetaFormer blocks.
+Depending on the parameters and computational complexity, MVFormer is categorized into MVFormer-xT, MVFormer-T, MVFormer-S, and MVFormer-B, where MVFormer-xT is the primary model for feasibility.
+The specific configurations of each MVFormer model are described in the AppendixA.
+
+SECTION: 4Experiments
+
+SECTION: 4.1Image Classification
+
+We conduct image classification experiments on the ImageNet-1K benchmark[8], including 1.28M training images and 50K validation images from 1K classes.
+To augment and regularize the input images for training, we employ weight decay, RandAugment[6], Random Erasing[63], Mixup[62], CutMix[61], Label Smoothing[40], Stochastic Depth[15]and training strategy of DeiT[43]. We train all models from scratch for 300 epochs with an input size of 224224.
+We use the AdamW[20,28]optimizer with a cosine learning rate schedule, including 20 warm-up epochs. ResScale[38]is used for the last two stages. The batch size, learning rate, and weight decay are set to 4096, 4e-3, and 0.05, respectively.
+We also use the stochastic depth with a probability of 0.2 for MVFormer-xT and MVFormer-T and 0.3 and 0.4 for MVFormer-S and MVFormer-B, respectively.
+We fine-tune the models trained at 224224 resolution for 30 epochs using exponential moving average[32]for 384384 resolution.
+The proposed implementation is based on PyTorch library[31], and the experiments are run on 8 NVIDIA A100 GPUs.
+
+Table2presents performance comparisons of MVFormer with the current SOTA models on ImageNet-1K classification.
+We compare MVFormer to existing attention-based[26,43,54,49]and convolution-based[27,60,55,12,59]SOTA models, grouped into the model size represented by the number of parameters and MACs.
+Throughout both approaches, the MVFormer variants consistently outperform other candidates. Particularly, MVFormer-T, S, and B beat the current convolution-based SOTA models, ConvFormer-S18, S36, and M36, by 0.4%p, 0.2%p and 0.1%p, respectively, regarding performance enhancements with equal or fewer parameters and MACs.
+On higher-resolution images, the performance increases occur in all three model variants.
+
+SECTION: 4.2Object Detection and Instance Segmentation
+
+We evaluate MVFormer regarding object detection and instance segmentation tasks on the COCO 2017 benchmark[24], with 118K training images and 5K validation images.
+We use the ImageNet-1K pre-trained MVFormer as the backbone, which is equipped with the Mask R-CNN[14]and RetinaNet[25].
+We train the model with single-scale inputs with a learning rate of 1e-4 for RetinaNet and 2e-4 for Mask R-CNN, decayed at 8 and 11 for 1schedule, and at 27 and 33 for 3schedule.
+The image is resized to the shorter side, at 800 pixels, whereas the longer side remains within the limit of 1333 pixels.
+To prevent overfitting, MVFormer-T and S have stochastic depths set to 0.3 and 0.4, respectively.
+The implementation is based on the mmdetection[2].
+
+Table3presents the performance comparison of MVFormer with SOTA ViT models.
+In all cases, our MVFormer-T and MVFormer-S consistently achieve SOTA performances with the highest mean average precision (mAP) on both tasks, with significantly fewer parameters and MACs.
+For 1schedule, MVFormer-variants even present bestandwith both Mask R-CNN and RetinaNet.
+This result underscores the exceptional generalization capability of MVFormer.
+In the case of 3schedule, compared to Focal-T[54], MVFormer-T shows slightly loweron both tasks.
+Nevertheless, considering higher mAP and, it becomes evident that MVFormer excels in providing more precise dense predictions.
+
+SECTION: 4.3Semantic Segmentation
+
+We also assess MVFormer on semantic segmentation using ADE20K benchmark[64],
+comprising 20K training and 2K validation images.
+We employ the ImageNet-1K pre-trained MVFormer as the backbone, equipped with the Semantic FPN[21].
+To train 40K iterations with a batch size of 32, we use AdamW with an initial learning rate ofand cosine learning rate schedule. Images are resized and cropped topixels for training.
+The implementation is based on mmsegmentation[5].
+
+In Table4, we compare MVFormer with SOTA models for the semantic segmentation task.
+Both MVFormer-T and MVFormer-S highly outperform other models given a competitive number of parameters and MACs.
+Compared to the VAN-B2 and B3[12], which are up-to-date convolution-based ViTs, MVFormer-T and S display 0.4%p and 0.7%p performance gains, respectively, with better efficiency.
+
+SECTION: 4.4Ablation Studies
+
+We perform ablation studies to validate the effectiveness of MVN and MVTM.
+All experiments are conducted on the ImageNet-1K classification, with the MVFormer-xT model.
+
+We conduct ablation experiments in Table5to evaluate the effect of each proposed module with a convolution-based ViT baseline on the ImageNet-1K classification.
+For a fair comparison, we design a MetaFormer-based baseline with a token mixer equal to the 55 depthwise separable convolution
+because it requires a similar number of parameters and MACs compared to the MVTM.
+Regarding normalization, LN is applied by default.
+When each of the MVN and MVTM is solely used, there occur significant performance enhancements of 0.53%p and 0.17%p with negligible amount of additional parameters and MACs, respectively.
+Between them, the MVN improves more performance of 0.38%p than MVTM.
+Additionally, MVFormer-xT, which incorporates MVN and MVTM, achieves the highest performance of 81.30%.
+These findings support the combined use of these proposed modules and the individual benefits each module has in improving model performance.
+
+Table6presents the ablation study of all combinations of the three normalization methods in MVN.
+Combining just two normalized features consistently enhances the performance compared to that of a single method.
+In particular, IN significantly degrades the performance when used alone.
+Nevertheless, IN exhibits beneficial synergy when combined with other methods.
+We infer that IN contributes to the performance gains by mitigating the batch-dependence in BN and spatial distribution variation in LN.
+The MVN, combining BN, LN and IN, significantly outperforms all other combinations, strongly supporting the conjecture that comprehensively encompassing diverse characteristics of normalization methods leads to improved performance and contributes to an enhanced perspective on extending feature diversity.
+
+To evaluate the generalization of MVN, we apply MVN to existing variants of ViT and CNN.
+For ViT candidates, we select Swin[26], ConvFormer[59], ConvNeXt[27], and PoolFormer[58], which are attention-, convolution- and pooling-based models, respectively, and we experiment on ResNet[13], which represents the CNN.
+For ViTs, we substitute the LN with MVN within each block, and in ResNet, all BN layers are replaced with MVNs.
+As listed in Table7, MVN displays impressive generalization, significantly improving the original performance of all five models.
+For ViTs, the model achieves 0.2%p of consistent Top-1 accuracy gains on PoolFormer-S36, Swin-T, ConvFormer-S18 models and ConvNeXt-T.
+In the case of CNN, MVN even works on ResNet50 with 0.2%p of accuracy improvement.
+These results suggest that MVN is not restricted to just CNN-ViT hybrid architecture, indicating promising feasibility for applications in various standard vision models.
+
+Table8presents the performance variation, excluding each proposed component of the MVTM individually.
+In terms of stage specificity, given either a single global filter size or fixed channelwise split ratio, there occurs similar degree of performance degradations, which is 0.10%p and 0.08%p, respectively.
+When both are applied, it gets larger that 0.15%p of performance drop is observed.
+This result shows that adopting stage specificity enhances the efficiency of MVFormer, as improving the performance given similar MACs and parameters.
+In addition, the ablation result on the mixing filter presents the importance of different mixing filter levels.
+When one of the three mixing filters is excluded, performance degradation occurs consistently.
+It is much higher when the smaller size of filter is eliminated.
+We infer that this is because the repeated small filters are able to cover a wide range of visual patterns, whereas the large filter struggles to focus on the local area.
+
+Fig.3presents the weight distributions in MVN to identify certain preferences depending on the stage number. Interestingly, it is observed that there exists an overall tendency of the ratio between three normalization methods.
+Across all stages, excluding the last part of the second stage, the weight of the LN consistently has the highest ratio.
+This suggests that the model predominantly reflects the input channel distribution of each pixel, rather than the spatial distribution of each channel. The BN and IN temporarily exhibit a higher ratio than the LN in the final block of Stage 2, possibly due to the model prioritizing spatial over channel distribution during a rapid channel dimension change. Moreover, IN generally has a lower ratio than BN, except in the last stage, suggesting a preference for batch-independent sample-level spatial information.
+This observation is consistent in the MVFormer-T and -B models.
+
+SECTION: 5Conclusion
+
+This work proposes MVFormer, an efficient yet effective convolution-based ViT,
+by introducing a normalization module (MVN) and a token mixer (MVTM) to extract diverse features from multiple viewpoints.
+The MVFormer outperforms the existing SOTA convolution-based ViTs in image classification and three downstream tasks, given competitive efficiency.
+Significantly, MVN consistently boosts the performance of MVFormer and existing ViTs and CNNs, affirming its scalability.
+We also confirm that triscale filters and stage specificity of the MVTM are crucial factors for performance.
+In the future, we will explore the interrelationship between the normalization method and various types of token mixers, and we expect that these approaches offer valuable insights into the vision community and can be extended to other domains.
+
+SECTION: References
+
+Supplementary Material
+
+SECTION: AModel Configurations
+
+SECTION: BTraining Configurations
+
+SECTION: CLearning Curve Analysis
+
+We compare the learning curves of MVFormer-xT trained with BN[18], LN[1], IN[45], and MVN to identify training stability and convergence rate using each method.
+In Fig.4, we observe that the overall learning trends of all four cases exhibit similar patterns.
+From the perspective of training stability, there are no significant gaps between the four curves, showing similar degrees of oscillation.
+In terms of the convergence rate, the training losses of all methods steadily decrease for 300 epochs, where the MVN almost shows the lowest values compared to BN, LN, and IN.
+This result suggests the efficacy of MVN that enables the model training to reach to more optimal point while maintaining competitive training stability.
+
+SECTION: DGrad-CAM Visualization
+
+To qualitatively assess the effectiveness of the proposed MVFormer, we conduct a visual comparison with the baseline ConvFormer[59]using Grad-CAM[36]visualization.
+Fig.5presents the activation maps of ConvFormer-S18 and MVFormer-T models, both trained on the ImageNet-1K.
+Compared to the baseline, our MVFormer effectively captures various scales of main objects in the input images.
+
+SECTION: EVisual Comparison of Normalized Images from BN, LN, IN, and MVN
+
+Fig.6shows the visualizations of normalized images from BN, LN, IN, and our MVN.
+For the weights of MVN, we apply the ratio of the first block in Stage 1, equal to 0.36, 0.62, and 0.02 for BN, LN, and IN, respectively.
+As reflecting the distinct characteristics of three normalized images, through the MVN, we can observe the local pattern-preserved smoothed images.
+By this property, MVN is expected to diversify the feature learning.
+
+SECTION: FPseudo-code in PyTorch
+
+Algorithm1and Algorithm2are the PyTorch-like pseudo-codes[31]for the MVN and MVTM modules, respectively.
+For simplification, we do not consider the channel ordering.

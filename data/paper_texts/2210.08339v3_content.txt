@@ -1,0 +1,262 @@
+SECTION: Reachable Polyhedral Marching (RPM): An Exact Analysis Tool for Deep-Learned Control Systems
+
+Neural networks are increasingly used in robotics as policies, state transition models, state estimation models, or all of the above.
+With these components being learned from data, it is important to be able to analyze what behaviors were learned and how this affects closed-loop performance.
+In this paper we take steps toward this goal by developing methods for computing control invariant sets and regions of attraction (ROAs) of dynamical systems represented as neural networks.
+We focus our attention on feedforward neural networks with the rectified linear unit (ReLU) activation, which are known to implement continuous piecewise-affine (PWA) functions.
+We describe the Reachable Polyhedral Marching (RPM) algorithm for enumerating the affine pieces of a neural network through an incremental connected walk.
+We then use this algorithm to compute exact forward and backward reachable sets, from which we provide methods for computing control invariant sets and ROAs.
+Our approach is unique in that we find these sets incrementally, without Lyapunov-based tools.
+In our examples we demonstrate the ability of our approach to find non-convex control invariant sets and ROAs on tasks with learned van der Pol oscillator and pendulum models.
+Further, we provide an accelerated algorithm for computing ROAs that leverages the incremental and connected enumeration of affine regions that RPM provides.
+We show this acceleration to lead to a 15x speedup in our examples.
+Finally, we apply our methods to find a set of states that are stabilized by an image-based controller for an aircraft runway control problem.
+
+SECTION: IIntroduction
+
+SECTION: I-AOverview
+
+In this paper we describe the Reachable Polyhedral Marching (RPM) algorithm for enumerating the affine regions of neural networks with rectified linear unit (ReLU) activation.
+This algorithm can then be leveraged to compute forward and backward reachable sets of neural networks.Our algorithm provides a building block for proving safety properties for autonomous systems with learned perception, dynamics, or control components in the loop.
+Specifically, given a set in the input space, RPM computes the set of all corresponding outputs.
+Similarly, given a set of outputs, RPM computes the set of all corresponding inputs under the ReLU network.
+We use these capabilities to compute control invariant sets and regions of attraction (ROAs) for dynamical systems represented as neural networks.Computing these sets helps roboticists (i) verify whether safety specifications on the robot state are met, (ii) identify states that will converge to some desirable equilibria, and (iii) identify regions in the state space for which a system can be controlled.
+Identification of these sets is an important part of the control design process, as directly synthesizing control policies that meet invariance constraints by construction is challenging[1].
+If a constraint is not met, the reachable or invariant sets computed give insight into which states lead to violation of the constraints, informing targeted policy improvements.
+
+It is well known that ReLU networks implement continuous piecewise-affine (PWA) functions, that is, the input space for a ReLU network can be tessellated into polyhedra, and over each polyhedron the neural network is affine.
+The RPM algorithms explicitly finds this equivalent PWA representation for a given ReLU network.
+Figure1illustrates how RPM incrementally solves for this representation.
+The algorithm incrementally enumerates the polyhedra and affine pieces of the PWA function by solving a series of Linear Programs (LPs), and following analytical edge flipping rules to determine neighboring polyhedra.
+The algorithm starts with an initial polyhedron, then solves for its neighboring polyhedra, then neighbors of neighbors, etc., until the desired input set is tessellated.
+In this way, our method is geometrically similar to fast marching methods in optimal control[2], path planning[3,4], and graphics[5,6].
+
+We then use computational methods for PWA reachability to compute forward and backward reachable sets for each polyhedron and associated affine function.The ability to compute forward and backward reachable sets allows us to search for and construct control invariant sets and ROAs without Lyapunov tools.
+Finally, we also propose an accelerated backward reachability procedure that leverages the connected enumeration of the RPM algorithm to restrict the number of polyhedra the algorithm searches over.
+We show that this accelerated procedure is guaranteed to enumerate the entire backward reachable set in the case that the deep network is a homeomorphism (a continuous bijection with continuous inverse).
+Checking this condition is simply done, and represents a novel general procedure for examining the invertibility of neural networks whose hidden layers are not bijections themselves.
+
+SECTION: I-BExisting Work
+
+Most existing algorithms that compute exact reachable sets of neural networks iterate through the network layer-by-layer[7,8,9].
+The layer-by-layer approaches obtain the entire reachable set at once at the end of the computation, rather than revealing the reachable set piece by piece throughout the computation.
+Consequently, if the computation must end early due to memory constraints or a computer fault, no usable result is obtained.
+In contrast, RPM builds the reachable set one polyhedron at a time, leading to a partial, but still potentially useful result if computation is halted before the algorithm runs to completion.
+
+The nnenum tool uses an exact reachability algorithm that is also incremental[10].
+The difference between this tool and our RPM algorithm is that RPM enumerates affine regions of the neural network in a connected walk; each new region that is revealed is connected to a previous region.
+In contrast, the algorithm used by nnenum does not have this property; whether a new region is connected to a previous one is unknown by the algorithm.
+In SectionVIwe show how the connected enumeration property leads to an accelerated algorithm for computing ROAs.
+Another way to conceptualize this difference between RPM and nnenum is that RPM can also return the graph that describes which affine regions neighbor one another.
+
+SECTION: I-CContributions and Organization
+
+In this paper, we build off the RPM algorithm to construct control invariant sets and ROAs for dynamical systems represented as neural networks.
+By taking this approach, we are able to compute intricate invariant sets that may be non-convex and even disconnected.
+In numerical examples, we compute ROAs for a learned van der Pol oscillator, and show this computation enjoys ax speedup because the learned dynamics are homeomorphic.
+We then pair RPM with the MPT3[11]Matlab toolbox to find an a control invariant set for a learned torque-controlled pendulum.
+Finally, we apply our algorithm to find a set of states stabilized by an image-based airplane runway taxiing system, TaxiNet[12].
+The closed-loop system is PWA withregions, orders of magnitude larger than PWA systems for which other nonlinear stability analysis approaches have been demonstrated.
+
+The contributions of this paper are
+
+For ReLU neural networks, a theorem to analytically determine an input space polyhedron from its neighbor by flipping neuron activations in the network.
+
+Application of PWA analysis tools to compute control invariant sets and regions of attraction for dynamical systems represented as ReLU networks.
+
+An accelerated exact backward reachability algorithm for ReLU networks that leverages a novel method for checking the invertibility of the network.
+
+This paper builds upon an earlier conference version[13], that first introduced the RPM algorithm to convert a ReLU network into a PWA representation.
+This paper improves upon[13]by (i) adding a formal proof of correctness for the main RPM algorithm, (ii) extending the RPM framework to compute control invariant sets and ROAs, and (iii) introducing an accelerated method for computing ROAs.
+
+The paper is organized as follows.
+We give related work in SectionIIand give background and state the problem in SectionIII.
+SectionIVdescribes the RPM algorithm and explains its derivation.
+In SectionVwe describe how RPM is used to perform forward and backward reachability computations for ReLU networks over multiple time steps.
+In SectionVIwe describe how RPM is leveraged to compute control invariant sets and ROAs.
+Finally, SectionVIIpresents numerical results for computing control invariant sets and ROAs for learned dynamical systems and we offer conclusions in SectionVIII.
+
+SECTION: IIRelated Work
+
+Though the analysis of neural networks is a young field, a broad literature has emerged to address varied questions related to interpretability, trustworthiness, and safety verification. Much work has been dedicated to characterizing the expressive potential of ReLU networks by studying how the number of affine regions scales with network depth and width[14,15,16]. Other research includes encoding piecewise-affine (PWA) functions as ReLU networks[17,18], learning deep signed distance functions and extracting level sets[6], and learning neural network dynamics or controllers that satisfy stability conditions[19,20], which may be more broadly grouped with correct-by-construction training approaches[21,22].
+
+Spurred by pioneering methods such as Reluplex[23], the field of neural network verification has emerged to address the problem of analyzing properties of neural networks over continuous input sets. A survey of the neural network verification literature is given by[24]. Reachability approaches are a subset of this literature and are especially useful for analysis of learned dynamical systems.
+
+Reachability methods can be categorized into overapproximate and exact methods.The reachable sets computed by overapproximate methods are guaranteed to capture all reachable states, but may also contain states that are unreachable.Overapproximate methods often compute neuron-wise bounds either from interval arithmetic or symbolically[25,26,27,28,29,30]. Optimization based approaches are also used to solve for bounds on a reachable output set in[31,32,33,34]. Other approaches include modeling the network as a hybrid system[35], abstracting the domain[36], and performing layer-by-layer operations on zonotopes[37].Closed-loop forward reachability using overapproximate methods is investigated in[38,39,40,41,42,43]Closed-loop backward reachability using overapproximate methods is investigated in[44,45].
+
+Exact reachability methods have also been proposed, although to a lesser degree.
+These methods either iteratively refine the reachable set by applying layer-by-layer transformations[7,8,9], or they solve for the explicit PWA representation and compute reachable sets from this[10,13].
+Similar layer-by-layer approaches have also been proposed to solve for the explicit PWA representation of a ReLU network[46,47,48].
+
+Our RPM algorithm is an exact method, meaning that there is no conservatism in the reachable sets computed by our algorithm.
+Our algorithm inherits all the advantages of exact methods, but is unique in that it enumerates the reachable set in an incremental and connected walk.This makes our high-level procedure more similar to explicit model predictive control methods[49]than to other neural network reachability methods.
+Finally, all intermediate polyhedra and affine map matrices of layer-by-layer methods must be stored in memory until the algorithm terminates, whereas with incremental methods, once a polyhedron-affine map pair is computed it can be sent to external memory and only a binary vector (the neuron activations) needs to be stored to continue the algorithm.
+This is especially useful because no method has been shown to accurately estimate the number of regions without explicit enumeration.Unlike other incremental approaches, ours explores affine regions in a connected walk. As a point of distinction, this allows our algorithm to not only output the PWA representation, but for each affine region also output the neighboring affine regions.
+
+In this paper we demonstrate how RPM can be used not only for finite-time reachability, but also for computingcontrol invariant sets and ROAs.Computing these sets tends to be much harder than computing finite-time reachable sets, but the associated guarantees hold for all time, unlike with finite-time reachable sets.
+Few methods exist for computing invariant sets or ROAs for dynamical systems represented as neural networks, and most that do rely on an optimization-based search of a Lyapunov function.
+In[50], the authors learn a quadratic Lyapunov function using semidefinite programming that results in an ellipsoidal ROA, a drawback of which is that ellipsoids are not very expressive sets.
+In contrast, nonconvex ROAs can be computed by[51,52,53].
+These methods learn Lyapunov functions for a given autonomous dynamical system and verify the Lyapunov conditions either using many samples and Lipschitz continuity or mixed integer programming.
+In[54], an optimization and sampling-based approach for synthesizing control invariant sets is given, but as with searching for Lyapunov functions, it may fail in finding a control invariant set when one exists.
+All of these methods inherit the drawbacks of Lyapunov-style approaches wherein a valid Lyapunov function may not be found when one exists, and certifying the Lyapunov conditions is challenging.In contrast to these methods, we explicitly solve for the PWA form of the dynamics, then find invariant sets using reachability methods rather than Lyapunov theory.
+A reachability-based approach like ours can be more constructive and reliable than Lyapunov approaches, as we show in our experiments.Lastly, a non-Lyapunov method is given in[55], where the focus is on continuous-time dynamical systems, whereas our focus is on discrete-time.
+
+For PWA dynamics, there are specialized algorithms for computing ROAs based on convex optimization approaches for computing Lyapunov functions[56,57,58,59], or reachability approaches[11,60].
+A drawback to the Lyapunov approaches for PWA dynamics is they can be too conservative and the standard approaches require the user to provide an invariant domain, which itself can be very challenging to find.
+Furthermore, in Section 7.2 of[56], motivating examples are given where a variety of Lyapunov approaches fail to find valid Lyapunov functions for very small PWA systems that are known to be stable.
+
+In contrast to the Lyapunov approaches, the reachability approach requires the user to supply an initial ‘seed’ set of states that is a ROA and uses backward reachability to grow the size of the ROA.
+Finding a seed ROA can be difficult for general nonlinear systems, but for PWA systems can be easily found due to the dynamics being locally linear.Although reachability-based computation of invariant sets has been explored for PWA dynamical systems before[60], a novelty in our work is pairing these methods with our RPM algorithm so that they can apply to dynamical systems represented as neural networks.Our proposed method for finding ROAs of neural networks follows the backward reachability approach from the literature.In addition, we show that our backward reachability algorithm may be sped up considerably when restricting RPM to enumerate a connected backward reachable set (a feature enabled by the connected walk of the algorithm).
+
+SECTION: IIIBackground and Problem Statement
+
+We begin by formalizing a model of a ReLU network, and defining various concepts related to polyhedra, PWA functions, and dynamical systems.We then state the main problems we seek to address in this paper.
+
+SECTION: III-AReLU Networks
+
+An-layer feedforward neural network implements a function, with the mapdefined recursively by the iteration
+
+whereis the input,is the output, andis the hidden layer output of the network at layer. The functionis the activation function at layer, andandare the weights and biases, respectively, wheredenotes the number of neurons in layer. We assumeis an identity map and all hidden layer activations are ReLU,
+
+whereis the pre-activation hidden state at layer. We can rewrite the iteration in (1) in a homogeneous form
+
+where
+
+We defineas the tuple containing all the parameters that define the function.
+
+Given an inputto a ReLU network, every hidden neuron has an associated binaryneuron activationof zero or one, corresponding to whether the preactivation value is nonpositive or positive, respectively.111This choice is arbitrary. Some works use the opposite convention.Specifically, the activation for neuronin layeris given by
+
+We define the activation pattern at layeras the binary vectorand the activation pattern of the whole network as the tuple. For a network withneurons there arepossible combinations of neuron activations, however not all are realizable by the network due to inter-dependencies between neurons from layer to layer, as we will see later in the paper. Empirically, the number of activation patterns achievable by the network is better approximated byfor input space with dimension[61].
+
+We can write equivalent expressions for the neural network function in terms of the activation pattern. Define the diagonal activation matrix for layeras, where ais appended at the end222Note that the homogeneous form adds a dummy neuron at each layer that is always active, since the last element of the hidden state isin homogeneous form, and thus always positive.to match the dimensions of the homogeneous form in (3). Using the activation matrix, we can write the iteration defining the ReLU network from (3) as
+
+Finally, the map from inputto the hidden layer preactivationcan be written explicitly from the iteration (6) as
+
+whereis therow of the matrix. Similarly, the whole neural network functioncan be written explicitly as a map fromtoas
+
+It is well known that in (8), the outputis a continuous and PWA function of the input[14,15,16]. Next, we mathematically characterize PWA functions and give useful definitions.
+
+SECTION: III-BPolyhedra and PWA Functions
+
+A convex polyhedron is a closed convex setdefined by a finite collection ofhalfspace constraints,
+
+where,, and eachpair defines a halfspace constraint. Defining matrixand vector, we can equivalently write
+
+We henceforth refer to convex polyhedra as just polyhedra.
+
+The above representation of a polyhedron is known as the halfspace representation, or H-representation.
+Note:
+
+A polyhedron can be bounded or unbounded.
+
+A polyhedron can occupy a dimension less than the ambient dimension (iffor some pairsand some positive scalars).
+
+A polyhedron can be empty (such that).
+
+Without loss of generality, the halfspace constraints for a polyhedron can be normalized so that(by dividing the unnormalized parametersandby), whereis thenorm.represents a degenerate constraint that is trivially satisfied if.
+
+An H-representation of a polyhedron may have an arbitrary number of redundant constraints, which are constraints that are implied by other constraints.
+
+A polyhedral tessellationis a finite set of polyhedra that tessellate a set. That is,and, for all, wheredenotes the-dimensional Euclidean volume of a set (the integral over the set with respect to the Lebesgue measure of dimension).
+
+Intuitively, the polyhedra in a tessellation together cover the set, and can only intersect with each other at shared faces, edges, vertices, etc.In the remainder of the paper when we refer to shared faces between neighboring polyhedra we mean thedimensional polyhedron given by the set intersection.
+
+Two polyhedra,and, are neighbors if their intersection has non-zero Euclidean volume indimensions, that is,.
+
+Intuitively, neighboring polyhedra are adjacent to one another in the tessellation, and share a common face. A polyhedral tessellation naturally induces a graph in which each node is a polyhedron and edges exist between neighboring polyhedra.
+
+A PWA function is a functionthat is affine over each polyhdron in a polyhedral tessellationof. Specifically,is defined as
+
+where,.
+
+Note that this requires a collection of tuples, wheredefine the polyhedron, anddefine the affine function over that polyhedron.
+We refer to the PWA representation in (9) as theexplicitPWA representation, as each affine map and polyhedron is written explicitly without specifying the relationship between them.
+There also exist other representations, such as the lattice representation[62,63]and the, so called, canonical representation[64,65].
+
+SECTION: III-CDynamical Systems
+
+In this paper we are concerned with analyzing dynamical systems represented by ReLU networks.
+Specifically, we consider the situations when the ReLU network represents the state transition function for a controlled (10) or autonomous (11) dynamical system,
+
+For notational convenience, in the remainder of the paper we drop thesubscript from.
+We next define key concepts and state the overall problems that we seek to solve.
+
+Given an initial set of statesand a set of admissible control inputs, a-step forward reachable set can be defined recursively,
+
+Given a final set of statesand a set of admissible control inputs, a-step backward reachable set can be defined recursively,
+
+The ability to compute-step forward and backward reachable sets will later enable us to compute control invariant sets and regions of attraction.
+
+Given a set of admissible control inputs, a control invariant set is a set of states for which there exists a sequence of control inputs such that the system state remains in the set for all time.
+Ifis a control invariant set, then
+
+whereandis the natural numbers.
+
+Given an autonomous dynamical system, an invariant region of attraction (ROA) is a set of states that asymptotically converges to an equilibrium state () and for which sequences of states remain for all time.
+Ifis an ROA, then
+
+where.
+
+In this paper we seek to solve the following problems.
+
+Given a ReLU networkand a polyhedral input set, compute the forward reachable set. Similarly, given a polyhedral output setcompute the backward reachable set.
+
+Given a ReLU network that implements a discrete-time dynamical systemand state domain, identify the existence of stable fixed-point equilibriaand compute associated ROAs.
+
+Given a ReLU network that implements a discrete-time dynamical system, a state domain, and set of admissible inputs, compute a control invariant set (if one exists).
+
+Given a ReLU network that implements a function, determine whether the network is a homeomorphism (bijection with continuous inverse).
+
+In the next section we describe the RPM algorithm for transcribing the ReLU network functioninto its equivalent explicit PWA representation. We then address the solution of the above problems in the subsequent sections.
+
+SECTION: IVFrom ReLU Network to PWA Function
+
+First, we seek to construct the explicit PWA representation of a ReLU network. Our method enumerates each polyhedral region and its associated affine map directly from the ReLU network. In Sec.IV-Awe show how polyhedra and affine maps are computed from the activation pattern of a ReLU network. In Sec.IV-Bwe show how polyhedral representations are reduced to a minimal form, which is used in Sec.IV-Cto determine neighboring polyhedra given a current polyhedron. This leads to a recursive procedure, that we call Reachable Polyhedral Marching (RPM), in which we explore an expanding front of polyhedra, ultimately giving the explicit PWA representation, as explained in Sec.IV-D.
+
+SECTION: IV-ADetermining Polyhedral Regions from Activation Patterns
+
+We show here that the network activation patternfrom (5) has a one-to-one correspondence with the regions of the polyhedral tessellation underlying the ReLU network. We show how to explicitly extract the half-space constraints defining the polyhedron from the activation pattern.
+
+Consider the expression for the preactivation valuein (7). We can re-write this equation as
+
+where
+
+The activationis decided by the test, which we can write as, defining a halfspace constraint in the input space. Specifically, we have the following cases,
+
+This defines a halfspace constraint, that may or may not be open (due to the strict ‘’ inequality). However, on the boundary, we havefrom (12), leading to the post activation hidden state. We see that the value of the activationis irrelevant on the boundary, as the post activation state evaluates to zero regardless. We can therefore replace the ‘’ with ‘’ in (14) without loss of generality.
+
+Finally, to obtain the standard normalized form for a halfspace constraint (), we define
+
+where, in the degenerate case when, we defineand. Hence, we obtain one halfspace constraintfor each neuron activation state.
+
+Given a specific input, we can then take the resulting activation pattern of the network, and directly extract the halfspace constraints that apply at that activation state from (14). In fact, (13) shows thatare actually functions of the activation patterns at earlier layers in the network. Indeed, consider perturbingas. The halfspace constraintswill remain fixed under this perturbation untilis large enough to change the activation pattern of an earlier layer,. Consider the set of all such perturbed input valuesthat do not result in a change in any neuron activation. We have
+
+which is a polyhedron. We see that for each activation pattern, there exists an associated polyhedronin the input space over which that activation pattern remains constant. The procedure for determining the polyhedron associated with an activation pattern is formalized in Algorithm1. A unique activation patterncan then be defined for each affine region. To be clear, we refer to the activation pattern for regionas, and use subscripts in parentheses to refer to the specific layer and neuron activation values. Lastly, for a fixed activation pattern, from (8) the ReLU network simplifies to the affine mapwhere
+
+SECTION: IV-BFinding Essential Constraints
+
+As mentioned previously, a polyhedron may have redundant constraints. We find that many of the constraints for the polyhedrongenerated byare either duplicates or redundant, and can thus be removed. We define more formally the concepts of duplicate and redundant constraints.
+
+A constraintis duplicate if there exists a scalarand a constraint,, such that.
+
+A constraint is redundant if the feasible set does not change upon its removal. An essential constraint is not redundant.
+
+We next describe how to remove the redundant constraints in a H-representation, leaving only the essential halfspace constraints. We first normalize all constraints, remove any duplicate constraints, and consider the resulting H-representation. To determine if the remainingconstraint is essential or redundant, we define a new set of constraints with theconstraint removed,
+
+and solve the linear program
+
+If the optimal objective value is less than or equal to, constraintis redundant.
+Note, it is critical that any duplicate constraints are removed before this procedure. We formalize this procedure in Algorithm2.
+
+In the worst case, a single LP must be solved for each constraint to determine whether it is essential or redundant. However, heuristics exist to practically avoid this worst case complexity. For computational efficiency, Algorithm2can be modified to first identify and remove a subset of redundant constraints using the bounding box heuristic[66]. We observe that this can result in identifying as many asof the redundant constraints. We find that other heuristics such as ray-shooting do not improve performance in our tests.
+
+SECTION: IV-CDetermining Neighboring Activation Patterns
+
+Consider two neighboring polyhedraandsuch that their shared face is identified byandis an essential constraint for, whileis an essential constraint for. We callthe neighbor constraint. Given the neuron activation patternfor, we next describe a procedure to find the activation patternfor, from which we can find the essential halfspace constraints from the procedure described in the previous section. This allows us to systematically generate all the activation patterns that are realizable by the network, and to obtain the polyhedra and affine maps associated with each of those activation patterns.
+
+Intuitively, to generateone ought to simply flip the activation of the neurons defining, and compute all the resulting new halfspace constraints from later layers in the network from (13). However, this intuitive procedure is incomplete because it does not correctly account for the influence that one neuron may have on other neurons in later layers. Flipping one neuron may lead to other neurons in later layers being flipped as well. To correctly determine the downstream effects of flipping a neuron, we provide a theorem for when neuron activationsmustbe flipped.
+
+For a given region, each neuron defines a hyperplane, as given by (15). Suppose regionsandneighbor each other and are separated bywhere. Then,
+
+if

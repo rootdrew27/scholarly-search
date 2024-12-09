@@ -44,7 +44,6 @@ class EmbeddingLibrary():
         return chunk
 
     def preprocess_paper(self, paper: str):
-
         title = re.search(r'SECTION:\s+[\d\.]*(.*)\n', paper, flags=re.IGNORECASE).group(1)
         paper = re.sub(self.end_of_paper_regex, r'', paper) # remove ending
         chunks = [
@@ -69,10 +68,16 @@ class EmbeddingLibrary():
         
         good_paper = True if n_secs > 4 and n_important_secs > 2 and has_title else False
         if not good_paper:
-            self.paper_ids.remove(file.name.replace('_content', ''))
+            self.paper_paths.remove(file)
+            self.paper_ids.remove(file.stem.replace('_content', ''))
 
         return good_paper
 
+    def update_paper_list(self):
+        for paper_path in self.paper_paths:
+            with open(paper_path, 'r', encoding='utf-8') as f:
+                paper = f.read()
+                self.is_paper_good(paper, paper_path)
 
     def set_paper_embs(self):
         if not isinstance(self.paper_embs, np.ndarray):
@@ -83,6 +88,13 @@ class EmbeddingLibrary():
             assert all_embs.shape[0] == len(self.paper_ids), f'The shape of the full paper embeddings ({all_embs.shape[0]}) does not equal the number of papers ({len(self.paper_ids)}).'
             self.paper_embs = all_embs
         return
+
+    def prep_papers(self):
+        for file in self.paper_paths:
+                with open(file, 'r', encoding='utf-8') as f:
+                    paper = f.read()
+                    if not self.is_paper_good(paper, file): continue
+
 
     def embed_papers(self, skip_existing:bool):
         try:

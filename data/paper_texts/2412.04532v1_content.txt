@@ -1,0 +1,229 @@
+SECTION: WinTSR: A Windowed Temporal Saliency Rescaling Method for InterpretingTime Series Deep Learning Models
+
+Interpreting complex time series forecasting models is challenging due to the temporal dependencies between time steps and the dynamic relevance of input features over time. Existing interpretation methods are limited by focusing mostly on classification tasks, evaluating using custom baseline models instead of the latest time series models, using simple synthetic datasets, and requiring training another model. We introduce a novel interpretation method calledWindowed Temporal Saliency Rescaling (WinTSR)addressing these limitations. WinTSR explicitly captures temporal dependencies among the past time steps and efficiently scales the feature importance with this time importance. We benchmark WinTSR against 10 recent interpretation techniques with 5 state-of-the-art deep-learning models of different architectures, including a time series foundation model. We use 3 real-world datasets for both time-series classification and regression. Our comprehensive analysis shows that WinTSR significantly outranks the other local interpretation methods in overall performance. Finally, we provide a novel and open-source framework to interpret the latest time series transformers and foundation models.
+
+SECTION: 1Introduction
+
+Time-series deep learning models have achieved unprecedented performance in recent years. However, the lack of explainability remains one of the key challenges for their widespread use. Explanations provide the necessary transparency to make reliable decisions, especially in sensitive data such as healthcare, finance, energy, traffic, weather, stocks, and many other science domains(Benidis et al.2022). These explanations can be eitherGlobal, the logic and reasoning of the entire model, orLocal, the model’s specific decision on an instance.Post-hocinterpretation methods are generally applied after the model has already been trained, whileIn-hocmethods work during the model training time.Model-agnosticmethods work on black-box models and do not require specific model architecture to work. Our proposed interpretation method is local, post-hoc, and model-agnostic.
+
+Unlike image and text data, the interpretability of multivariate time series models has been relatively under-explored and difficult to visualize. By explaining time series models, one can highlight the importance of input features to the prediction of the model(Rojat et al.2021), find intuitive patterns(Lim et al.2021), and visualize saliency maps(Leung et al.2023)without relying on the model architecture. This work focuses on the local interpretation techniques for deeper insights into the importance of temporal features. Interpretation methods commonly estimate how relevant each input feature is to the model’s output. However, existing works are limited by: (1) benchmarking using simple baseline models (e.g. LSTM, GRU), not recent SOTA time series models that are used in practice (2) focusing mostly on classification tasks, which makes generalization difficult (3) not efficiently capturing temporal dependency (4) train another model to interpret one model.
+
+We propose theWindowed Temporal Saliency Rescaling (WinTSR)method to address these challenges. It is benchmarked using the latest time series models of different architectures (including an LLM-based foundation model), tested on both classification and regression tasks, efficiently considers the temporal importance when interpreting, and does not require training a separate model. Our overall framework is summarized in Figure1. In short, our contributions are,
+
+A novel local interpretation method namedWinTSRthat calculates the time importance along the look-back window and rescales the feature importance based on it. This significantly improves the performance by capturing the delayed impact between input and output, while still being relatively fast.
+
+Extensive analysis with 3 real-world datasets for classification and regression tasks, and interpretation evaluation using robust metrics.
+
+BenchmarkWinTSRwith 5 state-of-the-art time series models (DLinear, MICN, SegRNN, iTransformer) including a foundation model (CALF) to demonstrate that WinTSR is generalizable and consistently outperforms in different model architectures.
+
+A unified open-source framework that includes 20+ recent time series models (including 3 foundation models, AppendixE) with 10+ popular interpretation methods. Also, visualize and compare the multivariate temporal trends interpreted by different methods.Code availableas open source in the Github111https://anonymous.4open.science/r/WinTSR
+
+SECTION: 2Related Works
+
+Time series interpretation methods cover a wide range of tasks and datasets(Rojat et al.2021; Turbé et al.2023). Table1summarizes the comparisons of our work with the related methods.Gradient basedmethods, such as Integrated Gradients(Sundararajan, Taly, and Yan2017), and GradientSHAP(Erion et al.2019)use the gradient of the model predictions to input features to generate importance scores.Perturbation basedmethods, such as Feature Ablation(Suresh et al.2017), and Augmented Feature Occlusion(Tonekaboni et al.2020)replace a feature or a set of features from the input using some baselines or generated masks and measure the importance based on the model output change. These methods are mainly proposed for image or language models anddo not consider the temporal dependencies in the time series data.
+
+Recent works like Dyna Mask(Crabbe and van der Schaar2021), and Extremal Mask(Enguehard2023a)focus onlearning the masksto better perturb the input features. Model-based saliency methods, such as(Kaji et al.2019; Lim et al.2021; Islam et al.2023), use the model architecture e.g. attention layers, to generate importance scores. ContraLSP(Liu et al.2024d), proposed a contrastive learning method to learn locally sparsed perturbation. TIMEX(Queen et al.2024)trained interpretable surrogates to learn stable explanations from latent space. However, TIMEX is limited to classification and assumes access to latent pretrained space. These methods overall have performed very well on synthetic data or real-world classification tasks. However, theyrequire training another model to interpret the target model, which adds additional complexity. These arenot benchmarked for regression tasksand often include algorithm design exclusively for classification(Queen et al.2024). Also,heavily uses simple RNN or LSTM baselines which are not state-of-the-art time series models.
+
+TSR(Ismail et al.2020)improved interpretation by considering the temporal dimension separately. However, this comes with a heavy computational cost and was not benchmarked on real-world time series data. Feature Importance in Time, FIT(Tonekaboni et al.2020)conditioned on the last input time step to calculate the distribution shift using KL-divergence of the predicted probability, but only supports classification tasks. WinIT(Leung et al.2023)proposed a sliding window-based approach to calculate delayed feature importance for classification tasks.
+
+So we need an interpretation method that is generalized for classification and regression, considers the time dependency of input data, and does not require training another model. In this work, we achieve this by, efficiently considering the time dependency, using a simple masking technique, and developing a novel framework that allows comparing these methods with SOTA time series models.
+
+SECTION: 3Windowed Temporal Saliency Rescaling
+
+SECTION: 3.1Problem Statement
+
+We consider a multivariate multi-horizon time series setting with length, the number of input features, target outputs, and totalinstances.is the input featureat time. Past information within a fixed look-back windowis used to forecast for the nexttime steps or the target class. The target output at timeis. The black-box modelis defined as,
+
+whereis the predicted class or the forecast attime steps in the future.is the input slice at timeof length.
+An input feature at positionin the full input matrix at time stepis denoted as.
+
+The interpretation goal is to calculate the importance matrix,for each outputor prediction horizon. This is a matrix of sizefor classification andfor regression. We find the relevance of the featureby masking it in the input matrixand measuring the model output change,
+
+whereis the input after masking/perturbing feature. Thedistance_scorecan vary based on interpretation methods and prediction tasks. For example, l1-norm for regression and l1-norm or KL-divergence for classification.
+
+SECTION: 3.2Our Approach
+
+We proposeWindowed Temporal Saliency Rescaling (WinTSR)across the input time window to calculate the importance score matrixat a time. Our method differs from previous approaches by accounting for the importance of a feature observation in a multi-horizon setting over multiple windows containing the target time step. The details are in the following Algorithm1. The method returns an importance matrixwhich is later used to evaluate the interpretation performance.
+
+For a distance score, we calculate the simple ‘L1 distance‘ between the original and perturbed prediction for classification and regression. Unlike TSR, which uses the ‘L1 distance‘ between the original and perturbed importance matrix returned from another interpretation method. This significantly improves our run time compared to TSR and removes the dependency on a second interpretation method. WinIT perturbs all values in a sliding window with and without the target feature, then finds the feature importance by subtracting them. Since we perturb only the individual feature, this reduces the computation overhead of perturbing a range of features and removes the dependency of choosing a best-fit sliding window.
+
+The time relevance score enables us to skip less important time steps to speed up the computation similar to(Ismail et al.2020). TSR uses the first feature value for masking, while WinIT uses feature augmentation (generated from past features). We generated random values from a normal distribution for masking and the input features are already normalized during the data pre-processing period.
+
+SECTION: 4Experimental Setup
+
+We compare WinTSR to ten recent local and post-hoc interpretation methods. We evaluate them with five state-of-the-art deep learning time series models across three datasets for classification and regression tasks.
+
+SECTION: 4.1Datasets
+
+We use the datasets shown in Table2. Electricity and Traffic datasets contain the electricity consumption rate and traffic occupancy over the past hours respectively. The task is to forecast those values for the next 24 hours based on past observations and time-encoded features from the last 96 hours. The MIMIC-III dataset contains patient info and lab reports from a hospital. The goal is to predict whether the patient will die during their hospital stay, based on the patient demographic info and lab reports over the last 48 hours. This is a private dataset but easy to apply for access and popularly used in related works(Leung et al.2023; Enguehard2023a). Details on the datasets and features are in AppendixA. The input values are standard normalized. The datasets are split into train validation test sets using the 8:1:1 ratio. The best model by validation loss is used in testing and for the rest of the experiments.
+
+DatasetFeatureSizeWindowOutputTaskElectricity526.2k9624RegressionTraffic520.7k9624RegressionMIMIC-III3222.9k482Classification
+
+SECTION: 4.2Models
+
+We use five neural network architecture groups (Linear, CNN, RNN, Transformer, and LLM) for our experiment. Multiple models are chosen to generalize the proposed method across different network architectures. We show how the same interpretation method impacts different models. A complete list of available models in our framework is given in AppendixE. We selected these five models based on their state-of-the-art performance in their respective architecture. These models are : (1)DLinear(Zeng et al.2023)- Linear, (2)SegRNN(Lin et al.2023)- Recurrent Neural Network (RNN), (3)MICN(Wang et al.2023)- Convolutional Neural Network (CNN), and (4)iTransformer(Liu et al.2024b)- Transformer, and (5)CALF(Liu et al.2024a)- A recent pretrained LLM model for generalized time series forecasting using cross-modal fine-tuning.
+
+We follow the Time-Series-Library(Wu et al.2023)222https://github.com/thuml/Time-Series-Libraryimplementation of these models. This ensures we follow the latest benchmarks. Table3shows the iTransformer model performs best across all cases. Details of the hyperparameters are listed in AppendixB.
+
+SECTION: 4.3Interpretation Methods
+
+We use the following post-hoc interpretation analysis methods for comparison in this work: (1) Feature Ablation (FA,Suresh et al. (2017)) (2) Augmented Feature Occlusion (AFO,Tonekaboni et al. (2020)) (3) Feature Permutation (FP,Molnar (2020)) (4) Integrated Gradients (IG,(Sundararajan, Taly, and Yan2017)) (5) Gradient Shap (GS,Lundberg and Lee (2017)) (6) Dyna Mask (DM,Crabbe and van der Schaar (2021)) (7) Extremal MaskEnguehard (2023a)(8) Windowed Feature Importance in Time (WinIT,Leung et al. (2023)) (9) Temporal Saliency Rescaling (TSR,Ismail et al. (2020)), and (10) Contrastive and Locally Sparse Perturbations (ContraLSP,Liu et al. (2024d)).
+
+We choose them based on versatility across different model architectures and tasks. Captum(Kokhlikyan et al.2020)333https://captum.ai/and Time Interpret(Enguehard2023b)444https://josephenguehard.github.io/time_interpretlibraries were used to implement the interpretation methods. Unlike(Enguehard2023b), which runs the methods on the CPU, we implemented our framework to run all methods with GPU, thus increasing the interpretation speed. The baselines to mask inputs were randomly generated from the normal distribution, the raw inputs were also normalized. We excluded the methods which are classification only (e.g. FIT) or no public implementation is not available (e.g. CGS-Mask). For TSR, we used the best combination in their work (TSR with Integrated Gradients and).
+
+SECTION: 4.4Evaluating Interpretation
+
+We follow(Ozyegen, Ilic, and Cevik2022; Turbé et al.2023)to evaluate interpretation when no interpretation ground truth is present. Figure2(b) briefly illustrates the evaluation framework. The steps are:
+
+Sort relevance scoresso thatis theelement in the ordered rank set. Hereis the look-back window andis the number of features.
+
+Find topfeatures in this set, where. Mask these top features or every other feature in the input.
+
+Calculate the change in the model’s output to the original output using different metrics. We use the AUC drop for classification(Leung et al.2023)and Mean Absolute Error (MAE) for regression.
+
+Abbreviations:AOPC: Area over the perturbation curve for classification,AOPCR: Area over the perturbation curve for regression,FA: Feature Ablation,AFO: Augmented Feature Occlusion,FP: Feature Permutation,IG: Integrated Gradients,GS: Gradient Shap,DM: Dyna Mask,EM: Extremal Mask,WinIT: Windowed Feature Importance in Time,TSR: Temporal Saliency Scaling with Integrated Gradients,ContraLSP: Contrastive and Locally
+Sparse Perturbation,WinTSR: Windowed Temporal Saliency Rescaling.
+
+DeYoung et al. (2019)proposed to measure thecomprehensivenessandsufficiencyto ensure the faithfulness of the explained rationales. Which are similar to the precision and recall fromIsmail et al. (2020). (1)Comprehensiveness: Were all features needed to make a prediction selected? Once important features are masked, the model should be less confident in its prediction. (2)Sufficiency:Are the top feature sufficient to make the prediction? This is achieved by masking all features except the top. In summary,the higher the comprehensiveness loss and the lower the sufficiency loss the better. We define the set of toprelevant features selected by the interpretation method for the-th inputas, the input after removing those features as. Then these two terms are calculated as:
+
+Forbins of topfeatures (we use top 5%, 7.5%, 10%, and 15% features, hence.), the aggregated comprehensiveness score(DeYoung et al.2019)for the classification task is called the ”Area Over the Perturbation Curve” (AOPC, Equation4). For AUC drop, this will calculate the drop for each output classafter masking topfeatures for each, then calculate the average drop.
+
+Similarly for regression,(Ozyegen, Ilic, and Cevik2022)defined the ”Area Over the Perturbation Curve for Regression” (AOPCR, Equation5). For MAE, it calculates the change in prediction for each outputand prediction horizonby masking topfeatures for eachthen takes the average. AOPC and AOPCR for sufficiency are calculated similarly after replacingwith.
+
+SECTION: 5Results
+
+This section shows the interpretation results and visualizations. Then discuss our time complexity and the effect of changing the lookback window.
+
+SECTION: 5.1Benchmark Evaluation
+
+Table4shows the overall results. Our method performs the best or second best in most cases. This is consistent across different datasets and models. We ranked the methods for each dataset and model in terms of overall comprehensiveness and Sufficiency. Then we averaged the ranks in the rightmost columns and used for the final rank.WinTSR achieves the best average rank in each dataset, 1(1.40.5), 1(1.40.05), and 1(2.41.5) in the Electricity, Traffic, and MIMIC-III respectively.
+
+Integrated Gradient achieves the best results in a few cases for comprehensiveness in regression but fails in others. TSR performs significantly better for comprehensiveness in the MIMIC-III dataset, but its high sufficiency in the same dataset shows the top features it selects are not sufficient. Feature Ablation method also consistently performed well and achieved 2nd rank overall. We also see the mask learner methods, in practice do not interpret the SOTA models well.
+
+SECTION: 5.2Visualizing Interpretation
+
+Visualizing the interpretations helps to understand their meaning. However, unlike images and texts, time series interpretations are harder to visualize and to verify intuitively. Here we 1) visualize persistent temporal patterns (trends present across the dataset) and 2) highlight the top features across time. Figure3shows the raw input feature (left) and the interpretation of these features (using normalized relevance/importance score). The MIMIC-III dataset is visualized with a heatmap due to many features (31), the other two datasets are shown with line plots. The interpretation results of the four selected methods are presented for comparison using the best-performing iTransformer model of 1st iteration.
+
+The relevance scores shown here are for forecasting the target for the next hour () or predicting mortality class () for simplicity. Electricity and traffic features show a daily pattern, where the importance is highest at the most recent time step () and the same time the previous day (). Sometimes at the last peak. This means, to predict the electricity consumption or traffic occupancy, past observations from recent times or the same daytime or last peak hour are important. For MIMIC-III the goal is to interpret which factors at which time were important in predicting the patient’s death. Figure3(c) shows the top three points interpreted by the methods, where WinIT and TSR display the features important in the last 12 hours, whereas WinTSR and FA identify these features much earlier, within the first 12 hours, and then again around the last 12 hours. Temporal change of the important features is visible in WinTSR, WinIT, and TSR as they all consider temporal dependency.
+
+SECTION: 5.3Time Complexity
+
+We summarize the run time information in Table5for some selected methods, Appendix11includes the complete results. Our WinTSR method’s time complexity is, whereis the lookback window andis the number of features. The perturbation-based methods (FA, AFO, FP) have similar run-time efficiencysince they also perturb each feature at each time point. WinIT has time complexity, but since it needs to perturb a sliding window of feature each time, it is slower in practice. Gradient-based methods (IG, GS, DM) run the fastest. TheTSRmethod is the slowest since it repeatedly applies theIGmethod across each time and feature column, then along the time axis to calculate the time relevance score. The time complexity iswhereis the time complexity of the Integrated Gradient (IG) method. In practice,WinTSR is around 32 to 367 times faster than TSR.
+
+SECTION: 5.4Varying Lookback Window
+
+Since the lookback window size is an integral part of capturing temporal dependency, it is important to analyze the effect of changing the window size. By design, the WinIT method supports variable window length, where TSR and WinTSR compute over the whole training window size. We retrained the best-performing iTransformer model for different lookback windows and interpreted it by comparing the 3 window-based methods (WinIT, TSR, WinTSR), specifically on temporal dependency. The results are shown in Table6. We reduced the lookback to 24-hour and 48-hour for Electricity and Traffic (original data have 96-hour lookback). For MIMIC-III, we varied the lookback to 24-hour and 36-hour since the original data had a 48-hour lookback. WinTSR performs best or 2nd best in most cases, showing its robustness across different input window sizes.
+
+SECTION: 6Conclusion and Future Work
+
+In this paper, we present a novel local interpretation method ”Windowed Temporal Saliency Rescaling” that explicitly accounts for the dynamic temporal nature of input data and explains their features’ importance. Through extensive experiments and metric comparisons, our analysis 1)shows WinTSR provides a more accurate interpretation of temporal dependencies among features; 2) benchmarks different neural network models: DLinear (Linear), SegRNN (RNN), MICN (CNN), iTransformer (Transformer), and CALF (LLM). 3) compares with ten widely used interpretation methods; 4) presents an easy-to-use framework by combining a popular time series library with interpretation libraries. This framework enables the quantitative measurement of time series interpretation across many recent models and methods.
+
+For future work, we will identify higher-level patterns and trends in time series models by explicitly incorporating both spatial and temporal domains, to enhance the effectiveness and efficiency of AI interpretability in time series datasets. We will explore using the pre-trained foundation models to explain features in the time series domain.
+
+SECTION: References
+
+SECTION: Appendix ADataset and Features
+
+SECTION: A.1Electricity
+
+The UCI Electricity dataset(Trindade2015)contains the consumption of 321 customers from 2012 to 2014. We aggregated it on an hourly level. This data has been used as a benchmark in many time series forecasting models(Wu et al.2023; Zeng et al.2023; Ozyegen, Ilic, and Cevik2022). Following(Wu et al.2021)we use the past 96 hours to forecast over the next 24 hours. And we added four time-encoded features: month, day, hour, and day of the week.
+
+SECTION: A.2Traffic
+
+The UCI PEM-SF Traffic Dataset describes the occupancy rate (with) of 440 SF Bay Area freeways from 2015 to 2016. It is also aggregated on an hourly level. Following(Wu et al.2021)we used a look-back window of 96 hours, a forecast horizon of 24 hours, and the 821st user as the target variable. We added four time-encoded features: month, day, hour, and day of the week.
+
+SECTION: A.3MIMIC-III Mortality
+
+A multivariate real-world clinical time series dataset with a range of vital and lab measurements taken over time for over 40,000 patients(Johnson et al.2016). It is widely used in healthcare and medical AI-related research, and also in time series interpretation(Tonekaboni et al.2020; Leung et al.2023). We follow the pre-processing procedure by(Leung et al.2023)to drop patients with missing information and then aggregate. Among the 22988 patient data left in the dataset, 2290 died during their hospital stay. We use the measurements hourly over 48 hours to predict patient mortality (whether the patient died). Table7lists the clinical features used from the MIMIC-III patient dataset used in our experiments. There are four static features, twenty lab measurements, and eight vitality indicators.
+
+SECTION: Appendix BParameters and Notations
+
+The model and training parameters are chosen following(Wu et al.2023)for a consistent comparison with the state-of-the-art. Table8and9list the training parameters and the model hyperparameters used during our experiments. Table10summarizes the notations mainly defined during the problem statement and interpretation evaluation framework.
+
+SECTION: Appendix CInterpretation methods
+
+The following describes the interpretation methods we have compared within this paper.
+
+Feature Ablation (FA):The difference in output after replacing each feature with a baseline.(Suresh et al.2017).
+
+Augmented Feature Occlusion (AFO):Tonekaboni et al. (2020)ablated the input features by sampling counterfactuals from the bootstrapped distribution.
+
+Feature Permutation (FP):Permutes the input feature values within a batch and computes the difference between original and shuffled outputs(Molnar2020).
+
+Integrated Gradients (IG):Sundararajan, Taly, and Yan (2017)assigned an importance score to each input feature by approximating the integral of gradients of the model’s output to the inputs.
+
+Gradient Shap (GS):Lundberg and Lee (2017)approximated SHAP values by computing the expectations of gradients by randomly sampling from the distribution of baselines/references.
+
+Dyna Mask (DM):Crabbe and van der Schaar (2021)learned masks representing feature importance.
+
+Extremal Mask (EM):Enguehard (2023a)improved the static perturbation from Dyna Mask by learning not only masks but also associated perturbations.
+
+Windowed Feature Importance in Time (WinIT):Leung et al. (2023)explicitly accounted for the temporal dependence among observations of the same feature by summarizing its importance over a lookback window.
+
+Temporal Saliency Rescaling (TSR):Ismail et al. (2020)proposed to separate the temporal dimension when calculating feature importance and rescaling it.
+
+ContraLSP:Liu et al. (2024d)designed a contrastive learning-based masking method to learn locally sparse perturbations for better explaining feature relevance with and without top important features.
+
+SECTION: Appendix DTime Complexity
+
+Table11shows the full run time comparison between the interpretation methods.
+
+SECTION: Appendix EAvailable Models
+
+Our framework currently includes the following time series foundation models:
+
+CALF: Aligns LLMs for time series forecasting with cross-modal fine-tuning(Liu et al.2024a).
+
+TimeLLM: Reprograms LLMs and its tokenization for better forecasting(Jin et al.2024).
+
+GPT4TS: Generalizes pretrained LLMs (GPT-2, Bert) for time series.
+
+We include the following transformer-based and other recent time series models in our proposed framework:
+
+TimeMixer,Wang et al. (2024)
+
+TSMixer,Chen et al. (2023)
+
+iTransformer,Liu et al. (2024b)
+
+TimesNet,Wu et al. (2022)
+
+DLinear,Zeng et al. (2023)
+
+PatchTST,Nie et al. (2022)
+
+MICN,Wang et al. (2023)
+
+Crossformer,Zhang and Yan (2023)
+
+SegRNN,Lin et al. (2023)
+
+Koopa,Liu et al. (2024c)
+
+FreTS,Yi et al. (2024)
+
+TiDE,Das et al. (2023)
+
+LightTS,Zhang et al. (2022)
+
+ETSformer,Woo et al. (2022)
+
+Non-stationary Transformer,Liu et al. (2022b)
+
+FEDformer,Zhou et al. (2022b)
+
+Pyraformer,Liu et al. (2022a)
+
+FiLM,Zhou et al. (2022a)
+
+Autoformer,Wu et al. (2021)
+
+Informer,Zhou et al. (2021)
+
+Reformer,Kitaev, Kaiser, and Levskaya (2020)
+
+Transformer,(Vaswani et al.2017)
+
+SECTION: Appendix FReproducibility Statement
+
+Our source code and documentation are already publicly available on GitHub. The public link will be shared upon acceptance. The documentation includes detailed settings and instructions for reproducing the experiments. The Electricity and Traffic datasets are publicly available. The private MIIMIC-III dataset can be accessed by following the steps at https://mimic.mit.edu/docs/gettingstarted/. In addition, we follow the procedures outlined in previous studies to preprocess the datasets and also include the code in our project. Our GitHub repository has singularity and docker definitions to ensure a reproducible container environment. The experiments are run on a single-node Linux server with 16 GB RAM and NVIDIA RTX GPU. We use a Python 3.12 environment with Pytorch 2.3.1 and Cuda 11.8. Version details of other libraries are given in our repository. The random processes are seeded to ensure reproducibility.

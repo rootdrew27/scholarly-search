@@ -1,0 +1,195 @@
+SECTION: I.Introduction
+
+Positron Emission Tomography (PET) is a nuclear medicine imaging technique that measures the three-dimensional distribution of radiolabeled molecules, known as tracers. Dynamic PET uses time-resolved imaging data to produce time activity curves (TAC) for image voxels or specified regions of interest (ROIs) to estimate kinetic parameters such as cardiac flow and receptor binding rate constants.[1]. This paper examines the kinetic analysis of dynamic myocardial perfusion PET studies conducted with the tracer82Rb.
+
+Cardiovascular disease is one of the main causes of death globally. Accurate assessment of the risks of the disease and early detection of vulnerable patients is crucial[2]. Dynamic PET enables non-invasive imaging of temporal dynamics of molecular activities within a patient[1]. This approach provides additional information to assess risk of coronary artery disease (CAD) by enabling the evaluation of regional myocardial blood flow (MBF)[3,4,5,6,7,8]. Various tracers are commonly used when quantifying MBF with PET:15O-water,13N-ammonia,82Rb,11C-acetate, and18F-flurpiridaz[4,8]. Among these,82Rb is frequently used since it can be produced by an82Sr /82Rb generator and it has a short half-life (76.4 s), enabling multiple perfusion tests in short period of time[7,8]. However, the short-half life also results in poor signal-to-noise ratio images.
+
+Quantification of MBF via dynamic PET imaging requires appropriate kinetic modeling[9,10,11]. The radioactive isotope82Rb is typically modeled using a two-tissue compartmental model[3,5,7]. Estimating kinetic parameters in multi-tissue compartment scenarios often involves nonconvex optimization challenges[9,10,1,11], as objective functions in these problems can have multiple local minima, complicating parameter estimation. Standard approaches like non-linear least squares (NLLS) and graphical methods, such as the Patlak or Logan plots[12,13,11], have their respective limitations. NLLS methods, though computationally demanding, tend to produce more accurate results. In contrast, graphical methods offer quicker estimation by linearizing the problem, but this simplification may introduce errors. Despite the precision of NLLS methods, they can still yield suboptimal results. Challenges remain in accurately estimating kinetic parameters, as both methods balance trade-offs between computational efficiency and accuracy.
+
+In our study, we investigated two novel methods for estimating PET kinetic parameters by simulating a two-tissue compartmental model of82Rb and assessing their performance against the trust region-based NLLS method and a Kalman-smoother EM (KEM) benchmark. The KEM, similar to what Gibson and Ninnes described[14], leverages the expectation-maximization (EM) algorithm, which iteratively alternates between estimating hidden states (E-step) using the Kalman smoother[15,16,17]and maximizing the Q function (M-step). The EM algorithm decomposes the multi-dimensional parameter solution space into a more manageable lower-dimensional optimization problem. The first novel method, the particle-smoother EM (PSEM), extends the EM algorithm by replacing the Kalman smoother with a particle smoother[18,19], enabling it to handle more complex state dynamics.
+
+The second novel approach involved a convolutional neural network (CNN), a deep learning strategy that exploits spatial and temporal coherencies in datasets[20,21]. CNNs have shown strong performance in time-series analysis[22]and PET applications[23,24]. To our knowledge, this study represents the first application of a CNN to dynamic82Rb PET. We enhanced a traditional CNN model by incorporating a Time2Vec layer[25]to better capture temporal information. These methods were compared to assess their accuracy and efficiency in estimating PET kinetic parameters.
+
+SECTION: II.Methods
+
+SECTION: II.A.2TC Model for82Rb PET
+
+Many studies have demonstrated that regional myocardial perfusion PET studies with82Rb are sufficiently modeled by a two-compartment model[26,3,5]. Shown in Fig.1,denotes the flow rate from the plasma to the first compartment(the fast exchangeable state),represents the volume of the first compartment, andandthe flow rate into and out of the second compartment.can also be described astimes the total volume of the tissue, withbeing the ratio of the volume of the first compartment to the total volume of the tissue. The 2TC Model for82Rb PET can be described by the following differential equations:
+
+whereis a concentration of the activity in plasma denoted as an input function in the model, andandare the amount of tracer in the first and second compartment, respectively.
+
+These differential equations can be represented in the state-space form of a linear dynamical system with a hidden state vector, an input vector, and an output vector:
+
+where theandmatrices are application-dependent. The output vectortypically represents the decay-corrected observable tracer activities in a region of interest (ROI) for PET kinetic analysis.
+
+In this work, we defined the matricesandin (5) for82Rb as below:
+
+whererepresents the plasma fraction of tracer concentration in ROI.
+
+We can discretize the system by:
+
+This leads to the identification ofandin (4) as below:
+
+Since PET images are distributions of radioactive decay concentration measured by photon counts over a time frameand the observed concentration decays over time, we simulated the PET measurementand the input measurementusing the following equations:
+
+Here,is defined as follows:. The discrete state-space representation can be categorized as a hidden Markov model (HMM). HMM inherits the Markov property, indicating that the current hidden state depends solely on the previous state. In this context, the hidden states denoted asare an intuitive choice for the latent variables essential for an EM algorithm.
+
+SECTION: II.B.Data Generation
+
+To generate simulation data, we first randomly assigned each kinetic parameter a value within a bounded range that reflects realistic measurements, similar to the values reported in the literature[5], assuming a uniform probability distribution for each kinetic parameter within those ranges. The range of random selection for each parameter is summarized in Table1. Secondly, we set the initial state as a zero vector, assuming all tracer concentrations are zero at the start of the scan. Then, using the selected parameters, we employed the 2TC model to generate the state variables.
+
+To generate the input function, we used a similar analytical function to[5]for the simulation input function:. However, instead of using fixed values of 39,218 and 1,428 forand, respectively, we setandto be uniform random variables that vary between 90% to 110% of the values suggested in[5].
+
+To simulate realistic PET measurements, additional noise calculated using the variance mean ratio (VMR) was introduced based on frame duration. This noise level was derived from a real dataset. For detailed derivations, see AppendixNoise estimation.
+
+Once we had simulated the PET measurements, we interpolated and decay-corrected them to acquire the estimated observed tracer concentration. Note that, instead of using true observable activitydirectly for parameter estimation, we performed these two additional steps, convertingtoand back to, to include errors caused by the interpolation and the decay correction steps, which are also present in realistic kinetic analysis scenarios. The estimated input vectorwas also acquired by following the same process. Using simulation, we generated 80,000 data sets to train and cross-validate the neural network, and then additional 200 data sets were created to test the methods proposed in the work.
+
+SECTION: II.C.Parameter estimation algorithms
+
+We employed a trust-region algorithm as a baseline non-linear least squares (NLLS) method and compared it with our proposed approaches. Considering a set of parameters, along with residuals fromfunctions, the NLLS loss functionis formulated as:
+
+To optimize (8), we employed the trust-region method available in the SciPy library[27]. It should be noted that while many NLLS-based approaches enhance the algorithm with regularization strategies and manual adjustments, we opted to employ the method in its basic form. This was to ensure an equitable comparison with the methods that we are introducing.
+
+One possible strategy for addressing the parameter estimation challenge is the utilization of the EM algorithm. In this section, we provide a concise overview of the EM algorithm, largely drawing upon the description byRoweis and Ghahramani[17].
+
+Rather than directly estimating the maximum-likelihood parameters from the measurements, the algorithm infers the parametersby initially assuming the existence of underlying latent states, with the measurements, assuming that we havetimepoints. To estimatethat optimizes the likelihood essentially involves identifying thethat maximizes the following log-likelihood:
+
+whereindicates a probability distribution given. To facilitate the optimization of the log-likelihood function, we can postulate a distribution over the state variables, termed the Q function. This allows us to derive the lower bound ofutilizing Jensen’s inequality:
+
+The initial term in (10b), referred to as the expected energy relative to the distribution, and the latter term denotes the entropy of. The EM algorithm optimizes iteratively alternating between the Expectation (E) step and the Maximization (M) step. The E-step approximates the log-likelihood by calculating, as denoted in (10), and by formulating the distribution. It can be shown that the optimaldistribution at stageis[17]. The M-step optimizes the parameter setthat augments the expected energy term in (10b), since the entropy component is invariant with respect to. The EM algorithm can be succinctly encapsulated as follows:
+
+EM Algorithm
+
+The energy term that being optimized in (11b) can be reformulated as follows[19]:
+
+where
+
+By making two assumptions that the kinetic model of our choice is linear and the noise distribution is Gaussian, we can perform the E-step by using a Kalman smoother[28]. The implementation and the derivation of the Kalman filter and Kalman-EM (KEM) can be found in literature[17,14].
+
+We briefly describe the particle filter and particle smoother here and show that the three terms in (13) can be calculated with the particle smoother-based approach. A particle filter is also known as a sequential Monte Carlo method and can be used to find the solution of non-convex problems. It uses multiple “particles” to sample the solution space at each iteration. With properly tuned sampling, the particles will converge to the maxima. Particle filters are related to genetic algorithms. Whereas genetic algorthms rely on heuristic rules, particle filters rely on rigorous statistical theory for the iterative updates. The details of the derivations can be found in[19,29]:
+
+When calculating each term in (13) in the E-step, the main challenge is to calculate the integrals ofand. The original form of the particle filter gives a Bayesian solution of the latent state sequence estimates by a sum of samples multiplied by certain weights:
+
+The termdenotes the state sequence from the initial state to the state at timefor theth particle, whilerepresents the corresponding relative weight of this particle anddenotes the number of samples (particles). The sum of the weights for all particles,, is equal to one. The Dirac delta function ensures that these weights are factored into the probability distribution solely when there is an exact match between the actual state sequenceand the particle’s state sequence. The weights as referenced in (14) are determined using the following equation:
+
+Here,denotes an importance density[29]. And it can be shown that the following equation holds by applying chain rule and Bayes theorem[30,29]:
+
+Using this recursive weight update, it can be shown that the posterior can be approximated as follows[30,29]:
+
+The next step involves designating an importance density function because the probability density, which is called a ”posterior” in Bayesian framework, is unknown in advance. Theoretically, any function greater than zero may serve as the importance density, and intuitively the weights will balance the difference between the actual posterior distribution and the importance density. From a practical standpoint, prior sampling — which employs the conditional prior of the latent state — is typically the most effective approach for a wide range of applications[31].
+
+This reduces the weight update equation (16) to the following expression:
+
+Now that we have derived the update equation that calculates the posterior and the weight update equation based on the state prior importance density, we summarize the entire algorithm as follows:
+
+Particle Filter Algorithm
+
+For eachth iteration with input, perform the following steps to calculate.
+
+Forto,
+
+Forward particle by
+
+Update weightswith (19)
+
+Perform resampling if necessary.∗
+
+(∗: Resampling, which is an essential element of the particle filter, is the most common and effective way of preventing particle degeneration[29]. Detailed explanations and proofs can be found in[19,29].)
+
+The particle smoother computes the smoothed densityrather than the filtered density, which the particle filter yields as the posterior. Without delving into further derivations, it’s shown that the following relationship holds[19]:
+
+It should be noted in (20b) that we introduce the smoothed weightas an outcome of particle smoothing. Employing these equations, the particle smoother is executed as follows[19]:
+
+Particle Smoother Algorithm
+
+Compute particlesand weightsforby implementing the particle filter.
+
+Initialize the smoothed weights atas
+
+Recursively compute the smoothed weights using (20).
+
+Omitting detailed proofs, we assert that (13) can be approximated using the outputs of the particle smoother with the following formulas[19]:
+
+The weights in (22b) are determined as follows:
+
+The equations in (22) are subsequently utilized to compute the Q function during the E-step of the EM algorithm. Our code was developed by augmenting scripts available in[32].
+
+The model we utilized for parameter estimation is depicted in Fig.2. The input was a tensor of dimensions 1,0242, comprising the time-activity curves from the observable acitivity, which was interpolated from the PET measurements, and the input function. This tensor was augmented with a Time2Vec embedding to capture temporal dependencies, including both periodic and non-periodic patterns, while being invariant to time scaling[25]. The Time2Vec layer’s kernel size was set to 2. The augmented vector was then fed into seven 1-D convolutional layers with filter sizes of 4, 8, 16, 32, 64, 128, and 256, respectively. Each convolutional layer had a kernel size of 10 and padding of 4 to reduce the tensor’s width by exactly half at each stage. The tensor output from the final convolutional layer was condensed using a global average pooling layer, followed by three 16-unit fully connected layers, resulting in the output of three kinetic parameters:,, and. We employed the Adam optimizer with a learning rate of 0.0011 and utilized the mean absolute percentage error as the loss function. Tab.2summarizes the details of the configuration. Simple hyperparameter tuning was done with KerasTuner, and the tuning process included all parameters listed in Tab.2.
+
+SECTION: II.D.Evaluation methods
+
+Each parameter was estimated using three proposed methods: KEM, PSEM, and CNN. The estimations obtained from these methods were then compared to the ground truth values utilized in our simulations. To analyze the accuracy of the estimations, both absolute error and relative error between the estimated and ground truth values were considered. Additionally, the success ratio was computed for each kinetic parameter. This ratio is defined as the frequency with which a proposed method outperforms the reference method, NLLS, in our analyses. The calculations for the three metrics are based on the following simple equations:
+
+SECTION: III.Results
+
+SECTION: III.A.Particle smoother illustration
+
+Fig.3shows an example of particle smoother performed on a sample TAC curve to illustrate the general idea of the particle smoother mechanism. The black dots represent particles, and we can see that the particle distribution can be used for effectively estimating the latent states in this sample case. Note that we assumed that the kinetic parameters are known in advance in this example case just to illustrate the effectiveness of the particle smoother. The proposed PSEM method uses particle smoother to calculate the elements of the expected energy of the Q function when running the E-step, and we can run the full EM algorithm by running E-step and M-step iteratively.
+
+SECTION: III.B.Simulation results
+
+Fig.4shows four samples of simulation results. We can observe that the dynamics of the latent states, which are generated with the 2TC model, depend on the chosen kinetic parameters. The PET measurements and the measurements of the input function decays with time since the radioactive decay factor has been applied to the two measurements.
+
+SECTION: III.C.Interpolation results
+
+Fig.5shows the result of estimating observable activities back from the PET measurements and the input measurements of same samples in Fig.4. Note that this step is necessary because we have assumed that we do not have prior information about the ground truth observable activity and we only have PET measurements and input measurements. We can see that the estimated observable activity and the input function, which are the result of applying decay correction and the interpolation to the PET measurement and input function measurement, respectively, match the ground truths with some noise. The estimation noise were reduced as time increases.
+
+SECTION: III.D.PSEM estimation along the iterations
+
+To visualize the convergence of the PSEM algorithm, we show figure6, which presents PSEM estimation across iterations for a selected simulation sample. PSEM consistently converges to the ground truth value for estimating, irrespective of the initial values.
+
+SECTION: III.E.Parameter estimation results
+
+Tab.3shows the result of differences calculated for each method, and the Tab.4shows the result of percentage differences for each method. CNN showed the best result among the other methods in terms of both the percentage error and the difference error.
+
+Fig.7shows the scatter plots of parameters estimated by each proposed method and those estimated by NLLS, which is the reference method. In terms of the success rate, we can see that KEM underperformed compared to NLLS for estimating parameter, whereas PSEM and CNN outperformed NLLS. Forand, all three proposed methods outperformed NLLS, with CNN showing the best result of 79.5% success rate.
+
+SECTION: IV.Discussion
+
+Fig.4illustrates how the kinetic parameters affects the simulated time-activity curves. First, we can notice that the activity of State 1 (fast exchangeable state) accumulates more whenis higher andis lower. Similarly, highvalues and lowvalues result in low activities in State 2 (slow exchangeable state). PET measurements and input function measurements decay over time, and we added noise estimated from real data sets to these measurements, resulting in signal degradations. Lastly, the changes in signal are reduced over time, which indicates that most of the extractable information regarding kinetics is stored in the early stage measurements.
+
+Fig.5shows the estimated observable activities and input functions recovered from PET measurements and input function measurements. Again, this step was necessary because we should not assume that we know the simulated (true) observable activities and input function. We can see that the noise is reduced over time, mainly because the high level of signal changes in the early stage of the process make the interpolation step less accurate. We chose the spline fitting method to perform the interpolation because the spline fit showed better result than other fitting schemes we tested (simple polynomial, piecewise cubic hermite interpolating polynomial, B-spline).
+
+Fig.6depicts the convergence of the ten PSEM estimations towards the ground truth value of parameter. All estimations converge monotonically to the ground truth value, demonstrating an indirect manifestation of Jensen’s inequality within the EM algorithm. However, it is important to note that while this sample highlights the algorithm’s effective performance in certain instances, the accuracy of PSEM outputs deteriorates when estimating multiple parameters and also varies significantly based on ground-truth values, as reported in SectionIII.E..
+
+Tables3and4show the estimation performances of each proposed method in absolute errors and relative errors, respectively. The result in absolute errors shows that CNN performed significantly better than other three approaches for all three parameters. This indicates that the model learned the kinetics well without having prior knowledge regarding the compartmental model. The absolute errors of KEM for parameterwere less than that of NLLS, whereas those of PSEM underperformed compared to NLLS. This may indicate that the PSEM needs hand-tuning to be employed in practice. KEM and PSEM performed better than NLLS in estimating, but the differences among the results of three methods estimatinghad no statistical significance. The result shown in relative errors also highlights that CNN outperformed other three approaches. In estimating, the relative errors of KEM was similar to that of CNN, but PSEM underperformed compared to CNN. And in terms ofand, the relative errors of NLLS, KEM, and PSEM were similar.
+
+Fig.7compares all estimations for each method with respect to those of NLLS, and shows the success rate of each method compared to NLLS. CNN shows80% success rate for all parameters. KEM outperformed NLLS in estimating all three parameters, whereas PSEM estimation forwas under 50%. However, the success rates of PSEM forandwere greater than 50%.
+
+In practice, many regularization techniques and hand-tunings for kinetic parameter estimations are deployed during or after NLLS to improve the accuracy. In this work, however, we did not apply any of those to make fair comparisons between algorithms. We may be extend this work by comparing all the methods with the regularization and hand-tuning applied in the future.
+
+On top of the best achieved accuracy, another advantage of CNN is that it offers kinetic model-agnostic solution, thereby minimizing hand-tuning for different tracers. However, it may be difficult to acquire a large number of data sets based on real patient scans. Desiging sophisticated realistic simulations may overcome this challenge effectively.
+
+In this first study of the PSEM method for kinetic modeling, we simply used the hidden states of the state-space model as the latent variables in the E-step. We may improve the PSEM estimation result by moving some of the kinetic parameters into the latent space of the E-step and solving the resulting problem by Rao-Blackwellized PSEM, which has been shown to effectively improve the accuracy of the particle smoother[33]. The particle smoother is effective in solving non-linear problems, and solving one or more of the kinetic parameters in the E-step by the particle smoother may improve the quantitative accuracy. Also, PSEM has a unique advantage that it may be applied to non-linear kinetic models, unlike KEM.
+
+SECTION: V.Conclusions
+
+In this work, we investigated, for the first time, the effectiveness of PSEM and CNN in estimating kinetic parameters of82Rb, and compared the results of each method to show that the CNN outperforms the other methods. PSEM showed mixed results, but CNN improved the accuracy significantly compared to all the other methods we tested. In the future, we plan to expand our work to other tracers and to construct more realistic simulations to improve the generalizability and we also aim to apply more advanced deep learning models, such as time-series transformers. Further, we will investigate different latent variable selections in the E-step of the PSEM and the use of Rao-Blackwellized particle smoothers.
+
+SECTION: VI.Acknowledgements
+
+Sarah was supported by The Sun-Pan Family Fellowship Fund. The authors would like to thank Dr. Mojtaba Jafaritadi for helpful discussions on deep learning ideas.
+
+SECTION: VII.Conflict of Interest Statement
+
+The authors declare no conflict of interest.
+
+SECTION: Appendix
+
+To run realistic simulations, we estimated PET measurement noise distribution based on a real data set. The data set was acquired on a Discovery 690 PET/CT system (GE Healthcare, Milwaukee, WI, USA) in list mode. The82Rb cardiac PET data was from the rest portion of a cardiac rest-stress study.
+
+We are interested in finding the relationship between time frame length and noise. We constructed images without decay correction starting for time frame lengths of 1, 2, 5, 10, 20, and 30 seconds. We then choose a 36 pixel square region of a tissue of interest. We normalized the activity values of the region to have a mean of 1 and report variance as variance mean ratio (VMR) and use (27) to calaculate standard error (SE) for time frame as
+
+whereis the total number of pixels in an ROI. We then interpolated the time frame and SE values to get realistic noise estimation for arbitrary time frame length.
+
+VMR is calculated as follows. Let’s denote a decay-corrected PET measurement atth time frame as, which can be considered as a random variable. Directly estimating the noise level ofcan be difficult, so we frame this problem as estimating standard error of sample distributions. A ROI in each PET image is a group of pixels, and thus can be seen as a “sample” of signals. And we can calculate VMR as follows:
+
+whereis the mean ROI signal at time frameandis the variance of the ROI signal at time frame. We assume that the noise can be modeled with a normal distribution, and we also assume that the VMR is constant across all images. Then the following holds:
+
+whereindicates the signal atth pixel of the ROI of the image at time frame, normalized by the mean signal of the ROI. Then, using normality assumption, the ROI signal for each time frame can be modeled as follows:
+
+The VMR value and time frame pairs from the real data set was listed in Table5, and we implemented noise distribution in simulation by using (30).
+
+SECTION: References
+
+SECTION:

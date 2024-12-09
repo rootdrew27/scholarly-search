@@ -1,0 +1,1372 @@
+SECTION: Code Generation and Runtime Techniques for Enabling Data-Efficient Deep Learning Training on GPUs
+
+As deep learning models scale, their training cost has surged significantly. Due to both hardware advancements and limitations in current software stacks, the need for data efficiency has risen. Data efficiency refers to the effective hiding of data access latency and the avoidance of unnecessary data movements. Significant challenges arise from the growing disparity between GPU memory bandwidth and computational throughput, imminent GPU memory capacity limitations, and inefficiencies in the PyTorch software stack, including a lack of device-specific PCIe transfer optimizations and high-level domain-specific abstractions.
+
+To effectively mitigate these data inefficiencies for deep learning training, this dissertation analyzes data inefficiency in representative deep training tasks, specifically in graph neural networks (GNNs) and large language models (LLMs). It then proposes novel runtime and code generation techniques to mitigate these challenges and implements these optimizations seamlessly within the PyTorch stack while maintaining strong programmability and interoperability.
+
+First, Hector intermediate representation (IR) and its code generator are devised to introduce domain-specific high-level abstraction and systematically address memory-intensive performance challenges for relational graph neural networks (RGNNs). The performance challenges stem from RGNN’s inherent memory intensiveness, the gap between the programming interface and the kernel APIs, and the high kernel optimization cost due to kernel coupling with layout and heterogeneity. Using a general matrix multiply (GEMM) template and a traversal template, Hector achieves up to a 43.7speed-up in training and inference compared to the state-of-the-art systems. Linear operator reordering and compact tensor materialization further achieve up to 3.8speed-up compared to the Hector unoptimized code.
+
+Second, PyTorch-Direct is introduced to incorporate the GPU-centric PCIe data transfer paradigm in PyTorch for GNN training. PyTorch-Direct significantly reduces CPU utilization, resulting in higher end-to-end training performance. For the input datasets and GNN architectures evaluated, PyTorch-Direct decreases the overall training time by up to 38.2%.
+
+Finally, in LLM training, the throughput has been increasingly constrained by GPU memory capacity. To mitigate this, the SSDTrain offloading framework is designed and implemented. Since activations take most of the GPU memory, SSDTrain offloads activations to Non-Volatile Memory Express (NVMe) SSDs with a direct GPU–SSD data path and good interoperability. The evaluation shows that SSDTrain reduces activations peak memory use by up to 47% with negligible overhead. We further analyze how the reduced activation memory use may be leveraged to increase throughput by increasing micro-batch size and reducing pipeline parallelism bubbles.
+
+Together, these contributions demonstrate that code generation and runtime techniques can systematically mitigate the data management bottlenecks in deep learning training, which stem from the data-intensive nature of workloads and the oversimplification inherent in the deep learning training software stack.
+
+To my parents, for their unconditional love and support.
+
+SECTION: LIST OF ABBREVIATIONS
+
+Artificial Intelligence
+
+Arithmetic Logic Unit
+
+Application Programming Interface
+
+The “A TENsor” Library
+
+Byte
+
+Bidirectional Encoder Representations From Transformers
+
+Batched Matrix Multiplication
+
+Basic Linear Algebra Subroutines
+
+Convolutional Neural Network
+
+Coordinate Format
+
+Central Processing Unit
+
+Compressed Sparse Row
+
+Compute Unified Device Architecture
+
+Deep Graph Library
+
+Direct Memory Access
+
+Deep Learning Recommendation Model
+
+Dynamic Random-Access Memory
+
+Domain-Specific Language
+
+Disk Writes Per Day
+
+Extract, Transform, and Load
+
+First In, First Out
+
+Floating-Point Operations
+
+Floating Point
+
+Billion
+
+Graph Attention Network
+
+GPUDirect Storage
+
+Gaussian Error Linear Unit
+
+General Matrix-Matrix Multiplication
+
+General Matrix-Vector Multiplication
+
+Global Interpreter Lock
+
+Graph Neural Network
+
+Generative Pre-Trained Transformer
+
+Graphics Processing Unit
+
+The “Graph SAmple and AggreGatE” Algorithm
+
+Generalized SpMM
+
+Generalized SDDMM
+
+High Bandwidth Memory
+
+Heterogeneous Graph Transformer
+
+High-Performance Computing
+
+Input/Output
+
+Instructions Per Cycle
+
+Intermediate Representation
+
+Instruction Set Architecture
+
+Joint Electron Device Engineering Council
+
+JEDEC Standard
+
+Just-In-Time
+
+Thousand
+
+Key-Value
+
+The Level-One / Texture Cache
+
+Layer Normalization
+
+Large Language Model Meta AI
+
+Large Language Model
+
+Load-Store Unit
+
+Million
+
+Multi-Level Intermediate Representation
+
+Multi-Level Cell
+
+Multilayer Perceptron
+
+Matrix Multiplication
+
+Milliseconds
+
+Mixture-of-Experts
+
+Mean Squared Error
+
+Not-And
+
+Non-Volatile Memory Express
+
+NVMe over Fabrics
+
+Out-Of-Memory
+
+Quadrillion
+
+Petabytes Writes
+
+Peripheral Component Interconnect Express
+
+Program/Erase
+
+Python Enhancement Proposal
+
+Parallel Thread Execution
+
+PyTorch Geometric
+
+Redundant Array of Independent Disks
+
+Rapid Analytics on Platforms In Data Science
+
+Rectified Linear Unit
+
+Relational Graph Attention Network
+
+Relational Graph Convolutional Network
+
+Relational Graph Neural Network
+
+Random Number Generator
+
+Recompute-Offload-Keep
+
+Seconds
+
+Streaming ASSembler
+
+Sampled Dense-Dense Matrix Multiplication
+
+Single Instruction, Multiple Threads
+
+Single-Level Cell
+
+Streaming Multiprocessor
+
+Standard Performance Evaluation Corporation
+
+SPEC High-Performance Group
+
+SPEC Open System Group
+
+Single Program, Multiple Data
+
+Sparse Matrix Dense Matrix Multiplication
+
+Structured Query Language
+
+Solid-State Drive
+
+Server PCIe Module
+
+Trillion
+
+Text-To-Text Transfer Transformer
+
+The Tensor Algebra Compiler
+
+Hyperbolic Tangent Function
+
+Tensor Core
+
+Total Cost of Ownership
+
+TorcH Python
+
+Triple-Level Cell
+
+Tensor Processing Unit
+
+Tensor Virtual Machine
+
+Microseconds
+
+Unified Virtual Memory
+
+Write Amplification Factor
+
+Accelerated Linear Algebra
+
+Transcendental and Data Type Conversion Unit
+
+Zero Redundancy Optimizer
+
+Zoned Namespaces
+
+SECTION: Chapter 1Introduction
+
+In recent years, deep learning models have demonstrated remarkable capabilities in learning from vast amounts of data, leading to broad adoption and superior performance in various real-world applications, e.g., recommender systems[1,2], content creation[3,4], etc. As these models continue to achieve transformative results, their scale has proliferated to further enhance their competence. However, this increase in model complexity has caused a significant rise in training cost: The training cost of frontier models has grown at 2.4annually in the last eight years. For example, training GPT-4, one of the largest models to date, incurred approximately US$100 million. Notably, the growth in training compute cost has outpaced that of inference, with the former being nearly double the latter[5].
+
+As a result, deep learning training has increasingly posed pressing data efficiency challenges to the software computing stack. Data efficiency means effectively hiding data access latency and avoiding unnecessary data accesses. Several factors contribute to the growing importance of data efficiency.
+
+First, the rapid growth of large-scale models has driven an increase in GPU computational power that far outpaces improvements in data transfer bandwidth. As shown in Figure1.1, for recent GPUs for deep learning, FP16 throughput (yellow dotted line, right vertical axis) has increased not only faster than memory bandwidth (blue dotted line, left vertical axis), but also faster than the device’s PCIe bandwidth (purple dotted line, left vertical axis) and device-to-device interconnect bandwidth (orange dotted line, left vertical axis). Moreover, hardware-accelerated lower-precision computation has enlarged the gap between the computational throughput and memory bandwidth: FP16 multiply costs 70% less energy compared with FP32 multiply[6]. At the same time, FP16 data transfers only reduce energy usage by 50% due to their proportionality to transfer size. Consequently, the training processes of most deep learning models are memory-bound. This is illustrated in Figure1.2, where the characteristics of Nvidia B100 are compared with the deep learning training production workloads reported by Google TPU architects[7]. All models except the reported LLM workload are bound by memory. Even in LLM training, memory-intensive operations account for a significant portion of the overall execution time[8,9].
+
+Second, GPU memory capacity alone cannot sustain the growth in computational throughput, necessitating additional buffer and domain-specific PCIe transfer optimizations. Due to the limited capacity of GPU memory, deep learning training predominantly relies on mini-batches, where the entire training dataset is stored outside the GPU, and only a small subset is transferred during each step. For graph neural networks (GNNs), the generic mini-batch transfer scheme—where the CPU prepares the mini-batch input and initiates direct memory access (DMA) PCIe transfer—introduces significant performance overhead due to fine-grained, gather-style random accesses. This can even lead to the loss of scalability[16]. As EMOGI demonstrates[17,16,18], an optimized GPU-centric transfer scheme avoids these issues by programming the GPU to use zero-copy techniques, allowing it to gather features and perform PCIe transfers simultaneously.
+
+For large language models (LLMs), the growth in GPU memory capacity and main memory capacity has struggled to keep up with the increasing demands driven by GPU throughput. In contrast, SSDs offer large storage capacity, and their growth has kept up with these demands. Section5.2.1details the reasoning. Given this, we choose to offload tensors to SSDs for LLM training to overcome GPU memory limitations. Nevertheless, SSD bandwidth is limited, and the gap between SSD bandwidth growth and GPU computational throughput growth continues to widen, as shown in Figures1.1and1.3. It is essential to carefully manage data transfers to prevent training throughput from being constrained by SSD bandwidth. We propose techniques for selecting which tensors to offload and hiding transfer latency. To evaluate the trade-off between performance and memory savings, we compare different strategies, i.e., tensor recomputation, offloading, and keeping tensors in GPU memory. These are detailed in Chapter5.
+
+Despite the importance of data efficiency, several obstacles exist to address it within the current PyTorch-based deep learning training software stack.
+As one of the most popular deep learning frameworks, PyTorch offers an intuitive interface through the dynamic Python language. It abstracts away the complexity of CUDA-accelerated systems, making them user-friendly and fostering a robust ecosystem in the deep learning community. However, PyTorch is by no means a “silver bullet”[21]. Instead, the PyTorch stack design is largely compute-oriented. This focus creates significant challenges when attempting to tackle data efficiency, a new paradigm requiring optimizing data access alongside computation.
+
+One significant challenge posed by PyTorch’s compute-centric design, which we encountered while integrating the EMOGI PCIe transfer scheme[17,16,18]for GNNs, is its assumption that both the input and output of each operator reside on the same device to which the operator is dispatched. However, the optimized transfer scheme uses the GPU to gather node features and perform PCIe transfer simultaneously as an integral process, demanding the input to be in the host memory.
+To adopt such a data-efficient scheme and retain the PyTorch programming interface, the PyTorch runtime code has to be recompiled with the addition of a full-fledged new tensor type, its special host memory allocator, and its set of new dispatch rules.
+Chapter4details our solution for incorporating EMOGI PCIe transfer into PyTorch.
+
+Second, although PyTorch incorporates high-performance math libraries and uses them for corresponding operators[22,23], it lacks high-level abstraction to capture domain-specific semantics. This limitation makes it difficult to safely optimize the code to eliminate redundant data movement and achieve more efficient execution schedules. For example, in relational GNNs (RGNNs), a common operation is producing a per-edge vector, edge message, by multiplying the source node features with a weight matrix specific to the edge type. Since edges with the same edge type and source node will get the same edge message as the result, repetitive computation and output footprint can be eliminated. However, existing frameworks with generic GNN abstraction cannot leverage these optimization opportunities because they lack the necessary abstraction to capture and track edge-type-specific information. Chapter3details how a code generator with domain-specific intermediate representation (IR) enables the optimization discussed above, compact materialization.
+
+In this thesis, we show that code generation and runtime techniques can systematically mitigate the data management bottlenecks in deep learning training, which stem from the data-intensive nature of workloads and the oversimplification inherent in the deep learning training software stack.
+
+To prove the dissertation statement, the dissertation examines the data inefficiency in representative scenarios in GNNs and LLMs, proposes runtime and code generation techniques to mitigate such inefficiency, and implements transparent incorporation into the PyTorch stack with good programmability and interoperability.
+The contributions of this dissertation are as follows:
+
+Hector IR and code generator for end-to-end RGNN training and inference[24]. RGNN execution faces significant performance challenges due to inherent memory intensiveness, the gap between the programming interface and the kernel APIs, and the high kernel optimization cost due to kernel coupling with layout and heterogeneity. To systematically address these issues, we present Hector. Hector generates optimized CUDA kernels to eliminate redundant data movement within GPU and reduces GPU memory footprint. The IR design decouples the model semantics, data layout, and operator-specific schedule and expresses these opportunities to integrate them into the design space. Based on a general matrix multiply (GEMM) template and a traversal template, Hector already achieves up to 43.7speed-up in training and inference compared to state-of-the-art systems. Linear operator reordering and compact tensor materialization obtain up to 3.8speed-up compared to the Hector unoptimized code. Chapter3details Hector.
+
+PyTorch-Direct, a GPU-centric data access paradigm for GNN training[25,16,26]. Training GNNs on large graphs that do not fit in GPU memory suffers from significant throughput and CPU utilization overhead. By enabling GPUs to efficiently access complicated data structures in host memory directly without CPU intervention, PyTorch-Direct significantly reduces CPU utilization in GNN training, resulting in higher end-to-end training performance. For the input datasets and GNN architectures evaluated, PyTorch-Direct decreases the overall training time by up to 38.2%. One of its key advantages is the minimal required programmer effort: Users can take full advantage of the benefits that PyTorch-Direct provides by modifying at most two lines of their original code. Chapter4details PyTorch-Direct.
+
+SSDTrain activations111In deep learning, activations are the tensors produced in forward propagation to be used for gradient computation in the backward propagation.offloading framework for LLM training[27]. After mitigating the data inefficiency in CUDA kernels and PCIe transfers, we take the next step to address higher-level data inefficiency, particularly challenges in overlapping kernels and transfers. Notice that LLM training systems are increasingly constrained by GPU memory, with activations being one of the primary culprits. We propose SSDTrain to address this by offloading activations to Non-Volatile Memory Express (NVMe) SSDs. We demonstrate its viability in large-scale systems by modeling. We incorporate into SSDTrain a direct GPU–SSD data path and good interoperability. To fully overlap computation with data transfer, SSDTrain features asynchronous data transfer, tensor deduplication, forwarding, and adaptive offloading. The evaluation shows SSDTrain reduces the activations peak memory use by up to 47% with negligible overhead. We introduce the recompute-offload-keep (ROK) curve to show runs with SSDTrain’s offloading are on the efficient frontier in the design space. We further analyze how the reduced activation memory use may lead to increased throughput by increasing micro-batch size and reducing pipeline parallelism bubbles. Chapter5details SSDTrain.
+
+The remaining chapters serve the following purposes:
+
+Chapter2introduces the background of this dissertation, involving GNNs, LLMs, the Nvidia GPU architecture and programming model, and the PyTorch computing stack.
+
+Chapter6presents a final discussion on PyTorch-Direct, Hector, and SSDTrain. Then, it explains the future work on top of this dissertation.
+
+Chapter7concludes this dissertation.
+
+SECTION: Chapter 2Background
+
+This chapter provides the background knowledge necessary for understanding the subsequent chapters.
+Readers may choose one or more sections to read for a particular chapter or skip the sections they are familiar with.
+Section2.1introduces GNNs, which are the focus ofChapters3and4.
+Section2.2delves into transformers, offering context for Chapter5.
+Section2.3covers the architecture, programming model, programming interface and compilation flow for Nvidia GPUs.
+Section2.4overviews the Python language.
+Section2.5introduces the PyTorch computing stack.
+
+SECTION: 2.1Graph Neural Networks
+
+Inspired by the success of convolutional neural networks (CNNs)[28], people devised GNNs as a new type of neural network that applies similar filters to graphs[29,30,1,31,32,33,34].
+While CNNs excel at extracting features from grid-like data such as images, GNNs are designed to propagate and transform features according to the structure of graphs, allowing them to retain relational information between entities represented by nodes and edges.
+GNNs are increasingly applied in diverse domains, including social network analysis and recommender systems[30,1,32], etc.
+
+GNNs have shown significant advantages in graph representation learning[35,30,1], where the goal is to embed graph-structured information into low-dimensional dense vectors.
+The trained model can produce vectors for specified nodes or edges. Then, tasks, e.g., node classification, link prediction, etc., can be performed by only relying on them rather than all the raw data in the graph, e.g., the adjacency list, node features, etc.
+As Hamilton et al.[35]noted, traditional algorithms, e.g., DeepWalk[36]and node2vec[37], cannot generalize to perform inference on unseen nodes or edges during training, and their representation power is limited.
+In comparison, GNNs offer a more powerful and flexible approach, capable of addressing these limitations and enabling inductive learning for new graph data.
+
+A widely-used GNN model is graph convolutional network (GCN)[32].
+Formally, a GCN layer is defined as, wheredenotes the trainable weight matrix of the-th layer,is a non-linear activation function andis the node representation at layer. In particular, the node input features are denoted as.is the adjacency matrix normalized by node degrees:
+
+whereis node’s out degree andis the in degree of node.
+
+SECTION: 2.2Transformer-Based Large Language Models
+
+LLMs now drive a wide range of applications, including chatbots[3], search[38], content generation[4], reasoning[39], etc. These models, when sufficiently large in size, demonstrate emergent abilities[40]and thus the ability to handle complicated tasks. Consequently, LLMs today can be as large as containing hundreds of billions of parameters. Furthermore, model designers are driven to continue to scale up the size of LLMs, carrying more parameters.
+
+Most LLM architectures, including GPT[41], are transformer-based[42]. As Figure2.1(a) shows, the GPT model consists mainly of multiple transformer layers. Before transformer layers, GPT takes in the tokenized text and maps the tokens into dense vectors with positional information. The task determines the last part of the model architecture.
+For instance, a classifier could be added for text classification tasks.
+Figure2.1(b) shows that each transformer layer is primarily made up of an attention block and a multi-layer perception (MLP) block. Attention blocks (Figure2.1(c)) compute a weight, called attention, for each token pair, and produce dense vectors for each token via weighted summation. The MLP blocks transform the vector of each token into a new vector.
+
+GPT is a decoder-only model because it only involves transformer decoder layers. A transformer encoder layer has the same structure as the transformer decoder layer except that the latter imposes causality on the attention mask in Figure2.1(d): the causal mask ensures that the new vectors produced by the attention block for each token depend only on vectors of tokens, not after this token. By this categorization, transformer models are classified as (1) encoder-only, e.g., BERT[43], (2) decoder-only, e.g., GPT, Llama[44], and (3) encoder-decoder, e.g., T5[45]. In encoder-decoder models, the transformer decoder layers take in both outputs from the encoders and another text and apply two attention blocks—the self-attention block is applied to the new text, and the cross-attention block is applied among the tokens in the sequence from the encoder and tokens in the new text.
+
+Parallelizing LLM training involves partitioning and/or replicating the model and the data into different GPUs[46]. Pipeline parallelism, data parallelism, and model parallelism are the three levels of parallelism available to all LLM models and widely adopted in frameworks, e.g., Megatron, DeepSpeed, and PyTorch 2.0[47,48,49].
+Pipeline parallelism partitions the model into several chunks of layers and places them on different GPUs. In a step, when the GPUs finish their layers, the output is passed to the GPUs owning the next layers.
+Data parallelism replicates the models in different groups of GPUs and assigns separate micro-batches to each group.
+At the end of a step, the gradients in each group are aggregated to update all the model replicas.
+Model parallelism shards a weight tensor and puts shards onto different GPUs. Each GPU performs a part of the computation using its shard for the corresponding operator.
+Given the system scale and interconnect, all or a few among the three levels may be used.
+Zero Redundancy Optimizer (ZeRO)[50]further reduces memory use with data parallelism by sharding the optimizer states, and/or optionally the gradients and parameters and stores the shards across these GPUs.
+
+SECTION: 2.3Nvidia GPU Architectures and Programs
+
+While the CPU is designed to minimize the latency of each operation, the GPU is a massively parallel processor optimized to maximize throughput[51]. To support this computational parallelism, each GPU device is equipped with memory that has very high bandwidth, reaching an order of magnitude of TB/s after high-bandwidth memory (HBM) is adopted. Just as each CPU chip contains multiple cores, each Nvidia GPU contains hundreds of cores, called streaming multiprocessors (SMs). The structure of an SM is illustrated in Figure2.2. In an SM, the scheduler selects instructions ready for execution, which are then dispatched by the dispatcher unit to various function units. The function units include floating-point units, arithmetic logic units (ALUs), tensor cores, transcendental and data type conversion units (XUs), and load-store units (LSUs). LSUs are responsible for transferring data between the register file and memory, while the other function units operate on values stored in registers. For fast on-chip memory, each SM also contains its own L1 cache and a scratchpad, called shared memory.
+
+A common way to program Nvidia GPUs with a parallel computing workload is to create a CUDA C++ program. Functions executed on Nvidia GPUs are called kernels. During the execution of a kernel, a massive number of threads execute the same logic specified in the kernel’s CUDA C++ function definition. CUDA C++ well matches Nvidia GPUs’ single instruction, multiple threads (SIMT) execution model: At each time during execution, all threads that are being executed in an SM execute the same instruction. Threads within a CUDA kernel are organized into blocks, and each block is scheduled onto one SM, where it remains until all threads within the block finish executing. To hide latency, programmers typically aim for high occupancy, i.e., ensuring that each SM is assigned a large number of threads.
+
+The Nvidia compiler, nvcc, compiles CUDA kernels into the PTX (Parallel Thread Execution) intermediate language. The machine code executed by the GPU is in a proprietary instruction set architecture (ISA), called SASS (Streaming ASSembler). Translation from PTX to SASS can occur at compile time or runtime via the GPU driver.
+
+SECTION: 2.4The Python Language
+
+People in the deep learning community use Python extensively. Python is easy to use due to its simplicity, expressiveness, and powerful features. One of the key features of Python is its interpreter, so users do not need to compile their code before execution. Additionally, Python’s dynamic typing, known as duck typing, frees programmers from declaring the type of each variable and allows variables to change types during execution, simplifying development. Python also features rich ecosystems with widely-used package managers, e.g., Python’s built-in Pip, Anaconda, etc.
+
+To illustrate how friendly Python is, we write a Python program to sort tuples in ListingLABEL:lst:sort_second_python. In contrast, ListingLABEL:lst:sort_second_cppshows the C++ program doing the same job. Both programs sort therecordsvariable according to each tuple’s second element. Therecordsvariable stores the name and address of each person as a two-string tuple. The tuples will be sorted according to the second string, i.e., the addresses. Both programs execute three steps: 1) defining therecordsvariable, 2) sorting, and 3) printing the sorted records.
+
+As shown, the Python code is more expressive and quicker to develop due to several factors. First, it does not need compilation and an entry pointmain()function. Second, Python does not require the type declaration of each variable. Third, Python has a simpler lambda function syntax and supports containers in the built-inprint()function.
+
+One of the biggest concerns of Python is the significant serialization penalty caused by the global interpreter lock (GIL) in multithreading programs. As the most widely-used Python implementation, CPython[58]uses GIL to ensure thread safety. To mitigate this, frameworks work around GIL. One method is to put performance-critical logic in the C++ framework libraries and release the GIL once the control flow goes outside the Python code[59]. Another direction is to remove the GIL from the Python implementation. Although there are some alternate GIL-free Python implementations[60]to CPython, many frameworks rely on CPython-specific implementation details, making it challenging to migrate these frameworks to such alternatives. These limitations led to the Python Enhancement Proposal (PEP) 703 to make GIL optional[61]in CPython, which has been accepted recently.
+
+SECTION: 2.5The PyTorch Computing Stack
+
+Thanks to its intuitive, dynamic, and flexible programming interface, PyTorch is friendly to both users and developers who build packages on top of PyTorch. As a result, PyTorch has gained much popularity since its inception.
+
+By default, PyTorch executes code eagerly, meaning operations are computed immediately as they are called. For example, ListingLABEL:lst:pytorch_nested_moduledefines a simple classifier model with mean squared error (MSE) as the loss function and executes a training step. The model contains a nested module,linear_with_activation, and a loss functionloss_fn().linear_with_activationis made up of a linear layer and a hyperbolic tangent activation function. Figure2.3illustrates both the forward-propagation and backward-propagation computational graphs for this example. As shown in step (1) of ListingLABEL:lst:pytorch_nested_module, the modules are defined as subclasses oftorch.nn.Module. In the class definition, the initialization method__init__()initializes the parameters of layers and submodules. The methodforward()defines the forward propagation logic of this module. Step (2) constructs the model, consisting of the nested modulelinear_with_activationand the MSE loss functionloss_fn. Step (3) executes a training step, i.e., one forward propagation and one backward propagation pass.xis the input data,yis the predicted labels, andy_expectedis the ground-truth labels.
+
+Notice that users only need to define the forward propagation logic, as shown in FigureLABEL:lst:pytorch_nested_module. PyTorch’s auto-differentiation mechanism handles the computation of gradients without requiring users to manually specify the backward propagation logic. During forward propagation, PyTorch records activations, i.e., the intermediate tensors, and weights required for backward propagation and constructs the corresponding computational graph. In Figure2.3, for example,yandy_expectedare the activations stored for the backward propagation process ofMSELoss,MSELossBackward. During backward propagation, PyTorch executes the backward-propagation computational graph. PyTorch calls precompiled kernels to execute operators in forward propagation and backward propagation.
+
+Another way to provide auto differentiation uses just-in-time (JIT) compilation. For example, to perform auto differentiation, JAX 1) captures the forward propagation functions’ IR through trace-based JIT, 2) generates the gradient functions’ IR via transformation, and 3) compiles CUDA binaries using XLA[62]. Similarly, JIT-based approaches are adopted by PyTorch JIT[63], Mathematica[64], Zygote[65], CLAD[66], and Enzyme[67].
+
+Figure2.4shows the PyTorch computing stack for GNNs and LLMs, the primary workloads addressed in this dissertation. At the top of the stack are the GNN models and LLM models. Users can use distributed optimizers, e.g., DeepSpeed for LLMs and DGL for GNNs. Both single-GPU execution and distributed optimizers are built on top of PyTorch, although DGL also relies on its library for graph-related operations. At the bottom of the stack are the CUDA runtime and math libraries. The stack comprises five layers from the top to the bottom: (i) Model definition specifies the model architecture and pre-trained parameters. (ii) Distributed optimizers provide mechanisms for device-level parallelism and communication. (iii) Python frameworks offer layer definition, dataloading, and profiling utilities. (iv) The C++ runtime provides a GIL-free context, auto differentiation mechanism, and functionality of operator dispatching. (v) Hardware-specific binaries provide the binaries to execute operators on devices. These binaries may leverage vendor-optimized libraries and provide support for new hardware, e.g., tensor cores on Nvidia GPUs. At this level, support for new operators can be added to the stack by creating new PyTorch extensions and registering them during runtime. PyTorch extensions usepybind11[68]to allow the new C++ code to interact with the Python runtime.
+
+SECTION: Chapter 3Hector: An Efficient GPU Programming and Compilation Framework for Relational Graph Neural Networks
+
+SECTION: 3.1Introduction
+
+GNN-specific machine learning frameworks, e.g., DGL[69]and PyTorch Geometric (PyG)[70], are optimized specifically for homogeneous graphs.
+For example, they implement several highly-optimized operations, e.g., sparse-dense matrix multiply (SpMM) and sampled dense-dense matrix multiply (SDDMM), to speed up the execution[71].
+Most of these operators and optimizations are for homogeneous graphs[72,73,71].
+However, real-world graphs are typically heterogeneous by nature and contain multiple types of nodes and edges.
+For example, a citation graph may represent entities involving authors, articles, etc., as nodes of different types;
+the edges may model various types of relations, e.g., an article citing the others.
+Recently, to incorporate the information provided by such heterogeneity,
+RGNNs[74,75]are proposed to define dedicated parameters and data paths for each type.
+
+RGNN poses three major challenges to the existing GPU computation stack due to its inherent computation patterns, the gap between the programming interface and the kernel APIs, and the high cost of kernel code optimizations due to its coupling with data layout and heterogeneity.
+
+The first challenge with GNN implementations on GPUs stems from their need to traverse graphs and scatter/gather tensor data in order to use high-performance GEMM kernels to implement message passing.
+In RGNN, message passing is the procedure in each layer where an edgewise operation is followed by a nodewise aggregation operation. In other words, messages are passed through edges to the destination nodes. We show how message passing works in models in Section3.2.1.
+During message passing, the graph structure and data layout significantly impact the memory access patterns and execution throughput[76,77]. (Examples and details are in Section3.3).
+Furthermore, as the connectivity of the input graph is involved in the gather computation, the computation patterns of GNNs are affected not only by the model definition but also by the graph. Such data-dependent behavior precludes any one-size-fits-all optimization strategy when executing GNNs. Additionally, RGNN introduces new complications into the design space due to the need for the operations to account for heterogeneity. We detail this in Section3.2.
+
+The second challenge in RGNN implementation stems from the lack of an abstraction layer between the programming interface and kernel APIs, resulting in extra data movement. A typical example is an edgewise typed linear layer.
+We detail the context and cause of the extra data movement in the edgewise typed linear layer in Section3.2.3.
+But essentially, an edgewise typed linear layer multiplies one of the vectors on each edge with the layer weight dedicated to the edge type.
+To achieve this, many existing PyTorch-based systems materialize a temporary three-dimensional edgewise weight tensor, where the slice corresponding to each edge is the weight matrix of its edge type.
+This temporary weight tensor is huge, causing redundant data access and memory footprint.
+Hector avoids such unnecessary copying activities by having typed linear transformations operate on views of tensors, a feature that PyTorch lacks, and decouples the materialization of its operands
+from the source-level expression (Section3.3.2).
+
+Third, code generation is necessary.
+High-performance neural network implementations have historically been based on pre-built libraries, e.g., cuBLAS[78].
+GNNs make this less practical because the number of kernels to optimize is multiplied by the number of adjacency-matrix storage format choices such as Blocked-Ellpack[51].
+For instance, cuSPARSE only supports the latter in a few APIs[79].
+The typed edges and nodes of RGNN further exacerbate the problem, which makes the traditional pre-built libraries even less adequate and compels framework developers to either painstakingly develop optimized layers from scratch or settle for slow implementation.
+For example, it took more than a month for a full-time engineer to implement and deploy the typed linear layer of RGNN in DGL[80].
+Another consequence is the performance degradation caused by limited kernels due to high implementation costs. For example, the DGLHeteroConvoperator uses a Python native loop to separately launch kernels for each of the relation types in a heterogeneous graph, leading to serial execution of small GPU kernels that underutilize GPU resources on small graphs.
+
+To systematically address these challenges, we propose Hector, a two-level IR and an associated code generator framework.
+The higher-level IR, called inter-operator level IR, defines the model semantics as sets of operators and expresses layout choices in a decoupled manner. At the lower level, the intra-operator level IR provides the facility to express template specialization and lower them to CUDA kernels.
+We further propose two optimizations, i.e., compact materialization (Section3.3.2) and linear operator reordering (Section3.3.2).
+We show in the corresponding Sections how these two optimizations are conveniently enabled by the two-level IR design.Sections3.3.2,3.3.3and3.3.4further the design and rationale of the two-level IR.
+
+In short, Hector 1) represents the key properties of RGNN models to capture opportunities to reduce memory accesses in inter-operator scheduling and materialization, 2) generates code flexibly with proper data access schemes to eliminate redundant data movement, and 3) expresses model semantics, data layout, and operator-specific optimization in a decoupled manner to reduce programming effort. To the best of our knowledge, Hector is the first to propose a multi-level IR to capture RGNN-specific opportunities involving cross-relation inter-operator optimizations and tensor data layout with consideration of the type dimension added by RGNNs.
+The contribution of Hector is as follows:
+
+We propose the Hector two-level IR and code generation framework to systematically optimize and generate GPU kernels for RGNN training and inference. It bridges the gap between the programming interface and the kernel generation process, decouples models, data layout, and operator-specific schedule from each other, and leverages optimization opportunities from the three aspects.
+
+We devised the Hector code generator based on two generalized CUDA templates, i.e., a GEMM template and a node and/or edge traversal template. The generated code achieves up to 9.9speed-up in inference and up to 43.7speed-up in training compared to the best among the state-of-the-art systems[81,82,83]when running RGCN, RGAT, and HGT[74,84,75]on heterogeneous datasets provided by DGL and OGB packages[85,86,87,88,89,90]. Hector also encountered fewer out-of-memory (OOM) errors, which is significantly alleviated by the optimization mentioned in Contribution3.
+In fact, with compaction enabled, Hector incurs no OOM error for all the datasets tested.
+
+We devised two optimizations: compact tensor materialization and linear operator reordering.
+The best combination of options varies across models and datasets and further obtains up to 3.8speed-up in inference and 2.7speed-up in training compared to our basic generated code mentioned in Contribution2.
+Through profiling, we found that the improved memory efficiency allows Hector to accommodate larger computations and improve GPU hardware utilization for forward propagation. In contrast, backward propagation does not benefit from larger input due to its latency-bound nature caused by atomic updates and outer products.
+
+SECTION: 3.2Background and Motivation
+
+RGNNs extend GNNs to model different node and edge types for relational graph data.
+For example, extended from GCN, a relational graph convolutional network (RGCN) layer is defined as
+
+, wheredenotes neighbors of nodein relation,is the-th layer node representation of.is the weight for relation.is a problem-specific normalization factor.
+Figure3.1shows an example of how output features are produced in the message passing formulation equivalent to Formula3.1:
+The forward propagation of an RGNN layer could be divided into ① the edge message generation stage and ② the node aggregation stage.
+For simplicity, we focus on the output featureof node: To obtain, ① a messageis generated for each incoming edge, and ② the edge messages go through weighted aggregation and an activation functionto produce.
+Notably, to obtain the output feature of node, the input feature ofitself is applied to theand added to the transformed neighbor features. We call this a virtual self-loop because it could be seen as if each node now has a new edge to itself.
+
+Relational graph attention network (RGAT)[84]and heterogeneous graph transformer (HGT)[75]are shown in Figure3.2. Attention is introduced in these more complex models:
+Attention is produced in the message generation stage together with edge messages.
+Similar to the normalization factor, it is a scalar that emphasizes the message associated with the same edge during the subsequent node aggregation stage. However, attention is learned, as it is produced by operations among weights and features.
+
+In addition to describing GNNs in two stages—message generation and node aggregation—a popular formulation uses the SpMM and SDDMM pair. The DGL[69]paper has proven that GNN message passing can be expressed as generalized SpMM (g-SpMM) and generalized SDDMM (g-SDDMM) operations, with their backward propagation also following the same structure. SpMM computes the product of two matrices,, where the left matrixis sparse and in a sparse matrix format. The right matrixis dense. Notice that each row inis a weighted aggregation of specific rows inaccording to:
+
+whereis the vector of’s-th row, andis the vector of’s-th row. g-SpMM generalizes SpMM in three ways: (1) the scalaris generalized to data corresponding to the edge, (2) the product operatoris generalized to a message function that produces a vector after taking as input the data of the edgeand thevector of node, and (3) the summation operatoris generalized to a custom aggregation function.
+
+SDDMM selectively computes the product of two dense matrices based on a sparse matrix:
+
+whereis the vector of’s-th row,is the vector of’s-th column, andis the sparse matrix. g-SDDMM generalizes SDDMM in two ways: (1) the scalaris generalized to data corresponding to the edgeand (2) the two product operatorsare generalized to one message function that produces a vector after taking as input the data of the edge, thevector of node, and thevector of node.
+
+In non-graph neural networks,
+most linear operators, e.g., convolution, can be efficiently implemented with GEMM kernels.
+GEMM takes up most of the execution time due to its cubic complexity.
+While some operators can be optimized by transformations, e.g., Winograd for convolution layers[91], the operators are still computation-intensive after such computation reduction.
+GPUs are excellent at GEMM because the latter’s high computation complexity allows leveraging the massive parallel compute units on GPUs. At the same time, the input data could be sufficiently reused to allow the memory bandwidth to keep up with the computation throughput.
+
+In contrast, GNNs spend a much larger portion of their execution time on memory-intensive, non-GEMM operations[76,77]. One major source of memory-intensiveness is the sparsity of graphs: to be not bound by the memory bandwidth, Nvidia H100 GPU requires the data reuse of single-precision float to be at least 16 times. However, the average degree of a graph often falls below this threshold, e.g., the graph datasets in Table3.3. The heterogeneity of RGNNs further exacerbates the issue due to lowered data reuse by the introduction of dedicated weights to different edge types and node types, as shown in Figure3.2.
+
+We use an edgewise typed linear layer as an example to walk through the various performance overheads in the existing computation stack, as summarized in Figure3.4.
+Edgewise typed linear layer applies a typed linear operator on each edge to one of its vectors. The weight of the linear operator used in the computation depends on each edge’s type. For example, the edge message in an RGCN layer (Figure3.1) or an RGAT layer (Figure3.2), is produced by a typed linear layer.
+
+A typed linear layer is typically implemented using batched matrix multiply (BMM) or segment matrix multiply (segment MM)[92].
+For example, PyGFastRGCNConvimplemented typed linear layers using BMM to unleash parallelism. However, a temporary tensor must be created from the weight tensor due to the lack of support for indirect addressing by PyTorch tensor APIs: the typed linear layer could be denoted aswhere,andare input feature, output feature of nodeand the weight of node’s type. The middle dimension ofandare needed to make the operation a matrix multiply. However, there is currently no support for specifyingas one of the arguments to an operator in PyTorch;
+one must createbefore the typed linear layer.
+
+Segment MM requires presorting features by types. Then, the node/edge feature tensor is in the form of segments of features of the same type: the segment MM kernel then applies the corresponding weight tensor of the type to each segment.
+If neither BMM nor segment MM can be employed, one may fall back to multiple matrix multiplies, leading to higher device API overhead and GPU under-utilization.
+
+Another type of inefficiency is suboptimal math library calls. PyTorch has routines to handle various scenarios, e.g., a tensor is strided in memory layout or isNestedTensor, a pack of tensors. Consequently, PyTorch sometimes performs BMM by launching multiple general matrix-vector multiplies (GEMVs) kernels, which also leads to API overhead and GPU under-utilization.
+
+Lastly, CUDA math libraries were initially developed for large inputs and may not be efficient for small inputs[78].
+
+To better illustrate the points, Figure3.3breaks down HGT and RGAT inference time on FB15k and MUTAG.
+Section3.4.1details the system configurations and datasets.
+This experiment measured Graphiler[82], which executed compiled TorchScript code and delivered the best inference performance among the existing systems tested in Hector.
+Figure3.3shows that indexing and copying take up a significant portion, and the portion of GEMM operations, i.e., MM vs. Other compute, varied with graphs.
+By profiling, we found that the CUDA API overhead is 22% of the time of the critical path, which is the sum of the API overhead and kernel duration. This is partly due to a huge number of kernel launches caused by 1) libraries calling a series of kernels to fulfill an API invocation and 2) some operators calling separate sets of kernels for each types in the graph.
+
+In contrast, Hector 1)lowers more of the logic to GEMM,
+and 2) assembles kernels with flexible access schemes togather and scatter data on the flyto eliminate redundant data movement. Consequently, Hector does not replicate weights during computation. As shown,this strategy achieves better performance than using hand-optimized kernels with dedicated functions to data movement, e.g., in Graphiler.
+
+To address the performance challenges in RGNN systems due to both RGNN’s inherent computation pattern and the system design, we propose the Hector IR and code generation framework. By the IR design thatdecouplesandexpressesthe model semantics, data layout, and operator-specific schedules, Hector opens up these opportunities and the integration of all three aspects into the design space.
+Table3.1shows the feature comparison of Hector with existing systems.
+
+Graphiler
+
+Seastar
+
+HGL
+
+Hector
+
+SECTION: 3.3Design and Implementation
+
+Hector consists of a programming interface, a code generator, and Python modules.
+The code generator takes in the model definition and generates both CUDA kernels and host functions that configure and invoke the CUDA kernels.
+
+Figure3.5uses an example to illustrate the workflow. The input is an excerpt of DGL code invoking a typed linear layer on the input node features. Applying the@hector.compiledecorator triggers a transpiling pass to lower the code into Hector inter-operator level IR. In this example, the typed linear transformationtyped_linearcan be efficiently implemented as GEMM kernels. To this end, Hector lowers the transform to an operator instance derived from the GEMM template at the inter-operator level. After the analysis and optimizations at the inter-operator level, Hector further lowers the code to a detailed GEMM specification at the intra-operator level. The GEMM outputcollects edge data generated from the node data. The first inputis the weight matrix, and the second inputis the collection of features of all the source nodes of the edges involved. The intra-operator level IR indicates that the GEMM operation should use the default tile width of 16 and be carried out without scatter, gather, or transpose applied to input or output matrices. Eventually, Hector generates a segment MM (Section3.2.3) kernel,gemm_1.
+The Layout Choices section of Figure3.5shows the default layout choice.etype_ptrspecifies the offsets of each segment of different type.row_idxis the source node index array in the COO format. The result tensore["msg"]has the number of edges as the number of rows, and the number of the columns is the input dimension of the hidden layer. We detail in Section3.3.2an optimization technique, compact materialization, that is opened up by the decoupled layout choices from the inter-operator level IR.
+
+The generated code is compiled into a shared library where host functions are exported through thepybind11utilities.
+Hector falls back to existing routines in PyTorch when certain operators are not yet supported.
+During runtime, the precompiled functions are loaded and registered as subclasses of PyTorchautograd.Function.
+
+The inter-operator level IR follows the Python grammar but involves some new constructs, as listed in Table3.2. ListingLABEL:lst:ir_exampleillustrates how the attention calculation in a single-headed RGAT layer could be expressed using the inter-operator level IR.
+Lines 10-16 shows a code segment that generates attention values for all edges of graphgand then invoke theedge_softmax(g)function that spans lines 1 through 9. As shown in ListingLABEL:lst:ir_example, the message generation and aggregation stages are expressed as for-each edge loops starting from line 2, line 8, and line 10, and for-each node loop starting from line 4. To accumulate data from the incoming edges of each node n, then.incoming_edges()iterator is used. Notably, the data layout that specifies how to access the input and output data per edge or node as well as the incoming edges associated with each node, is abstracted away in ListingLABEL:lst:ir_example.
+
+Hector provides a decorator,@hector.compile, to take the existing PyG or DGL forward propagation logic and generate code for it, as exemplified by the input in Figure3.5. The decorator, when applied to a method, invokes a simple transpiling pass that replaces the PyG and DGL method calls, e.g., SpMM/SDDMM, with an implementation in the inter-operator level IR, and replaces supported constructs from PyG and DGL with expressions in Hector IR.
+Similarly to statically-typed compilers in other Python packages[93,94], the function to compile can use most of the Python features except dynamic ones, e.g., assigning objects of different types to the same variable. We support a few types as the function arguments for heterogeneous graphs, involvingTensoranddict[str, Tensor]objects, i.e.,dictobjects where the keys arestrobjects and the values areTensorobjects.
+
+Besides, one can use the Hector inter-operator level IR itself to express the model, as exemplified by ListingLABEL:lst:ir_example.
+
+The Hector inter-operator level IR deliberately abstracts away the data layout from the model semantics. As exemplified by ListingLABEL:lst:ir_example, the IR only expresses the association of variables with nodes or edges, e.g.,e["att"]andn["att_sum"], without dictating the mapping of elements in the conceptual variable to the memory space.
+
+In Hector, we devised compact materialization, which is a technique enabled by the decoupling between model semantics and data layout.
+Note that certain edge data are determined by sparse combinations of source node features and edge types, e.g.in Figure3.2. Rather than computing and storing such data for each edge, we instead compute and store the data once for eachpair that actually exists, reducing the resources spent on computing and storing common subexpressions.
+As exemplified in Figure3.7, the materialized tensor involves seven rows when each row vector corresponds to amsgof an edge.
+Alternatively, the system can materialize the tensor with only five rows, where each row vector corresponds to amsgof anpair.
+We call the former vanilla materialization and the latter compact materialization.
+For the vanilla scheme, the row number is the edge index specified by the sparse adjacency. For the compact scheme, it is a unique non-negative integer assigned to each. We precompute this mapping and store it in a CSR-like format. Hector does not create the temporary weight tensor, as explained in Section3.2.3.
+In summary, compact materialization is a technique to eliminate repetitive identical computations and results in edgewise operators. It is applicable when an edgewise operator depends only on the source node data and edge type, and its output has the shape of. After this optimization, the output shape is reduced to, and repetitive computation is eliminated.
+Section3.4.3provided further analysis of the effects of compact materialization on memory footprint reduction.
+
+Besides tensor materialization, the multi-level IR design also allows data layout optimizations involving 1) architecture-specific optimizations, e.g., padding, and 2) various sparse adjacency encoding.
+At the inter-operator level, data layout specifications are decoupled from the model semantics and do not influence the transform passes at this level.
+However, they determine the data access scheme and make a difference when generating CUDA code at the intra-operator level.
+Hector inter-operator level IR bookkeeps the specifications, which are passed to the intra-operator level during lowering.
+The intra-operator level operator instances choose the data access scheme corresponding to the data layout specifications while assembling the kernel code.
+We leave the exploration of data layout optimizations to future work and detail our plan in Section3.6.
+
+Linear operator reordering is an inter-operator level optimization. When a linear operator, e.g., linear layer and dot product, is followed by another linear operator, their order may be switched.
+For example, forattsas shown in Figure3.8(c), we may calculatefirst instead. Its profitability can be determined by counting the number of multiplication and addition involved in the two GEMMs before and after the order is changed. For now, we implement the pass to switch the orders of two linear operators whenever this produces an operator between weights, because it reduces the complexity by reducing one of its factors, the number of nodes/edges, to the size of hidden dimension. For simplicity, rewritten operator instances use PyTorch BMM to compute the product of weights and apply PyTorch slicing when necessary.
+
+Loop transformation at this level is augmented with the graph-semantic-specific equivalence rule: a for-each loop over the edges is equivalent to a for-each loop nest iterating over all the incoming/outgoing edges of all destination or source node. Loop transformation is applied during the lowering pass to canonicalize and fuse loops in order to more thoroughly identify kernel fusion opportunities.
+
+To lower the IR to the intra-operator level, Hector greedily lowers every eligible operator to instances derived from GEMM templates (Section3.3.3). Then, it fuses each remaining region and lower them to as few traversal instances (Section3.3.3) as possible.
+To achieve this, Hector scans the code three times. Each time, it attempts to lower operators to instances of a specific preference level. During the first pass, it attempts to lower operators to GEMM-template-derived instances. In the next pass, it attempts the traversal-template-derived instances. The third pass will lower all the remaining operators to PyTorch function calls.
+During each pass, whenever an operator can be lowered, Hector marks the operator itself, together with all subsequent operators that can be fused into it, with the lowering decision.
+After all the operators have been examined in a pass, the marked operators are lowered and fused. Before the second pass, it canonicalizes the for loops and fuses loop nests whenever possible to discover kernel fusion opportunities.
+
+The intra-operator level IR serves between the inter-operator level IR and the generated CUDA code. At this level, the IR should encode specifications to emit CUDA code and provide sufficient information specific to each operator invocation to the transform and lowering passes at the inter-operator level.
+The code transformation components at this level provide the methods to generate specialized CUDA code for the operators, to apply operator-specific schedules, and to return necessary information on operator selection and kernel fusion feasibility to the passes at the inter-operator level.
+
+Hector’s code generator ultimately lowers the IR to two basic constructs, the GEMM template and the traversal template.
+Algorithms3.1and3.2illustrate the edge traversal template and the GEMM template.
+The node traversal template is similar to Algorithm3.2, and we will revisit it in Section3.3.4.
+For simplicity, function template specialization refers to routines specialized for the specific instances derived from the two templates and involve 1) function arguments, e.g., number of rows, etc., 2) special registers, e.g.,threadIdx, and 3) loop variables.
+
+We base the code generation on GEMM and traversal templates because RGNNs involve not only sparse operations but also multiple dense operations to project vectors across different semantic spaces.
+The GEMM template serves edgewise and nodewise linear transformations, as exemplified by the computation of RGAT edge messages in Figure3.7. The GEMM template is defined as a matrix multiply augmented with custom gather and scatter schemes. It is formulated aswhere,,are output, input, and weights, respectively;,, andare scatter list, gather list, and the type of the nodes or edges, respectively.
+The traversal template performs generic nodewise or edgewise operations. It serves operators that cannot be lowered to GEMM templates, e.g., edgewise dot products.
+
+As shown in Algorithm3.1, the GEMM template is based on tiled matrix multiplication. The GEMM template starts with the work assignment per block during theGetRange<kid>subroutine (line 1).
+TheidxTileRowandidxTileColwhose range is determined byGetRange<kid>is used to position the workload.
+Typically, it is the coordinate of the tile of the output matrix.
+Factors that affect’s loading scheme,LoadXToShmemIfInRange<kid>, and’s,LoadWToShmemOrRegistersIfInRange<kid>, involve whether gather lists or transpose needs to be applied on the fly (lines 4-5).
+Gather listin the Input section is sometimes needed to locate the rows in the source matrix: For example, in Figure3.7(a),row_idxis needed in step ①.
+The required information will be passed during the lowering.
+The operator instance then accordingly chooses the data access scheme code piece for kernel code generation.
+The storing schemeStoreCIfInRange<kid>depends similarly on whether a scatter list will be applied.
+Atomic intrinsics are used in the case of multiple simultaneous updaters.
+
+In the traversal template, as shown in
+Algorithm3.2, the edge type, node indices retrieval scheme in lines 5-7 depend on the sparse adjacency encoding.
+Similarly to the GEMM template, when a row vector needs to be loaded or stored, the tensor materialization scheme determines how the row is located in the materialized tensor.
+All statements are initially inserted into the innermost loop.
+After Hector finishes the loop transformations, it then defines work assignment on line 1 in Algorithm3.2for the operator instance derived from the traversal template using a simple scheme. For example, if the loop nest is three levels, as exemplified by Algorithm3.2, we assign the outermost loop, i.e.,idxEdgeoridxNodeloop, to each thread block and the two inner loops to the multi-dimensional threads in each block.
+
+At the intra-operator level, the templates work for any sparse adjacency encoding as long as specific interfaces are implemented. For example, the edge traversal shown in Algorithm3.2works as long as the function template specializationGetEType<kid>,GetSrcId<kid>, andGetDstId<kid>are implemented: If the sparse adjacency is COO,GetSrcId<kid>is a subscript operator applied to the row indices array. If it is CSR, thenGetSrcId<kid>is a binary search in the row pointer array.
+
+Central to the code generator is the two-level IR.
+Inter-operator level IR optimizations address the opportunities brought in by heterogeneous relation types. These optimizations manipulate operators and their connections. A high-level IR abstracts away the low-level details that can complicate or even hinder the transformations.
+Intra-operator level IR optimizations reduce the data movement by generating access schemes in kernels rather than using specialized kernels and dedicated indexing/copying kernels. These optimizations manipulate low-level data access and schedule details, and thus are better supported by a low-level IR.
+
+The two-level IR enables concerted but decoupled choices of intermediate data layout and compute schedules.
+For example, in Figure3.5, the semantics of the model are decoupled from the layout choices.
+Hector implements the model semantics and layout choices in intra-operator level IR with specific access schemes.
+The next few paragraphs explain how the two-level IR design facilitates operator-specific optimizations, operator selection, and kernel fusion.
+
+Each instance derived from the GEMM template provides the option to apply a coarsening factor in, to choose the tile size, and to apply__launch_bounds__that limits the number of registers in exchange for more active warps.
+The coarsening factor is the number of elements each thread deals with in the loading, computing, and storing stages. When applied, each block still works on the same assignment, but its number of threads shrinks by the factor[51].
+We also allow a per-row scalar to be applied to the tiles of matrix.
+This eliminates the extra memory-intensive traversal to perform weighted vector summation by attention or norm.
+
+As for the traversal template, similarly to the discussion in Section3.3.2, we incorporate graph-semantic-aware loop transformation rules that allow Hector to leverage graph semantics to open up the trade-off between more data reuse opportunities and greater parallelism. As mentioned in Section3.3.3, initially, all statements are in the innermost loop in each instance derived from the traversal template.
+Loop hoisting is performed to enhance data reuse: The template features insertion points before and after the end of each loop level. For each statement, Hector finds the outermost level where it can be placed before applying the template.
+In addition, the template also provides a partial result aggregation method, which is applied during lowering by default, to reduce global memory traffic by accumulating results within a thread and within a warp before atomically adding them to the data in global memory.
+
+Transformation and lowering passes at the inter-operator level need information about operator instances, specifically operator preference and the feasibility of kernel fusion.
+Preference level is the mechanism Hector uses to select the operator instance when there are multiple candidates. For example, an operator instance derived from the GEMM template may have an alternative derived from the traversal template but the alternative would lead to lower performance due to much lower data reuse.
+For good performance, operator instances derived from the GEMM template are assigned a higher preference level than those derived from the traversal template unless otherwise specified. Instances that fall back to PyTorch have the lowest preference level.
+
+Operator instances also provide methods to determine the feasible operators to be fused within the IR. Operator instances derived from the GEMM template can be fused with the consumer if 1) the latter multiplies the row vectors in the GEMM output with scalars and 2) the two operators are in the same loop (nest). Operator instances derived from the traversal template can be fused with each other as long as they are in the same loop (nest).
+If the inter-operator level pass finds that some temporary variables are created and merely used inside the fused operator, it passes that knowledge to the method so that the variable no longer needs to be created in the global memory.
+
+Similarly to PyTorch, Hector supports auto-differentiation by maintaining the backward propagation counterparts of the operators.
+Hector first emits the backward propagation via inter-operator level IR and removes unused gradients and their computation.
+The lowering and code generation schemes are similar to those in forward propagation.
+However, additional processing is needed because the PyTorch auto-differentiation requires the backward propagation methods to be paired with the forward propagation methods in theautograd.Functiondefinitions. To achieve this, Hector bookkeeps the kernel calls in each forward propagation method. For each forward propagation method, Hector puts all the corresponding backward propagation kernel calls in the body of the backward propagation method.
+
+The code generation procedure emits code based on the CUDA kernel specifications detailed in the form of intra-operator IR. Kernel code generation is fairly straightforward and is implemented using a template-based approach.
+Hector then emits the host functions that configure grids and blocks, gets raw pointers from thelibtorchat::Tensorreferences, and launches the corresponding kernel. The host functions are exported viapybind11utilities.
+
+The Hector performs a pass that scans all the functions generated to collect a list of preprocessing required for the input dataset, involving transposition, converting COO to CSR, etc. The code generator then emits the preprocessing code.
+
+Linear operator reordering and compact materialization are specific to RGNNs. Linear operator reordering is specific to RGNNs because RGNNs typically require linear projections from different semantic spaces, introduced by the heterogeneity of node types and edge types, to a common space before further operations.
+Compact materialization is specific to RGNNs because of the additional tensor dimension brought in by different node types and edge types.
+
+Some of the intra-operator IR optimizations could benefit ordinary GNNs, which can be treated as a special case of RGNNs whose relation type number is one. Intra-operator level IR allows specification of both data access schemes and schedules, thus allowing flexible code generation to accommodate different dense or sparse tensor layouts, a need that often arises from compact materialization. However, the ability to generate code for different data access schemes and schedules can be beneficial when compiling ordinary GNNs.
+
+SECTION: 3.4Evaluation
+
+We evaluate Hector with the following questions to answer.
+
+How does the performance of Hector compare with state-of-the-art systems? How does Hector achieve it?
+
+How much improvement do the two optimizations detailed inSections3.3.2and3.3.2, compaction materialization and linear operator reordering, make?
+
+Any architectural insights for GPU for RGNNs?
+
+Section3.4.2answers Q1.Section3.4.3answers Q2 and further analyzes the performance implications of the two optimizations through a case study.Section3.4.4addresses Q3.
+
+To assess performance, we measure the inference and training time of Hector and other systems on a single-GPU computer. Its hardware components include one Intel Core i9-9900K CPU, 128 GB dual-channel memory, and one Nvidia RTX 3090 GPU with 24 GB memory. The operating system is Ubuntu 18.04.5, with kernel version 5.4.0-135. The CUDA and driver versions are 12.1 and 530.30.02, respectively. PyTorch and DGL versions are 2.0.1 and 1.1.1, respectively.
+
+As shown in Table3.3, we use public datasets from DGL[69]and OGB[85].
+We measure (1) inference and (2) training time on three RGNN models, RGCN[74], RGAT[84], and HGT[75], comparing with previous systems, involving DGL[69], PyG[70], Seastar[81], Graphiler[82], and HGL[83].
+We ported Seastar artifacts to the same version of CUDA and Python packages as Hector depends on because one of Seastar’s dependencies, dgl 0.4, used an API deprecated since CUDA 11.
+
+For RGCN, RGAT, and HGT, excluding comments, Hector took in 51 lines in total and produced more than 3K lines of CUDA kernel code, 5K lines of other C++ code to define host functions, and 2K lines of Python code to define subclasses of PyTorchautograd.Function. The implementation also involves 2K lines of Python code providing common utilities.
+
+To best align with the hyper-parameters prior work used in its evaluation, we set the input and output feature dimensions as 64 and the number of heads as 1.
+We measure the inference and training time of the single layer used.
+In training, to obtain a loss, we compute the negative log-likelihood loss by comparing the output with a precomputed random label tensor.
+For each case, we run the full graph inference and training for at least 10 epochs and average the elapsed time.
+To align with the existing system, nodes are presorted to enable segment MM for typed linear layers.
+
+For the performance of DGL and PyG, we measure all public implementations of these models from DGL, PyG, and Graphiler artifacts.
+PyG provides two RGCN convolution layers:RGCNConvplaces nodes in segments of the same type but launches separate kernels for each of the node types, leading to device underutilization.FastRGCNConvreplicates weights and usesbmm(). It is consistently faster than theRGCNConvimplementation.
+Similarly, DGL’s built-in segmentMM-based RGCN layer is faster than other DGL implementations.
+For HGT, the DGL segmentMM-basedHGTConvprimitive generally has the best performance.
+In the cases where some variants encounter OOM errors, we choose the best among those that run without issues.
+Some cases are missing due to insufficient operator support, such as HGL on HGT and Graphiler on training. We do not measure HGL in inference because it is designed to optimize training.
+
+Figure3.9shows that Hector’s best-optimized code consistently outperforms state-of-the-art systems. It achieves up to 9.9speed-up in inference and up to 43.7speed-up in training against the best state-of-the-art systems. On geometric average, Hector gets 1.79, 8.56, 2.87speed-up in inference via RGCN, RGAT, and HGT, respectively, and 2.59, 11.34, 8.02speed-up in training RGCN, RGAT, and HGT, respectively. The performance advantage is larger in small graphs, demonstrating thatgenerating a single kernel that performs the computation across multiple edge types boosts the performance on small graphs compared to existing systems that run many small kernels.
+
+We see close performance achieved by Graphiler in RGCN and HGT inference. Graphiler leverages PyTorch utilities to produce TorchScript binaries before execution and utilizes edgewise parallelism for edgewise computation. Similarly toRGCNConv, it places node features into segments of the same type but runs separate kernels to perform a typed linear transformation. DGL and PyG, under similar configurations, achieve competitive performance. However, when it comes to RGAT, Graphiler suffers from performance degradation. Because Graphiler relies on pre-programmed fused kernels to deliver a significant portion of the performance boost[82], we postulate that the degradation is due to the non-exhaustiveness of these pre-programmed kernels[95].
+This reflects the drawbacks of compiler design without a code generation mechanism. By contrast, with two-level IR and a code generator, Hector achieves better performance, showing thatgenerating kernels with flexible access scheme that gather and scatter data on the fly eliminates redundant data movement and outperforms indexing/copying followed by hand-optimized GEMM and sparse kernels. Besides, it is challenging to extend Graphiler’s approach to training due to TorchScript’s limited auto-differentiation support. For example,dictobject creation is not supported, but it is a common way to express nodewise and edgewise data.
+
+By comparing Hector with Seastar, which lowers all logic to sparse kernels, we realize thatsparse kernel code generation alone is not efficient in RGNNs: it is better to lower to GEMM kernels as much as possible.
+
+There are two reasons why Hector is more efficient in device memory usage. First, Hector only keeps a single copy of weights, as discussed in Section3.3.2. Replicating weights also affects backward propagation because the gradient of each copy will be derived, occupying extra memory. Second, our compact materialization reduces memory and redundant computation, as explained in Section3.4.3.
+
+Notably, even without compact materialization or linear operator reordering, Hector still consistently outperforms existing systems, as Table3.4shows. In addition, the unoptimized Hector code triggers fewer OOMs than existing systems, with the only exception where the RGAT inference is run on mag and wikikg2.
+For comparison, we also show the statistics of the best optimized Hector code in Table3.4.
+
+Now, we study the effects of compact materialization and linear operator reordering. They are detailed inSections3.3.2and3.3.2.
+We investigate their effects on RGAT and HGT.
+
+Table3.5shows the speed-up on top of Hector unoptimized code by these two optimizations. Due to compact materialization, Hector no longer triggers OOM errors when running RGAT on mag and wikikg2. In addition, in some cases, the layout speeds up the execution due to the common subexpression elimination brought forth by the layout. Compact materialization is hardly possible without a code generation scheme or an IR design that decouples the model semantics, data layout, and operator-specific schedule.
+Besides,data layout choice, compact materialization, in particular, allows further performance enhancementwhile prior work usually focuses on improving the schedule given a specific sparse matrix format. This is shown by the significant speed-ups in the “C[ompact]” columns in Table3.5.
+
+*Normalized by the performance with compact materialization (C) because the unoptimized version triggers OOM errors.
+
+To study how compact materialization reduces the memory footprint, we illustrate the Hector DRAM usage without compact materialization in Figure3.10(b) and the portion of DRAM usage with compact materialization in Figure3.10(a). For simplicity, we define the entity compaction ratio as the number of uniquepairs divided by the number of edges. Figure3.10(b) shows that the memory use of inference and training is highly proportional to the number of edges of the datasets. Figure3.10(a) shows that compact materialization significantly reduces DRAM usage in all datasets. The memory footprint ratio of compact materialization compared with the memory footprint of the unoptimized code correlates with the entity compaction ratio. The memory footprint ratio is higher than the entity compaction ratio, as the memory footprint consists of edgewise data, nodewise data, and weights, whereas the compaction applies to edgewise data only. Besides, in case the average degrees are larger, the memory footprint ratio reduces more significantly, getting closer to the entity compaction ratio.
+
+To better understand the performance benefits of optimizations, Figure3.11studies two cases.
+The entity compaction ratio of AM and FB15k are 57% and 26%, respectively. On AM, the time GEMM instances take is greatly reduced. By comparison, in FB15k, compaction brings less performance improvement due to the less significant GEMM reduction.
+
+In short,due to the data-dependent nature of computation in RGNNs, there is no one-size-fits-all optimization strategy. However, as shown in Table3.5, enabling compaction and reordering obtains fairly good performance consistently and is the best fixed strategy on average in all four scenarios, i.e.,. If Hector presumably chooses the best configuration in every run, it could further get 1.06, 1.33, 1.02, and 1.08speed-up in the four scenarios above, respectively. We leave autotuning to future work.
+
+We show the average time of unoptimized Hector in Figure3.12. We also profile generated kernels when running Hector on RGAT on bgs and am, as shown in Figure3.13.
+
+One thing to note is the sublinear time increase in Figure3.12: when the input and output dimension doubles, the amount of computation and memory accesses becomes close to 4those of the original, but the time increase is typically lower than 2of the original. The reason is increased computation throughput when the size increases, as corroborated by Figure3.13. Moreover, we observed higher throughput when the graph scale increases, e.g., from bgs to am in Figure3.13. Similarly, we witnessed the cuBLAS throughput increases steadily when we keep the right matrix size as (64, 64) and increase the number of rows of the left matrix from 1M (217) to 8M (220). These suggest thatan RGNN system should be memory-efficient in order to accommodate larger models and datasets to fully utilize the massive resources on GPUs. By eliminating unnecessary data copies, Hector achieves better memory efficiency than state-of-the-art systems.
+
+The instruction per cycle (IPC) charts in Figure3.13indicate the traversal kernels are generally latency-bound: on RTX 3090, IPC is ideally four as each SM has four schedulers. Backward propagation kernels have lower throughput due to worsened latency and increased memory bandwidth consumption by doubled memory accesses compared to forward propagation. In backward propagation, backward traversal kernels compute gradients using atomic updates, therefore hindering the throughput; GEMM kernels also, on average, have lower performance due to outer products that compute the delta of weights.
+
+SECTION: 3.5Related Work
+
+General GPU-accelerated GNN libraries.DGL[69]and PyG[70]are among the most popular GNN Python packages that enable easy development and evaluation of GNN models. DGL[69]proposes to implement GNN as SpMM/SDDMM operations. PyG’s key scheme is scatter and gather operations that switch between edge-parallel regions and node-parallel regions. Hector instead built upon GEMM and traversal templates. By lowering the operators to GEMM as much as possible, Hector obtains better RGNN performance.
+Besides, DGL, PyG, and work based on them do not currently provide inter-operator level IR. Hector shows the benefit of capturing
+inter-operator and inter-relation opportunities, e.g., linear-operator reordering, by operator rewrite at the inter-operator level IR. Systems without IR at this level eagerly execute operators without support for such optimizations.
+
+GNN end-to-end compilers.Seastar[81]proposes a vertex-centric compiler stack to generate performant kernels throughout the model’s training and/or inference. Graphiler[82]proposes to program the message passing data flow graph and devises several TorchScript transforms to emit highly optimized inference code. Similarly, HGL[83]is an RGNN compiler. These prior arts 1) expose PyTorch tensors as operands of all operations to users and 2) replicate weight to unleash parallelism due to a lack of support for flexible data access schemes and/or code generation. Thus, they suffer more or less from memory inefficiency and performance degradation.
+Although the general concept of multi-level IR is not new, Hector proposes new optimizations appropriate for each level and effective in reducing data movement and code bloat in the current state of practice:
+Linear operator reordering and compact materialization are two key and novel features to capture and eliminate repetitive computation across edge types. Section3.3.7discussed the generalizability of Hector.
+
+Kernel code optimization.FeatGraph[71]proposes a code optimization framework on top of TVM[96]for user-defined-function-enabled SpMM and SDDMM. Some work proposed optimizations for specific GNN kernels. GE-SpMM[72,97], and work[98]propose optimized schedules for SpMM. Others involve Seastar[81], PyTorch-Direct[16], and TLPGNN[99]. As Hector shows, SpMM/SDDMM is not the only essential kernel in end-to-end RGNN execution. Hector is orthogonal to these prior arts as they can be incorporated into Hector as operator-specific schedules or new templates.
+
+Code generation.SparseTIR[73]and TACO[100]propose IR and code generator for sparse tensor operations.
+MLIR[101]proposes multi-level IR design for deep learning.
+Aligned with this direction, FusedMM[102]unifies the SpMM and SDDMM CPU kernels.
+Hector is different as a higher-level compiler that optimizes the type of operators and generates efficient kernels to handle multiple edge/node types in the RGNN execution. SparseTIR and TACO are tensor-level compilers for sparse operators that may or may not specialize in deep learning.
+While we do not intend to reinvent the general-purpose sparse tensor code generator for completeness or performance, some of these works inspire us. They may be incorporated to enhance the Hector code generator.
+
+SECTION: 3.6Discussion on Extensibility
+
+Hector is designed as an extensible framework to prototype and evaluate new techniques. First, inter-operator optimizations can be prototyped as inter-operator level passes. Second, data layout optimizations can be supported by adding the corresponding intermediate data and adjacency access schemes discussed in Section3.3.2.
+Third, kernel optimizations can be prototyped as a kernel template and operator instances based on it. Alternatively, they can be implemented as operator-specific schedules.
+
+Table3.6shows how the proposed compiler could be extended to support common kernel optimizations from the high-performance computing community. Each row in the table shows an example of the new feature to support in bold, followed by an approach to add support to it in our system. For example, to enable row reordering to balance the load, we can add a schedule option at the intra-operator level such that, when enabled, the compiler remaps the row loop index to the row index.
+
+We focused Hector on single-GPU performance. The kernels Hector generated could serve distributed systems, e.g., DistDGL[111]. Since performance improvement results from the reduction of data movements and memory footprints, it also applies to distributed systems.
+
+In Hector, we craft the code generators on our own for quick prototyping and focus on high-level optimizations. As Hector establishes our understanding of what constructs are needed in the code generators for the traversal kernels, we think it viable to incorporate TACO for the code generation in the future because TACO provides a mature compiler infrastructure that enables the expression and application of optimizations[112]for sparse tensor operations in a principled manner, e.g., loop transformations. However, RGNN scenarios still pose several open challenges to TACO, especially in edge-centric operations. Take the edgewise dot product when computingin Figure3.2as an example. First, to balance the workload, we evenly split the edgewise loop and assign them to threading blocks. If we specify the source-node-wise loop and destination-node-wise loop as two dimensions in the TACO iteration space, we need to fuse these two loop levels to form the edgewise loop to split, but such loop fusion between two loop levels of iteration variables is not supported by TACO yet. Alternatively, we can specify the edgewise loop index as one dimension in the iteration space. In this case, we need indirect addressing to retrieve node data: We need to retrieve ① the source/destination node index by edgewise loop index and then ② the node data. However, indirect addressing is not natively supported in TACO and thus poses the second challenge.
+
+SECTION: 3.7Conclusion
+
+RGNNs are graph neural networks with dedicated structures for modeling the different types of nodes and edges in heterogeneous graphs. While RGNNs have been increasingly adopted in many real-world applications due to their versatility and accuracy, they pose performance and system design challenges: inherent memory-intensive computation patterns, the gap between the programming interface and kernel APIs, and heavy programming effort required to optimize kernels caused by their coupling with data layout and heterogeneity. To systematically address these challenges, we propose Hector, a novel two-level intermediate representation and its code generator framework that
+(a)capturesthe key properties of RGNN models, and opportunities to reduce memory accesses in inter-operator scheduling and materialization,
+(b)generatescode with flexible data access schemes to eliminate redundant data copies, and
+(c)decouplesmodel semantics, data layout, and operators-specific optimizations from each other to reduce programming effort.
+By building on one GEMM template and a node/edge traversal template, Hector achieves up to 9.9speed-up in inference and 43.7speed-up in training compared with the state-of-the-art public systems on select models, RGCN, RGAT, and HGT, when running heterogeneous graphs provided by DGL and OGB.
+In addition, Hector does not trigger any OOM exceptions in these tests.
+We also propose linear operator reordering and compact materialization to further accelerate the system by up to 3.8.
+As an indicator of the reduction of programming effort, Hector takes in 51 lines of code expressing the three models and generates 8K lines of CUDA and C++ code.
+Through profiling, we found that higher memory efficiency allows Hector to accommodate larger input and, therefore, attain higher throughput in forward propagation. In contrast, backward propagation is bound by latency introduced by atomic updates and outer products.
+
+SECTION: Chapter 4PyTorch-Direct: Enabling GPU-Centric Data Access for Very Large Graph Neural Network Training
+
+SECTION: 4.1Introduction
+
+Compared with traditional neural networks, GPU-accelerated systems in large-scale GNNs suffer from performance penalties caused by low effective PCIe bandwidth.
+The scale of graphs in real world is way larger than the tens of gigabytes of capacity the GPU device memory offers;
+Therefore, raw data of the graph is stored in the host memory, and during each mini-batch, the input to the model is transferred to the GPU.
+
+Figure4.1illustrates the data layout and transfer during the training of a GNN model.
+The features of all nodes in the graph are stored in a two-dimensional array, as shown on the left in Figure4.1.
+They encode prior knowledge and stay constant during training.
+In this example, the vector for node 9 is to be output.
+Its neighbors and two-hop neighbors are sampled and required as the input for the graph.
+These sampled neighbors are scattered in the node features array.
+Unfortunately, transferring the scattered data to GPUs with the existing deep neural network (DNN) libraries is not straightforward.
+Initiating a DMA call on each data fragment is too expensive; therefore, the CPUs must first gather the scattered data before the transfer.
+For small graphs, this inefficiency can be bypassed by simply loading the whole features into GPU memory, but real-world graphs can go beyond billions of nodes[1]and thus far exceed the GPU memory capacity.
+
+Conventional wisdom would argue that since the graph feature data is in host memory, the CPU should have a significant latency and bandwidth advantage over GPUs in performing the gather operations on these features. However, with their ability to issue a massive number of concurrent memory accesses to tolerate latency, GPUs have recently been shown to be effective in accessing data with irregular structures like graphs in the host memory[17]. If successful, having the GPUs perform gather operations also eliminates the need to perform a data copy from the CPU to the GPU after the feature data has been gathered.
+It is, therefore, desirable to explore the use of GPUs to perform feature gather accesses to significantly reduce end-to-end GNN training time. This chapter presents PyTorch-Direct, a GPU-centric data access design for GNN training.
+
+PyTorch-Direct adopts zero-copy, in which the node features array is stored in host-pinned memory and can be accessed by GPU kernels directly.
+In a zero-copy access, the GPU sends a PCIe read request to the host memory at the time the GPU core dereferences the pointer.
+Contrary to the usual belief, after careful optimization on access pattern, zero-copy access yields close to peak PCIe bandwidth[17].
+Moreover, it removes the redundant data copy in the host memory incurred during a block transfer.
+Figure4.2(b) shows the transfer procedure after adopting zero-copy access.
+Comparing it with the original procedure in Figure4.2(a) shows that 1) redundant data copy is eliminated, and 2) finer-granularity zero-copy access replaces block transfer.
+
+Nevertheless, incorporating zero-copy into PyTorch is non-trivial.
+PyTorch does not support zero-copy.
+Nor did PyTorch take cross-device access into consideration in its tensor abstraction.
+Specifically, every tensor in PyTorch is bound to a specific device, as illustrated in Figure4.2(b).
+Such device binding governs the computation device and the physical location of the result tensor.
+ PyTorch-Direct devises and implements a full-fledged new tensor type, the unified tensor, accessible by both CPU and GPU.
+It is underlain by zero-copy access, enabling the scheme in Figure4.2(b), and is seamlessly integrated into the PyTorch APIs and runtime.
+Changes needed to adopt it in GNN scripts are minimal.
+
+The contributions of PyTorch-Direct are as follows:
+
+We identify inefficient host-to-GPU data transfer patterns in existing GNN training schemes that cause high CPU utilization and increase end-to-end training time.
+
+We propose
+a GPU-centric data access paradigm with a novel circular shift indexing optimization for GNN training to reduce training time and CPU utilization.
+
+We seamlessly incorporate the proposed system level changes into a popular DNN library, PyTorch, with a comprehensive implementation to benefit a broad range of GNN architectures.
+
+SECTION: 4.2Background and Related Work
+
+One shortcoming of early GNN models is the large memory footprint.
+As inspired by the Laplacian filter, they usually involve an adjacency matrix in each of their hidden layers, which scales up as the size of the graph increases.
+
+To mitigate this, GraphSAGE[30]proposes neighbor sampling along with mini-batch.
+It takes in the node pairs chosen in the mini-batch, their sampled neighbors, and multi-hop neighbors rather than the nodes in the whole graph.
+This dramatically reduces the memory footprint.
+A GraphSAGE model includes two to three aggregation layers, which can be mean, pooling, LSTM, etc.
+Figure4.1shows an example of neighbor sampling on node 9.
+Node indices are represented in hexadecimal.
+Neighbors of node 9 are sampled, constituting the input of the second aggregation layer.
+Similarly, the neighbors of these neighbors are sampled as the input for the first aggregation layer.
+The input of the first aggregation layer is node features from the graph.
+Consequently, the sampled node features are scattered in the node features tensor, as the illustration on the left shows.
+Gathering needs to be done before DMA block transfer in the original mini-batch input transfer scheme, as Figure4.2(a) shows.
+
+In GNN training, the input features are located in a two-dimensional array where the row indices are the identifiers of nodes and the columns are the features of each node.
+In Figure4.2, we show a case of retrieving the node features of the neighboring nodes during the GNN training.
+Due to the structural discrepancy between the graph and the array, accessing the features of neighboring nodes in the graph results in accessing rather unpredictable and non-sequential rows of the Feature Array.
+
+A straightforward approach to sending these non-consecutive rows to the GPU is to call data copying functions likecudaMemcpy()multiple times, once for each row.
+Unfortunately, making multiple calls to data copying functions incurs significant overhead and can be highly inefficient.
+When the input graphs are small, one can bypass this issue by simply placing
+the entire feature array into the GPU memory at the beginning of GNN training.
+However, in reality, it is not reasonable to assume that the entire feature array can always fit into the GPU memory.
+
+Currently, the solutions for training GNNs on huge graphs can be divided mainly into two categories:
+1) Only the immediately necessary features for the current mini-batch are gathered by the CPU and then sent to the GPU memory[1].
+2) Before training, partition the input graphs into multiple smaller subgraphs that can be fit into the GPU memory and then train on them one by one[113,114].
+In the former category, the CPU can become a bottleneck, slowing down the training pipeline. In the latter category, the subgraphs inevitably lose some of the distinct structural patterns of the original graphs[115].
+PyTorch-Direct addresses these deficiencies by enabling the GPU to directly gather all the needed features from the host memory on demand.
+
+To facilitate GNN development, efforts are made to create frameworks that incorporate commonly required functionalities in GNN training based on popular Python-based DNN libraries such as PyTorch and TensorFlow.
+DGL[69]is developed based on MXNet, PyTorch, and TensorFlow.
+PyTorch-Geometric[70]is a PyTorch-based GNN framework.
+StellarGraph[116]and Spektral[117]are based on TensorFlow and Keras API. In PyTorch-Direct, we demonstrate the benefit of our approach by extending PyTorch.
+
+There is rich literature addressing the challenges of large-scale GNNs.
+While this body of work highlights the demands and issues with large-scale GNNs, the novelty of PyTorch-Direct is unique: it mitigates the PCIe bottleneck for these applications by proving the close-to-peak effective PCIe bandwidth of zero-copy in node features gathering and transfer and devising the new APIs and runtime modifications to integrate into PyTorch.
+Works[118,119,114,113,120]propose new models to mitigate the memory footprint, such as graph partitioning, layer sampling, etc. They change the algorithm and empirically may worsen the accuracy[121].
+In comparison, PyTorch-Direct applies to all GNN models using neighbor sampling.
+Work[122]proposes a general GNN processing framework able to utilize multiple GPUs and conduct high-level optimizations, including kernel fusions and dataflow optimizations. Still, it does not account for the PCIe transfer efficiency.
+Work[111]devises a distributed CPU-only GNN processing system, which does not exploit the massive parallelism of GPUs.
+
+Besides, there is much research on large-scale graph processing systems.
+Work[123]utilizes unified memory and static graph ordering to mitigate irregular data access, but our work also applies to dynamic graphs. Work[124]proposes a subgraph generation algorithm and uses DMA engines to perform host-to-device transfer.
+
+There are three ways to transfer data among the CPU and GPUs, i.e., API calls for DMA transfers, on-demand paging by Unified Virtual Memory (UVM)[125,52,126,127,128], and zero-copy access[127,17,129].
+
+The first way is through explicit API calls.
+Host logic in the program invokes the corresponding APIs to perform data transfer.
+The two most commonly used APIs arecudaMemcpy()andcudaMemcpyAsync(), which perform synchronous and asynchronous data copy, respectively.
+The programmer must also specify data movement direction, e.g., host to device, device to device, etc.
+When the API is invoked, the driver uses the DMA engine to perform the transfer.
+If the source data are in the host memory, they will be first copied to a pinned region in the host memory by the CPU, causing extra data movement[128,130].
+As Pearson et al.[128]measured, the effective bandwidth is very low when the transfer size is a few KBs and reaches 50% of the peak bandwidth only when the transfer size is at least 217to 219bytes.
+Given that each node feature typically takes around 1 KB, the host must first gather the node features into a temporary array in host memory before DMA transfer to well utilize PCIe bandwidth.
+
+On-demand paging is the second way. CUDA provides UVM[127]to reduce the burden of memory management.cudaMallocManaged()calls allocate UVM-managed memory regions, which can be accessed by either the host or GPUs in the system.
+During a miss, the driver transparently migrates the page from the remote to the local memory.
+The migration granularity is between 4 KB and 2 MB.
+Since Pascal architecture, Nvidia GPUs use the page faulting mechanism to handle missing pages when accessing a location not in its device memory[131,125].
+UVM provides the programmers with convenience.
+Especially, they do not need to explicitly perform deep copies for every referenced memory region.
+But UVM is not designed to maximize performance.
+As Chien et al.[132]have measured, page faults by unified virtual memory cause non-negligible negative impacts on bandwidth.
+Besides, in GNN, in particular, only a few node features may be accessed per page migration, reducing the effective bandwidth.
+Furthermore, since the total size of all node features is way larger than the device memory, it may cause excessive eviction, further aggravating the originally severe PCIe bottleneck.
+
+The third method is zero-copy access.
+GPU can access any data in the system as long as it is pinned and memory-mapped into the GPU’s address space.
+In zero-copy access, GPU sends the request through the interconnect to get data, without explicit copying or migration in the previously mentioned two mechanisms.
+When accessing host memory, the GPU issues at most cacheline-sized, i.e., 128 bytes, data requests onto PCIe[17].
+There are three APIs or combinations that enable zero-copy in a memory region[25], but for simplicity, we choosecudaMallocHost()in PyTorch-Direct.
+
+SECTION: 4.3Motivation
+
+In current implementations of deep learning frameworks, the host-to-GPU data loading process is CPU-centric.
+When data that needs to be processed by the GPU is scattered in host memory, it is the CPU’s responsibility to gather the data fragments before calling a DMA. Figure4.2(a) shows the four main steps of this CPU-centric approach. The CPU first reads (gathers) the features, i.e., relevant rows of the Feature Array in this example, into its cache (①),
+it then writes them into consecutive locations in a temporary buffer (②)
+before it calls a data copy function to set up a DMA operation (③)
+and finally, the DMA hardware on the GPU reads the data from the temporary buffer in host memory into a corresponding buffer in the GPU memory (④).
+
+In Figure4.3, we show the impact of this CPU-centric data loading approach on GNN training.
+As a comparison, we use AlexNet[133]and ResNet-18[134]as CNN examples and GraphSAGE[30]and graph attention network (GAT)[135]as GNN examples.
+We use Torchvision[136]for CNN training and DGL backed by PyTorch for GNN training.
+While the time spent for data loading is less than 1% of the CNN training time, it consumes 47% and 82% of the GNN training time for GrapSAGE and GAT, respectively.
+As the vertical axis on the right of Figure4.3shows, CPU utilization is also much higher in GNN training.
+This happens partly because the data gathering part of the code is multithreaded and tries to maximize the throughput and thus minimize latency.
+Additionally, multi-threading is also used to maximize the performance of graph traversal and subgraph generation during data loading.
+
+In short, in GNN training, unlike CNN training, data loading incurs significant time and resource overheads. In PyTorch-Direct, we aim to reduce this overhead from inefficient use of CPU resources in gather operations.
+We propose a GPU-centric approach to accessing data for GNN training based on the direct host-memory-access capability of modern GPUs (Figure4.2(b)).
+Modern GPUs have their own address translation units and can access host memory directly.
+If GPUs are connected over PCIe, they can simply generate PCIe read/write I/O
+requests to the host.
+From the programmer’s point of view, accessing host memory can be simply done by dereferencing unified memory pointers, just like dereferencing device memory pointers.
+
+This direct access feature is different from the conventional unified virtual memory (UVM) method, which is based on page migration.
+In UVM, the data transfer between the host and GPU is done in page granularity, which is at least 4 KB per page in modern computing systems.
+Whenever a required page is missing from the GPU, the CPU needs to handle the page fault through a hardware interrupt service.
+Since the minimum data transfer granularity is a page and the hardware interrupt service process is costly, the performance of the UVM method depends on the applications’ spatial and temporal localities[137].
+When dealing with highly irregular data structures such as a graph, using UVM incurs excessive page faults and I/O amplification[123,17,124].
+
+In the following section, we describe our implementation of PyTorch-Direct, which enables GPU-centric data accesses for the PyTorch DNN library.
+We mainly focus on PyTorch in PyTorch-Direct due to its straightforward and intuitive way of binding data to a certain physical location from the user’s perspective.
+However, the main idea of the GPU-centric data accessing mechanism can still be applied to other DNN frameworks, such as TensorFlow.
+
+SECTION: 4.4Design and Implementation
+
+This section describes the design and implementation of PyTorch-Direct.
+First, we provide an overview of design goals and introduce a new type of tensor, i.e.,the unified tensor, which incorporates new concepts in need.
+We then discuss the unified tensor API and its advanced configurations.
+Finally, we describe our implementation and optimizations.
+
+PyTorch-Direct aims to enable GPU out-of-memory training and inference for GNN while incorporating the direct access feature to improve data access performance.
+To achieve this, PyTorch-Direct presents to the developers several API features centered around a new type of tensor called “unified tensor”.
+It is a new, independent type parallel to PyTorch native GPU or CPU tensors from both the user interface perspective and its implementation in the runtime system. We have developed all the supporting code that allows unified tensors to be used as a full-fledged tensor type in all PyTorch runtime activities such as memory allocator,torch.deviceclass, dispatch, etc. This makes it extremely easy for the application developers to adapt their PyTorch code to use unified tensors.
+
+Unified tensors are at the core of the PyTorch-Direct design, which enables GPUs to directly operate on the host memory.
+All CUDA and CPU C++ kernels in PyTorch runtime can directly access unified tensors by simply dereferencing their memory pointers.
+In comparison, PyTorch native CPU tensors can only be accessed by CPU, and CUDA tensors can only be accessed by GPU, thus limiting the type of computation devices that can participate in processing these tensors.
+Unified tensors eliminate these limitations.
+
+By default, PyTorch-Direct allocates the unified tensors in the host memory and allows GPUs to directly access them over the PCIe.
+Since the unified tensors are located in the host memory, their sizes can grow beyond the GPU memory size.
+From the CPU’s perspective, accessing the unified tensors is identical to accessing CPU tensors.
+
+Application developers can adapt their PyTorch code to use unified tensors with minimal changes to their code.
+In ListingLABEL:unified-example-original, we show a simplified example of GNN training in PyTorch.
+After loading all the features into host memory, in every training step, it sends the features in the mini-batch to the GPU by callingto("cuda")before invoking thetrainfunction (lines 10–13).
+
+The procedure with the unified tensor is shown in ListingLABEL:unified-example.
+In this example, to migrate to the unified tensor scheme, the developer only needs to remove theto("cuda")invocation onfeatures[neighbor_id]and instead invoketo("unified")onfeaturesat the beginning.
+The features of the whole graph are now stored in a unified tensor that can hold data beyond the GPU memory capacity.
+After that, GPU kernels that are launched by thetrain()function can directly accessfeaturessince it can access a unified tensor and its derived tensors.
+Therefore,to()calls are not needed anymore.
+Section4.4.2describes more about the API design, including advanced configurations.
+
+As a full-fledged tensor type, unified tensor facilitates a clean implementation of complicated rules in runtime systems and easy future extensions.
+For example, PyTorch-Direct clearly defines the whole set of rules to resolve computation placement and output tensor placement for computation that involves unified tensors, as detailed in Section4.4.3. Thanks to the completeness of the unified tensor, this ruleset is well integrated into the PyTorch runtime system. The implementation details are discussed in Section4.4.4,
+
+PyTorch-Direct APIs are designed to provide an interface to unified tensors in the idiomatic PyTorch manner.
+Table4.1demonstrates the typical use of unified tensor APIs.
+Developers can create a unified tensor by copying from another tensor via PyTorch built-into()method oftorch.Tensor.
+It can also be created from scratch by specifying thedeviceargument as the unified device in PyTorch APIs, such astorch.ones.
+The user can check if a tensor is of unified type by checking theis_unifiedattribute.
+
+Unified tensors can be computed with CPU or CUDA tensors, providing great flexibility.
+Meanwhile, they are free from redundant data movements since the CPU and GPU can directly access their underlying memory without creating temporary copies.
+By contrast, in the native PyTorch API, CPU tensors typically cannot work with CUDA tensors because of the device binding unless additional routines to handle them have been implemented in the PyTorch runtime system.
+For example, the subscript operator allows a CUDA tensor to be indexed by a CPU tensor, and binary and comparison operators accept GPU scalar and CPU scalar as the two operands.
+
+Though unified tensors can be accessed by both CPU and GPUs, we need to define scheme to determine the computation device and the location of result tensors.
+Especially, this scheme may be complicated in scenarios where the operator involves more than two tensors or a hybrid of native tensors and unified tensors.
+
+In the original PyTorch, the dispatch mechanism determines the computation device and result tensor type based on input tensor metadata before executing the operator.
+We followed the same idea and integrated a set of lightweight rules into the existing dispatch mechanism.
+This allows it to be better integrated into the PyTorch runtime and leads to low overhead in performance and programmer effort to adopt the unified tensor.
+There might be more sophisticated ideas, such as computational graphs, but they may drastically change the APIs or cause a bigger performance overhead.
+
+Each unified tensor is designated an affinity mode, either host-affinity or GPU-affinity.
+In the simplest scenario where an operator is applied to a unified tensor in host-affinity mode, the computation and results tensors are placed on the host during execution.
+Similarly, if this happens to a unified tensor in GPU-affinity mode, the computation and result are placed on the GPU.
+The reasoning behind the two modes is simple.
+In GNN mini-batch input transfer, we want the results to stay on the GPU as they are consumed by kernels executing the GNN on the GPU, thus avoiding unnecessary data transfers over PCIe.
+Therefore, the output tensor should be of CUDA type.
+This is what the GPU-affinity mode is for.
+On the other hand, the host-affinity mode allows the result tensor to stick to the unified tensor type and allows for more preprocessing.
+One can switch a host-affinitive unified tensor to GPU-affinity mode once the preprocessing is done.
+
+Switching the affinity mode of a unified tensor can be done easily by a new tensor method.
+It does not incur movements.
+
+Table4.2shows the complete set of rules.
+The number of scalar CPU tensors influences the placement to stay consistent with the existing PyTorch dispatch logic.
+The other factor is if CUDA tensors are participating in the operator because, in that case, the only feasible computation devices are GPUs.
+
+While offering seamless API integration into the existing PyTorch design, this project also integrates it into the PyTorch runtime C++ code in a neat, modular, and extensible way.
+
+The goal of implementation is to realize the flexibility and performance benefits of the unified tensor while keeping modifications to existing logic as minimal as possible, especially with the large number of operator definitions.
+
+The core object in the PyTorch runtime system isat::Tensor.
+Every PyTorch tensor (torch.Tensorobject) is aTHPVariable111“THP” stands for TorcH Python[138].object in C++ runtime code, which is the wrapper class combining anat::Tensorobject with Python metadata.
+The PyTorch runtime dispatches each method call to the proper definition according to the device and data types of the tensor arguments.
+A PyTorch method operating on tensors eventually goes into a function ofat::Tensor222“at” stands for the “A TENsor” library[139]..
+
+PyTorch-Direct implements the unified tensor mechanisms in the PyTorch runtime as a complete type of tensor.
+This makes the design modular, extensible, and well-integrated into the PyTorch runtime code.
+A new memory allocator is implemented to govern the memory allocation for all unified tensors.
+It adapts the allocation pool mechanism from the PyTorch CUDA allocator to reduce the number of CUDA API invocations.
+
+Two dispatch keys are added, corresponding to the two affinity modes mentioned in Section4.4.3.
+Dispatch keys specified by each tensor inform the dispatcher to dispatch the operator to the correct backend to get executed.
+The introduced zero-copy memory allocator uses PyTorch’s pooling idea in PyTorch’s original CUDA to reduce API invocations.
+Besides, auxiliary logic in the build system and runtime is modified to incorporate the changes.
+Only the device-checking logic needs to be changed for most operator definitions, as it now needs to recognize the new unified tensor type.
+
+This project is first developed on top of PyTorch 1.6.
+Around 2.6K lines of code are added or modified to incorporate the complete mechanism detailed in this section.
+To support the latest CUDA microarchitecture in Section4.5, we then migrated the minimal functional part to nightly PyTorch 1.8.
+
+To achieve efficient PCIe data transfer, memory requests from the GPU threads in the same warp should be aligned and merged to the GPU cacheline (128-byte) granularity[17].
+However, the default PyTorch GPU indexing function does not guarantee memory alignment unless the input feature tensors are naturally aligned with the GPU cacheline size.
+In Figure4.4, we depict a simplified working mechanism of the default PyTorch GPU indexing function.
+In this specific example, we scale down the warp size (32 threads in real) and the GPU cacheline size (128 bytes in real) by a factor of eight.
+We assume each feature is 4 bytes, and each node has 11 features.
+Now, due to the size mismatch between the cacheline (16-byte) and the node feature (44-byte), misaligned accesses can occur.
+
+In the example of Figure4.4, assume that the GPU needs to access nodes 0, 2, and 4.
+To achieve this, each thread accesses a single feature.
+For example, the first 11 threads access the 11 features of node 0; the following 11 threads access the 11 features of node 2, and so on.
+This looks simple in a logical view on the left side of Figure4.4, where we highlight the accesses of threads 11–21 to features of node 2.
+However, when we redraw the access patterns based on cacheline and warp alignments on the right side of Figure4.4, we see that the accesses are fragmented into multiple cachelines and warps.
+
+To solve the problem of misaligned access patterns, we use a circular shift method as described in Figure4.5.
+In this method, all threads calculate the required index offset values to make aligned accesses.
+In the case of Figure4.5, the threads need to do a right shift by an offset of one.
+The threads on the edges check the boundary conditions and make additional adjustments by adding or subtracting the length of the node feature so that they do not accidentally access the other node features.
+When the indexed values are written to the output, the output indices are also identically adjusted to maintain the ordering.
+With the optimization, PyTorch-Direct reduces the number of total PCIe requests from seven to five in this case.
+Inside the PyTorch GPU indexing kernel, we check the input tensors and apply this optimization only when the input tensors are unified tensors and the feature widths are not naturally aligned to 128-byte granularity.
+All these adjustments are automatically made due to our modifications to PyTorch source code. As such, no programmer effort is required to solve the memory alignment problem.
+
+SECTION: 4.5Evaluation
+
+This section evaluates PyTorch-Direct performance using a well-defined microbenchmark and end-to-end GNN training.
+Using the microbenchmark, we demonstrate that (1) PyTorch-Direct is faster than the baseline PyTorch approach in accessing features from the GPU under different combinations of data sizes and systems and (2) the effectiveness of our optimized memory alignment mechanism.
+In GNN training, we show the benefit of using PyTorch-Direct for faster training.
+
+Datasets.The datasets we use for the GNN training evaluation are shown in Table4.3.
+For the sk-2005[140], twitter7[141], and wikipedia_link_en[142]datasets, we have created them from existing real-world graphs but with synthetic feature values just for the purpose of training time evaluation.
+Datasets reddit[30], ogbn-products, and ogbn-papers100M[85]are commonly used datasets in the field for comparing the training accuracies between different GNN architectures.
+
+Test System.The platforms we have used for the evaluation are described in Table4.4.
+We use NVIDIA 450.51.05 driver and CUDA 10.2 on the evaluation platforms.
+System2 and System3 configurations are only used in Section4.5.2.
+
+Microbenchmark.We would like to answer the following questions with the microbenchmark:
+
+How does increasing the feature size affect the PyTorch-Direct performance? The feature sizes vary greatly across datasets. For example, while a node of ogbn-products[85]has 100 features, a node of reddit[30]has 602 features.
+
+How does increasing the number of features to be copied affect the PyTorch-Direct performance? Depending on factors such as the connectivity of the input graph and the batch size, the number of neighboring nodes that need to be fetched per batch can vary.
+
+How well does the alignment optimization as discussed in Section4.4.5work with misaligned input features?
+
+What is the performance impact of using PyTorch-Direct on different systems?
+
+The microbenchmark is designed to mimic the behavior of the data gathering and copy processes in the GNN training.
+The microbenchmark uses a random number generator (RNG) to generate random indices, which are used to index feature values.
+The total number of items is fixed to 4M for all experiments.
+
+GNN Training.In this evaluation, we use GraphSAGE[30]and GAT[135]implementations from DGL.
+Both implementations have all necessary utilities (e.g., subgraph generation) to perform GNN mini-batching, which makes it suitable to work even if the input graphs cannot fit into the GPU memory.
+The features are located in host memory, and during training, only the immediately required features are transferred to the GPU memory.
+In the baseline implementation with PyTorch, the required features are gathered by the CPU and then copied to the GPU memory through DMA.
+In the PyTorch-Direct implementation, the entire features are located in the unified tensor and the GPU directly accesses only the immediately required features.
+Besides the data movement parts, the core training algorithms of the DGL implementations are left unmodified.
+
+The result of copying different numbers of features with various sizes is shown in Figure4.6.
+The ideal case only includes the pure data transfer time under the theoretical peak bandwidth of the interconnect.
+Due to the lack of system memory, we do not run the(256K, 16KB)setup with System3.
+With the baseline PyTorch approach, the performance varies greatly depending on the system configurations.
+While the slowdowns in System2 are about 3.31to 5.01, the slowdowns in System1 are about 1.85to 2.82.
+On the other hand, with PyTorch-Direct, we can consistently reach near the ideal performance regardless of the system configuration unless the data transfer volume is very small.
+When the total data transfer volume is very small, the overall execution time is dominated by the CUDA API calls and kernel launch overheads.
+Except for the(8K, 256B)case, the baseline PyTorch approach shows 1.85to 3.98slowdowns, while PyTorch-Direct shows only 1.03to 1.20slowdowns compared with the ideal case.
+Overall, PyTorch-Direct shows about 2.39of performance improvement on average compared to the baseline PyTorch approach.
+
+To evaluate the impact of the memory alignment optimization in PyTorch-Direct, we measure data access times for various feature sizes from 2048-byte to 2076-byte in a 4-byte stride.
+The result is shown in Figure4.7.
+For thePyD Naïvecase, we use the unmodified GPU indexing kernel from PyTorch, and the kernel has no knowledge of memory alignment.
+For thePyD Optimizedcase, the optimization from Section4.4.5is applied.
+
+Figure4.7shows that PyTorch-Direct reduces the data access time significantly compared to the PyTorch baseline.
+However, the benefit is limited without the memory-alignment optimization.
+For example, when the feature size is 2052 bytes, thePyD Naïveprovides only 1.17of performance improvement overPy, while thePyD Optimizedprovides 1.95of performance improvement.
+Based on the results, we observe the optimization provides a consistent benefit over the PyTorch baseline (averagely 1.93) regardless of the data alignment.
+
+In Figure4.8, we compare the breakdown of the training epoch time when using unmodified DGL implementations in PyTorch vs. PyTorch-Direct.
+In the GAT training, we do not runskdataset due to the DGL’s out-of-host-memory error for both PyTorch and PyTorch-Direct cases.
+Similar to the microbenchmark results in Section4.5.2, we observe about 47.1% reduction in the feature copy times.
+The other portions of the training epoch times remain almost identical to the baseline case.
+PyTorch-Direct gives less benefit for datasets with smaller feature sizes (e.g.,paper) because the feature copy time is smaller in the end-to-end training time.
+Similarly, GAT training is computationally heavier than GraphSAGE, and therefore, we observe less benefit of PyTorch-Direct.
+Overall, we observe between 1.01to 1.45speedup when we use PyTorch-Direct in GNN training.
+
+SECTION: 4.6Conclusion
+
+With the increasing adoption of GNNs in the machine learning community, GPUs have become essential to accelerate GNN training.
+However, training GNNs on massive graphs that do not fit in GPU memory is still a challenging task.
+Unlike conventional neural networks, mini-batching input samples
+in GNNs requires complicated tasks such as traversing neighboring nodes and gathering their feature values.
+While this process accounts for a significant portion of the training time, existing GNN implementations using popular deep neural network libraries such as PyTorch are limited to a CPU-centric approach for the entire data preparation step.
+This “all-in-CPU” approach negatively impacts the overall GNN training performance as it over-utilizes CPU resources and hinders GPU acceleration of GNN training.
+To overcome such limitations, we introduce PyTorch-Direct, which enables a GPU-centric data-accessing paradigm for GNN training.
+In PyTorch-Direct, GPUs can efficiently access complicated data structures in host memory directly without CPU intervention.
+Our microbenchmark and end-to-end GNN training results show that PyTorch-Direct reduces data transfer time by 47.1% on average and speeds up GNN training by up to 1.6.
+To minimize programmer effort, we introduce a new “unified tensor” type along with necessary changes to the PyTorch memory allocator, dispatch logic, and placement rules.
+As a result, users need to change at most two lines of their PyTorch GNN training code for each tensor object to take advantage of PyTorch-Direct.
+
+SECTION: Chapter 5SSDTrain: Enhancing Large Language Model Training Throughput by Using SSDs to Keep Activations
+
+SECTION: 5.1Introduction
+
+GPU memory capacity has become a bottleneck for the continued growth of LLMs.
+As Figure5.1shows, the increase of GPU memory capacity is around 60% slower than the LLM size scaling speed and the GPU FP16 throughput improvement. About 80% of the GPU memory used to train recent LLMs consists of activations[143,144], the intermediate tensors produced by forward propagation and reused in backward propagation.
+Furthermore, the memory needed for activations is growing more rapidly than any other memory use, making GPU memory a more severe constraint for future LLM training (see Section5.2.1for details).
+
+Common mitigations are to reduce batch size or through gradient accumulation. With gradient accumulation, a batch is divided into micro-batches that are processed separately between gradient updates. Although gradient accumulation has been adopted by many LLMs[145,47,146], the GPU computation stack is not designed for small inputs, and both mitigations lead to device under-utilization[147,148]and suboptimal math library performance[149].
+Intuitively, a smaller batch size might reduce total training computation through faster convergence. However, LLM trainers have identified a critical batch size for each model, below which convergence speed increases negligibly or even decreases[150,151]. Notably, critical batch size grows during training as training loss is reduced.
+
+Another common approach to reducing GPU memory use is activation checkpointing. With this strategy, only some activations are kept in GPU memory, while others are flushed and then recomputed during backward propagation. For a model withlayers, activation checkpointing can reduce memory requirements fromto[152]. However, as we show in Section5.2.1, even this reduction is insufficient to eliminate the bottleneck posed by the GPU memory limits for future LLMs.
+
+This chapter proposes SSDTrain, a software framework that offloads activations to NVMe SSDs and reloads activations just before they are needed in backward propagation. SSDTrain can fully overlap activation transfers with computation, reducing activation memory usage without incurring significant performance overhead.
+
+SSDs are a more attractive target than main (CPU) memory for several reasons. First, as illustrated in Figure5.2, clusters and cloud instances[154,155,156]typically have limited host memory capacity (100–250 GB per GPU), while SSDs offer much greater capacity. Host memory capacity is further consumed by input data, checkpointing buffers, and other training management buffers, leaving even less capacity for activation offloading. In contrast, as modeled in Section5.3.6, the activation size per GPU per training step in large LLM models can reach hundreds of GBs or even TBs, exceeding the capacity of host memory. Additionally, as Section5.2.1will detail, SSD capacity is increasing faster than the main memory, making SSD the more viable choice in the future. Second, host memory bandwidth is shared across training management tasks and offloaded computation[157,158,159]running on the host CPU (Please see further elaboration onSwapping and offloadingin Section5.5). This shared usage can make host memory bandwidth both limited and unpredictable[160]for saving and restoring activations. In contrast, the SSD bandwidth can be dedicated to activation offloading during training.
+Third, SSDs are more elastic, both by adding more SSDs and even PCIe switches if necessary—as well as through the use of optional remote high-throughput storage[161,162]. Such elasticity allows the data centers to keep up with the fast-growing size of activations. In contrast, the memory capacity of GPU cloud instances and cluster nodes is much more challenging to extend.
+
+SSDTrain makes the following main contributions:
+
+To address the GPU memory capacity issue and the resulting GPU under-utilization during LLM model training, we design and implement the SSDTrain framework to offload activations in LLM training to NVMe SSDs. We demonstrate the viability of SSDTrain on large-scale systems by modeling the performance, estimated SSD lifespan, and the required per-GPU PCIe bandwidth.
+
+With all code in Python except for a tiny CUDA memory allocation API hooking library, SSDTrain works with the latest PyTorch and distributed frameworks, including Megatron[47]and DeepSpeed[48]. We developed and tested SSDTrain with Megatron-DeepSpeed[163]on a two-GPU node with seven Intel Optane SSDs.
+
+Because SSDTrain overlaps the data transfer entirely with computation, it incurs almost no performance overhead. To achieve this, we introduce several optimization techniques, including tensor deduplication, tensor forwarding, and adaptive offloading algorithm.
+
+Evaluation shows SSDTrain achieves almost the same training time per step as the original system without SSDTrain while reducing the activations peak memory use by up to 47%. We introduce the recompute-offload-keep (ROK) curve to compare the SSDTrain offloading with two other tensor placement strategies, keeping activations in memory and layerwise full recomputation. SSDTrain has the same performance as keeping activations in memory and a lower memory peak than activation checkpointing.
+
+We further analyze how the reduced activation memory use may be leveraged to increase throughput by increasing micro-batch size and reducing pipeline parallelism bubbles.
+
+SECTION: 5.2Background and Motivation
+
+As Figure5.12of Section5.4will show, the GPU memory capacity limits the model throughput. By offloading the activations to SSDs, SSDTrain can alleviate this limitation and improve the per-GPU model throughput. An important question is whether the GPU memory capacity will continue to be the limiting factor of per-GPU model throughput according to the trend of LLM scaling. This section shows that the historical trend will make GPU memory capacity an even more critical limiting factor of the per-GPU model throughput.
+
+Neural scaling laws[164,150,151]guide LLM scaling as computing power increases. We follow these laws in our reasoning.
+The whole-system GPU compute throughput, whereis the number of parameters andis the number of tokens in a batch[165]. The Chinchilla scaling law[164]concludes that the optimal model design follows, which impliesto saturate the GPU throughput. Whole-system GPU memory use consists of two parts: activations, which require, whereis the hidden dimension in the layers and is a slow-growing function of, e.g.,, and all other memory use,, including parameters, gradients, and optimizer states. Comparing the factors, we can deduce that (1)grows faster than, and (2) whole-system memory use, which is dominated by the activations, grows slightly slower than the compute throughput(approximated).
+However, Figure5.1shows that the historical growth rate of GPU memory capacity (red dotted line) is less than 50% of that of the compute throughput (yellow dotted line). Therefore,GPU memory capacity will become increasingly inadequate for saturating the compute throughput, and memory for activations will continue to dominate the GPU memory usage.
+
+What about activation checkpointing? Revisiting the prior equation,whereis the number of layers. Activation checkpointing makes the new activations memory use. Sinceandgrow whenincreases and,still grows faster than.
+
+Figure5.3illustrates the trend of the main memory capacity and Figure5.4illustrates the SSD capacity’s trend. As shown, the growth of the main memory capacity still falls behind the demand to sustain GPU throughput growth. On the contrary, the SSD capacity better keeps up with such demand.
+
+Trends in price, latency, and bandwidth have led to the widespread adoption and integration of SSDs into cloud instances and clusters[154,155,156].
+The random write latency of flash has been reduced to tens of microseconds[167], and NVMe SSD data rates are now a few GB/s.
+
+SSD endurance remains a concern: how long will SSDs last in a write-intensive scenario such as activation offloading?
+SSD endurance is determined by the type and number of cells, write amplification factor (WAF), and over-provisioning.
+SSD cells can be purposed to store one bit, i.e., single-level cells (SLCs), or multiple levels, e.g., triple-level cells (TLCs).
+Generally, the more bits a cell stores, the shorter its lifetime in program/erase (P/E) cycles. WAF is the ratio of media write amount to host write amount—SSD writes pages at a time but erases blocks of pages, a coarser granularity. Erasing a partially empty block requires the remaining valid pages to be relocated, causing write amplification.
+In turn, vendors adopt over-provisioning to reserve some blocks for wear leveling, evening out the writes across blocks.
+
+Table5.1samples current SSD models. TheD7-P5620represents a mainstream data center model with 144-layer (L) TLC cells and a rating of three disk writes per day (DWPD). The FL6 andD7-P5810SSDs are designed for write-intensive scenarios and have much higher endurance. Notably, SSD endurance rating uses the JESD testing method[168], performing random writes after tough preconditioning. In our scenario, the writes are large and sequential, as each tensor being offloaded is easily hundreds of MBs. Such writes are more endurance-friendly than those used to determine the JESD rating.
+For example,three-DWPDSSDs generally allow about 2.5as many sequential writes as expected from the JESD rating[169,170,171]. Vendor guidelines[172,173,174]and empirical data[175]corroborate this difference.
+Section5.3.6conducts modeling to demonstrate why mainstream data center SSDs similar toD7-P5620are viable options to support the deployment of SSDTrain in a large-scale LLM training system.
+
+To offload tensors to SSDs with high performance, SSDTrain utilizes GPUDirect Storage (GDS), which enables a direct data path between GPU and local or remote NVMe SSDs[182]. By eliminating the need to involve the CPU for the bounce buffer, GDS enhances bandwidth and reduces both latency and CPU load.
+
+SSDTrain aims to mitigate the training overhead caused by the GPU memory capacity limit, e.g., device underutilization, large pipeline bubble time fraction, etc. In contrast, most existing projects incorporate the offloading mechanism to execute larger models than the original system can fit without offloading at the cost of performance. To this end, there are three differences between SSDTrain and existing work: SSDTrain offloads (a) activations to (b) the SSDs (c) with negligible performance overhead. To the best of our knowledge, SSDTrain is the first work that leverages SSD to offload activations for LLM training.
+
+To take a closer look at the uniqueness of SSDTrain, let us compare it with related work Stronghold[183]and ZeRO-Infinity[184]. For difference (a), SSDTrain offloads activations. Data in LLM training can be categorized into mutually exclusive types: parameters, optimizer states, gradients, and activations.
+In contrast, existing work offloads other data than activations. E.g., Stronghold offloads parameters and gradients. Although ZeRO-Infinity offloads many types of data, when it comes to activations, only a subset as defined in the activation checkpoints, is optionally offloaded. Activations are the intermediate tensors produced in the forward propagation and kept for gradient computation. They are consumed in the backward propagation immediately after the forward propagation. Due to the high computing cost, gradient computation is best done by GPUs. In comparison, parameter updates associated with parameter and gradient offloading are also light and suitable for CPUs, which is why some work leverages the CPU computing power to update the gradients to improve overall throughput.
+
+For difference (c), neither ZeRO-Infinity nor Stronghold is designed to hide long data transfer latency. With activation checkpointing in the CPU memory enabled, at the beginning of the backward propagation of each layer, ZeRO-Infinity loads its checkpoint from the CPU memory and waits until it is done. The data transfer latency is in the critical path. Because Stronghold overlaps data transfer with computation, Stronghold’s evaluation performs significantly better than ZeRO-Infinity. Nevertheless, Stronghold exhibits performance degradation compared with the no-offloading Megatron due to the long transfer latency when using NVMe, as Figures 11 and 14 of Stronghold’s publication show. In contrast, SSDTrain incurs no performance degradation as it overlaps the computation and data transfer well and uses GDS to reduce the SSD access latency.
+
+In summary, SSDTrain must tackle unique challenges, including (i) the micro-second level SSD latency and (ii) the short interval between producing activations in the forward propagation and their consumption in the backward propagation. To achieve this, SSDTrain uses GDS to reduce SSD access latency and carefully schedules data movement so that the computation hides the latency.
+
+Table5.2compares the features of earlier LLM systems supporting activation offloading and SSDTrain:
+
+Direct GPU–SSD data path.As Section5.1mentions, transfer via CPU interferes with CPU workloads, affecting efficiency.
+
+Async data transfer.These systems either block the training computation when loading the offloaded data or synchronize at each layer. Consequently, the I/O latency is exposed in the critical path. SSDTrain hides the I/O latency by overlapping I/O with GPU computation.
+
+Interoperability.Since LLM training requires a synergy of Python packages and the ecosystem is rapidly evolving, it is vital for the offloading feature to have good interoperability with other components in the same library or other libraries. SSDTrain relies on process-local alternation to PyTorch execution and can work with distributed frameworks, such as Megatron and DeepSpeed. In contrast, DeepSpeed’s offloading features, e.g., ZeRO-Infinity, are available only in certain ZeRO stages. ZeRO stage determines what is sharded. For example, stage-3 ZeRO in Fig.5.10sharded optimizer states, gradients, and weights across the data parallel ranks. Flexgen and LLM in a Flash have their own runtime and do not work with distributed frameworks.
+
+Flexgen
+
+LLM in a Flash
+
+ZeRO-Infinity
+
+SSDTrain
+
+SECTION: 5.3Design and Implementation
+
+SSDTrain implements atensor cacheto manage the offloading and reloading of tensors, facilitating the release of memory and the prefetch of tensors back to memory before they are needed for backward propagation.
+Figure5.5demonstrates how SSDTrain works using PyTorch as an example.
+SSDTrain launches its threads (separate from PyTorch’s execution threads) to store tensors (①) and to load them back (⑤). In forward propagation (F), offloading of an activation starts once the operator producing it finishes (①). When activations are reused in backward propagation (B), prefetching (⑤) occurs in the reverse order of layers as recorded during forward propagation (②). If the last layer begins backward propagation immediately after its forward propagation (L3 in micro-batch 2 in the example) , SSDTrain keeps the layer’s activations in GPU memory instead of offloading them (④). SSDTrain keeps individual records for each micro-batch. Upon micro-batch changes (②), SSDTrain switches its record to the one corresponding to the new micro-batch.
+
+Figure5.6shows the SSDTrain software components.
+The tensor cache manages the activations and performs tensor offloading and loading. To achieve this, PyTorch hooks are used to alter PyTorch execution. Section5.3.2details the design and implementation of the tensor cache. SSDTrain has the SSD offloader that targets NVMe SSDs within the same node and the CPU offloader that targets host memory. Each offloader encapsulates the logic to transfer CUDA tensors to and from an offloading target. The SSD offloader leverages the GDS python binding, kvikio[187]. Using theLD_PRELOADlibrary interposition mechanism, CUDA malloc hook is a shared library that alters CUDA memory allocation and free API calls so that the memory is properly registered and deregistered for best GDS performance. This allows us to keep the PyTorch CUDA cached memory allocator for easy comparison with the baseline, without replicating its implementation in a PyTorch pluggable memory allocator or modifying the PyTorch runtime C++ code. The CPU offloader is for future work on clusters with massive remote SSD storage. It is backed by an allocator with pre-allocated host-pinned memory. The pool size is determined by profiling the first training step. New API calls are added to Megatron’s and DeepSpeed’s schedulers so that the tensor cache could get hints about stage changes and micro-batch changes, e.g., ③ and ④ in Figure5.5. The following paragraph details hinted DeepSpeed’s scheduler as an example.
+
+To use SSDTrain, moderate code additions are needed in the existing script:configure_tensor_cache()in Algorithm5.1shows the logic to configure tensor cache before training. The logic registers the PyTorch hooks, bookkeeps the parameters to not offload them when they are registered onto the computational graph, and monkey-patches[188]the schedulers.
+With the dynamicity of PyTorch, monkey-patch overrides a defined function by assigning the custom implementation to the defined function in a package.deepspeed_exec_schedule()shows the hints added to DeepSpeed’s pipeline scheduler. Before and after the execution of each command, APIs are called to notify the tensor cache about the upcoming stage (line 13) and the completion of an action (line 15). Accordingly, the tensor cache can prefetch data or wait for I/O to complete. Megatron’s scheduler is patched similarly.
+
+SSDTrain extends naturally to distributed settings such as use with ZeRO, because frameworks like DeepSpeed and Megatron divide the workload into processes built on top of PyTorch’s built-in tensor functionality.
+By working below PyTorch and keeping each process’ activities local, SSDTrain applies directly to distributed launches.
+
+To benefit from tensor offloading, the GPU memory that the offloaded tensors own must be released when the tensors are not in use. However, by default, PyTorch stores a reference to all the activations on the computational graph, disallowing the GPU memory to be reclaimed. The tensor cache alters the PyTorch execution so that the identifiers, not the references, of the activations are registered on the computational graph; upon PyTorch’s reusing the activation tensor, the tensor cache uses the identifier from the computational graph as the key to return the requested tensor. In forward propagation, when the tensor finishes offloading, the tensor cache no longer holds a reference to it, allowing its memory to be reclaimed by Python garbage collection once the Python control flow gets out of the function scope where the tensor object is used. In the backward propagation, the tensor cache holds a reference to the tensor by loading it from the SSD before its use; when all the module scopes the tensor is referred to have been finished, the reference is no longer held, allowing its memory to be reclaimed.
+
+In short, the tensor cache is the in-memory structure that manages the references to all activations and keeps track of activations’ states, including whether they are being offloaded, the path in the file system, etc.
+
+As Algorithm5.2shows, the tensor cache relies on the three PyTorch hook pairs to alter its execution behavior.
+
+The forward hook pair works in the forward propagation: The start of a module triggers the forward pre-hook, and the finish of a module triggers the forward hook.
+The tensor cache maintains the current scope stack using the forward hook pair: Upon entrance to a module, the module is pushed to the stack;
+when the module exits, it is popped out.
+
+The backward hook pair is similar.
+When entering a module, the tensor cache prefetches activations in upcoming modules. Section5.3.4details prefetching.
+When exiting a module, the tensor cache removes it from the scope lists of all activations. Activations no longer in use are removed, whose memory will be released by garbage collection.
+
+When a tensor is to be registered onto the computational graph, the pack hook is called to produce a value to be registered instead.
+When the tensor is reused, the unpack hooks are called to take in the object on the computational graph and return the original tensor.
+Figure5.7illustrates the tensor cache’s activity when triggering the pack or unpack hook.
+When the multiply operatorfinishes (①), the pack hook is called (②) on the inputxand parametersw.
+Tensor cache has a record of parameters and accordingly returnswto let it be registered on the graph as is.
+The tensor will also be returned as is if the tensor is on CPU or it is too small (line 12 in Algorithm5.2).
+As line 16 in Algorithm5.2shows, the tensor cache does not offload tensors but only keeps a record when the module is to be kept in the memory or in backward propagation.
+The first condition holds true when the adaptive offloading algorithm determines to keep the last few modules in GPU memory (Section5.3.5).
+The second condition is true when an activation-checkpointing-enabled function does recomputation in the backward propagation to reproduce the activations.
+For tensorxin Figure5.7, the tensor cache stores it to the SSDs (③) and returns a tensor identifier.
+When the unpack hook is triggered (Ⓑ), in the backward propagation (Ⓐ), the tensor cache either waits until the prefetch finishes(Ⓒ), and eventually returns the tensor.
+
+Tensor cache has aget_id()method to assign a unique identifier to each tensor.
+The shortcoming of PyTorch nativeid()is that its returned value is related to the GPU memory address. As SSDTrain offloads activations, the latter will be cleared by garbage collection once the control flow goes out of its use scope.
+The GPU memory address may be reused, causing identifier collision.
+To solve this,get_id()combines the timestamp when it first processes the tensor with the tensor shape as the unique identifier. Whenget_id()processes a tensortfor the first time,get_id()adds the current timestamp as an additional attribute to the tensor’s underlying storaget.untyped_storage()instead oft.
+This is because sometimes PyTorch creates newtorch.Tensorobjects representing the identical tensor.
+All futureget_id()calls get the attribute value.
+This deduplicating scheme helps prevent redundant I/Os.
+
+PyTorch registers all needed tensors in backward propagation into the computational graph, including activations and parameters. As SSDTrain focuses on offloading activations, the tensor cache excludes the model parameters. To achieve this, before training, the tensor cache records the identifiers of all model parameters (line 4 in Algorithm5.1). As linear layers store the transpose of the parameter tensors for backward propagation, the unique identifiers of the transpose are recorded. One benefit of ourget_id()scheme is that the identifier for the transpose of the same parameter tensor remains consistent across steps. This is because the transpose uses the original tensor’s underlying storage, to which we already assigned a timestamp before training.
+
+The tensor cache has two thread pools—one for storing tensors and the other for loading tensors. The jobs submitted to each thread pool are executed in first-in-first-out (FIFO) order.
+
+To hide the I/O latency, the tensor cache starts prefetching each activation before the corresponding module’s backward propagation.
+The activations in the last module are kept in GPU memory, so they need not be prefetched.
+This simple scheme suffices because, in PyTorch, the CPU submits GPU kernel launches and memory operations ahead of GPU execution. Prefetching schemes are equivalent as long as there are always I/O tasks in the GPU job queue to keep PCIe busy.
+
+Upon loading a tensor, if it is still being stored, the tensor cache will return its original in-memory reference to skip loading from SSD. We call this data forwarding. For example, in Figure5.7, when the PyTorch engine retrieves tensorxfrom theMulBWDnode, if it is still being stored to the SSDs, it is in memory. Instead of loading the tensor, the tensor cache returns its in-memory reference by converting the weak reference to a reference and storing the obtained reference in the tensor cache for the future if it is used in other scopes.
+
+One insight we got during SSDTrain is that the activation offloading should target minimizing the peak memory usage so that the same system could accommodate a configuration with larger activations without triggering out-of-memory (OOM) errors. Offloading tensors after the peak is not helpful. In Figure5.8, the blue curve is the memory footprint without offloading; it illustrates that GPU memory usage peaks at the beginning of the backward propagation. The black curve shows the memory footprint with offloading, where the peak is delayed by the in-progress offloading jobs and new intermediate tensors created in backward propagation. Excessive tensor offloading may keep the tensor reference even after its last use in backward propagation, delaying the reclamation of its memory. To reduce unnecessary offloading after the peak, we devised adaptive offloading with two features.
+
+First, when a thread is assigned a storing job, the thread will check if the tensor was forwarded. If so, the job will be canceled. Second, as illustrated in Figure5.9, we devise an algorithm to choose a module from which the offloading is paused. We profile a step to collect: (1) the data transfer size and computation time of each MLP block and attention block, and (2) the forward propagation’s computation time, data transfer time, and total data transfer amount. Suppose moduleis the last module to offload in a step. The required data transfer bandwidth is to finish offloading for all the modules beforeand both offloading and reloading for moduleby the time the backward propagation of modulebegins. With the estimate that the backward propagation time is twice the forward propagation time, the required data transfer bandwidth can be calculated by the collected numbers. It should be no larger than the write bandwidth in the measured forward propagation.
+
+To confirm whether our design is viable in large-scale training systems, particularly regarding SSD endurance and required bandwidth, we conduct performance modeling to obtain the forward propagation time per training step and the size of activations produced in the process.
+
+We extend the performance model packagellm-analysis[8].
+To estimate the forward propagation time,llm-analysismodels each transformer layer as a simple pipeline,,
+wheredenotes any layers inside a transformer layer. When ZeRO is enabled, the ZeRO communication time is assumed to be perfectly pipelined with the non-ZeRO computation and memory operations at the level of the transformer layer.
+
+We model the required PCIe write bandwidth per GPU as the total amount of activations divided by half the training time. As Section5.3.5explains, some activations may be written at the early stages of the backward propagation to reduce the needed PCIe bandwidth. We also assume that the training step timeis three times the forward propagation time. The lifespan is then projected aswhereis the lifetime writes allowed by the SSD endurance rating, andis the size of activations per training step. We validated theformula with profiled activations size in experiments in Section5.4. We assume four Solidigm D7-P5620 12.8TB (Table5.1) for each GPU and assume the WAF is 2.5 in JESD rating and 1 in our scenario.
+
+With these, we obtain Figure5.10. We use the system configurations and measured floating point throughput from Megatron-LM[47]. The GPUs are A100 PCIe. Among all cases, the projected lifespan is over three years, and the PCIe write bandwidth per GPU is no greater than 12.1 GB/s.
+Moreover, when the system size scales up, the required PCIe write bandwidth reduces, and the projected lifespan increases. This occurs because larger systems imply increased communication overhead and reduced computation efficiency, thus slowing down training iterations on each GPU. Similar effects are observed when the model size scales up because larger model size leads to longer compute latency with increased
+data reuse and therefore less bandwidth requirement. Section5.4.4discusses the effect of scaling up in detail.
+
+We also estimate the maximal size of activations each GPU produces in one step: We compute the maximal micro-batch size by assuming only two layers in a row are in GPU memory at the same time while all other activations are offloaded. Then, the activation maximal micro-batches produce in a step are the largest activations offloading could open up, which are shown as diamond marks in Figure5.10. The maximal activations size per GPU ranges from 0.4 TB to 1.8 TB, while the micro-batch size ranges from eight to 32. Activations so large can no longer be held by the main memory (Figure5.2), and therefore, SSD is the only choice as an offloading target.
+
+To further increase SSD endurance, the data retention period can be relaxed: NAND flash gets 86P/E cycles when the data retention period is relaxed from three years to one day[189,190,191,192]. This technique was not leveraged in the reasoning of this subsection, but we discuss its impact on cost in Section5.4.4.
+
+SECTION: 5.4Evaluation and Discussion
+
+We evaluate SSDTrain and answer the following questions:
+
+How well does SSDTrain hide the I/O latency?
+
+How much does SSDTrain reduce peak memory usage?
+
+How does SSDTrain effects translate into advantages as a design choice?
+
+Section5.4.2answers Q1 and Q2 by comparing SSDTrain with execution without SSDTrain. To answer Q3, we examine the design space in Section5.4.3and discuss various implications in multiple aspects in Section5.4.4.
+
+We use a machine with two A100 PCIe GPUs and seven Intel P5800X SSDs, as Table5.3specifies. The SSDs are organized into two RAID0 arrays: one with three SSDs and the other with four SSDs. Each array is the dedicated offloading target of one of the A100 GPUs. We measured the memory usage of the A100 with four SSDs during the evaluation. For consistent performance, the GPUs are locked at base frequency. The latest Megatron-DeepSpeed[163]is installed, incorporating DeepSpeed techniques into Megatron and ensuring interoperability.
+
+We measure the system pretraining performance on three models: BERT[43]as an encoder-only model, GPT[41]as a decoder-only model, and T5[45]as an encoder-decoder model.
+We use the OSCAR corpus[193,194]as the dataset.
+
+Before we further explain the model setup, we clarify the batch taxonomy. Like other deep learning models, LLM model training typically uses mini-batches, smaller subsets of the training data. Before Section5.4, we use the terms “mini-batch” and “batch” interchangeably.
+
+However, the introduction of data parallelism complicates this terminology: Now, the samples processed in each training step are partitioned into several groups, and each group is assigned to a data-parallel rank. To avoid confusion, in cases where data parallelism is enabled, we refer to all the samples in each training step as aglobal batch, and we refer to the samples assigned to one data-parallel rank amini-batch. Such cases where data parallelism is enabled are only in Section5.4.4.
+
+Micro-batch is at the lowest level of the batch taxonomy. When gradient accumulation is enabled, a global batch or a mini-batch is further divided into smaller groups for concurrent processing. Similarly, when pipeline parallelism is enabled, such a phenomenon may occur. Each group of samples is called amicro-batch. In particular, micro-batch refers to the samples processed in one operator kernel launch.
+
+We use the two A100 GPUs for tensor parallelism. The number of micro-batches per step is fixed at one because without pipeline parallelism, in each training iteration, Megatron-DeepSpeed will not start a new micro-batch before both forward propagation and backward propagation of the previous micro-batch are done. A micro-batch number larger than one only brings in gradient accumulation and does not affect the activation offloading pattern. In other words, unless stated otherwise, the micro-batch size is equivalent to global batch size throughout Section5.4.
+Throughout Section5.4, no ZeRO technique is used. Besides, the optimizer states, i.e., what stage-1 ZeRO shards only, may be shared across other dimensions than across the data-parallel ranks: In Megatron or Megatron-DeepSpeed, this is enabled by the--use-distributed-optimizerargument, which we also do not enable in experiments across Section5.4.
+In our experiments, the hidden dimension is from 8,192 to 16,384, and we use typical hyper-parameters[43,44,45]for hidden dimensions within this range. The attention head dimension is 128. The text sequence length is 1,024. For T5, the number of decoders is half the number of layers, rounded down. FlashAttention-2[195]is used with or without SSDTrain for optimized attention computation.
+
+As each A100 has only 40 GB of device memory, to explore the design space closer to that in real-world training systems with A100 80 GB and later GPUs[47,143], we make several mitigations. First, we use FP16 instead of mixed precision, eliminating the FP32 weight copy. Second, we use SGD instead of Adam as the optimizer to reduce the memory use by optimizer states. The two measures only affect accumulation operations and weight updates, thus imposing a constant bias in the training step time and memory usage in execution with or without SSDTrain.
+
+To understand SSDTrain’s impact on execution time and peak memory usage, we measure the step time of BERT, T5, and GPT and the memory peak during forward and backward propagation. The collected metrics of the system with SSDTrain and without are compared in Figure5.11. For each model, we collected three scenarios with different (hidden dimension, number of layers): (8192, 4), (12288, 3) and (16384, 2). As shown, SSDTrain has almost no performance overhead in all cases. Although SSDTrain and its optimizations introduce additional CPU-executed logic, the performance comparison indicates that this logic is not on the critical path. Instead, GPU computation defines the critical path, and the CPU’s role lies primarily in launching new GPU jobs before current GPU operations are complete. Thus, the CPU is underutilized, and SSDTrain’s extra work does not lead to delays in new tasks reaching the GPUs.
+Regarding the activations’ memory use, SSDTrain effectively reduces the peak by 28%–40% in these cases.
+
+Notice that throughout Section5.4, neither ZeRO nor the Megatron’s optimizer state sharding, i.e., the feature enabled by the--use-distributed-optimizerargument, are enabled. Both stage-1 ZeRO and Megatron’s optimizer state sharding affect only the weight update stage and have no effect on SSDTrain activation offloading and reloading. As a feature for data parallelism, ZeRO may be enabled when data parallelism is enabled. Data parallelism is typically introduced when the number of GPUs exceeds 100[47,196].
+As to be further explained in the discussion onImpact of Upscalingin Section5.4.4, data parallelism with or without ZeRO will not negatively affect SSDTrain performance.
+
+SSDTrain opens up offloading activations to SSDs as an option besides keeping activations in the GPU memory and activations checkpointing. We compare the three strategies here by plotting the runs on the recompute-offload-keep (ROK) curve.
+Figure5.12shows the ROK curve for training two 3-layer BERT models, one with a hidden dimension of 12,288 and the other with a hidden dimension of 14,336. In a ROK curve, each training run is represented by a point. The x-axis is the activations memory peak, and the y-axis is the model throughput. Model throughput[47]refers to the number of algorithmic computations done in unit time regardless of software and hardware implementation, e.g., whether the activations are recomputed.
+In these two cases, SSDTrain reduces the GPU activations memory peak, allowing a larger micro-batch size to attain higher throughput. Given the same micro-batch size, SSDTrain offloading attains the throughput the same as the throughput when the activations are kept in memory. Meanwhile, SSDTrain gets a lower activations memory peak than the recomputation. Compared with keeping the activations in memory, SSDTrain can double the micro-batch size with the same activations memory budget. Alternatively, people could leverage SSDTrain to run a bigger model or use fewer GPUs.
+
+Other than the three strategies, before FlashAttention[197], Megatron[144]proposed selective recomputation:
+noting that in the transformer layer, the operations performed by the core attention module (the whole gray box in Figure2.1) require less computation but create a large intermediate tensor when compared with the MLP block, the work recomputed only the core attention module.
+As we adopt FlashAttention, the core attention module is done in one kernel, eliminating these intermediate tensors. The effect of selective recomputation with FlashAttention has a negligible impact on the performance and the peak memory usage for activations.
+
+To understand the accuracy of the performance model in Section5.3.6, we compare the offloaded amount by SSDTrain with the model estimate. As shown in Table5.4, the figures are close. We also compute the required PCIe write bandwidth using half of the measured training time. The PCIe write bandwidth is reduced as the hidden dimension gets larger. Typically, a model with more than 60B parameters has a hidden dimension of no less than 8K[44,164]. The PCIe write bandwidth of the BERT models aligns with the estimate in Section5.3.6.
+
+When LLM systems scale up, the computation efficiency decreases due to more cross-node communication.
+Section5.2.1demonstrates that the whole-system activations sizegrows slower than the whole-system GPU throughput, i.e.,. Therefore, the bandwidth required to fully overlap the computation with the SSD accesses is reduced.
+In short, LLM scaling is essentially a weak scaling scenario, and SSD I/O latency is easier to hide when scaled up.
+
+As shown in Table5.4, the required SSD throughput per GPU to fully offload tensors is negatively correlated with the hidden dimension of the LLM model, a factor of the model scale. Since most computation is GEMM, theoretically, the required SSD throughput per GPU is approximately inversely proportional to the hidden dimension of the LLM model, assuming the GPU model and computational efficiency are the same. The evaluation shows that the SSDTrain offloading performs well with two GPUs and a hidden dimension of 8K. Given that all data transfers SSDTrain offloading incurs are within the node, this configuration pressured the system more than some larger configurations, e.g., four GPUs per node and hidden dimension as 16K.
+
+In Table5.5, we further project the impact of upscaling on the write bandwidth per GPU usingllm-analysis. We follow typical parallelism configurations[47,196]when the number of GPUs is less than 100: Initially, all GPUs are dedicated to tensor parallelism, and as the number of GPUs increases, we gradually increase the pipeline parallelism factor. In all projected cases, the write bandwidth per GPU is smaller than the corresponding original two-GPU case shown in Table5.4. Notice that Table5.5does not study the effect of data parallelism, which is typically adopted when the number of GPUs exceeds 100. Vanilla data parallelism only affects the weight update stage and does not affect the write bandwidth because SSD offloading and reloading only happen during forward and backward propagation. A configuration with ZeRO-enabled data parallelism has no greater required write bandwidth than the corresponding configuration without data parallelism because the introduced communication operations may delay forward propagation and backward propagation.
+
+To further understand how larger micro-batch size improves the performance, we compare the no-offloading cases in Figure5.12(a) to the same configurations with global batch size as one and break down the throughput improvement in Table5.6. The improvement comes from higher kernel throughput and time-saving by weight update, where weight update saving is consistently the primary source. Such a benefit is very relevant to large-scale LLM training systems. The micro-batch size is usually set as one or two in Paxml[198]and BLOOM[146]pretraining. For these two models, the micro-batch size is set small in exchange for smaller bubbles introduced by the pipeline parallelism. The bubble time percentage is inversely proportional to the number of micro-batches. For example, in the BLOOM training system, the tensor parallelism factor is four, and the pipeline parallelism factor is 12. In each training step, each data-parallel rank is assigned a mini-batch with 32 samples. When the micro-batch size is no less than four, the ideal pipeline bubble time percentage is no less than 11.5%. However, the weight update and gradient accumulation cost is inversely proportional to the micro-batch size. When the micro-batch size is one or two, the cost is enormous. SSDTrain allows larger micro-batch sizes given the same activation memory budget, thus beneficial to these pipeline-parallelism-enabled training systems.
+
+This work focuses on offloading activations. When the size of weights gets larger, it becomes more desirable to offload weights. SSDTrain can be configured to offload weights as well. As Section5.3.2explained, the tensor cache keeps a record of all the weights and ignores them when the pack hook is triggered. The tensor cache may be modified to offload weights in a profitable situation. For each operator, e.g., a matrix multiply, the amount of computation, weight size, and input size can be determined from the model specification without execution. SSDTrain can decide whether to offload one or both according to the GPU FP16 throughput and SSD write bandwidth. A reasonable starting strategy is to offload as much as possible while staying within SSD write bandwidth.
+
+Furthermore, SSDTrain could be extended to generate an optimized plan for all operators in the model before the execution by framing the decision-making process into an optimization problem and solving it. Offloading weights works when the pipeline parallelism factor is small. When the pipeline parallelism factor is large, careful planning is needed to determine what to offload because some weights are immediately reused by the later micro-batches.
+
+Notice that offloading weights to the main memory, together with weight update to the CPU, has been explored in prior work[184,157]. In the future, it may be explored to use SSDTrain together with any of the prior work to offload activations to the device memory and offload weights to the main memory. We leave the discussion to the elaboration onSwapping and offloadingin Section5.5.
+
+We study the SSD cost associated with adopting SSDTrain offloading in LLM systems.
+To obtain the endurance in Figure5.10, each A100 priced at US$10K[199]is paired with a total of US$6.4K worth of SSDs.
+In the evaluation, we allocate seven Intel Optane P5800X for the two A100s. Although P5800X is more expensive than the models in Table5.1, the price per PBW is comparable at US$10.27[200].
+We can further reduce the cost to a few percentage points by relaxing the data retention period: For example, for all cases shown in Figure5.10, Figure5.13shows that using four Samsung 980 PRO 1 TB for each A100 provides more than two years of SSD lifespan. The corresponding SSD cost is US$360 per A100[201,202].
+To have more durable storage for other data, the system may restrict the activation offloading to dedicated SSDs or utilize hardware equipped with Zoned Namespaces (ZNS) standard[203,204]to confine the wear within designated zones of physical blocks on the same SSD.
+
+Another significant cost factor is electricity. Each SSD costs around 20 watts, whereas a single GPU can easily draw several hundred watts. Taking other factors, e.g., commissioning, cooling, etc., into consideration[205,206], the total cost of ownership (TCO) of each GPU is an order of magnitude higher than its corresponding SSDs[207,208].
+
+Will NVMe SSDs continue to be a good offloading target in the future? As shown in Figure1.1, historically, the PCIe bandwidth per lane has grown faster than the minimum requirement to keep up with the FP16 throughput, i.e.,of the growth rate of FP16 throughput. The PCIe bandwidth has continued to grow rapidly, with new standards frequently released that double the bandwidth per lane of the previous version.
+Whenever a new PCIe standard is adopted, SSD vendors promptly release SSD products that provide the increased bandwidth aligned with the new PCIe standard.
+Therefore, the analysis we have done and all the conclusions we have drawn on SSDs in Chapter5will still be valid in the future.
+
+First,Cost Analysisshows the cost of SSDs in a system with SSDTrain enabled is an order of magnitude lower than that of GPUs. Therefore, adopting SSDs to enable SSDTrain, whether as an upgrade to existing on-premises clusters or in new on-premises machines, is profitable. The power supply should not be a problem: Typically, clusters have sufficient power redundancy to support upgrades that add new SSDs[205]. However, adopting SSDs in cloud instances may not be profitable if high-throughput SSDs are too costly[161].
+
+Second, some clusters may have a lower SSD-to-GPU ratio.
+Two measures can be taken for such clusters. First, a portion of the processes on the node can use the CPU offloader (Figure5.6) to offload tensors to the CPUs. Second, the adaptive offloading mechanism (Figure5.9) measures the I/O bandwidth and determines the amount of tensors to be offloaded so as not to delay the training process.
+
+Let us conduct a case study on DGX H100 systems[209]. Each DGX H100 node is equipped with dual-socket CPUs and eight GPUs. Within each DGX H100 node, in addition to 10 local NVMe SSDs, a significant number of PCIe lanes are allocated to storage network adapters that enable high-performance access to NVMe over Fabrics (NVMe-oF)[210]. Since GDS supports both local NVMe SSDs and remote NVMe-oF SSDs, SSDTrain is compatible with both types of storage in the DGX H100 system. GDS still provides acceleration[211,212]when the remote SSDs are purposed as a distributed file system, e.g., Lustre, and optimized file format is used, e.g., HDF5. Users can choose to offload activations to local SSDs when their bandwidth and capacity are sufficient. If additional bandwidth or capacity are needed, users may utilize remote SSDs when available and/or choose the host memory as an additional target, as discussed above.
+
+SECTION: 5.5Related Work
+
+Swapping and offloading.Many LLM systems with offloading abilities are inference-only[213,185,186]. In inference, weights and KV-cache never change and are reused across iterations; researchers leverage this to enhance locality and memory efficiency. However, in LLM training, the weights are updated in each iteration, and all tensors change across the iterations. Some work avails offloading features[184]for training but is mostly designed to accommodate larger models in a smaller system at the cost of performance. They lack the asynchronous data transfer ability to maintain performance.
+
+Another direction is to offload data and the associated computation to the CPU[158,157,159]. The offloaded computation is relatively light, and the offloaded data include gradients, sparse elements in the weights, etc.
+Recognizing this direction, SSDTrain is made orthogonal because we offload the activations to SSDs via GDS to minimize the interference with the CPU. Activations are for gradient computation, which is compute-intensive and best done solely on GPUs.
+
+Before the massive adoption of LLMs, there is work on offloading data for deep learning[214,215,160,216,217]. Most of them offload data to main memory while some[160]enable the GPU–SSD data path. LLM training is unique because massive parallelism and its implications on the memory use of optimizer states, gradients, and weights are fundamental to the design space. SSDTrain naturally supports multiple GPUs. Besides, we demonstrated its viability on clusters and introduced the ROK curve to help with the design choice. On the other hand, LLMs have such a high demand for computing power that it stimulates rapid development in specialized hardware, e.g., transformer engine[218], and distributed frameworks. This is why we ensure good interoperability. In contrast, most earlier work in this direction is bound to a specific PyTorch version or a custom runtime with support to select layers.
+
+Quantization and sparsity.Some work on offloading uses quantization and/or sparsity to reduce the I/O size[185,186,160]. To reduce computation, algorithms have been proposed to quantize parameters and introduce sparsity into the model[219,220,221,222,223]. Mixture-of-Experts (MoE)[224]is in this direction as it sparsifies the token-to-neuron connection in the MLP to the token-to-expert connection. Some algorithms introduce structured sparsity, e.g., N:M[225]sparsity and 2:4[226]sparsity. On the other hand, there are frameworks and specialized kernels to accelerate models with quantization and/or sparsity[227,228,229,230]. Some kernels leverage specialized hardware, e.g., Ampere tensor core[231,232].
+These techniques are orthogonal to SSDTrain and can be used to alternate the model and accelerate the computation while using SSDTrain. Notably, given the hardware, the reuse factor to fully overlap the computation with PCIe transfer will change according to the new numerical format or sparsity access pattern. We believe that SSDTrain’s adaptive offloading algorithm helps optimize the offload amounts in these cases.
+
+Optimized kernels.Previous work develops optimized kernels to accelerate LLM[197,195,233]. Some kernels utilize special hardware[234]. SSDTrain’s interoperability ensures it can be used easily with these and upcoming techniques.
+
+SECTION: 5.6Conclusion
+
+The growth rate of the GPU memory capacity has not been able to keep up with that of the size of LLMs,
+hindering the model training process. In particular, activations—the intermediate tensors produced during forward propagation and reused in backward propagation—dominate the GPU memory use. To address this challenge, we propose SSDTrain to efficiently offload activations to high-capacity NVMe SSDs. This approach reduces GPU memory usage without impacting performance by adaptively overlapping data transfers with computation. SSDTrain is compatible with popular deep learning frameworks such as PyTorch, Megatron, and DeepSpeed and employs techniques such as tensor deduplication, forwarding, and adaptive offloading to further enhance efficiency. We extensively tested popular LLMs such as GPT, BERT, and T5. The results demonstrate that SSDTrain effectively reduces 47% of the activation peak memory usage. At the same time, SSDTrain perfectly overlaps the I/O with the computation and incurs negligible performance overhead. We introduce the ROK curve to compare the SSDTrain offloading with two other tensor placement strategies, keeping activations in GPU memory and layerwise full recomputation. SSDTrain achieves better memory savings than layerwise full recomputation while retaining the performance of keeping the activations in memory. We further analyze how SSDTrain increases training throughput by increasing micro-batch size and reducing pipeline bubbles.
+
+SECTION: Chapter 6Discussion and Future Work
+
+Before concluding this dissertation in Chapter7, this chapter provides a final discussion on the contributions made in this work and introduces potential future directions. Section6.1examines the advantages and limitations of various approaches to integrate techniques into the PyTorch stack. Section6.2explains how future work can further our investigation into data-efficient deep learning training. Lastly, Section6.3elaborates on how the optimizations proposed in this dissertation can be applied to other data-intensive workloads, particularly tabular data analysis.
+
+SECTION: 6.1Discussion on Integrating Techniques into the PyTorch Stack
+
+In this dissertation, we propose and implement three projects: Hector, PyTorch-Direct, and SSDTrain. All are incorporated into the PyTorch stack in different ways.
+PyTorch-Direct wraps the zero-copy-enabled dispatch ruleset into a full-fledged unified tensor type and incorporates that into the PyTorch C++ runtime, which requires recompiling the PyTorch source code (Section4.4.1).
+Hector generates the kernels, compiles them as a PyTorch extension library, and loads them before training. The code generator and auxiliary logic, e.g., graph loading, are in Python (Section3.3.1).
+SSDTrain has all logic in Python, except for an interposed library to register memory in GDS during device memory allocation and deregister the memory during deallocation (Section5.3.1). The software components of the three works are shown in Table6.1.
+
+Similarly to Hector, most of the literature incorporating changes into the PyTorch runtime creates Python extension libraries to achieve this, e.g., DeepSpeed[48], Megatron[47], Graphiler[82]. Similarly to PyTorch-Direct, some projects make changes to the PyTorch source code and recompile it to incorporate extensive modifications to the PyTorch runtime. For example, FlashNeuron[160]introduces the tensor offloading mechanism into PyTorch. PopTorch[235]incorporates support for GraphCore’s accelerator, which requires adding a new dispatch key.
+
+Unlike Python extension libraries and interposed libraries, modifying and recompiling the PyTorch source code usually requires consistent efforts to keep up with the latest PyTorch changes in the long run, especially when the changes are maintained in an out-of-tree repository. Merging modifications to the official PyTorch repository will alleviate such consistent efforts, if possible. Therefore, for research projects, modifying the PyTorch source code is advisable only when the other two methods are insufficient in adding the required functionality, e.g., adding new dispatch keys.
+In light of this, our SSDTrain project is carefully developed without modifying the PyTorch source code, unlike other projects such as FlashNeuron, as discussed in Section5.5.
+As for the PyTorch-Direct project, changes in the PyTorch source code are required to incorporate the GPU-centric paradigm in exchange for keeping PyTorch’s original programming interface. We have worked with the DGL team to integrate the particular optimized transfer scheme into the DGL repository[236,237,238,239,240]so that the optimized scheme can be activated through explicit new APIs without the need to recompile modified PyTorch source code.
+
+SECTION: 6.2Further Exploration in Deep Learning Training
+
+Cost modeling and inter-operator scheduling are two key areas to deepen our exploration in deep learning training. Cost modeling helps choose the optimized design in the efficient frontier of the design space complicated by data efficiency.
+Inter-operator scheduling helps hide the latency of memory accesses and data transfers with other operators.
+
+For Hector, devise algorithms to select layouts, optimizations, and schedules according to model, input graph, and GPU architecture.One of the most important compiler research problems is the algorithm that makes choices among candidates in the design space. It remains an open problem how the data-dependent sparse operations and layout choices fit in the cost model and layout choices. Pertinently, in various applications in high-performance computing (HPC) with multiple layout and kernel choices, researchers have developed heuristics to make the optimized choice[241,242,243]. Besides, the specific microarchitecture of each GPU model also makes a difference due to the architecture-specific features available, e.g., asynchronous loading to shared memory since Ampere[244], and different microarchitecture characteristics in each model. Therefore, it is meaningful to investigate their impact and incorporate them into decision-making.
+
+For SSDTrain, devise algorithms to pick the optimized design choice in the combined design space of both LLM parallelism strategies and tensor placement strategies.SSDTrain demonstrates that offloading opens up design choices on the efficient frontier, given a parallelism strategy. With the memory savings from SSDTrain offloading, we may choose a new LLM parallelism strategy with higher throughput at the cost of more per-GPU memory use. For example, as mentioned, the larger amount of activations SSDTrain allows to accommodate can be allocated to enlarge the number of micro-batches and/or to enlarge the micro-batch size.
+On the other hand, pipeline parallelism brings about bubbles of idleness of the device, which could be mitigated by a larger number of micro-batches[47].
+Both the throughput boost by increased micro-batch size and that by increased number of micro-batches saturate at a point, leaving the optimized strategy to allocate activations memory given parallelism configurations an intriguing question to explore. A broader and more general challenge is how to systematically explore the combined design space of both LLM parallelism and tensor placement strategies and find the optimized design choice. In addition to throughput, TCO is an essential target. For example, it is valuable to understand the minimal SSD requirements for a particular scenario and the upgrade cost from an existing cluster configuration.
+
+In its latest systems software stack, Nvidia provides CUDA Graph as a performant task graph runtime. CUDA Graph reduces the launch overhead of kernels and schedules and executes tasks in the graph while their dependencies are preserved. We use CUDA Graph for low-overhead inter-operator scheduling.
+
+Hide memory latency of sparse operations by enhancing intra-SM parallelism via CUDA Graph.We have observed that both GNNs and LLMs involve a mixture of sparse operations and dense operations: for GNNs, we have broken down the models to GEMM kernels and traversal kernels; for LLMs, the layers are typically dense if neither specific design, e.g., mixture-of-experts[245], is performed nor pruning is done, but the output of the activation layers is typically sparse by its nature.
+
+The mixture of dense and sparse operations allows us to hide the memory latency of sparse operations by running dense and sparse operations in parallel. In particular, we will break down sparse and dense operations into smaller kernels and schedule them so that both dense and sparse kernels are run on the same SM simultaneously. For example, GEMM and SpMM can be broken down by partitioning the input matrices into blocks and performing matrix multiplication among block pairs before reduction. To reduce launch overhead, we use the CUDA graph to manage task dependencies and execute the series of kernels.
+
+For GNNs, optimize data movement in mini-batch training.Graphs not fitting into GPU memory must stay in host memory or even storage during RGNN execution. In each step, the subgraphs are sampled and transferred to the GPU. With knowledge of graph semantics, data layout, and operator-specific schedules, Hector can help improve the scheduling of sampling and data transfer and generate CUDA kernels that gather data from the host memory on the fly[16].
+
+During backward propagation, the system needs to compute the gradient of both the weights and the input for each layer. This doubles the cost compared to forward propagation. On the other hand, the computation of the two gradients uses identical tensors, creating an opportunity yet to be leveraged to reuse data across the calculation of the two gradients.
+
+SECTION: 6.3Applying Techniques to Tabular Data Analysis
+
+Data tables have been widely adopted in data analytics and machine learning pipelines. Data analytics aims to gain insights from massive data, where data tables are a core data structure. In SQL database systems, tables are essential elements to organize raw data and outputs of each query; in many data processing libraries and languages, such as pandas and R, data tables are the fundamental class as well. In machine learning pipelines, data tables hold the data, at least during preprocessing, before input to the machine learning model. The preprocessing stages involve ETL (extract, transform, and load) and feature engineering. Preprocessing may reoccur in data streaming scenarios or when iteratively refining the algorithm. Data processing takes a substantial amount of time: 80%—90% of the work time of a data scientist is dedicated to processing data[246,247].
+
+Thanks to the high bandwidth of device memory and a massive number of processing units, GPUs could greatly help analytical workloads that typically involve many simple homogeneous operations. Aligned with this direction, many GPU-optimized databases have been established recently, involving Brytlyt, Kinetica, OmniSci (formerly MapD), SQream, etc.[248]Nvidia released the RAPIDS Python suite to allow developers to run end-to-end data analytics and data science pipelines on the GPU[249]. Central to it is the cudf package, which is the CUDA equivalent of the data table Python package pandas. In cudf, in-memory data tables are in columnar format. Other packages in RAPIDS, e.g., BlazingSQL, cuGraph, etc., enable SQL queries, graph analytics, etc., by using cudf to store data in data tables.
+
+Similarly to deep learning training, tabular data analysis is data-intensive[250]. Data table operations typically have small arithmetical intensity, e.g., comparing the values of two columns and light arithmetic computation of a few cells for each row. Besides, real-world tabular data analysis usually involves massive data, rendering the limited GPU HBM memory capacity a problem[251].
+
+The techniques proposed in this dissertation can also be applied to tabular data analysis. As an example, the following explains how code generation with flexible data access schemes proposed by the Hector project could help tabular data analysis with indexes.
+Index is an essential optimization in tabular data analysis[252,253]: Index stores the presorted results of a column or multiple columns and the mapping from the result to the row index in the original table. Many data table operations can be accelerated using the index to save computation.
+Nevertheless, GPU-accelerated tabular data analysis software has limited support on indices[254,255].
+By introducing a Hector-like code generator with optional indirect addressing by index, the software gets 1) optimized kernel development cost without the need to maintain kernel variants of the same operator and 2) free of intermediate data tables when doing indirect addressing.
+Such optimization is aligned with kernel fusion for tabular data analysis[250,256], and the optimizations to avoid materialization of intermediate data tables[257]. However, none of these existing projects support the index.
+
+SECTION: Chapter 7Conclusion
+
+Due to both demand from the workload and hardware advancements, it becomes increasingly critical to ensure data efficiency in deep learning training.
+Data inefficiency in deep learning training arises from the data-intensive nature of workloads and the oversimplification inherent in the PyTorch computing stack.
+To effectively mitigate data inefficiency for deep learning training, this dissertation analyzes data inefficiency in representative deep training tasks, specifically in GNNs and LLMs. It then proposes novel runtime and code generation techniques to mitigate these challenges and implements these optimizations seamlessly within the PyTorch stack while maintaining strong programmability and interoperability.
+
+First, this dissertation devises the Hector IR and code generator. By introducing domain-specific high-level abstraction and code generation, Hector systematically addresses significant performance challenges due to the inherent memory intensiveness, the gap between the programming interface and kernel APIs, and the high kernel optimization cost due to the kernel coupling with layout and heterogeneity.
+
+Then, this dissertation designs and implements PyTorch-Direct to incorporate the GPU-centric PCIe data transfer paradigm in PyTorch for GNN training. PyTorch-Direct significantly reduces CPU utilization, resulting in higher end-to-end training performance.
+
+Last, LLM training systems are increasingly constrained by GPU memory, with activations being one of the primary culprits. This dissertation creates the SSDTrain activations offloading framework with a direct GPU–SSD data path and good interoperability.
+
+This dissertation proves that code generation and runtime techniques can effectively mitigate data inefficiency in deep learning training.
+
+SECTION: References

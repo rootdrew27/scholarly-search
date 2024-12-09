@@ -1,0 +1,353 @@
+SECTION: QuantAttack: Exploiting Quantization Techniquesto Attack Vision Transformers
+
+In recent years, there has been a significant trend in deep neural networks (DNNs), particularly transformer-based models, of developing ever-larger and more capable models.
+While they demonstrate state-of-the-art performance, their growing scale requires increased computational resources (e.g., GPUs with greater memory capacity).
+To address this problem, quantization techniques (i.e., low-bit-precision representation and matrix multiplication) have been proposed.
+Most quantization techniques employ a static strategy in which the model parameters are quantized, either during training or inference, without considering the test-time sample.
+In contrast, dynamic quantization techniques, which have become increasingly popular, adapt during inference based on the input provided, while maintaining full-precision performance.
+However, their dynamic behavior and average-case performance assumption makes them vulnerable to a novel threat vector – adversarial attacks that target the model’s efficiency and availability.
+In this paper, we presentQuantAttack, a novel attack that targets the availability of quantized vision transformers, slowing down the inference, and increasing memory usage and energy consumption.
+The source code is available online111https://github.com/barasamit/QuantAttack.
+
+SECTION: 1Introduction
+
+In recent years, deep neural networks (DNNs), particularly transformers[21], have made tremendous progress in various domains, such as NLP[18]and computer vision[19].
+Their success stems mainly from their continually expanding network size, which is based on the number of parameters they contain and the precision of the parameters (the number of bits with which each parameter is represented).
+However, the high computational cost of their transformer blocks makes them unsuitable for edge devices.
+
+One way of reducing the size of the parameters is to quantize them to fewer bits and use low-bit-precision matrix multiplication.
+There are two types of quantization techniques:
+(a) quantization-aware training[50,10,2]- training a model with quantized parameters; and
+(b) post-training quantization[29,11,40]- quantizing parameters of a pretrained model, which can be done in a static or dynamic (sample-dependent) manner.
+Recently, LLM.int8()[8], a dynamic post-training quantization technique, was proposed and integrated into Hugging Face[42], one of the largest open-source machine learning (ML) platforms.
+This technique decomposes the features and weights into sub-matrices of large magnitude features (outliers) and other values.
+The outlier feature matrices are multiplied in higher precision, while all other values are multiplied in lower precision, reducing inference time, memory usage, and energy consumption, without any degradation in performance.
+While LLM.int8() was originally proposed for the NLP domain, the application of quantization techniques extends to vision models, aiming to balance efficiency and performance while preserving crucial visual information for tasks like image classification and object detection.
+Despite the fact that quantization is effective in making DNNs more resource-efficient, it also opens up a new attack surface for adversaries aiming to compromise model availability.
+
+Given the potential impact of availability-oriented attacks, the ML research community has begun to direct its attention to adversarial attacks that target model availability.
+Shumailovet al.[35]were the first to presentsponge examples, a technique that exploits data sparsity, causing the number of GPU operations to increase; this leads to increased inference time and energy consumption.
+Employing this attack vector, Cinaet al.[5]poisoned models during the training phase to cause delays in the testing phase.
+Dynamic neural networks[14], which adapt their structures or parameters to the input during inference, have also been shown to be susceptible to adversarial attacks.
+For example, adversarial attacks against models that employ early-exit strategies (a type of a dynamic network) have been studied extensively[16,31].
+Research focusing on the post-processing phase of DNNs, particularly in object detection[34]and LiDAR detection[22], has shown that they are also susceptible to availability-oriented attacks.
+
+In this paper, we introduceQuantAttack, a novel adversarial attack that specifically targets the quantization process and exploits its test-time dynamism in vision transformers.
+We argue that this attack vector poses a significant threat to the availability of transformer models, as it operates at the core level and is broadly generalizable to any type of network.
+Such attacks could have far-reaching implications, particularly in resource-constrained environments, where maintaining low latency and computational efficiency is paramount.
+For instance, in cloud-based IoT systems like surveillance cameras, this attack can cause delays in anomaly detection, compromising security.
+Similarly, in real-time edge applications such as autonomous vehicles, the attack can lead to navigation errors or delayed decision-making, posing significant safety risks.
+Above all, this paper aims to highlight the potential risk that dynamically quantized transformer-based models comprise.
+To perform our attack, we propose overloading the matrix multiplication operation with high-bit precision (i.e., outlier values) to trigger worst-case performance.
+To increase the stealthiness of our adversarial examples in cases where anomaly detection mechanisms are applied (e.g., monitoring shifts in the predicted distribution), we design our attack to preserve the model’s original classification.
+To assess the proposed attack’s effectiveness, in our evaluation, we perform experiments addressing:(i)modality - investigating uni-modal and multi-modal;(ii)model task - considering various computer vision applications;(iii)attack variations - single-image, class-universal, and universal;(iv)transferability - examining whether the perturbations are transferable between different models.
+Our experiments on the ViT model[9]show that the proposed attack can increase the model’s use of GPU memory by 17.2%, extend the GPU processing time by 9%, and expand energy use by 7%.
+Finally, we demonstrate that quantized models, both static and dynamic, are susceptible to integrity-based attacks.
+
+Our contributions can be summarized as follows:
+
+To the best of our knowledge, we are the first to identify dynamic quantization as a novel threat vector and propose an attack exploiting the availability of quantized models.
+
+We design a stealthy attack that preserves the model’s original classification.
+
+We conduct a comprehensive evaluation on various configurations, examining different modalities and tasks, reusable perturbations, transferability, and ensembles.
+
+We shed light on the vulnerabilities and provide key insights into the security implications associated with the transformer architecture.
+
+We present various countermeasures that can be employed to mitigate the threat posed by our attack.
+
+SECTION: 2Related Work
+
+SECTION: 2.1Quantization
+
+DNNs, particularly transformers, have achieved great success in various ML tasks[19,43].
+However, their computational complexity and large model size pose challenges for real-time applications and resource-limited devices.
+The size of a model is determined by the number of parameters and their precision.
+The precision relates to the number of bits each weight value is stored with, typically 16 bits (also referred to as float16 orf16) or 8 bits (also referred to as int8 ori8).
+To mitigate these challenges, techniques like quantization are employed.
+
+Quantization is used to reduce the computational time and memory consumption of neural networks.
+By quantizing the weights and activations into low-bit integers (e.g., a 16-bit float to an 8-bit integer), GPU memory usage can be reduced and inference can be accelerated, due to low-bit-precision matrix multiplication.
+Two main quantization approaches have been proposed:
+
+Quantization-Aware Training (QAT)[50,10,2]: This method involves training the model with quantized weights and activations.
+QAT maintains good performance, even when using low-precision formats.
+
+Post-Training Quantization (PTQ): This approach takes a pretrained model and quantizes it directly, eliminating the need for extensive retraining, making it generally less computationally intensive compared to QAT.
+PTQ can be categorized into two main categories:
+
+Static quantization[29,11,40,44,3,46,23,47]: The weights are quantized to lower precision only once using calibration sets, after the model is trained.
+
+Dynamic quantization[8]: The weights and activations are quantized during runtime based on specific rules.
+
+In this paper, we focus on PTQ techniques, highlighting that dynamic techniques possess an availability-based vulnerability due to their inherent dynamism, which uniquely impacts their security.
+Additionally, we demonstrate that both static and dynamic techniques are susceptible to integrity-based attacks.
+
+SECTION: 2.2Availability Attacks
+
+Confidentiality, integrity, and availability, also known as the CIA triad, are a model that that typically serves as the basis for the development of security systems[33].
+In the context of DNNs, adversarial attacks targeting integrity[37,13,28,27,36,45,52,51]and confidentiality[1,17]have received a great deal of research attention over the last few years.
+However, adversarial attacks that target the availability of these models have only recently gained the attention of the ML research community.
+Shumailovet al.[35]were the pioneers in this area, introducing the sponge examples attack, a technique that primarily targets the efficiency of vision and NLP models.
+The authors propose to exploit:(i)computation dimensions - expanding the internal representation size of inputs/outputs; and(ii)data sparsity - forcing non-zero activations against the zero-skipping multiplications acceleration technique.
+Both attacks lead to increased energy consumption and inference time.
+Employing the data sparsity attack vector, Cinaet al.[6]proposed sponge poisoning, a method aimed at degrading models’ throughput by subjecting them to a sponge attack during the training phase.
+Another noteworthy extension of the sponge examples (computation
+dimension vulnerability) was presented by Boucher[4], who introduced an adversarial attack on NLP models using invisible characters and homoglyphs, which, while undetectable to humans, can significantly affect the model’s throughput.
+
+Dynamic neural networks[14], which optimize computational efficiency by adapting to input data during runtime, have also been shown to be vulnerable to adversarial attacks.
+Haqueet al.[15]attacked DNNs that employ an layer-skipping mechanism by generating adversarial examples that go through all the layers.
+Later, in a similar way, Honget al.[16]proposed an attack against early-exit mechanisms, generating malicious that bypass all early exits.
+Panet al.[31]proposed a unified formulation to construct adversarial samples to attack both the dynamic depth and width networks.
+
+Another avenue of research, in which the post-processing phase of DNNs is targeted, has also been investigated.
+Shapiraet al.[34]showed that overloading object detection models by increasing the total number of candidates input into the non-maximum suppression (NMS) component can lead to increased execution times.
+Liu[22]extended this to LiDAR detection models.
+
+In this paper, we propose a novel attack vector that has not been studied before – an attack that targets the availability of dynamically quantized models.
+
+SECTION: 3Background
+
+SECTION: 3.1Dynamic PTQ
+
+We focus on the one of the most popular PTQ techniques, LLM.int8()[8].
+We consider a quantized modelthat receives an inputand outputsreal-valued numbers that represent the model’s confidence for each class, and containsquantized layers.
+During inference, for every quantized layer, given the layer inputand weightswith sequence dimension, feature dimension, and output dimension, the steps for efficient matrix multiplication are:
+
+Outlier Extraction: From the input, extract all column indices that contain at least one outlier (i.e., absolute values that are larger than a certain threshold) into the set.
+
+Mixed-Precision Multiplication: The matrix multiplication process is divided into two segments.
+Outliers are multiplied using the standard matrix multiplication in float16, while non-outliers are first quantized to their 8-bit representation and then multiplied in int8.
+This involves row-wise quantization for the input and column-wise quantization for the weight matrix.
+
+Dequantization and Aggregation: The non-outlier results are dequantized back to float16 and combined with the outlier results to form the final output.
+
+More formally, the matrix multiplication can be described as:
+
+whererepresents the output tensor in float16,represent the float16 input and weight for outliers,is the denormalization term for int8 inputs and weights, andrepresent the int8 input and weight for non-outliers.
+Additional details on the quantization process can be found in the supplementary material.
+
+SECTION: 3.2Vision Transformers
+
+Vision transformers are usually comprised oftransformer blocks, each of which containing a multi-head self-attention (MSA) and a feedforward network (FFN).
+Given an input sequence representation, The-th block outputis calculated as follows:
+
+wheredenotes layer normalization such that:
+
+with learnable parametersand.
+Specifically, two different normalization layers are used to in the transformer block differing in theandvalues.
+
+A single-head attention is formulated as follows:
+
+where Q, K, and V are the query, key and value matrices, respectively, andis scaling factor.
+Consequently, the MSA is computed as:
+
+whereare the parameter matrices of the-th attention head in the-th transformer block.
+Finally, as shown in Equation (2), the output of the MSA is then processed by the FFN, a two-layer MLP.
+
+In the context of LLM.int8(), which quantizes linear layers, we also discuss their location in the model.
+In the standard transformer block (presented above), the MSA and the FFN consist of four and two linear layers, respectively, for a total of six linear layers.
+In the MSA, three linear layers (with parameters) are used to derive the parameters matrices for the query, key and value; the last linear layer (with parameter) is used to combine the different attention heads.
+In the FFN, a two-layer MLP is used to produce the final block’s output.
+Notably, the inputs fed into the first three layers in the MSA () and the first layer in the FFN () are directly affected by the normalization layersand, an important aspect we will further discuss in Section5.2.
+
+SECTION: 4Method
+
+SECTION: 4.1Threat Model
+
+Adversary’s Goals.We consider an adversary whose primary goal is to generate an adversarial perturbationthat triggers the worst-case performance of dynamic quantization techniques,i.e., increases the number of high-bit operations.
+Along with our primary goal, to increase the stealthiness of the attack the adversary aims to maintain the original classification.
+
+Adversary’s Knowledge.To assess the security vulnerability of dynamic quantization to adversarial attacks, we consider three scenarios:(i)a white-box scenario: the attacker has full knowledge about the victim model;(ii)a grey-box scenario: the attacker has partial knowledge about the set of potential models; and(iii)a black-box scenario: the attacker crafts a perturbation on a surrogate model and applies it to a different victim model.
+
+Attack Variants.Given a datasetthat contains multiple pairswhereis a sample andis the label, we consider three variants:(i)single - a different perturbationis crafted for each;(ii)class-universal - a single perturbationis crafted for a target class; and(iii)universal - a single perturbationis crafted for all.
+
+SECTION: 4.2The Quant Attack
+
+To achieve the goals presented above, we modify the PGD attack[24]with a novel loss function[34,16].
+The update of the perturbationin iterationis formulated as follows:
+
+whereis the step size,is the projection operator that enforcesfor some norm, andis the loss function.
+The selection ofdepends on the attack variant:(i)for the single-image variant,;(ii)for the class-universal variant with a target class,; and(iii)for the universal variant,.
+Next, we describe the proposed custom loss function, which consists of two components:
+
+whereis empirically determined using the grid search approach.
+The two components are described below.
+
+Quantization Loss.This component aims to achieve our main goal, increasing the number of multiplications in 16-bit precision.
+The number of multiplications in a higher precision level depends on the existence of an outlier value in each column in the input hidden state matrix.
+Therefore, practically, we aim to produce at least one “synthetic" outlier value in each column in this matrix.
+
+Formally, letdenote the input of thequantized layer (we omit the bit-precision notation for simplicity).
+For each input matrix, we extract the top-values of each column, denoted as, with the aim of pushing these values towards a target value, such that.
+The loss for a single layer is defined as follows:
+
+Note that we only use values below the threshold to ensure that existing outlier values are not penalized by the loss function.
+
+Finally, the loss for alllayers is defined as:
+
+Classification Loss.To increase the stealthiness of our attack, we aim to preserve the original classification of the input image.
+Therefore, we include the classification loss component, which is defined as follows:
+
+wheredenotes the score for class.
+
+SECTION: 5Evaluation
+
+SECTION: 5.1Evaluation Setup
+
+Models.We evaluated our attack on two state-of-the-art vision transformers:
+
+Vision Transformer (ViT)[9]:We use thebasesize version, pretrained on ImageNet-21K, at a resolution of 224x224.
+The model is then finetuned on ImageNet-1K .
+Images are presented to the model as a sequence of fixed-size patches (resolution 16x16).
+
+Data-efficient image Transformer (DeiT)[38]:We use thebasesize version, pretrained and finetuned on ImageNet-1K, at a resolution of 224x224.
+Images are presented to the model as a sequence of fixed-size patches (resolution 16x16).
+
+In the supplementary material, we show that the accuracy results for the quantized models are on par with those of the non-quantized ones.
+
+Datasets.In our evaluation, we use the ImageNet dataset[7], and specifically, the images from its validation set, which were not used to train the models described above.
+For the single-image attack variant, we trained and tested our attack on 500 random images from various class categories.
+For the class-universal variant, we selected 10 random classes, and for each class we trained the perturbation on 250 images (i.e.,) and tested them on a distinct set of 500 images from the same class.
+Similarly, for the universal variant, we followed the same training and testing procedure, however from different class categories.
+
+Metrics.To evaluate the effectiveness of our attack, we examine the number of outlier multiplications, different hardware metrics, and the effect of the attack on the model’s original task performance:
+
+GPU Memory Consumption: how much GPU memory the process uses.
+
+GPU Throughput: how long the GPU takes to perform calculations.
+
+Energy Consumption: the total energy usage of the GPU, with measurements obtained using the NVIDIA Management Library (NVML).
+
+Number of Outliers: represents the number of matrix multiplications done in 16-bit precision (see Section3).
+
+Accuracy: the performance of the model on its original task.
+We consider the model’s prediction on the original images as the ground-truth label.
+
+Implementation Details.In our attack, we focus onnorm bounded perturbations, and set, a value commonly used in prior studies[25,30,41,49].
+The results for othervalues can be found in the supplementary material.
+We use a cosine annealing strategy with warm restarts for the attack’s step size, where the maximum and minimum values areand, respectively.
+For the dynamic quantization threshold, we set, as suggested in the original paper[8].
+We set the target value of our attackto 70, the number of extracted values from each columnto 4, and the weighting factorto 50 as they empirically yielded the best results.
+The results of the ablation studies we performed on the,andvalues can be found in the supplementary material.
+The experiments are conducted on a GeForce RTX 3090 GPU.
+olgu
+
+We compare our attack with four baselines: (a) clean - the original image with no perturbation, random - a randomly sampled perturbation from the uniform distribution, Sponge Examples[35]- an attack aimed at increasing the amount of non-zero activations, and standard PGD[24]- the original PGD attack with the model’s loss function (integrity-based attack).
+Table1presents the performance of the different perturbations on the ViT and DeiT models.
+The analysis reveals that single-image perturbations substantially increase the GPU memory usage and processing time for both models compared to the baselines.
+Specifically, for the ViT model, the single-image perturbations cause 1681% more outliers than a clean image.
+In terms of hardware metrics, they result in a 17.2% increase in GPU memory usage, a 7% increase in energy consumption, and an 9% increase in GPU processing time, compared to clean images.
+The sponge examples and the standard PGD however, do not incur any substantial effect both in terms of outliers and hardware metrics.
+Interestingly, in most cases, the random perturbations lead to a degradation in performance compared to the clean images.
+We hypothesize that random perturbations simply eliminate “natural" outlier features (i.e., those that exist in clean images) due to the random noise added to the images.
+
+We also investigate the effect of reusable perturbations, in which class-universal and universal perturbations (Section4.1) are trained on one set of images and tested on a distinct holdout set.
+The results presented in Table1enable comparison of the perturbations’ impact based on various metrics.
+On the DeiT model, when compared to clean images, a universal perturbation results in a 12.4% increase in GPU memory usage, 2.6% increase in energy consumption, and 3.3% increase in GPU processing time.
+Class-specific perturbations cause an 12.8% increase in GPU memory, 4.4% increase in energy consumption, and 3.5% increase in GPU time, performing slightly better than the universal perturbation.
+Note that in this case, we usedas it is a more complex setting compared to the single variant.
+
+Although universal and class-specific perturbations are less resource-exhaustive than single-image perturbations, they offer a distinct advantage.
+A universal perturbation vector is capable of affecting multiple images or an entire class of images, thereby providing an efficient mechanism for broad-spectrum adversarial attacks.
+This efficiency is especially advantageous in scenarios where the attacker aims to disrupt the model across multiple data points with minimal computational effort.
+
+When examining the effect of these perturbations, we observed an interesting phenomenon: relaxing the requirement for imperceptibility (i.e., the noise boundis set at a high value) causes the perturbation to completely distort the visual appearance of the input image, visually resembling sheer noise.
+This, in turn, creates a resource-intensive scenario which could be interpreted as a denial-of-service (DoS) attack, increasing GPU memory usage by 70%, energy consumption by 12%, and GPU time by 25%.
+
+In the LLM.int8()[8]technique, when the quantized model processes a batch ofimages, every quantized layer transforms the given 3D input matrixto a stacked 2D version, resulting inmore rows.
+The transformation is followed by quantized matrix multiplication (Section4).
+In this case, when an outlier value exists in a column, the entire column is processed in f16 precision, including values in rows that belong to a completely different image.
+
+In a realistic scenario where a quantized model is deployed and serves as ML-as-a-service, input images from different sources can be stacked together and given to the model as a batch of images.
+In this case, an adversary could potentially implant a perturbed image that will affect the resource consumption of the whole batch.
+
+Therefore, we evaluate the impact of such a scenario in which we feed the quantized model different sized batches that include asingleperturbed image.
+Figure1presents the results for the different batch sizes; the values represent the percentage difference between a benign batch and its attacked counterpart.
+The results show that a single perturbed image implanted in a batch of images could potentially affect the performance of the entire batch, as an increase in resource consumption is seen for all of the batch sizes examined.
+Notably, smaller size batches (e.g., two images) are more sensitive than larger size batches (e.g., 16 images).
+For example, for a two-image batch, the memory usage increases by 11.7% compared to the benign batch, while for a 16-image batch, the memory only increases by 3.5%.
+A plausible explanation for this can be found in the initial state of outliers in the batches - with a large batch size, natural outliers from different images are likely to spread across multiple columns.
+Consequently, the attacked image could contain synthetic outliers in the same columns, which are already processed in f16, and this leads to a smaller percentage difference.
+
+In adversarial attacks, transferability refers to the ability of an adversarial example, crafted on a surrogate model, to affect other models.
+In our experiments, we examine the effect of perturbations trained on ViT and tested on DeiT and vice versa.
+As shown in Table2, adversarial examples trained on one model show limited impact on the other.
+Interestingly, we observed an unexpected anomaly in the GPU time when perturbations were trained on DeiT and tested on ViT, in which a negative value was recorded (i.e., the GPU time decreased).
+We hypothesize that this occurred due to the marginal effect of just 10% more outliers.
+Such anomalies emphasize the nuanced relationship between outliers and resource metrics, hinting at the complex performance environment within which these models operate.
+Despite this minor deviation, the general trend remains consistent: a higher number of outliers usually requires more resources.
+
+To improve the transferability between different models, we employ an ensemble training strategy, in which the adversarial example is trained on both models simultaneously, such that in each training iteration one of the models is randomly selected.
+This approach aims to examine the collaborative benefit of utilizing the strengths of both models to create generalizable adversarial perturbations.
+Based on the results presented in Table2, we can see that the ensemble strategy is able to affect both models, and results in an increase in GPU memory usage and GPU time, although with sightly less efficiency compared to perturbations trained and tested on the same model.
+For example, when the ensemble-based perturbations are tested on the DeiT model, GPU memory usage and GPU time increased by 21.3% and 7.5%, respectively.
+
+To emphasize the potential impact and generalizability of our attack, we also experiment with other models that have different characteristics: different computer vision tasks, and different modalities.
+In addition, we also broaden our analysis from the computer vision domain to include the audio domain.
+Particularly, we experiment with the following models:
+(a) Open-World Localization (OWLv2)[26]- a zero-shot text-conditioned object detection model;
+(b) You Only Look at One Sequence (YOLOS)[12]- a transformer-based object detection model;
+(c) Generative Image-to-text Transformer (GIT)[39]- a decoder-only transformer for vision-language tasks; and
+(d) Whisper[32]- a sequence-to-sequence model for automatic speech recognition and speech translation.
+It should be noted that in our attack against those models, we only use the single-image attack variant with the quantization loss component (i.e.,) for simplicity.
+We also note that the same attack configuration used for the image classification models (Section5.1) is used for all the evaluated models below, which might lead to suboptimal results.
+Further experimental details on these models can be found in supplementary material.
+
+From Table4we can see that transformer-based models in general are vulnerable to our attack, not limited to the image classification domain.
+For example, on the multi-modal OWLv2, the energy consumption increased by 4.9% and on the YOLOS, the memory usage increased by 9.3%.
+Beyond the computer vision domain, our attack also successfully affects the Whisper model.
+
+Beyond the scope of availability-based attacks, we also explore the effect of generating outlier values on the models’ prediction capabilities (i.e., use Equation7with).
+We evaluate the effectiveness of our attack on both static and dynamic PTQ techniques.
+We argue that dynamic techniques heavily rely on outlier values for successful classification, while static techniques depend on low-scale calibration sets that do not account for extreme cases (e.g., artificially crafted outlier values).
+
+We evaluate the models’ performance under various quantization techniques.
+Specifically, in addition to LLM.int8(), we also evaluate the static quantization methods PTQ4ViT[48]and Repq-vit[20].
+As shown in Table3, our attack successfully degrades model’s accuracy, regardless of the quantization technique.
+Interestingly, the static techniques are more vulnerable, as they are not calibrated to handle extreme values.
+On the other hand, the dynamic technique is relatively more robust to outlier values due to its increased bit-precision mechanism.
+This highlights the trade-off between robustness to availability attacks and maintaining model performance.
+We include transferability and ensemble results in the supplementary material.
+
+SECTION: 5.2Discussion and Insights
+
+In Section3we discussed the presence of the normalization layers in the transformer block, and which linear layers’ inputs are directly affected by them.
+In the context of our attack, which aims to increase the values in these inputs, the normalization applied to the inputs just before the mixed-precision matrix multiplication has both negative and positive effects on our attack’s performance.
+Given an input matrix, the output of the normalization layer (Equation (3)) is affected by the input mean, variance, and the learnable parametersand.
+
+In Figure2a we show the percentage of outliers in the transformer blocks’ six linear layers (explained in Section3).
+As can be seen, our attack only affects the number of outliers in blocks 10, 11, and 12.
+Particularly, the outliers occur in the 4-th layer of the MSA (i.e., the linear layer that combines the different attention heads) and in both linear layers of the FFN.
+We hypothesize that the occurrence of outliers in the MSA 4-th linear layer and in the FFN last linear layer can be attributed to the fact that their inputs are not directly affected by the normalization layers,i.e., additional computations are done between the normalization layers and these layers, allowing our attack to craft synthetic outliers.
+In contrast, the inputs to the first three linear layers in the MSA and the first linear layer in the FFN are first processed by the normalization layers.
+Interestingly, our attack is not able to affect these MSA layers while successfully generating outliers in the FFN layer.
+This phenomena can be explained by examining thelearnable parameter value in each transformer block (theoretically thevalues should also affect the output’s magnitude; however, in practice the values are very low and only marginally affect the magnitude).
+As presented in Figure2b, the FFN normalization layer’svalue in the first nine blocks is lower than one, scaling down the input values’ magnitudes.
+However, in the last three blocks thevalue is substantially higher, either maintaining or up scaling the input values magnitudes, which contributes to our attack’s success.
+As opposed to this gradually increasing value pattern, the MSA normalization layer’svalue remains low across all blocks, preventing our attack from generating any synthetic outliers that surpass the threshold.
+Therefore, we can see a direct correlation between our attack’s success and the normalization layer values.
+
+Furthermore, since the normalization layer’s output is also affected by the input’s meanand variance, we also tried to attack these values,i.e., decreasing the entire input’s mean and variance.
+However, it did not improve the performance of our attack.
+This arises from the fact that the quantization loss component (Equation (9)) implicitly induces the same effect (we include an analysis of this phenomena in the supplementary material).
+Thus, we conclude that the most influential parameter to our attack’s performance is the normalization layer’svalue.
+
+SECTION: 6Countermeasures
+
+In response to the challenges posed by QuantAttack, in this section, we propose two practical steps that can be performed to enhance the security of the quantization process:Limiting the use of high-precision multiplications– implement rules that limit when and how often the model uses high-precision calculations.
+An implementation of this approach (further discussed in the supplementary material) has shown that the 1681% increase in the outliers can be reduced to a 251% increase, without compromising model accuracy on the clean images;
+This approach, however, requires a pre-defined threshold which depends on the specific model and system requirements.Increasing the batch size– based on our observations (Figure1), increasing the batch size reduces QuantAttack’s impact due to a higher occurrence of natural outliers.
+In this case, the synthetic outliers that our attack produces might blend with the natural outliers (i.e., the number of high-precision multiplications will not increase linearly).
+Nonetheless, the quantization’s efficiency decreases as the batch size grows.
+Above all, both approaches have trade-offs between performance and security, demonstrating that there is no perfect solution that will completely eliminate the threat posed by our attack.
+
+SECTION: 7Conclusion
+
+In this paper, we presented QuantAttack, a novel adversarial attack that both exploits the vulnerabilities and highlights the risk of using vision transformers with dynamic quantization.
+We showed that quantized models, while benefiting from the quantization’s efficiency, are susceptible to availability-oriented adversarial techniques that can degrade their performance.
+Our comprehensive evaluation demonstrated the impact of our attack on a wide range of vision transformers in various attack configurations.
+The implications of these findings are significant, indicating the pressing need to develop more robust quantization methods that can withstand such adversarial challenges.
+In future work, we plan to extend our attack to the NLP domain and evaluate its impact on popular large language models (LLMs).
+
+SECTION: References

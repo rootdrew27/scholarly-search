@@ -1,0 +1,367 @@
+SECTION: Enhancing Parameter-Efficient Fine-Tuning of Vision Transformers through Frequency-Based Adaptation
+
+Adapting vision transformer foundation models through parameter-efficient fine-tuning (PEFT) methods has become increasingly popular. These methods optimize a limited subset of parameters, enabling efficient adaptation without the need to fine-tune the entire model while still achieving competitive performance.
+However, traditional PEFT methods may limit the model’s capacity to capture complex patterns, especially those associated with high-frequency spectra. This limitation becomes particularly problematic as existing research indicates that high-frequency features are crucial for distinguishing subtle image structures.
+To address this issue, we introduce FreqFit, a novelFrequencyFine-tuning module between ViT blocks to enhance model adaptability. FreqFit is simple yet surprisingly effective, and can be integrated with all existing PEFT methods to boost their performance. By manipulating features in the frequency domain, our approach allows models to capture subtle patterns more effectively. Extensive experiments on 24 datasets, using both supervised and self-supervised foundational models with various state-of-the-art PEFT methods, reveal that FreqFit consistently improves performance over the original PEFT methods with performance gains ranging from 1% to 16%. For instance, FreqFit-LoRA surpasses the performances of state-of-the-art baselines on CIFAR 100 by more than 10% even without applying regularization or strong augmentation. For reproducibility purposes, the source code is available athttps://github.com/tsly123/FreqFiT.
+
+SECTION: 1Introduction
+
+The availability of transformer-basedfoundation modelshas revolutionized the domain adaptation research. Many fine-tuning methods have been proposed to effectively leverage the good representation of foundation models[23,5,53,27,49,8,22]. These parameter-efficient fine-tuning (PEFT) methods work by focusing on a small subset of parameters. This approach retains the original pre-trained parameters for the most part, tuning only targeted operations, which dramatically reduces computational overhead while maintaining competitive performance on downstream tasks. For example, BitFit[5,53]updates only the bias term of the pre-trained backbone, Adapter[21]and AdaptFormer[8]insert bottleneck-like MLP modules with residual connection inside ViT’s blocks, or Lora[22]injects trainable rank decomposition matrices into each layer of the Transformer architecture.
+
+However, many PEFT methods may limit the model’s capacity to capture complex patterns, especially those associated with high-frequency spectra. The limitation becomes particularly problematic as existing research indicates that high-frequency features are vital for improving performance[19,36,39,46,3,32]. These high-frequency components play a key role in tasks that require a deep understanding of intricate image details, such as fine-grained classification, object detection, and medical imaging. Without effective modeling of these high-frequency patterns, PEFT methods risk underperforming, particularly when applied to complex, real-world datasets where such subtle distinctions are essential for accurate predictions.
+
+While it might be argued that PEFT methods have indirectly addressed this frequency limitation by tuning the necessary operations, including self-attentions and other linear layers, our empirical and theoretical findings suggest otherwise.
+As illustrated in Fig.1, incorporating the feature transformation modules between ViT blocks improves the performance over the original PEFT method.
+
+Building on these insights, we propose FreqFit, a straightforward frequency fine-tuning method designed to modify the features’ spectra before it passes through the subsequent ViT blocks. As shown in Fig.1, FreqFit begins by performing a Fast Fourier Transform (FFT) along the spatial dimensions to convert features into the frequency domain. The spectra are then modulated using a learnable filter. After modulation, the spectral features are converted back to the spatial domain with an inverse FFT (iFFT), followed by a learnable scaling and shifting module, and finally added as the residual connection to the original input.
+
+Our main contributions are as follows:
+
+We propose FreqFit, a simple and effective frequency-based fine-tuning module that seamlessly integrates with existing PEFT methods to enhance model adaptation.
+
+We provide theoretical support for why FreqFit can capture image features that existing PEFT methods cannot.
+
+We provide a detailed analysis using 24 diverse datasets to demonstrate that FreqFit’s frequency modulation improves ViT token representations and model adaptability.
+
+SECTION: 2Related Works
+
+Parameter-efficient fine-tuning MethodsFine-tuning knowledge from pre-trained or foundation models has emerged as a quick and efficient approach to learning new tasks. Recent studies on fine-tuning methods could be categorized into two main approaches: (i) Adopting the subset of tunable input to frozen pre-trained models with Visual Prompt-tuning[23]as the representative method. Visual Prompt-tuning (VPT) emerges as a promising solution to address the challenges of domain adaptation. By tuning a small set of additional input tokens, VPT alternates the input domain to optimally align with the frozen pre-trained model.
+(ii) Minimally tuning a small subset of parameters of the pre-trained model while keeping the rest unaltered. The noticeable methods can be mentioned as Bias[5,53]simply fine-tune solely the Bias terms of pre-trained models[5,53,27], Adapter[21,33,34]inserts bottleneck-like modules with residual connections into ViTs backbone, and low-rank method as LoRA[22], BOFT[29], VeRA[24], FourierFT[17].
+Both VPT and minimal weight-tuning have demonstrated their efficacy and been explored in many directions, such as long-tailed image classification[14], adversarial attacks[2,6], generative visual[50,4], point cloud analysis[47,56], and continual learning[49,48,44].
+
+However, these methods greatly rely on hyper-parameters such as the number of prompts and the reduction factor in the case of VPT and Adapter, respectively. Their performances show inconsistency across various hyper-parameters settings[23,38,49,8,10,57,7]. For example, the effectiveness of VPT significantly depends on the prompt tokens hyper-parameters as they directly determine how prompt tokens interact with image tokens in the spatial domain[23,49,48,52]. Another problem is that in the fine-tuning context, the pre-trained backbone parameters are frozen, including self-attention which data-dependably captures long-term dependencies. The existing fine-tuning methods which mainly perform on spatial domain have not been able to learn the equivalent knowledge as self-attention does. Our method takes another approach by modifying the spectrum of the input features to adapt to the frozen pre-trained model in the frequency domain. The learnable filter in our FreqFiT can cover all frequency signals; therefore, it can capture both long-term and short-term interaction between tokens. A frequency-based PEFT method is FourierFT[17]which aims to further compress trainable parameters compared to LoRa[22]by enjoying the powerful expressiveness of the Fourier transform. Our paper differentiates itself from FourierFT by focusing on the ability to modulate the frequency signal.
+
+Fourier Transform in VisionFourier transform has been an important tool in digital image processing. There are a variety of works that incorporate the Fourier transform into the deep learning method which suggested the connection between frequency information and superior performances[19,36,40,41,51,25,11,13]. Some of these works utilize the convolution theorem to accelerate the CNNs via FFT computational advantages[25,11,13]. With the advancements of ViTs, there are lines of works that employ the Fourier transform to develop self-attention alternatives[41,36,40,26,37]. However, these prior works mainly apply in the pre-training state where the backbone’s parameters are fully updated, including self-attention.
+
+SECTION: 3Methodology
+
+Background on Fourier Transform.This section provides the background knowledge of Fourier Transform (FT) to set the foundation for understanding the proposed methods. FT has been widely used to decompose signals, such as images and audios, into their consituents frequency components and amplitudes. Concretely, FT for continuous time-domain signal is defined as follows:
+
+whereis the time-domain signal,is the frequency-domain representation of the signal,is the angular frequency,is a complex exponential function. The output of this transformationis a complex function encoding both amplitude and phase of each frequency in the original signal. One can also convert the frequency-domain representation back to the orignal time-domain signal using inverse FT.
+
+The original FT is typically defined for time-domain signals, but it can also be applied to image features by replacing the time index with the spatial index.
+
+Fast Fourier Transform (FFT).
+In many practical applications, signals are represented as discrete data points rather than continuous functions. Discrete Fourier Transform (DFT) is the version of the FT that is applied to discrete signals, such as time-series data or digital images. The DFT is defined for a sequence ofdiscrete values,, whereas follows:
+
+where. DFT can be computationally expensive, particularly for large signals, since its direct computation involvesoperations. FFT exploits the symmetrical property within DFT to improve the computational efficiency to. Otherwise, FFT computes the same features as DFT. Note that Eq.3can be written in matrix form, which will be used in our theoretical proof of Theorems 1 & 2 in subsequent sections.
+
+FreqFit - Frequency Fine-tuning.Here, we formally introduce the frequency tuning method, called FreqFit, as illustrated in Fig.1. FreqFit integrates a frequency operator, consisting of a filter basis followed by a residual connection, between ViT blocks. Given an input token, we perform FFT along the spatial dimensions to transform the input into, as shown in Eq.4.is a complex tensor representing the spectrum ofin the frequency domain. We modulateby multiplying it with the learnable filter, which has the same dimensions as, as shown in Eq.5. Finally, we convert the modulated spectral featuresback to the spatial domain using the inverse FFT, as shown in Eq.6, and add a residual connection from the original input. This process can be mathematically summarized as follows:
+
+where,andare the fast Fourier transform (FFT) and its inverse.denotes a learnable filter,andare the scale and shift factors, andis the Hadamard product.
+To facilitate the straightforward incorporation of FreqFiT layer into other fine-tuning methods. The 2D DFT can be viewed as performing 1D DFT on the two dimensions alternatively which also satisfied the conjugate symmetry property.
+
+How Does FreqFit Improve Performance?The basic idea behind frequency-based tuning FreqFit is to learn the interactions among spatial locations in the frequency domain. Many studies have demonstrated that incorporating high-frequency features leads to better performance[3,32,46,39]. We hypothesize that FreqFit amplifies high-frequency components. The spectral modulation capabilities of FreqFit are visualized and discussed in Fig.2and Sec.6, showing that integrating FreqFit increases the high-frequency features. This observation supports our hypothesis.
+
+As shown in Eq.5, the filterKmodulates the spectrum ofXthrough element-wise multiplication. This modulation controls the strength of different frequency components in the output, allowing for the enhancement or suppression of specific frequency ranges within the token signal. In other words, the result of the element-wise multiplication between the filter and tokens is determined by the filter, which is learned through the back-propagation process. In what follows, we provide the theoretical foundation that underscores the importance of incorporating FreqFit into the existing fine-tuning paradigm.
+
+Theorem 1.FreqFit withparameters can create a feature transformation that spatial-domain parameter-efficient fine-tuning methods cannot replicate.
+
+Sketch of Proof:Due to space constraints, the full proof is provided in the appendix. Here, we outline a proof sketch for better understanding. FreqFit performs a 2D FFT for each token dimension by aggregating statistics across all tokens. In other words, FreqFit operates on thedimensions of. This means that changes induced by the frequency filter depend on these aggregated statistics, affecting all tokens simultaneously. In contrast, spatial-domain PEFT methods do not aggregate statistics across all tokens. Instead, they compute aggregated statistics along thedimension ofwithin each individual token. For example, LoRa applies changes using a low-rank matrix or other spatial-domain PEFT methods modify a subset of parameters, which affects all tokens, but without relying on aggregated statistics across tokens. Therefore, spatial-domain PEFT methods cannot replicate the feature changes introduced by FreqFit.
+
+Theorem 1 demonstrates that FreqFit is a missing piece within the current parameter-efficient fine-tuning paradigm. By using onlyparameters, FreqFit can transform features in ways that existing PEFT methods cannot, thereby enhancing the model’s ability to capture more complex patterns.
+
+Theorem 2.Combining FreqFit with spatial-domain PEFT methods can create a feature transformation that cannot be achieved by FreqFit or any spatial-domain PEFT method alone.
+
+Sketch of Proof:Since FreqFit computes aggregated statistics within thesame token dimensions, it cannot replicate the effect of spatial-domain PEFT methods, which aggregate statistics acrossall token dimensions. Together with the result of Theorem 1, this suggests that combining these two methods can yield transformations that neither method can achieve on its own.
+
+Theorem 2 provides a compelling rationale for combining two complementary approaches: FreqFit and traditional PEFT methods like LoRa and Adapters. By leveraging their distinct strengths, this combination enables a significantly more effective fine-tuning strategy. Our experimental results across 24 diverse datasets strongly validate this theory, demonstrating substantial improvements over using either method alone.
+
+SECTION: 4Experimental Settings
+
+Pre-Trained Foundation Models.In this study, we experiment with different foundation models that were pre-trained on different datasets and learning approaches, including MAE[20], MoCo[9], and ImageNet-21k[12]. All the foundation models have the same ViT-Base backbones[16]. We also follow the original configurations, such as image size, patch size, etc.
+See Supplementary Material for more details on the experimental settings.
+
+Cifar100
+
+Caltech101
+
+DTD
+
+Flower102
+
+Pets
+
+SVHN
+
+Sun397
+
+Camelyon
+
+EuroSAT
+
+Resisc45
+
+Retinopathy
+
+Clevr-Count
+
+Clevr-Dist
+
+DMLab
+
+KITTI-Dist
+
+dSpr-Loc
+
+dSpr-Ori
+
+sNORB-Azim
+
+sNORB-Elev
+
+Mean
+
+Fine-Tuning PEFT Methods.We apply the feature transformation techniques in conjunction with the following PEFT methods. We selected these methods as they are representative examples within their respective approach families.
+
+LINEAR: only update the last linear layer as classification head.
+
+BIAS[5,53]: update only the bias term of the pre-trained backbone.
+
+ADAPTER[21,33,34]: insert bottleneck-like MLP modules with residual connection inside ViT’s blocks.
+
+VPT[23,52]: adding learnable tokens along with image tokens as input of ViT’s blocks. We follow the number of prompt tokens reported in VPT[23].
+
+LoRA[22]: decomposes a large matrix into two smaller low-rank matrices in the desired layers. We apply LoRa for all linear layers.
+
+BOFT[29]: leverages butterfly-structured orthogonal parameterization to reduce trainable parameters. We apply BOFT for all linear layers.
+
+VeRA[24]: using a single pair of low-rank matrices shared across all layers and learning small scaling vectors instead, reducing the number of trainable parameters. We apply VeRA for all linear layers.
+
+Downstream Tasks.Following[23,8,52,28,27], we evaluate FreqFiT on the VTAB-1k Natural[54]tasks that contain natural images and the Fine-Grained Visual Classification (FGVC) tasks, including CUB-200-2011[45], NABirds[42], Oxford Flowers[31], Stanford Dogs[1]and Stanford Cars[18]. We follow the dataset split in[23].
+
+Hypeparameter Configurations and Regulations/Augmentation.Our primary goal is to illustrate the effectiveness of the feature transformation approach rather than to compete directly with state-of-the-art methods. Therefore, we avoid extensive hyperparameter searches, including Adapter reduction rate, VPT prompt tokens, LoRa rank, instead applying a single default configuration across all experiments for consistency. In addition, to clearly demonstrate the effectiveness of the feature transformation approach, following[5,23], we do not utilize Mixup[55]or strong image augmentation techniques in this study. Further details are provided in Supplementary Material.
+
+SECTION: 5Results
+
+Effects of incorporating FreqFit.Tables1and2summarize the fine-tuning performance on VTAB-1k tasks with natural images, demonstrating that methods enhanced with feature transformation techniques consistently outperform recent fine-tuning approaches. Notably, these improvements hold across a range of advanced PEFT techniques—including VPT[23], Bias Tuning[5,53], Adapter[21,33,34], LoRA[22], BOFT[29], and VeRA[24]—and pre-trained foundation models such as MAE[20], MoCo[9], and ImageNet-21k[12]. For instance, when applied to ImageNet-21k, FreqFit achieves a mean accuracy gain of 1.5% to 16% across 19 VTAB-1k tasks, outperforming state-of-the-art PEFT methods. Note that, to clearly demonstrate the effectiveness of the feature transformation approach, we do not utilize Mixup[55]and strong augmentations. Even without those strong performance booster techniques, feature-transformed methods yield competitive results and often surpass baseline performances with these enhancements across multiple tasks. For instance, FreqFit-LoRA surpasses other state-of-the-art baselines on CIFAR100 more than 10%. Furthermore, the Linear transformation method, when used with the feature transformation module, exceeds the performance of other state-of-the-art techniques and even outperforms full fine-tuning (FULL) by 1-2% on several tasks. These results highlight the crucial of modifying features in the frequency domain in optimizing ViTs across diverse settings.
+
+Supervised versus self-supervised pre-trained models.Tab.1and2show that FreqFit methods yield better performance gains when applied to supervised pre-trained models, such as ImageNet-21K, compared to self-supervised pre-trained models like MAE and MoCo. Specifically, FreqFit techniques consistently produce higher accuracy improvements with MoCo than MAE pre-trained models. The results highlight the importance of addressing the limitation in capturing frequency patterns regardless the pre-training strategy.
+
+Next, we will discuss how incorporating FreqFit improves the performance for the representative PEFT methods.
+
+- FreqFit with VPT.Our simple yet effective method outperforms the original VPT by 23% and 7% on average across all Natural tasks for pre-trained MAE and MoCo, respectively, and 2.4% on all tasks with Imagenet-21K. We hypothesize that this superiority is due to the frequency properties of FreqFiT. Typically, VPT learns the interaction among tokens in the spatial domain by appending prompt tokens to image tokens, with long-term dependencies learned by the self-attention module[43,15,36]. This important knowledge may not be fully captured when all the backbone’s parameters, including self-attention, are not updated for new tasks under VPT framework. In contrast, our FFT-based tuning approach captures both long-term and short-term interactions. It is worth noting our FreqFiT-VPT does not search for theoptimal prompt lengthor the ViTblocks to insertprompt tokens as in VPT[23]. Instead, we reuse the prompt lengths reported in VPT[23]and Gated-VPT[52], inserting the FreqFiT layer before every ViT block.
+
+- FreqFit with Adapter.FreqFiT significantly enhances the performance of the original Adapter method, achieving average improvements of 16.4% across all VTab-1k tasks with Imagenet-1K pre-trained weights. This improvement can be attributed to the original Adapter’s limitations in learning long-term information. In the Adapter approach, only the bottleneck-like MLP modules are updated, while all other parameters, including the self-attention modules, remain frozen. Furthermore, we observe performance fluctuations when varying the reduction factor. For a detailed analysis of experiments on prompt lengths and reduction factors, please refer to Sec.6.
+
+- FreqFit with Bias Tuning.Bias tuning[5,53]is a competitive, parameter-efficient tuning baseline. Interestingly, despite yielding superior results with 6.1% gain in performance with Imagenet-21k[12]pre-trained model, the results with MAE[20]and MoCo[9]do not enhance performance. This suggests the distinction between supervised and self-supervised pre-trained models could have different effects on the performances. Unlike VPT and Adapter, bias tuning is the only baseline that modifies self-attention (bias terms), which is essential for learning long-term dependencies.
+Since only the bias term is updated, this strategy can be viewed as a linear transformation, which may not be sufficient to handle complex data distribution shifts or effectively capture the frequency patterns. Consequently, we hypothesize that the linearly shifted outputs from bias tuning could negatively impact the long-term dependency-capturing ability of the FreqFiT layer. To better understand this phenomenon, we will present a visualization of the frequency filter and discuss it in the subsequent section.
+
+Imagenet-21K - CIFAR100
+
+(Left) LoRA. (Right) FreqFiT-LoRA
+
+- FreqFiT with low-rank methods.LoRA[22]and its variants, BOFT[29]and VeRA[24], reparameterize a large matrix into smaller low-rank matrices. In this study, we use the default hyper-parameter configurations from HuggingFace[30]and apply these PEFT techniques for all linear layers for all experiments. FreqFiT consistently enhances the performance of these methods, achieving average improvements of 1.6%, 1.5%, and 0.8% across all VTab-1k tasks with Imagenet-1K pre-trained weights with LoRA, BOFT, and VeRA, respectively. Since we apply these methods for all linear layers, including those of self-attention operations, they may be able to capture the spatial dependencies for new tasks and address the inter-block relationship problems. However, when incorporated with FreqFit, these PEFT methods achieve better performances, validating our approach of altering the feature in the frequency domain.
+
+MAE/FreqFiT-Adapter/Caltech101
+
+MAE/FreqFiT-Bias/Caltech101
+
+CLIP/FreqFiT-VPT/Flower102
+
+CLIP/FreqFiT-Bias/Flower102
+
+Imagenet/FreqFiT-Lora/Cifar100
+
+Imagenet/FreqFiT-Bias/Cifar100
+
+SECTION: 6Ablation Study
+
+Frequency analysis.Given that FreqFit operates primarily in the frequency domain, it is essential to analyze the learned transformations. Following[32,40,39], we compare the relative log amplitudes of the Fourier transform of the output feature maps. Fig.2visualizes the differences in the relative log amplitudes of Fourier-transformed feature maps between (left) original LoRA and (right) FreqFit-LoRA, the FreqFiT-enhanced versions. Thelog amplitude represents the relative logarithmic amplitude between frequency(center) and(boundary). Brighter colors indicate deeper layers.
+
+Across various tasks and fine-tuning methods, a common pattern emerges: FreqFiT tends to increase the amplitude, as hypothesized in Sec.3. Since high-frequency features are important in capturing interactions among spatial locations in the frequency domain, leading to better performance as discussed in[19,36,39,46,3,32], it is logical that our method increases the amplitude. FreqFiT filters can address both low and high frequencies, enabling the FreqFiT-enhanced methods to capture high-frequency features more effectively than the original methods, as evidenced by the higher amplitudes shown in Fig.2.
+
+To better understand this behavior, we visualize the filters of different fine-tuning settings, as shown in Fig.3. Our visualization shows that the incorporated FreqFiT-LoRA, FreqFiT-VPT, and FreqFiT-Adapter can capture high-frequency components by adopting our FreqFiT. In addition, we can also see high-pass, low-pass, and band-pass filters in the visualization. This is reasonable as the filters in our FreqFiT cover all frequency ranges. Regarding the FreqFiT-Bias visualizations, they do not show a clear pattern of capturing high-frequency components. This visualization justifies our hypothesis and results shown in Sec.5.
+
+Compared to VPT and Adapter, Bias tuning is the only baseline that modifies the self-attention mechanism. However, its effectiveness is lower than the other methods. This suggests that Bias tuning and our FreqFiT are not necessarily complementary. Importantly, our FreqFiT captures both low and high frequencies. Previous studies[19,40,32,3]have indicated a link between high-frequency components in tokens and improved performance. These findings validate our frequency-tuning approach and highlight a potential research direction: adaptive frequency-tuning, which could result in filters functioning as high-pass filters. On the other hand, we can recognize a pattern in the learned filter of Bias with the pre-trained Imagenet-1K. However, it is also less obvious compared to that of LoRA. This could be because the difference in pre-trained foundation model, suggesting the drawback of linear transformation in capturing useful frequency signals.
+
+FreqFit versus Scaling-Shifting.Fig.4presents a detailed comparison of two feature transformation techniques: Scaling-Shifting and frequency tuning (FreqFit). The results indicate that FreqFit consistently outperforms Scaling-Shifting, with a mean performance gain difference of 1.2% across all evaluated methods, underscoring the effectiveness of FreqFit in aligning input features more closely with the frozen model parameters. This superiority may be attributed to FreqFit’s ability to operate across the all frequencies spectrum, enabling it to capture a wider range of spatial dependencies within the token representations. By modulating frequencies, FreqFit can more effectively capture both long-term structural patterns and short-term fine-grained details, providing a more holistic transformation that allows the frozen parameters to better adapt to variations in data distribution. Furthermore, prior research has underscored a strong connection between high-frequency signal capture and improved model performance[36,32,19,40,41,51,25,11,13]. FreqFit’s frequency modulation allows it to harness these high-frequency signals effectively, thus reinforcing its potential to capture subtle spatial relationships and complex data patterns. This positions FreqFit as a promising enhancement for parameter-efficient fine-tuning, offering frozen models a level of flexibility and robustness in adapting to new tasks that Scaling-Shifting alone cannot provide.
+
+Test Acc. (%)
+
+Prompt length (log scale)
+
+Test Acc. (%)
+
+Reduction factor
+
+In contrast, the Scaling-Shifting technique offers a straightforward linear transformation by applying learnable scaling and shifting factors to input data, helping to align it with frozen model parameters. This approach adjusts the amplitude and mean of the input features, effectively addressing moderate distribution shifts without modifying the model’s structure. However, Scaling-Shifting’s simplicity limits its ability to capture complex spatial dependencies and high-frequency details, as it focuses only on global feature characteristics. While efficient for tasks with minimal domain shifts, Scaling-Shifting lacks the nuanced adaptability that FreqFit provides. The comparison underscores that while both techniques enhance PEFT performance, FreqFit’s frequency-based modulation better captures intricate data patterns, making it particularly suitable for complex tasks.
+
+Robustness Against Randomization.Tab.3provides per-task fine-tuning results on FGVC tasks with self-supervised learning pre-trained models MAE[20]and MoCo-v3[9]. Results ingraydenote the reported performances in original Gated-VPT[52]. Since[52]does not provide seeding configurations or how many runs the results were averaged from, we use the provided configurations, including prompt length and learning rate to reproduce their results with the same 5 seeds as used for FreqFiT-VPT, denoted asGated-VPT w/ seeds. Our FreqFiT-VPT demonstrates the stability and superiority over VPT[23]and Gated-VPT[52].
+In addition, the results of theGated-VPT w/ seedsetting are inconsistent and lower than those in the original paper. We report the standard deviation from 5 runs in brackets. The comparison points out that theseeding is importantfor Gate-VPT and also highlights the stability and improvement of our FreqFiT-VPT.
+
+Sensitivity to Hyper-Parameters.We investigate the degree of performance fluctuation when varying the prompt lengths in VPT and the reduction factor in VPT and Adapter tuning. Fig.5illustrates the ablation studies on (a) prompt length for FreqFiT-VPT and (b-c) reduction factor for FreqFiT-Adapter across different tasks. We vary the number of prompts in {0, 1, 5, 10, 50, 100, 200} and the reduction factor in {8, 64, 256}. When adjusting the prompt length, accuracy fluctuates from less than 2% to roughly 50% on average for Caltech101 and SVHN tasks, respectively, while other tasks show fluctuations around 5%. Even with FreqFiT’s enhanced ability to capture useful frequency signals, FreqFiT-VPT still heavily depends on the prompt length. In contrast, FreqFiT-Adapter exhibits significantly smaller performance variations, with the largest fluctuation being around 8% on average.
+
+Attention Tuning.In this experiment, we explore an alternative route for learning the long-term dependencies without updating the MSAs. Instead of plugging our frequency-filter module between ViT’s blocks, we simply insert it into the self-attention module right after the QKV projection and before the softmax operation. Mathematically:
+
+where,andare the weights matrices and bias terms of Queue, Key, and Value in the self-attention mechanism. By doing this, we can directly modify the output of the self-attention and learn the long-term dependencies. Tab.4presents the enhanced outcomes of this strategy. Especially, it can boost the results up to 6% on the KITTI dataset[54]. The experiment substantiates the advantage of our frequency-tuning approach.
+
+SECTION: 7Conclusion
+
+In this study, we explore the route of frequency adaptation as PEFT method. We introduce FreqFiT, a novel frequency-tuning module designed to modify ViT frequencies for better adaptation to new tasks. This module can be easily integrated into existing fine-tuning methods. We conducted extensive experiments to evaluate FreqFiT on both supervised and self-supervised foundational models, including MAE, MoCo, CLIP, and ImageNet-21k, across VTAB-1k Natural and FGVC tasks. Our comprehensive analysis demonstrates how FreqFiT effectively captures high-frequency components in tokens, leading to significant performance improvements across various tasks. We believe FreqFit establishes a new paradigm for effective adaptation of ViT-based foundation models to downstream tasks.
+
+SECTION: References
+
+Supplementary Material
+
+The Supplementary Material is organized as follows:
+
+Proofs for Theorem 1 and Theorem 2, Sec.8.
+
+Augmentation and Hyper-parameters for all experiments, Sec.9.
+
+FreqFit pseudo-code, Alg.1.
+
+Per task result for Scaling Shifting, FreqFit-FourierFT, Tab.6.
+
+More visualization of the relative log amplitudes of Fourier-transformed feature maps of different PEFT methods, Fig.6.
+
+More visualization of FreqFit filters on different settings.
+
+SECTION: 8Proofs
+
+Here, we employ LoRA to ease the proof as this can be generalized to other PEFT methods. We re-introduce FreqFit and LoRA equations to facilitate the proofs below.
+
+Given the input the feature map, where each token is a D-dimensional vector spread across anspatial grid. The LoRA transformation and FreqFit are as:
+
+where,, andandare the low-rank matrices. Note that, for simplicity, we do not presentandparameters for FreqFit as in the main manuscript.
+
+Theorem 1.FreqFit withparameters can create a feature transformation that spatial-domain parameter-efficient fine-tuning methods cannot replicate.
+
+Proof.For FreqFit to replicate LoRA transformation, and vice versa, there must exist a filterFsuch that:
+
+However, this is not generally possible because of the following reasons:
+
+FilterKandBAoperate in different domains, i.e., frequency domains and spatial domains, respectively.
+
+Kis a 3D filter that modulates information in both the tokens 2-dimensionaland the channel dimensionD. For each position (in frequency domains) in thegrid,Kcontains a unique filter for each of theDchannels.
+
+AB, in Eq.12is a token-specific modification, where the D-dimensional representation of each token is updated. This modification captures relationships within and across channels, such as correlations or dependencies among the features in D.
+
+As a result, FreqFit introduces implicit cross-token interaction via aggregated statistics across all the tokens. Whereas, LoRA operates locally, emphasizing token-specific updates in the channel dimension.
+
+LoRA transformation is not full rank.The product, in12, has a rank of at mostr, which limits the expressiveness of this transformation to a subspace of dimensionr. In other words,can only capture transformations in an r-dimensional subspace of.
+
+FreqFit transformation is full rank.The Fourier transform ofis given by:
+
+whereandare the unitary Fourier transform matrix of row and column grid. Theandare the conjugate transpose ofand, respectively, i.e.,and. Thus, if the inputis full-rank andis a full-rank diagonal matrix (no zero entries for all frequency components), sinceis unitary, the rank ofis preserved in the frequency domain, then the resultmust be full-rank. This means FreqFit can learn from all information from the input feature with.
+
+FreqFit hasparameter complexity, as the frequency modulation filtercan be parameterized efficiently, focusing only on essential frequency components, regardless the input dimensions ofX.
+
+Therefore, FreqFit withparameters can create a feature transformation that spatial-domain parameter-efficient fine-tuning methods cannot replicate.
+
+Theorem 2.Combining FreqFit with spatial-domain PEFT methods can create a feature transformation that cannot be achieved by FreqFit or any spatial-domain PEFT method alone.
+
+Proof.The FreqFit filterapplies a frequency-domain filter independently to each channelon the grid. This impliesdepends only onas in Eq.18. Whereas, the product, Eq.12is the same across all tokens, meaning it only introduces channel-wise dependencies. This meansdepends only onas in Eq.19. Mathematically:
+
+Assume FreqFit can replicate LoRA transformation. Then, FreqFit must create cross-channel dependencies of the form
+
+However, by construction, FreqFit only operates independently within each channel. This directly contradicts LoRA as it introduces dependencies across. Thus,FreqFit can not replicate LoRA transformation.
+
+Together with the result of Theorem 1 which shows LoRA can not replicate FreqFit transformation, Theorem 2 provides a compelling rationale for combining two complementary approaches: FreqFit and PEFT methods like LoRa. By leveraging their distinct strengths, combining these two methods can yield transformations that neither method can achieve on its own.
+
+SECTION: 9Augmentation and Hyper-parameters
+
+We use PyTorch to implement all experiments on NVIDIA V100-32GB GPUs. Following[23], we conduct a grid search to find the tuning-specific hyper-parameters, learning rate, and weight decay values using val set of each task, as shown in Tab.5.
+
+Cifar100
+
+Caltech101
+
+DTD
+
+Flower102
+
+Pets
+
+SVHN
+
+Sun397
+
+Camelyon
+
+EuroSAT
+
+Resisc45
+
+Retinopathy
+
+Clevr-Count
+
+Clevr-Dist
+
+DMLab
+
+KITTI-Dist
+
+dSpr-Loc
+
+dSpr-Ori
+
+sNORB-Azim
+
+sNORB-Elev
+
+Mean
+
+Imagenet-21K - CIFAR100
+
+(Left) Bias. (Right) FreqFiT-Bias
+
+(Left) Adapter. (Right) FreqFiT-Adapter
+
+(Left) LoRA. (Right) FreqFiT-LoRA
+
+(Left) BOFT. (Right) FreqFiT-BOFT
+
+(Left) VeRA. (Right) FreqFiT-VeRA
+
+(Left) FourierFT. (Right) FreqFiT-FourierFT
+
+ImageNet / FreqFiT-LoRA / Cifar100(a) Mean of filters from 12 layers.
+
+Left to right, Upper row: layer 1-6. Lower row: layer 7-12
+
+(b) First 252 filters from the 1st layer
+
+ImageNet / FreqFiT-FourierFT / Cifar100(a) Mean of filters from 12 layers.
+
+Left to right, Upper row: layer 1-6. Lower row: layer 7-12
+
+(b) First 252 filters from the 1st layer
+
+MAE / FreqFiT-Adapter / Caltech101(a) Mean of filters from 12 layers.
+
+Left to right, Upper row: layer 1-6. Lower row: layer 7-12
+
+(b) First 252 filters from the last layer
+
+MAE / FreqFiT-Bias / Caltech101(a) Mean of filters from 12 layers.
+
+Left to right, Upper row: layer 1-6. Lower row: layer 7-12
+
+(b) First 252 filters from the last layer.
+
+MoCo / FreqFiT-Adapter / CIFAR100(a) Mean of filters from 12 layers.
+
+Left to right, Upper row: layer 1-6. Lower row: layer 7-12
+
+(b) First 252 filters from the last layer
+
+MoCo / FreqFiT-Bias / CIFAR100(a) Mean of filters from 12 layers.
+
+Left to right, Upper row: layer 1-6. Lower row: layer 7-12
+
+(b) First 252 filters from the last layer.
+
+CLIP / FreqFiT-VPT / Flower102(a) Mean of filters from 12 layers.
+
+Left to right, Upper row: layer 1-6. Lower row: layer 7-12
+
+(b) First 252 filters from the last layer.
+
+CLIP / FreqFiT-Bias / Flower102(a) Mean of filters from 12 layers.
+
+Left to right, Upper row: layer 1-6. Lower row: layer 7-12
+
+(b) First 252 filters from the last layer.

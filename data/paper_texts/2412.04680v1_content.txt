@@ -1,0 +1,284 @@
+SECTION: Superpixel Tokenization for Vision Transformers:Preserving Semantic Integrity in Visual Tokens
+
+Transformers, a groundbreaking architecture proposed for Natural Language Processing (NLP), have also achieved remarkable success in Computer Vision.
+A cornerstone of their success lies in the attention mechanism, which models relationships among tokens.
+While the tokenization process in NLP inherently ensures that a single token does not contain multiple semantics, the tokenization of Vision Transformer (ViT) utilizes tokens from uniformly partitioned square image patches, which may result in an arbitrary mixing of visual concepts in a token.
+In this work, we propose to substitute the grid-based tokenization in ViT with superpixel tokenization, which employs superpixels to generate a token that encapsulates a sole visual concept.
+Unfortunately, the diverse shapes, sizes, and locations of superpixels make integrating superpixels into ViT tokenization rather challenging.
+Our tokenization pipeline, comprised of pre-aggregate extraction and superpixel-aware aggregation, overcomes the challenges that arise in superpixel tokenization.
+Extensive experiments demonstrate that our approach, which exhibits strong compatibility with existing frameworks, enhances the accuracy and robustness of ViT on various downstream tasks.
+The source codes are available at:https://github.com/jangsoohyuk/SuiT
+
+SECTION: 1Introduction
+
+Transformers[51], originally proposed for Natural Language Processing (NLP), have demonstrated exceptional performance across diverse tasks such as machine translation[55,19,5], natural language understanding[27,34], and text generation[41,31].
+The transformative power of Transformers was again attested by the release of large language models[7], which continue to revolutionize NLP as we know it.
+Similarly, the Vision Transformer (ViT)[14], which extended the Transformer architecture to image recognition, changed the landscape of Computer Vision research.
+The subsequent research efforts to broaden the usage of ViTs to various visual tasks, including detection[45,8,65], segmentation[32,63,48], generation[15,38,60], and multi-modal applications[42], have made the ViT the dominant architecture in Computer Vision.
+
+In NLP, the success of Transformers is commonly attributed to the attention mechanism, which captures contextual dependencies by modeling the relationship among input texts, which are expressed as tokens.
+Widely adopted tokenization methods in NLP, such as Byte Pair Encoding[46],
+WordPiece[47], and SentencePiece[29], first split each sentence into words, which are then broken down into more granular tokens.
+For instance, when tokenizing “Attention is All You Need,” each word is separated into: [“Attention,” “is,” “All,” “You,” “Need”].
+By definition, this initial word-level splitting of sentences prevents multiple words with different meanings from being fused into a single token.
+
+In contrast, fixed-size grid patches form the basis of tokenization in ViT and its variants[14,50,35].
+As visualized in Figure1, when naïvely sliced square image patches are used as tokens, a single token can simultaneously contain two or more visual concepts,e.g.,eye and fur.
+Consequently, this approach in ViT diverges from the core principle of tokenization, which is to convert plain inputs into smaller yet more structured subunits for further processing.
+
+In this work, we employ the concept of superpixels to design a tokenization process that yields semantically preserving tokens that contain a single, isolated visual concept.
+A superpixel is a cluster of connected pixels in an image that share similar properties, such as color, texture, or position, and it is often used as a fundamental unit in image processing[2,11,33].
+Figure1illustrates how leveraging superpixels alters tokenization of ViT.
+Grouping pixels into superpixels divides an image into cohesive regions that capture similar semantics, thereby preventing the mixture of unrelated semantic information in each token.
+
+Despite the advantage of superpixels in tokenization, the different shapes and sizes of each superpixel present significant challenges in utilizing them as ViT tokens[25,59,62].
+In ViTs, tokens are generated from fixed-size square patches at predefined locations through simple flattening and linear projection.
+Because superpixels consist of varying numbers of pixels, de-facto flattening and linear projection operations in ViT are incompatible with superpixels.
+Moreover, the location of each superpixel changes dynamically depending on the image.
+The variability of superpixel locations makes it infeasible to directly apply the positional embeddings of ViT, which are designed for fixed locations.
+The inadequacy of original ViT operations necessitates novel techniques for addressing irregular geometry and composition to reap the inherent benefits of superpixels.
+
+We thus propose a novel tokenization pipeline that overcomes the aforementioned problems and enables the effective incorporation of superpixels into ViT tokenization.
+The proposed pipeline consists of two major technical components:pre-aggregate feature extractionandsuperpixel-aware feature aggregation.
+The first stage prepares pre-aggregate features for the subsequent superpixel-aware aggregation, which utilizes pooling operations to remove the irregularity and variability of superpixels.
+Applying pooling operations directly on the input image may result in a severe loss of information.
+By training the pre-aggregate feature extractor and applying it prior to our feature aggregation, we effectively sidestep this potential information loss.
+Collectively, this two-stage process allows the proposed tokenization approach to leverage the benefits of superpixels
+while preserving important details of an image.
+
+We demonstrate the superiority of ourSuperpixel-Tokenized VisionTransformer (SuiT) compared to the baselines. SuiT outperforms in a variety of tasks including ImageNet-1K classification[12], segmentation[56], transfer learning[66], and self-supervised learning[9]. We further analyze the properties that emerge using our tokenization pipeline by conducting extra examinations.
+Furthermore, we visualize that our proposed tokenization method indeed results in image tokens that preserve semantics more effectively than the grid-based tokenization method.
+
+Our contribution can be summarized as follows:
+
+We propose an effective superpixel-based tokenization method that overcomes the challenges associated with the use of superpixels.
+
+We empirically show that our tokenization method produces tokens that better preserve semantic information than grid-based tokens.
+
+We demonstrate the effectiveness of our approach through experiments on image classification, transfer learning, self-supervised learning, and zero-shot segmentation.
+
+SECTION: 2Related Work
+
+Superpixels, which are perceptually meaningful clusters of pixels, have been a foundational concept in computer vision[2,11,33].
+Previous studies have attempted to use superpixels in several tasks such as segmentation[30,37]and object detection[18], but these works did not demonstrate the broad applicability of superpixels across a range of vision tasks.
+
+Another recent work, STViT[23], applies superpixel-like clustering across all layers via supertoken attention, but operates at the token level, resulting in a coarser granularity than superpixels.
+CoC[36], borrows the concept of superpixels within neural networks but lacks further exploration of superpixel tokenization.
+Similarly, SPFormer[37]utilizes superpixel-based representations but requires specialized attention modules making it difficult to integrate with existing ViT architectures in a plug-and-play manner.
+
+In contrast to these approaches, our research explores a simple yet effective superpixel tokenization method that can be easily employed in a transformer architecture for a range of general-purpose tasks.
+
+While most ViT variants focus on improving backbone architectures and attention mechanisms using naive square-shaped patches, there have been several attempts in exploration of advanced tokenization strategies tailored for vision tasks. Quadformer[44]and MSViT[16]both propose adaptive tokenization strategies that dynamically adjust token resolutions based on image content.
+
+The studies SPiT[1]and sViT[28]are the most similar to our work in that they target only the tokenizing module while keeping the backbone intact and share similar research motivations. SPiT[1]focused on analyzing this tokenization from the explainable AI (XAI) perspective but did not explore its generalizability across various tasks. Also, SPiT[1]suffers from performance degradation without gradient features, as they lack of abundant features due to their learning free feature extraction. Moreover, its applicability to other learning paradigms, such as self-supervised learning[9], was not investigated.
+
+sViT[28]shared a similar motivation in aiming for semantically preserving tokenization, but it still divides tokens based on a naïve bounding box, failing to create truly semantically preserving tokens. Additionally, resizing these tokens into square shapes compromised the visual structure of objects within the tokens. These shortcomings in design leads leads to limited performance in various tasks.
+
+As described in the previous section, we propose a semantically preserving tokenization through superpixels in vision and investigate the performance of our method across various tasks and explore its adaptability to self-supervised frameworks.
+
+SECTION: 3Preliminaries
+
+In this section, we introduce the key concepts and notations that are integral to our work, which aims to construct semantically preserving ViT tokens with superpixels.
+In Section3.1, we describe the mechanism of superpixel algorithms, and in Section3.2, we go over the traditional ViT tokenization.
+Subsequently, we discuss the research challenges in adopting superpixels as tokens in ViTs.
+
+SECTION: 3.1Superpixel Algorithms
+
+Superpixels are clusters of image pixels grouped together based on color, position, or other similarity measures.
+They provide a compact and meaningful representation of the image by grouping pixels into regions that align with its underlying structure.
+
+Given an input image, a superpixel algorithmproduces a superpixel index map:
+
+whereis the number of superpixels, andis a parameter that controls the trade-off between color and positional distance, i.e., compactness in SLIC[2].
+
+The superpixel index of at coordinatecan be defined as, where.
+A-th superpixelcan then be defined as:
+
+whereis the pixel at. Each superpixelconsists of varying numbers of pixels with different shapes and sizes.
+
+SECTION: 3.2Tokenization in Vision Transformers
+
+In grid-based tokenization of conventional ViT and its variants[50,35,42], the input imageis divided intonon-overlapping patches of size, each represented as, wherecorresponds to the index of each patch. Each patchis flattened into a vectorand linearly projected using an embedding matrix, whereis the dimension of tokens.
+In addition to this, positional embeddingof its location is injected to form the input token.
+The set of tokenswhich originates from patches as above, is given to the ViT models along with a learnable classification tokenfor classification.
+
+The tokenization process in ViT requires square-shaped and fixed-sized patches, acquired at uniform locations.
+These constraints on image patches make a naïve application of superpixels to ViT tokenization challenging.
+First, the straightforward flatten-and-project operation is incompatible with superpixels that come in varying sizes and shapes[25,59,62].
+Flattening of superpixels with diverse shapes and varying numbers of pixels yields vectors of varying lengths, which hinder a simple linear projection.
+Second, unlike grid patches with fixed positions, superpixels are located at different positions depending on the image.
+Consequently, the standard positional embedding, which relies on fixed positions, is inappropriate for superpixels.
+
+SECTION: 4Method
+
+To address the aforementioned issues in Section3, we propose a novel superpixel tokenization pipeline that effectively embeds each superpixel into a single token.
+The overview of superpixel tokenization is illustrated in Figure2.
+Our proposed pipeline incorporates two components: pre-aggregate feature extraction (Section4.1) and superpixel-aware feature aggregation (Section4.2).
+Our aggregation is based on pooling operations to address the inconsistent size and shape of superpixels.
+However, naïve application of such aggregation on the RGB space may lead to critical loss of information.
+To sidestep this potential risk, we train a pre-aggregate feature extractor and use its output as input for the superpixel-aware aggregation.
+These two processes of the proposed tokenization method together exploit the benefits of superpixel-based tokenization while conserving critical image information.
+
+SECTION: 4.1Pre-aggregate Feature Extraction
+
+We start by extracting local features from the input image using a simple convolutional block.
+We adopt the design of the initial convolutional block in ResNet[17],
+which consists of aconvolutional layer, a Batch Normalization layer[24], and a ReLU activation function[3].
+We make a slight modification by replacing ReLU with GELU[20], to align with recent advances in the field[14,35].
+Given an input imageand the convolutional block, we extract local features.
+
+Positional features play a crucial role in transformers, as they are unaware of the order of input tokens.
+While the original Transformer proposed to use sinusoidal positional encodings with pre-defined frequencies[51], ViTs opted to use learnable positional embeddings for each pre-defined locations[14,50].
+
+Superpixels have complex positional information of high granularity. Using the learnable positional embeddings as in ViT is inadequate, as it would require excessive number of parameters,i.e.,learnable embeddings each of-dimensions.
+To keep it parameter-efficient, we adopt the sinusoidal positional encoding with learnable frequencies, which is known to capture high frequency information efficiently[49].
+To our knowledge, this positional encoding scheme has not been applied to the Transformer literature before, and is a peculiar choice to adapt to our design of using superpixels of high-granularity.
+
+Consequently, we acquire the value of-th dimension in-dimensional positional featureat each spatial coordinateas below:
+
+whereandeach denote the frequency of horizontal and vertical axis in the-th dimension.
+
+Given the local featuresand the positional features,
+we integrate the two to obtain our pre-aggregate features.
+The two feature mapsandare concatenated and passed to a linear projection layer:
+
+wheredenotes concatenation in the channel dimension.
+The resulting pre-aggregate feature mapis used in the subsequent aggregation stage.
+
+SECTION: 4.2Superpixel-aware Feature Aggregation
+
+To aggregate the extracted pre-aggregate features within each superpixel into a representative embedding,
+we employ average and max pooling, which effectively handles features of varying numbers.
+The pre-computed superpixel index mapof an input imagexis used as the guideline for determining which features belong to which superpixels.
+
+Given the-dimensional pre-aggregate features, we perform average pooling and max pooling within each superpixel cluster.
+This results in two feature vectors per superpixel: average featuresand max features, each of-dimensions:
+
+whereanddenote the number of pixels within superpixeland the pre-aggregate feature at coordinate, respectively.
+
+Average pooling and max pooling extract complementary features from each superpixel. Average pooling captures the overall characteristics common in the superpixel, while max pooling identifies the most salient features that may be obscured by averaging alone.
+We concatenate-dimensional vectors from each pooling method along the channel dimension, yielding a-dimensional token:
+
+This approach effectively combines both general and prominent information, creating a more comprehensive representation of each superpixel.
+
+SECTION: 5Experiments
+
+SizeModel# Params.GMACs# tokensTop-1TinyDeiT5.7M1.2619672.2SuiT5.5M0.7910072.21.2617175.31.4419675.7SmallDeiT22.1M4.6119679.8SuiT21.7M3.6413279.84.6017280.55.2019680.9BaseDeiT86.8M17.619681.8SuiT86.0M16.416081.817.617382.019.719682.1
+
+SECTION: 5.1Experimental Settings
+
+We validate our tokenization method by applying it to ViTs, dubbed as SuiT.
+We experiment on three model scales, Tiny (), Small (), and Base (). The valuesandare both set to.
+
+We employ FastSLIC[4]as our superpixel algorithm due to its high
+speed.
+We use a stride of 2 in the convolutional layer of local feature extraction, which produces feature maps ofsmaller size than the input. The positional feature mapand superpixel index mapare scaled to the same size accordingly.
+
+This design choice was based on the observation that using a stride of 1 offered no notable performance improvements while significantly increasing computational costs.
+Further details are described in Appendix.
+
+SECTION: 5.2Comparison to Baseline
+
+As our approach focuses on tokenization without modifying the backbone network, we focus on comparison with our baseline, DeiT[50]on ImageNet-1K classification[12].
+We mostly follow the experimental settings from DeiT, with minimal changes for fair comparison.
+
+Table1compares the classification performance of SuiT to that of DeiT. For each model size, the table provides a detailed comparison across key aspects: classification accuracy, computational cost measured in GMACs, and the number of tokens processed.
+This adaptive inference capability arises from the flexibility to adjust the number of superpixel tokens, enabling users to customize the configuration based on specific needs.
+When achieving comparable performance, SuiT exhibits substantially higher efficiency than DeiT. At equivalent GMACs, SuiT delivers superior accuracy. Maintaining an identical number of tokens further boosts its accuracy,
+
+SECTION: 5.3Comparison to Existing Tokenization Methods
+
+We evaluate our tokenization method against existing approaches under two scenarios used in existing tokenization studies. For a fair comparison, we follow the setup of[44,16], which fine-tunes a ViT pretrained on ImageNet-21K[43]. Additionally, we include SPiT[1], a concurrent work leveraging superpixels for tokenization, which trains its model from scratch on ImageNet-1K. Both experiments are conducted on ImageNet-1K classification tasks.
+
+As reported inTable2, our method consistently outperforms existing tokenization methods across all scales of model size, showing its efficacy.
+On fine-tuning experiments following[44,16], SuiT outperforms existing tokenization methods for fine-grained tokens, such as Quadformer[44]and MSViT[16].
+
+In experiments for training from scratch following[1], SuiT consistently outperforms SPiT, another work on superpixel-based tokenization, by a noticeable margin.
+These results verify the excellence of our tokenization pipeline compared to prior work.
+
+SECTION: 5.4Transfer Learning
+
+We verify the generalization ability of SuiT when transferred to various downstream tasks. We follow the standard fine-tuning protocol and default settings of DeiT[50]for fair comparison, by fine-tuning ImageNet-1K pre-trained SuiT to each downstream task specifically. We test our models on iNaturalist[22], Flowers102[39], and StanfordCars[10]. Further details can be found in the Appendix.
+
+Table3presents a comparison of the classification accuracy between DeiT and SuiT when fine-tuned on various downstream tasks.
+Across various tasks and model scales,  SuiT consistently achieves higher accuracy than DeiT. Notably, on iNaturalist2018, SuiT-Small outperforms DeiT-Small by 0.8%p, demonstrating its superior ability to effectively transfer learned features, particularly when ample data is available.
+
+These results indicate that SuiT shows improved generalizability than DeiT. This positions SuiT a strong choice for transfer learning across diverse domains. The consistently superior performance of SuiT, regardless of model size or dataset complexity, further underscores its suitability for real-world applications.
+
+SECTION: 5.5Self-supervised Learning
+
+We further study the applicability of SuiT in self-supervised scenario. Specifically, we train SuiT on ImageNet-1K with DINO[9], a well-known self-supervised learning approach, chosen for its proven effectiveness and popularity.
+
+After pre-training SuiT with DINO, we evaluate its performance when transferred to downstream tasks to confirm the quality of learned features.
+As shown in the lower section of Table3, DINO-SuiT consistently surpasses DINO-ViT across all downstream tasks. This demonstrates that SuiT effectively supports self-supervised scenarios, further establishing its strength as a versatile pipeline for a wide range of vision tasks.
+
+It is well known that the attention map of ViTs trained with DINO effectively attends to object regions without explicit supervision[9]. As shown in Figure3, while DINO-ViT’s self-attention maps are limited to square patch-level details, those of DINO-SuiT even capture finer structures of salient objects.
+To demonstrate that this fine-grained property synergistically enhances the salient object segmentation capabilities of DINO[9], we measure the segmentation performance on three benchmark datasets, ECSSD[57], DUTS[54]and DUT-OMRON[58]following the works ofWang et al.[56],Aasan et al.[1].
+We conduct our experiments on the TokenCut framework[56], which is a normalized graph cut algorithm that extracts saliency mask from attention map.
+
+Superpixel tokenization significantly improves DINO-ViT[9]performance across most metrics without post-processing, achieving results comparable to DINO-ViT with post-processing.
+
+Notably, as shown in Table4, our model exhibits minimal performance differences between post-processed and non-post-processed cases, unlike DINO-ViT.
+Compared to SPiT[1], SuiT demonstrates competitive performance across three datasets. However, SPiT[1]does not show its applicability to self-supervised methods such as DINO and is trained with larger resolution images.
+Qualitative comparisons in Figure4highlight that DINO-SuiT detects all salient objects, even in multi-object scenarios, whereas DINO-ViT shows limitations such as rectangular masks without post-processing and incomplete object detection.
+
+SECTION: 6Analysis
+
+SECTION: 6.1Semantic Integrity of Superpixel Tokens
+
+To verify the improved semantic preservation of our superpixel tokens, we perform K-means clustering[26]on tokens embedding space. We compare the clustering results of superpixel tokens with grid-based tokens.
+
+As shown in Figure5, our superpixel tokens are grouped based on semantic similarity rather than spatial proximity, unlike the patch tokens from DeiT, which lack consistency within clusters. For example, in the first row, tokens corresponding to the regions of ducklings are grouped together, whereas clusters from DeiT’s patch tokens fail to convey clear meaning. This analysis suggests that superpixel tokens are better at preserving semantics. Additional results are provided in the Appendix.
+
+SECTION: 6.2Class Identifiability Analysis
+
+Vilas et al.[52]examined class-specific encoding in supervised ViTs by projecting intermediate representations through the trained classifier head into a class-specific embedding space, similar to the logit lens method in NLP[40,6]. Building on this, we evaluate class-specific encoding across SuiT’s layers by projecting token representations through the classifier head and measuring the proportion of tokens correctly predicting the target class.
+
+Figure6shows that SuiT’s classification token shows higher class identifiability in the earlier layers compared to DeiT. This can be attributed to the semantic preserving nature of superpixel tokenization, which aids in aggregating class-specific encoding in early layers. In the deeper layers, DeiT’s patch tokens exhibit class identifiability levels slightly lower than its classification token, with a marginal gap. This observation aligns with findings from previous studies[52,53], which report that patch tokens in supervised ViTs tend to encode increasingly global information as layers deepen. In contrast, SuiT’s patch tokens maintain a lower proportion of class-identifiable features in the later layers, suggesting a reduced emphasis on global feature encoding. This divergence alludes that SuiT and DeiT adopt distinctive strategies to aggregate class-specific features at different network depths.
+
+SECTION: 6.3Enhanced Robustness
+
+We examine the robustness and out-of-distribution (OOD) generalization ability of SuiT in ImageNet variants, ImageNet-A[13]and ImageNet-O[21]. ImageNet-A is a subset of ImageNet-1K curated to mislead classifiers and test model robustness, while ImageNet-O, composed of OOD samples not in ImageNet-1K, evaluates the OOD detection capabilities of models.
+
+In Table5, SuiT consistently outperforms DeiT on both datasets across model variants.
+
+These findings indicate that our superpixel tokenization improves model robustness in challenging scenarios by mitigating the model’s reliance on features that are easily learned but lack generalizability.
+
+SECTION: 6.4Ablation Studies
+
+The following ablation studies on our proposed components are conducted using SuiT-Tiny.
+Table6highlights the importance of components in pre-aggregate feature extraction. First, using raw 3-channel RGB features leads to a significant performance drop, confirming the need for higher-dimensional local features. Second, removing positional information reduces performance but retains partial class prediction through local cues. Experiments also reveal that predefined positional frequencies under-perform compared to learned frequencies, emphasizing the need for vision-specific customization. Lastly, our results show that the combination of concatenation and projection more effectively integrate local and positional features than simple concatenation or addition used in prior studies[51,14,50].
+
+Table7presents the analysis of our aggregation method, which employs cardinality-independent operations. Removing max pooling results in a notable performance drop, and removing average pooling causes a slight decrease. We also tested standard deviation as an alternative to max pooling, but it proved numerically unstable and unsuitable for training. Softmax pooling, which computes a weighted sum of values within each superpixel, showed promising results but slightly underperformed compared to max pooling. This may be due to the softmax operation suppressing prominent features crucial for recognition, leading to less discriminative representations.
+
+SECTION: 7Conclusion
+
+In this work, we proposed a novel superpixel-based tokenization method for ViTs as an attempt to improve the visual tokenization process.
+By leveraging superpixels, the proposed tokenization obtains semantic-preserving tokens, overcoming the issue of mixed semantics in grid-based patches.
+To incorporate superpixels that are irregular in shape, size, and location, we proposed a two-stage pipeline consisting of pre-aggregate feature extraction and superpixel-aware feature aggregation.
+Extensive experiments demonstrated the effectiveness of our method on diverse tasks,e.g.,supervised classification, transfer learning, and self-supervised learning. Additional analytical findings provided meaningful insights into the mechanism and emergent properties of superpixel tokenization.
+We hope our promising results inspire further exploration of token design in ViTs, fostering advancements in both model performance and interpretability.
+
+SECTION: References
+
+Supplementary Material
+
+SECTION: A1Implementation Details
+
+SECTION: A1.1ImageNet-1K classification
+
+The settings for experiments from scratch is presented in TableA2. We mostly follow the settings of DeiT[50]with minimal changes.
+The main difference to the DeiT setting is as follows:
+1) to align with our main concept of using superpixels, we disable
+MixUp[61].
+2) In random erasing[64],
+the randomly erased region is filled with per-channel random color instead of per-pixel random color. 3) We use gradient clipping, which was known to be helpful in ViT[14], but later removed in DeiT[50].
+Other than that, we slightly tweak hyper-parameters of learning rate, weight decay and stochastic depth.
+For models of all three scales, Tiny, Small and Base, we use a base learning rate of, which is scaled proportionally to the batch size, by. We use different weight decay and stochastic depth values for each scale. Most notably, our model uses a larger weight decay and drop rate for stochastic depth, especially in Base scale. This is because we found that our model tends to overfit quickly, compared to the baseline DeiT. We thus opt to use a stronger regularization term. Similar observations were made in Transfer Learning, which is also discussed in the SectionA1.2.
+
+The settings for fine-tuning is presented in TableA2. We mostly follow the settings of Ronen et al.[44]. We initialize our models with the weights pre-trained on ImageNet-21K and fine-tuned on Imagenet-1K, as in[44], and the tokenization part is randomly initialized only. We use the pre-trained weights provided by thetimmlibrary,vit_{size}_patch16_224.augreg_in21k_ft_in1k, where{size}denotes the model size,e.g., Tiny, Small, Base. We train our models for 130 epochs. In this experiment, stronger weight decay did not lead to notable difference, but the drop rate of stochastic depth was significant in prevention of overfitting, as in the experiments from scratch.
+
+SECTION: A1.2Transfer Learning
+
+Here, we list the training settings used for transfer learning. For both ImageNet-1K[12]classification models and DINO[9]pre-trained models, we follow the default training settings of DeiT[50]and DINO[9]. The details for each experiment can be found at TableA4and TableA4.
+Our experiments, especially on smaller datasets, required stronger regularization terms. A very high drop rate for stochastic depth of 0.5 was essential in Flowers and StandfordCars, to avoid overfitting.

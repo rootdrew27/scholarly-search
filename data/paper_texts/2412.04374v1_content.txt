@@ -1,0 +1,376 @@
+SECTION: Reversible molecular simulation for training classical and machine learning force fields
+
+The next generation of force fields for molecular dynamics will be developed using a wealth of data.
+Training systematically with experimental data remains a challenge, however, especially for machine learning potentials.
+Differentiable molecular simulation calculates gradients of observables with respect to parameters through molecular dynamics trajectories.
+Here we improve this approach by explicitly calculating gradients using a reverse-time simulation with effectively constant memory cost.
+The method is applied to learn all-atom water and gas diffusion models with different functional forms, and to train a machine learning potential for diamond from scratch.
+Comparison to ensemble reweighting indicates that reversible simulation can provide more accurate gradients and train to match time-dependent observables.
+
+SECTION: Introduction
+
+Molecular dynamics (MD) simulations have given us insight into how atoms move, from biomolecules to materials[1].
+Key to the accuracy of a MD simulation is the accuracy of the force field used to describe how the atoms interact.
+For classical molecular mechanics, force field development has largely been manual with parameters tuned to give the best possible match to quantum mechanical (QM) data (bottom-up) and condensed phase properties (top-down)[2,3].
+There have been automated approaches, including ensemble reweighting methods[4,5,6,7]like the popular ForceBalance[8,9,10], and graph neural networks to avoid discrete atom typing[11], but much work is still done manually[12].
+The recently emerging and promising machine learning interatomic potentials (MLIPs)[13,14]are typically trained bottom-up on QM data alone[15], though this can give a distorted view of the utility of these models[16].
+Whilst MLIPs can be validated on other data[17], using non-QM data during training has proved challenging.
+This puts a heavy emphasis on generating large and diverse QM datasets and neglects other available data.
+
+One approach to training force fields with experimental data is differentiable molecular simulation (DMS), in which automatic differentiation (AD)[18]is used to obtain the gradients of a loss value with respect to the parameters over a simulation.
+This has had a number of recent applications[19,20,21,22,23,24,25,26,27,28,29,30]with dedicated software available[31,32,33,34,25].
+It is appealing due to the variety of possible loss functions and because the gradients are exact with respect to the forward simulation.
+There are, however, three main problems with DMS.
+Firstly, the memory required is linear in the number of simulation steps meaning that gradient checkpointing is required for longer simulations and that larger neural networks may be incompatible.
+Secondly, performance is considerably slower than standard simulation due to the overhead of reverse mode AD (RAD).
+Finally, the gradients are prone to explosion due to the numerical integration.
+Despite this, DMS holds promise particularly for training on time-dependent observables where ensemble reweighting approaches are not generally applicable[35].
+Examples of these include diffusion coefficients, autocorrelation functions, relaxation rates, thermal conductivity and reaction rates, where available data is challenging to use during training.
+
+Here we take inspiration from reversible differential equation solvers[36,37]and reversible neural networks[38,39]and ask if DMS can be done without storing intermediate states, i.e. by explicitly deriving gradients rather than using conventional AD.
+This is motivated by three features of molecular simulations: they consist of the same step repeated many times, the algorithm does not contain branching, and they are reversible in certain situations.
+We find that identical gradients to DMS with RAD can be obtained with effectively constant memory cost and a computation count comparable to standard simulation, and explore gradient truncation as a way to avoid gradient explosion.
+This reversible simulation approach is demonstrated with three examples: learning molecular mechanics water models with different functional forms, training to match gas diffusion data, and learning a MLIP for diamond from scratch.
+
+SECTION: Results
+
+A molecular simulation is run using a force field with parameters.
+We wish to improveto better match experimental data.
+Whilst it is possible to do this using gradient-free approaches, this scales poorly with parameter number and both molecular mechanics force fields and MLIPs can have thousands or more parameters.
+Consequently, we wish to calculatewhere the loss functionrepresents the match of the simulation to experiment.
+Existing gradient-based approaches to parameterise force fields are summarised in Table1and Figure1A.
+
+Here we show (see the Methods) that:
+
+whereare the coordinates at step,are the forces on each atom at step,is the force function,is the snapshot step, and the angle brackets represent the average over snapshots of the simulation.can be calculated at each time step.
+By calculating a series of intermediate values,can be accumulated by stepping back in time.
+This equates to the same operations as DMS with RAD but coded explicitly, and requires running the simulation back in time, hence the name reversible simulation.
+
+Arbitrary trajectories back in time will diverge in the NVT (canonical) ensemble, hence an initial simulation forwards in time must be run for the length of the simulation to ensure we obtain a valid trajectory.
+Given the tendency of the reverse-time integrator to gradually diverge over time from the corresponding forward simulation due to not being bitwise reversible[42,43], snapshots also need to be stored every 1 ps to reset the coordinates and velocities.
+Apart from this storage, which is cheap, the method is constant in memory for any simulation length.
+Conceptually it is similar to the adjoint method[41,30], with a comparison in the Methods, though the adjoint method solves a different equation back in time[44,45,46,47].
+
+To test reversible simulation and compare to ensemble reweighting, we train a 3-point molecular mechanics water model to match experimental data.
+Parameterising water models is a common challenge where the fit to various properties has to be balanced.
+In this case enthalpy of vapourisation and radial distribution function (RDF)[50]data were used as a proof of principle, though other studies have used more properties[8].
+Starting from the popular TIP3P water model[51]we train the Lennard-Jonesandparameters, the partial charge on oxygen (and hence on hydrogen, since the overall molecular charge is zero), and the equilibrium values and force constants for the harmonic bonds and angles.
+As can be seen in Figure1B, the gradients are numerically identical to DMS with RAD for small step numbers as expected.
+The gradients from reversible simulation correlate surprisingly well with those from ensemble reweighting, which are compared to in Figure1C.
+It is encouraging that these two distinct approaches give similar gradients.
+The gradients vary much less for reversible simulation over repeats with different random seeds used for the thermostat (Figure1D).
+This is possibly due to the increased number of steps contributing to the gradient as discussed in the Supplementary Methods.
+Plotting the loss values against the gradients shows that the loss is minimised when the gradient is zero, indicating that the gradients are accurate and that optimising with the gradients will minimise the loss (Figure1E).
+The correlation of loss to gradient magnitude is better for reversible simulation, suggesting that it may provide a smoother optimisation surface.
+
+As shown in Figure2A both reversible simulation and ensemble reweighting provide gradients that improve the match to experiment for the chosen properties over training with simulations of 50 ps using a box of 895 water molecules.
+They follow similar optimisation pathways through parameter space, shown in Figure2B for two parameters, with reversible simulation taking steps in a more consistent direction than ensemble reweighting as suggested by Figure1E.
+Longer validation simulations with the learned potentials show an improved match to the enthalpy of vapourisation across multiple temperatures and to the RDF (Figure3), though ensemble reweighting does not match the enthalpy of vapourisation as well.
+Other properties are also shown.
+The match to density is made worse as it was not used during training, though the match to the self-diffusion coefficient is improved.
+Rather than fit to all available properties here, we aim to demonstrate that reversible simulation is able to match chosen experimental properties for all-atom models.
+
+Since reversible simulation is independent of the functional form used to calculate the forces, we also demonstrate that it can optimise parameters for other functional forms of the non-charge non-bonded potential.
+The double exponential, Buckingham and Lennard-Jones soft core potentials have all been proposed as improvements over the Lennard-Jones potential, in which the repulsion term is not physically motivated.
+By starting from sensible parameters and training on the same properties as before, parameters can be learned that better fit the experimental data.
+As can be seen in Figure2C-D and Figure3these flexible functional forms give potentials of a similar shape with the learned parameters and are able to match the enthalpy of vapourisation and RDF well.
+This indicates that reversible simulation could be useful in developing the next generation of force fields that go beyond Lennard-Jones.
+
+As discussed in the Methods, the run time of reversible simulation is similar to that of the forward simulation if the required gradients can be calculated explicitly.
+For water training the run time was 2.7 ms per simulation step on CPU for Lennard-Jones, compared to 2.3 ms for a single forward step.
+In comparison the run time of OpenMM on the same system was 1.2 ms per step on CPU for a standard simulation, so reversible simulation can approach the simulation speed of mature software.
+Optimisation for GPU is left to further work.
+The alternative functional forms add less than 10% to the run time of Lennard-Jones.
+
+Given that ensemble reweighting gives similar gradients to reversible simulation (Figure1C) and is often easier to set up, it will be the preferred choice for many properties of interest.
+However, reversible simulation is distinguished by its ability to target time-dependent properties.
+Here we show how this can be useful by learning parameters that match the experimental diffusion coefficientof the oxygen diatomic molecule in water.
+For Lennard-Jones we use TIP3P starting parameters for the water and oxygen parameters from Wang et al. 2021[53].
+By training on simulations of 50 ps with 10 oxygen molecules randomly placed in 885 water molecules and calculatingusing the slope of the mean squared displacement (MSD) against time, reversible simulation can learn parameters that reproduce the experimental value ofm2s-1forfrom a starting value ofm2s-1(Figure4A-B).
+
+Similar to the water models discussed previously, we learn parameters for alternative functional forms.
+These are also able to reproduce the experimental value of, indicating that reversible simulation can train to match time-dependent properties for a variety of functional forms.
+Longer simulations with the learned parameters reproduce improvedvalues, as shown in Figure4B.
+
+The water molecules described above have fewer than 10 parameters each.
+In order to demonstrate that reversible simulation can train neural networks with many more parameters from scratch, we train the MLIP model for diamond used in Thaler and Zavadlav 2021[5]on GPU using the experimental elastic stiffness tensor.
+The model consists of a Stillinger-Weber prior with starting parameters for silicon[54]and the DimeNet++ neural network[55].
+The virial stress tensor and stiffness tensor calculated via the stress fluctuation method were used to define the loss function, with only three distinct stiffness moduli in the stiffness tensor due to symmetries in the diamond cubic crystal.
+All parameters of the model were trained over increasing numbers of simulation steps of 1000 carbon atoms, with 1 ps of simulation used by the end of training.
+This was sufficient to train the model, as shown in Figure4C-D.
+The learned model maintains a low loss over longer 100 ps validation simulations, indicating stability, with stress and stiffness values showing good agreement with the target values.
+The DimeNet++ model used has 121,542 parameters, demonstrating that reversible simulation can effectively train models with large numbers of parameters.
+As long as one force evaluation can fit in memory, reversible simulation should be applicable to even larger models whereas DMS would struggle even with gradient checkpointing.
+
+SECTION: Discussion
+
+The number of computations required to calculate gradients with reversible simulation is similar to that of a standard simulation due to gradient truncation, as described in the Methods.
+In addition, reversible simulation uses effectively constant memory for any number of simulation steps, is applicable to many loss functions and gives accurate gradients that numerically match those from the forward simulation, unlike the adjoint method.
+The high degree of control over the gradients, not available in general with AD, means that gradient truncation can be easily implemented.
+These improvements over DMS should make it applicable to larger systems and systems where the potential has a significant memory cost such as MLIPs.
+The ability to train three different systems using the Adam optimiser with gradients from reversible simulation shows its wide applicability.
+
+One drawback of the method is that it requires implementing the algorithm whereas ensemble reweighting can largely make use of existing software.
+However, implementing the algorithm is not particularly difficult and can mostly be achieved using fast components of existing software.
+Another drawback is that the loss and force functions need to be differentiable with respect to the atomic coordinates, which can be challenging for losses such as density.
+Second order AD may be required to calculate the force gradients for MLIPs, but this is supported in many frameworks.
+Some loss functions involving combinations of averages are also hard to implement with reversible simulation.
+
+Recent work has used neural networks for continuous atom typing[11].
+These methods could be trained end-to-end with reversible simulation to target condensed phase properties.
+It should also be possible to train on binding free energy data directly[33,56]with reversible simulation by differentiating through the appropriate estimator.
+One surprise from this work is the similarity between gradients arising from reversible simulation and ensemble reweighting.
+This is encouraging given that they are computed in different ways.
+For many applications, ensemble-based approaches are sufficient.
+However, reversible simulation allows time-dependent properties to be targeted and here gives gradients with less variance.
+It could be used in combination with ensemble reweighting to target multiple properties, alongside force matching to QM data[57].
+A variety of approaches will be important for training the next generation of molecular mechanics force fields, MLIPs, and everything in-between[58].
+
+SECTION: Methods
+
+Consider the widely used Langevin integrator for running molecular simulations in the NVT (canonical) ensemble:
+
+where foratoms at step,are the atomic coordinates,are the velocities,are the accelerations,are the masses,is the force function arising from the interaction potential,are the force field parameters,is the collision frequency,is the Boltzmann constant,is the temperature andis a stationary Gaussian process with zero-mean.
+One popular implementation is the Langevin middle integrator from OpenMM[59,60], which has been used successfully for DMS[25].
+The integration step at stepfor this integrator is:
+
+whereare the forces arising from the interaction potential,is the time step,are random velocities generated from the Boltzmann distribution at temperatureeach step and′denotes intermediate computation values.
+The velocities are offset by half a time step from the coordinates.
+If the match to experiment after a simulation ofsteps is represented by a loss functionthen according to the multi-variable chain rule:
+
+sinceonly appears inandduring the integration step (Equation 2).
+In the case that multiple snapshots contribute to the loss, then:
+
+whereis the step number of the snapshot and the angle brackets represent the average over the snapshots.can be calculated at the point of calculating.can be calculated each step, shown in the Supplementary Methods for the example of the Lennard-Jones potential, meaning that the challenge is to calculate theterms.
+This can be rewritten:
+
+The terms can be derived using Symbolics.jl[61]from an unrolled simulation (see the Supplementary Methods).
+The first two terms are:
+
+Noting thataccumulates terms for each step backwards in time, this suggests an efficient approach to calculatingby running a reverse-time simulation.
+This is mathematically equivalent to RAD.
+The concept is similar to using a reversible differential equation solver[36,37]and reversible neural networks[38,39], with a discussion in Section 5.3.2 of Kidger 2021[36].
+For the Langevin middle integrator, the time step is reversible provided that the random velocities from the previous step,, are known:
+
+Note that this integrator is not bitwise reversible[42,43]since the order of floating point operations is different to the forward step.
+Consequently, coordinates and velocities are stored every 1 ps and reset during the reverse simulation to prevent drift.
+This incurs a small memory cost proportional to the number of simulation steps.
+A series of accumulation vectors is required to update.
+The starting values at stepare:
+
+At each time step, the accumulation vectors,and the growingare updated:
+
+whereis the contribution tofrom stepandis the contribution tofrom all steps fromto.
+There are two gradient calls, in lines 3 and 4 of Equation 5.
+These are vector-Jacobian products, as expected for an equivalent scheme to RAD, and consequently are efficient to compute via AD[18].
+For the simple functional forms of molecular mechanics potentials they can be coded explicitly, and hence AD is not required at all.
+This is shown for the Lennard-Jones potential in the Supplementary Methods.
+For MLIPs that compute potential energy and use AD to calculate the forces, second order AD can usually be used to calculate the two required gradients.
+
+Whilst this form of the algorithm is specific to the Langevin middle integrator, the leapfrog Verlet integrator corresponds to the special case whereps-1.
+In this case the leading bracketed term inincreases to 2, 4, 6, 8, etc. as further steps are taken back in time (Equation 4).
+This demonstrates what is known practically[19,62,63], that gradients can explode even for a stable forward simulation.
+For typical values ofps-1andfs the leading terms increase to 1.999, 3.996, 5.991, 7.984, etc., so gradient explosion is still a problem.
+This motivates the use of gradient truncation[64,30], whereis not accumulated beyond a certain number of reverse steps.
+Here truncation was found to give more accurate gradients than gradient norm clipping[65,25].
+The effect of gradient truncation on the accuracy of gradients is shown in FigureS1.
+Truncation after 200 steps was used throughout the results as it appears to balance preventing gradient explosion with using information from as many steps as possible.
+As described below, truncation also increases the speed of reversible simulation since reversible steps only need to be carried out whilst gradients are being accumulated.
+Steps can be skipped by loading from the stored coordinates and velocities.
+
+So far we have considered that the loss depends only on the coordinates and velocities at one point in time.
+One advantage of reversible simulation over ensemble reweighting is that the loss value can take in multiple time points, for example to calculate diffusion coefficients.
+In this case, additional terms are added to Equation 3 and calculated with a different set of accumulation values.
+Truncation is applied separately for each.
+The ability to control the gradients explicitly at every step is useful for allowing gradient truncation for losses that consider multiple time points, which would be challenging with AD software.
+
+By carrying out the gradient calculation this way we have alleviated the problems with using RAD for DMS.
+The memory cost is reduced, and hence no gradient checkpointing is required, since no intermediate values apart from the vectors in Equation 5 and occasional coordinate and velocity copies need to be stored.
+The typical 5-10x compute overhead of RAD is reduced since we code everything explicitly.
+The calculation ofandeach step typically takes a similar amount of time to the calculation of, suggesting a slowdown of around 3x over the forward simulation, though for molecular mechanics force fields it is often possible to share calculations when computing the three values explicitly as shown in the Supplementary Methods.
+In the absence of gradient truncation, the cost is one forward simulation followed by the reverse simulation consisting of one standard and two RAD calls to the force function.
+However truncating every 200 steps, in addition to preventing gradient explosion, means that the reverse simulation only needs to take a fraction of the steps of the forward simulation depending on how often snapshots contribute to the loss.
+When training the water model snapshots are taken every 2000 steps, so reversible simulation only needs to be done for a tenth of steps.
+Consequently, the computation count is similar to the forward simulation and ensemble reweighting.
+Concretely, on 32 CPU cores (Intel Xeon Gold 6258R) the water model with 2685 atoms runs at 2.3 ms per forward step, 3.9 ms per reverse step, and 2.7 ms per step for a 50 ps training run.
+OpenMM[60]on the same machine runs at 1.2 ms per step for a standard simulation with the same parameters.
+
+The above derivation will change for different integrators and thermostats.
+Here we avoid the complexities of constant pressure simulation, constrained bonds and angles, virtual sites and Ewald summation for long-range electrostatics, though the approach should extend to include them.
+
+We implemented reversible simulation in the Julia language[66]due to its flexibility, speed and growing use in science[67].
+The Molly.jl MD package[25]was used for standard MD components such as neighbour lists and periodic boundary conditions.
+LoopVectorization.jl and Polyester.jl were used to improve performance.
+Double floating point precision was used throughout to increase numerical precision (see Figure1B).
+Integer random seeds were stored from the forward simulation and used to generate the same random velocitiesduring the reverse simulation.
+Gradients were computed using Zygote.jl[68]and Enzyme.jl[69,70].
+MDAnalysis[71]and BioStructures[72]were used for analysis.
+Ensemble reweighting was implemented following ForceBalance[8]with AD used to calculate the requiredandgradients for improved speed and accuracy.
+The same number of snapshots were used to calculate the loss for reversible simulation and ensemble reweighting.
+For the molecular mechanics models, the required force gradients were explicitly derived and implemented for bonded and non-bonded terms for all functional forms.
+
+To train the water models we used a cubic box with 3 nm sides containing 895 water molecules.
+The Langevin middle integrator withps-1, a temperature of 295.15 K, a time step of 1 fs, no bond or angle constraints, a 1 nm cutoff for non-bonded interactions and the reaction field approximation for long range electrostatics were used.
+Each epoch an equilibrium simulation of 10 ps was followed by a production simulation of 50 ps, with the loss computed from snapshots taken every 2 ps.
+A Monte Carlo barostat was used to set the pressure to 1 bar during equilibration but not during the production run.
+
+The enthalpy of vapourisation was calculated following the procedure in OpenFF Evaluator[73].
+The gas potential energy was pre-computed once before training.
+Since bond and angle constraints were not used during training but were used for validation simulations, 2.8 kJ/mol was added to the liquid potential energy during training as tests in OpenMM with TIP3P water indicated that not using constraints leads to this difference.
+A mean squared error (MSE) loss with an experimental value of 44.12 kJ/mol was used.
+The RDF was calculated for O-O and O-H distances using the differentiable procedure from Wang et al. 2023[24]and experimental data from Soper 2013[48].
+In addition to the Lennard-Jones or alternative parameters described below, the TIP3P starting parameters[51]of O partial charge -0.834, O-H bond distance 0.09572 nm, O-H bond force constant 462750 kJ mol-1nm-2, H-O-H angle 1.824 radians and H-O-H angle force constant 836.8 kJ/mol were used.
+The Adam optimiser with a learning rate ofwas used, parameter values were divided by their starting values for optimisation to account for their different sizes, and a maximum gradient magnitude of 1000 per parameter was applied.
+Training was carried out on 32 CPU cores for a week or around 1000 epochs.
+
+Validation simulations were carried out using OpenMM[60].
+At each temperature from 260 K to 365 K at 5 K intervals, a 120 ns simulation was run with the first 20 ns being discarded as equilibration.
+The Langevin middle integrator withps-1, the Monte Carlo barostat with a pressure of 1 bar, a time step of 2 fs, constrained bonds and angles, a 1 nm cutoff for non-bonded interactions and particle mesh Ewald for long range electrostatics were used.
+Snapshots were saved for analysis every 50 ps.
+For the self-diffusion coefficient, 5 short 5 ns equilibration simulations were run as above followed by 5 100 ps simulations in the NVE ensemble using the Verlet integrator with a time step of 1 fs.
+The diffusion coefficient was calculated as described in the later section on gas diffusion.
+The dielectric constant was calculated following the procedure in OpenFF Evaluator[73].
+The RDF was calculated using MDAnalysis[71].
+
+Here we outline the potential energy functions used for the alternative functional forms.
+These were only applied to the oxygen atoms in each molecule by settingkJ/mol or similar for hydrogen.
+The starting O partial charge and bonded parameters are always those from TIP3P.
+In each caseis the interatomic distance.
+The Lennard-Jones potential is standard and has parametersand:
+
+The TIP3P starting parametersnm andkJ/mol were used, and also where relevant for other functional forms.
+
+The double exponential potential has parameters,,and:
+
+where.
+The starting valuesandfrom Horton et al. 2023[74]were used.
+
+The Buckingham potential has parameters,and:
+
+The starting valueskJ/mol,nm-1andkJ/mol nm6were used after a fit of the three parameters to the TIP3P Lennard-Jones potential curve.
+
+The Lennard-Jones soft core potential has parameters,,and:
+
+where.
+The starting valuesandwere used.
+
+Unless otherwise stated, the same simulation and training options as the water model were used.
+Only the non-bonded parameters were trained.
+No barostat was used during equilibration.
+The same box of 895 water molecules was used except 10 water molecules were randomly replaced each epoch with oxygen molecules followed by an energy minimisation.
+Snapshots were taken every 200 fs.
+The MSD of oxygen gas molecules was calculated, accounting for the periodic boundary conditions, across multiple time segments spanning half the simulation time. This was divided by 6 times the segment time to obtainfrom Einstein’s relation.
+Training simulations were carried out using the Langevin middle integrator withps-1and a time step of 1 fs.
+Training in the NVT ensemble was found to give better results than the NVE ensemble and represents a likely use case.
+Consequently, the validation simulation were also run in the NVT ensemble.
+The loss was the MSE to an experimentalvalue ofm2s-1[52], multiplied by.
+Starting parameters for the oxygen gas ofnm andkJ/mol were taken from Wang et al. 2021[53].
+The Adam optimiser with a learning rate ofwas used.
+For validation, 5 simulations of 100 ps were run after separate 10 ps equilibration runs and thevalue averaged.
+
+The Stillinger-Weber prior[54]was implemented in Julia.
+The starting parameters were those for silicon with modified length and energy scalesnm andkJ/mol to account for the smaller carbon atom[5].
+Rather than implement the DimeNet++ model[55]in Julia, PythonCall.jl was used to call the Jax code from Thaler and Zavadlav 2021[5,32]on GPU.
+In this section the notation from that paper is matched.
+A cubic box with 1.784 nm sides containing 1000 carbon atoms was used, representing 5 diamond unit cells in each direction.
+The Langevin middle integrator withps-1, a temperature of 298 K and a time step of 0.5 fs were used.
+The loss was defined as:
+
+wherekJ-2mol2nm6,kJ-2mol2nm6,GPa,GPa andGPa.
+The crystal is assumed to have zero stress for vanishing strain.
+The virial stress tensoris calculated[75]as:
+
+whereis the number of atoms,is the outer product,are the atomic masses,are the atom velocities,is the atomic coordinate array (),is the atomic force array (),is the potential energy,is the lattice tensor describing the simulation box andis the box volume.
+The isothermal elastic stiffness tensorwas calculated at constant strainvia the stress fluctuation method:
+
+withand Kronecker delta.
+Second order AD was used to calculate, meaning that third order AD was used to calculate the gradient of the loss function.,andwere calculated from[5].
+The Born contribution to the stress tensor is omitted as it is difficult to calculate with reversible simulation and it is a considerably smaller term than the others.
+The loss was computed from snapshots taken every 250 fs.
+AD was used in Julia or Jax to compute the required derivatives.
+The training simulation time was scaled up over epochs, and was set to 0.5 fs multiplied by the epoch number with no equilibration.
+By the end of training at 2000 epochs the simulation time was 1 ps, which was found to be sufficient for learning.
+The Adam optimiser with a learning rate offor the DimeNet++ parameters andfor the Stillinger-Weber parameters was used.
+The validation simulations with the learned model were 100 ps.
+Training and validation were carried out on one A100 GPU.
+Other details are the same as Thaler and Zavadlav 2021[5].
+
+SECTION: Availability
+
+Training and validation scripts are available under a permissive licence athttps://github.com/greener-group/rev-sim.
+Molly.jl is available athttps://github.com/JuliaMolSim/Molly.jl.
+
+SECTION: Conflict of interest
+
+The author declares no competing interests.
+
+SECTION: Acknowledgements
+
+I thank the Sjors Scheres group, Stephan Thaler, Josh Fass, Yutong Zhao, Yuanqing Wang, Daniel Cole, Joshua Horton and Kresten Lindorff-Larsen for useful discussions; all contributors to Molly.jl; William Moses and Valentin Churavy for support with Enzyme.jl; and Jake Grimmett, Toby Darling and Ivan Clayson for help with high-performance computing.
+This work was supported by the Medical Research Council, as part of United Kingdom Research and Innovation (also known as UK Research and Innovation) [MC_UP_1201/33].
+For the purpose of open access, the MRC Laboratory of Molecular Biology has applied a CC BY public copyright licence to any Author Accepted Manuscript version arising.
+
+SECTION: References
+
+SECTION: Reversible molecular simulation for training classical and machine learning force fields
+
+SECTION: Joe G Greener
+
+SECTION: Supplementary Methods and Data
+
+SECTION: Reversible molecular simulation derivation
+
+Consider a single simulation step of the Langevin middle integrator as shown in Equation 2.
+One operation at a time can be explicitly computed with constants represented by values ofand intermediate vectors represented by values of:
+
+The multi-variable chain rule can then be used to compute:
+
+This is the first term in Equation 4.
+Following a similar process with assistance from Symbolics.jl[61]further terms, which quickly increase in complexity, can be derived.
+Examining the relationship between these terms manually leads to the relations in Equation 5.
+
+SECTION: Force gradients
+
+The Lennard-Jones potential between two atoms is defined by potential energyfor interatomic distanceand atom pair parametersand.
+The magnitude of the forceand the gradients required for reversible simulation are given by:
+
+Significant computation can be reused when calculating these quantities.
+Note that whenthe power 12 term will approach zero andandwill have the same sign.
+
+SECTION: Comparison to ensemble reweighting
+
+Consider for example the ForceBalance approach[8,9,10].
+Ifis a generic thermodynamic average property then:
+
+whereis the number of microstates,is the probability of state,is the potential energy of state,is the partition function and the angle brackets represent the average over microstates.
+By differentiating this[8,9,10]we obtain:
+
+This can be compared to Equation 1.
+Finite differences can be used to calculateand[8], but AD provides a way to do this faster and with higher accuracy[5].
+Typically, one or more simulations are run and the snapshots sampled are taken as representative of the microstates.
+This assumes sufficient sampling of low energy regions and requires enough time between snapshots to reduce correlation.
+The first term is the same as in Equation 1 and represents the direct dependence ofon the parameters.
+The second term represents how a change in the parameters affects the weighting of states in the ensemble.
+Reversible simulation does this by differentiating through a simulation, whereas the ensemble reweighting approach reweights the snapshots based on how the potential energy depends on the parameters.
+Ensemble reweighting therefore only consider snapshot states, whereas reversible simulation considers a number of steps prior to each snapshot state depending on gradient truncation.
+Since reordering states does not change the gradients arising from ensemble reweighting, observables that depend on multiple time points such as diffusion coefficients are not directly applicable to this scheme.
+DiffTRe extends the above approach by using thermodynamic perturbation theory to reuse states, allowing for more efficient training[5].
+
+SECTION: Comparison to the adjoint method
+
+The adjoint method differentiates an ordinary differential equation (ODE) before discretising it[41,36].
+Consider a loss functionwhose input is the result of an ODE solver acting on hidden state:
+
+The adjointdetermines the gradient of the loss with respect to:
+
+It can then be shown[41]that:
+
+The required integrals for solving,andcan be computed in a single call to an ODE solver.
+This steps back through time starting from the final state, similar to reversible simulation.
+The two vector-Jacobian products above are similar to the two in Equation 5.
+However, reversible simulation discretises the differential equation before differentiating it[36].
+This means that the gradients match those of the forward simulation to within numerical error.
+By contrast, the adjoint method solves a different equation to obtain the gradients, which can cause problems[44,45].
+It can be unclear how to best solve this adjoint equation.
+The forward simulation is stable for conventional MD cases, but this is not guaranteed for the adjoint equation[46], so it makes sense to use the gradients of the forward simulation if possible.
+There has also been work on second order neural ODEs[47].

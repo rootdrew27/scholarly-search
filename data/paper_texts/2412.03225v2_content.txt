@@ -1,0 +1,251 @@
+SECTION: MaterialPicker: Multi-Modal Material Generation with Diffusion Transformers
+
+High-quality material generation is key for virtual environment authoring and inverse rendering. We propose MaterialPicker, a multi-modal material generator leveraging a Diffusion Transformer (DiT) architecture, improving and simplifying the creation of high-quality materials from text prompts and/or photographs. Our method can generate a material based on an image crop of a material sample, even if the captured surface is distorted, viewed at an angle or partially occluded, as is often the case in photographs of natural scenes. We further allow the user to specify a text prompt to provide additional guidance for the generation. We finetune a pre-trained DiT-based video generator into a material generator, where each material map is treated as a frame in a video sequence. We evaluate our approach both quantitatively and qualitatively and show that it enables more diverse material generation and better distortion correction than previous work.
+
+SECTION: 1Introduction
+
+High-quality materials are a core requirement for photorealistic image synthesis. We present a multi-modal material generator, conditioned on a text prompt and/or an image. The image can be a photograph containing a material sample captured at any angle, potentially distorted or partially occluded. Our model lets users “pick” materials from any photograph just by outlining a rough crop square around the material sample of interest.
+
+Traditional material acquisition often requires tens or hundreds of photo samples under known light conditions and camera poses. Even with recent advances in material acquisition allowing single or few image(s) capture[8,9,30,42,17,55,47], strong restrictions on the capture conditions are imposed. These methods typically require a flash light co-located with the camera as the only light source, and/or a fronto-parallel view of a flat sample. Even methods designed for capture using non-planar photographs[28]cannot handle significant texture distortion in the input photographs. Many recent material generation methods are trained from scratch on synthetic materials, limiting the generation diversity due to limited datasets[47,1], as compared to general-purpose text-to-image diffusion models[31,38,39].
+
+We propose to tackle these challenges with two new ideas. First, we create a dataset which contains 800K crops of synthetic scene renderings, textured with randomly assigned materials, with each crop paired with its ground truth material. Using this data, we can train our model for the “material picking task”, with various observation angles and distortion. We additionally use a text-to-material dataset[47]containing 800K pairs of text descriptions and associated ground truth material maps, encouraging material generation diversity and resulting in a multi-modal generator that can accept images, text or both.
+
+Second, we re-purpose a text-to-video generation model to generate material maps instead. We use a Diffusion-Transformer (DiT) based architecture, which has been shown to be effective for high-quality video synthesis[6]. However, our target domain is materials, which we represent as a set of 2D maps (albedo, normal, height, roughness, metallicity). To adapt our base DiT model, trained on videos, to materials, we finetune it by considering each material map as a “frame” in a video sequence. This approach preserves the strong prior information in the video model, improving our method’s generalization and robustness.
+
+We evaluate our model on both real and synthetic input images and compare it against the state-of-the-art methods for texture rectification[19], material picking[28]and text-to-material generation[47,48]. We show that our approach generates materials that follow the input text prompt and/or match the appearance of the material sample in the input image, while correcting its distortions.
+In summary, we make the following contributions:
+
+We propose a material generation model which uses text and/or image prompts as inputs, while being robust to distortion, occlusion and perspective in the input image.
+
+We design a large-scale dataset of crops of material samples paired with the corresponding ground truth material maps, enabling our model to handle a range of viewing angles and distortion.
+
+We adapt a Diffusion Transformer text-to-video model for material generation by treating material maps as video frames, preserving the original prior knowledge embedded in the model to generate diverse materials.
+
+SECTION: 2Related Work
+
+SECTION: 2.1Material Acquisition and Generation
+
+While material acquisition has been a long standing challenge[15], lightweight material acquisition and generation have seen significant progress using machine learning. Various methods were proposed to infer PBR material maps from only a single or few photographs[8,9,10,42,17,55]. However, these methods rely on specific capture condition using a flash light co-located with the camera location.Martin et al.[30]propose to use natural illumination but doesn’t support direct metallic and roughness map estimations. Further, these methods rely on the camera being fronto-parallel or very close to it. This kind of photographs require specific captures, making the use of in the wild photos for material creation challenging.
+
+As an alternative to create materials, generative model for materials were proposed. GAN-based approaches[18,56]show that unconditional generation of materials is possible and can be used for material acquisition via optimization of their noise and latent spaces. Recent progress in generative model, and more specifically diffusion models[39], enabled more stable, diffusion based, material generators[48,50]. Such diffusion models can also be used to support material acquisition tasks[47], for example when paired with ControlNet[54].
+All these diffusion-based approaches either attempt to train the model from scratch, using solely synthetic material data[48,47]or significantly alter the architecture of the original text-to-image model[50], preventing the use of the pre-existing priors in large scale image generation models[39], limiting their generalization and diversity. Further, image prompts are limited to fronto-parallel photographs, which requires a specific capture.
+
+Other methods leveraged transformers as a model for material generation[16,25]but focused on procedural material, which relies on generating functional graph generation, a very different modality. These procedural representations have resolution and editability benefits, but cannot easily model materials with complex texture patterns in the wild. In contrast, our model supports generating materials from any image or text prompt and produces varied, high-quality material samples.
+
+SECTION: 2.2Material Extraction and Rectification
+
+Different methods were proposed to rectify textures or generally enable non-fronto-parallel textures as input. Some approaches[52,51]aim to evaluate the materials in an image through a retrieval and optimization method. Given an image, they retrieve the geometries and procedural materials in databases to optimize their position and appearance via differentiable rendering[43,53]. Closest to our work is Material palette[28], targeting material extraction from a single photo, not restricted to fronto parallel images. The method leverages Dreambooth[40]optimized through a LoRA[24]on Stable Diffusion[39]to learn a “concept” for each material. This lets them generate a texture with a similar appearance to the target material and use a separate material estimation network to decompose the texture into material maps. However, this LoRA optimization step takes up to 3 minutes for each image, and we find that our approach reproduces better the target appearance.
+
+A related field is that of texture synthesis from real-world images. Wu et al.[49]present an automatic texture exemplar extraction based on Trimmed Texture CNN. VQGAN[12]achieves high resolution image-to-image synthesis with a transformer-based architecture. These methods however do not support the common occlusions and deformations that occur in natural images. To tackle this limitation,Hao et al.[19]propose to rectify occlusions and distortions in texture images via a conditional denoising UNet with an occlusion-aware latent transformer. We show that our approach yields better texture rectification and simultaneously generates material parameters.
+
+SECTION: 2.3Diffusion Models and Diffusion Transformers
+
+Diffusion models[23,44,45,46]are state-of-the-art generative models, showing great results across various visual applications such as image synthesis and video generation. The core architecture of diffusion models progressed from simple UNets, incorporating self-attention and enhanced upscaling layers[11], prior-based text-to-image model[31,38], a VAE[26]for latent diffusion models (LDM)[39]and temporal attention layers for video generations[3,2]. These image generation methods all rely on a U-net backbone, a convolutional-based encoder-decoder architecture.
+
+Recently, transformer-based diffusion models, Diffusion Transformers (DiT) were proposed[35], benefiting from the scalability of Transformer models, removing the convolutions inductive bias. PixArt-presents a DiT-based text-to-image that can synthesize high resolution images with low training cost. Stable Diffusion 3[13]demonstrates that a multi-modal DiT model trained with Rectified Flow can achieve superior image synthesis quality. Compared to the U-net architecture, the DiT shows greater flexibility in the representation on the visual data, which is particularly important to video synthesis tasks. Sora[6], a DiT-based video diffusion model, encodes video sequences as tokens and uses transformers to denoise these visual tokens, demonstrating the ability to generate minute-long, high-resolution high-quality videos. We adapt a DiT-based video generation model for our purpose and show that it can be flexibly transformed into a multi-channel material generator.
+
+SECTION: 3Method
+
+SECTION: 3.1Diffusion Transformer
+
+Diffusion models are generative models that iteratively transform an initial noise distribution (e.g. Gaussian noise) into a complex real-world data distribution (e.g., images, or their encodings).
+The diffusion process relies on aforwardprocess that progressively transforms the original data distribution into a noise distribution. For example, this can be achieved by iteratively adding Gaussian noise to the data sample. Given data samples, corrupted dataare constructed indiffusion steps.
+
+To sample the original data distributionfrom the noise distribution, areversemappingneeds to be modeled whereis the noise predicted at each step by a neural network. The neural networkis conditioned on the denoising stepto predict the noise, which is then used to reconstructfromin each reverse step[23]:
+
+whereis conditional inputs (e.g., text prompts or images).
+
+We use a Diffusion Transformer[35]architecture as a backbone to model. The visual datais tokenized patch-wise, resulting in visual tokenswhereare the spatial and temporal dimensions of the video,is the number of tokens andis the feature dimension. Positional encoding is also added toto specify spatial and temporal order. Any conditionis also embedded as tokenswhereis the number of the tokens for conditional inputs. For example, whenis a text, it is encoded by an pre-trained encoder[37]with additional embedding layers to map it into the same feature dimension. The transformeris trained to denoise each patch at timestep. The final denoised patchesare reassembled as visual dataafter decoding through linear layers. Since the number of tokens grows quickly with resolution, we use a variational autoencoder (VAE) model[35,39]before the tokenizing process, producing a latent representation ofof the original datafor the transformer to process.
+
+SECTION: 3.2Datasets
+
+To train our material generative model, we propose two datasets,ScenesandMaterials. Together, these datasets enable joint training for both surface rectification and high quality material generation.
+
+For theScenesdataset, we build a set of synthetic indoor scenes with planar floors, walls, and randomly placed 3D objects, such as cubes, spheres, cylinders, cones, and toruses, similar to random Cornell boxes[34]. Each object is randomly assigned a unique material from around 3,000 stationary (i.e., approximately shift invariant) materials. Using this approach we create a dataset of 100,000 high-resolution rendered images, with different kinds of light sources, including point lights and area lights, to simulate complex real-world illumination (see Fig.2). We randomly place cameras to capture a wide variety of view points and maximize coverage.
+
+We further crop the rendered images to construct training data, including input images, corresponding material maps, binary material mask, and the material name as an optional text prompt. During cropping, we ensure that the dominant material occupies at least 70% of the region. Importantly, we rescale the material maps based on UV coordinates to ensure that the rendered crops and target material maps share a matching texture scale. After cropping, this dataset contains 800,000 text-image-mask-material tuples.
+
+As ourScenesdataset only contains stationary materials, it may fail to represent the full diversity of textures in the wild. To enhance the generalization capability, we use an additionalMaterialsdataset[30], which we augment to 800,000 cropped material maps. We use the name of the materials as the text prompts for text-to-material generation. These data items can be thought of as text-material pairs. This additional data diversity leads to significant improvement for non-stationary textures in input photographs as discussed in Sec.4.4.2.
+
+SECTION: 3.3Generative Material Model
+
+We employ a pre-trained DiT-based text-to-video generative model, with an architecture similar to the one described inBrooks et al.[6], as a base model. We retarget it into a multi-channel material generator.
+
+To retarget this model while preserving its learned prior knowledge, we stack the material maps(albedo map, normal map, height map, roughness map and metallicity map) into a “video” of 5 frames , and compute the temporal positional embedding assuming their time stamp interval is 1 e.g., fps=1. Since DiT flexibly generates tokenized data, as opposed to a U-net architecture[2], the number of frames it is able to produce is not fixed, allowing us to adapt the original video generator to generate the right number of “frames” to meet our requirement. Our proposed use of a video model is in contrast to image diffusion models which typically generate 3 channels (RGB) and need to be non-trivially adjusted to generate more channels[27].
+
+To enable material generation from an image input, we consider the input imageas the first frame, with the model generating the stacked material mapsas the subsequent frames, similar to a video extension model. Recall that the input image can be captured with arbitrary camera pose, and may include perspective and distortions. Using this approach, the self-attention mechanism of the transformer ensures that the generated material parameters are aligned with each other, and allows for non-aligned pixels between the input image condition and the generated material maps. The model simply learns that all frames except the first need to be aligned. This property is key for texture rectification, which is challenging for convolution-based architectures, in which (approximate) pixel alignment between input and output is built in due to the convolution inductive bias.
+
+We additionally train our material generator to produce a segmentation mask for the dominant material in the crop. Typically, the user-provided crop is not entirely covered by a single material (see Fig.4). Performing conservative cropping on an image may reduce the number of usable pixels, while using an additional segmentation mask requires additional user input or a separate segmentation model[41]. Instead, our model automatically identifies the dominant material[29]in the image. We add a maskto be inferred from the input image as the second frame. Our training datacan thus be represented as, where; we have 7 RGB frames: input, mask, and five material maps. Noiseis applied only to the last six frames occupied byand, resulting in, with the first frame (input image) remaining free of noise. Our objective from Eq.1is
+
+wheredenotes the text input (material description). This process can be seen as a completion of the frames (mask and material channels) given the input image and text condition. The notationrefers to the last 6 frames generated by the Transformer.
+When the input consists solely ofwithout,whereis a uniformly white RGB image. The computation of the loss remains unchanged.
+
+SECTION: 3.4Training and Inference
+
+We finetune the pre-trained DiT model using the AdamW optimizer on 8 Nvidia A100 GPUs. The learning rate is set atwith an effective batch size of 64. The model is finetuned onresolution for about 70K steps, which takes 90 hours. During training, we feed data from our two training datasetsScenesandMaterialsin a 5:3 ratio, prioritizing the task of image-conditioned material generation. We also randomly drop the conditions to retain the capacity to use classifier-free guidance (CFG)[22]. For text-only or unconditional generation, the mask is replaced by a completely white image placeholder.
+
+Our model completes a generation in 12 seconds using 50 diffusion steps. The model natively outputs a resolution of 256 due to limited computational resources. We apply an upsampler[32]to increase the resolution of each material map to 512 × 512.
+
+SECTION: 4Results
+
+We evaluate the performance of our MaterialPicker across multiple dimensions. First, we perform qualitative and quantitative comparisons with Material Palette[28]on material extraction using both synthetic and real-world images (Sec.4.2). Next, we compare with a texture rectification method on real-world images (Sec.4.2) and with MatGen[47]and MatFuse[48]on text-to-material generation (Sec.4.3). Finally, we conduct ablation studies on multi-modality, dataset design and evaluate the impact of the input image scale(Sec.4.4). We also ablate the usage of a mask and evaluate robustness to distortion and lighting/shadowing in the supplemental materials.
+
+SECTION: 4.1Evaluation dataset and metrics
+
+Synthetic Evaluation dataset.For systematic evaluation, we build a synthetic evaluation dataset by gathering a diverse set of 531 materials from PolyHaven[36], applied to three interior scenes from the Archinteriors collection[14](which are completely independent from our training set). For each scene, we sequentially apply the 531 collected materials to a designated object inside the scene, and render 2D images using Blender Cycles[4]with the scene’s default illumination setup. We generate a total of 1,593 synthetic renderings, and crop a square around the location of the object with replaced materials.
+
+Real Photographs Evaluation Dataset.To validate the generalization of our models, we curate an evaluation dataset containing real photographs captured by smartphones. This dataset covers a comprehensive set of real-world materials observed under both natural outdoor lighting and complex indoor illumination. We crop the photographs with a primary focus on our target material, without strictly limiting the cropping boundaries.
+
+Evaluation Metrics.Since we do not target pixel-aligned material capture, per-pixel metrics cannot be used for our results. Instead, we focus on theappearance similarityof the materials extracted from the photo inputs. Following related work on high-fidelity image synthesis such as DreamBooth[40], we leverage CLIP-I, which is the average pairwise cosine similarity between ViT-L-14 CLIP[37]embeddings of two sets of images. We also use the DINO metric[40]to measure the average pairwise cosine similarity between ViT-L-16 DINO embeddings. Additionally, we report the FID score[21]to measure the statistical visual similarity between two image distributions. We compute the FID score for each of the 531 output material map sets against the corresponding ground truth material map sets, and average the FID scores over the three scenes in our synthetic evaluation dataset.
+
+SECTION: 4.2Image Conditioned Generation.
+
+We evaluate the performance of our model on both synthetic images and real photographs. We first show a visual comparison with the state-of-the-art method Material Palette[28]on our synthetic evaluation dataset (Sec.4.1). Since Material Palette generates only three material maps (albedo, normal, and roughness), we present both qualitative and quantitative results for these channels, along with the re-rendered images using these generated material maps. Our method takes 12 seconds to generate a material while Material Palette takes 3 minutes, on the same Nvidia A100 GPU, a 15 times speedup. Furthermore, our model can generate materials in batches. In Fig.3we show that our model produces material maps with a closer texture appearance and better matching the ground-truth material maps. In contrast, Material Palette struggles to reconstruct structured textures often resulting in distorted lines. We also observe that in the rendered images, our generated materials better matches the original input images.
+
+We include a quantitative comparison with Material Palette on the entire synthetic dataset in Tab.1. We find that our proposed model performs better on all three metrics for the vast majority of the generated material channels and the corresponding re-rendered images.
+
+Ours
+
+MaterialPalette
+
+Ours
+
+MaterialPalette
+
+Ours
+
+MaterialPalette
+
+Ours
+
+MaterialPalette
+
+Ours
+
+MaterialPalette
+
+Ours
+
+MaterialPalette
+
+We show qualitative evaluation on real photographs in Fig.4where we can see that our model generalizes well to photographs of materials from various angles. We render the generated materials on a planar surface under environment lighting, showing strong visual similarity to the original input images. Unlike Material Palette, which requires input masks from a separate segmentation step[41], our model operates out-of-box with an input image only, showcasing its potential as a lightweightMaterialPicker.
+
+Since our model automatically performs perspective rectification on the generated materials, we further compare against another state-of-the-art texture rectification and synthesis method[19]. In Fig.5, we evaluate both methods using real photographs. Since our model directly outputs material maps, instead of textures, we present our results by rendering them under different environment maps. We find that the compared method doesn’t generalize well to real-world photographs, taken from non-frontal and/or non-parallel setups and fails to correct distortion in these cases. In contrast, our approach synthesizes a fronto-parallel view and remains robust across various real-world lighting conditions and viewing angles. Finally, as previously, our model does not require detailed masks as input, directly rectifying the dominant texture in the input image.
+
+SECTION: 4.3Text Conditioned Generation.
+
+Although the primary focus of our method is the generation of materials from photos, our multi-modal model also supports text-conditioned generation without image inputs. We evaluate its performance on the text-to-material task, comparing it with two state-of-the-art diffusion-based generative models for material synthesis: MatFuse[48]and MatGen[47]. As shown in Fig.6, our model demonstrates strong text-to-material synthesis capability, producing high-quality material samples, comparable to other state-of-the-art approaches. Leveraging a pretrained text-to-video model as a prior, our model can interpret complex semantics beyond the material-only training set, such as ”wood rings” and ”floral” patterns.
+
+Ours
+
+MatGen
+
+MatFuse
+
+Ours
+
+MatGen
+
+MatFuse
+
+Ours
+
+MatGen
+
+MatFuse
+
+SECTION: 4.4Ablation Study
+
+Our generative material model takes advantages of its multi-modality. Though it is designed to create material maps from input photographs, it can benefit from additional signal to reduce the ambiguity of a single in-the-wild photograph. We present different combinations of input conditions in Fig.7including 1) text condition only; 2) image condition only and 3) text+image dual conditions. We found that text conditioning provides high level guidance for material generation. On the other hand, image conditioning contains ambiguities, as lighting and camera poses are uncontrolled. Combining both options enables text prompts to guide the model in identifying the reflective properties of a material. For instance, by prompting the model with appropriate text, it can better differentiate between metallic and non-metallic materials, as shown in the third example in Fig.7.
+
+In Sec.3.2, we introduce two datasets used to train our model. To confirm that using both datasets help, we train a variant using only theScenedataset. Since this dataset primarily contains stationary materials, training exclusively on it reduces our model’s generalization for complex texture patterns commonly found in real-world scenarios as shown in Fig.8. By mixing additional training data, our model synthesizes more diverse texture patterns and features such as woven pattern or the texture of a manhole cover.
+
+“Wovenratten”Mixed dataset
+
+“Wovenratten”Single dataset
+
+“Manholecover”Mixed dataset
+
+“Manholecover”Single dataset
+
+Reproducing the texture scale in the input photos is critical for material generation. As we process our training data to align the scales of input images and output material maps (Sec.3.2), our model generates scale-matched materials, as shown in Fig.9. We see that our result follow the scale of the input as it increases from top to bottom.
+
+”Marble tiles”
+
+”Marble tiles”
+
+”Marble tiles”
+
+SECTION: 5Limitations
+
+Despite strong generation capacity, our model may still encounter challenging inputs, as shown in Fig.10. In the first row we show an example where our model confuses shading and albedo variation. Our model may also have difficulty handling materials with cutouts or holes, since it does not produce opacity maps as outputs. Finally, preserving semantically meaningful patterns, such as text, is a remaining challenge in our approach.
+
+“Concretepavement”
+
+“Perforatedmetal”
+
+“Towel”
+
+SECTION: 6Conclusion
+
+We present a generative model for high-quality material synthesis from text prompts and/or crops of natural images by finetuning a pretrained text-to-video generative model, which provides strong prior knowledge. The flexible video DiT architecture lets us adjust the model for multi-channel material generation. We show extensive evaluation on both synthetic and real examples and conduct systematic ablation studies and test on robustness. We believe that our re-purposing of a video model for multi-channel generation opens an interesting avenue for other domain which require the generation of additional channels, such as intrinsic decomposition[47].
+
+SECTION: References
+
+Supplementary Material
+
+SECTION: Appendix AMore Results
+
+SECTION: A.1Image Conditioned Generation
+
+We show qualitative and quantitative comparisons with Material Palette[28]on material extraction in Sec.4.2of the main paper.
+We provide more visual comparisons in Fig.15and Fig.16. Since Material Palette generates only three material maps (albedo, normal, and roughness), we present results for these channels, along with the re-rendered images. We report the average CLIP-I metricand DINO metricbetween the output material maps and ground truth in Tab.1in the main paper. We further report the 95% confidence interval in Tab.2of the Supplemental Material. Our method achieves higher 95% confidence intervals for the vast majority of the generated material channels with the exception of the Albedo for which the intervals overlap. Our re-rendered images also show consistently higher alignment with the ground truth.
+
+SECTION: A.2Ablation Study
+
+As opposed to existing material generation models, our model doesn’t require the target material to cover the entire input image[47]or manually-created masks[28]to identify the sample of interest. Our model instead outputs a mask along with the generated materials. To assess the impact of generating this mask, we train an alternative model using our two datasets, with a slight modification to the model configuration. We add noiseto the material mapsonly, with, leaving the image and mask as non-noised inputs (orwithout), using our adaptation of a video model (as described in Sec.3.3).
+The loss is then computed on the material mapsonly. As shown in Fig.11, we find that our proposed model, which automatically predicts a mask, performs comparably well to this variant requiring the mask as input.
+
+”Ceramictiles”
+
+Input
+
+”Ceramictiles”
+
+Output
+
+”Stone wall”
+
+Input
+
+”Stone wall”
+
+Output
+
+SECTION: A.3Evaluations on the Robustness.
+
+We further test our model’s robustness under various factors, including different texture scales (in the main paper), varying levels of distortion, and diverse lighting conditions.
+
+To examine the robustness of our model to strong, real-world, distortions, we generate a synthetic test set that use textures from the texture datasets TexSD[28]and follow the texture processing steps outlined byHao et al.[19]. We apply homography transformations[20]and thin plate spline transformations[5]to the textures.
+Our results in Fig.12show that the model is robust to severe distortions, stretching, and the blurring effects introduced by these transformations. More examples of real photos with distortion or surface geometry diversity can be found in Fig.17, Fig.18, Fig.19, Fig.20, Fig.21and Fig.22.
+
+”Gingham”
+
+”Marbelmosaic”
+
+”Ice”
+
+”Leather”
+
+We further evaluate the model’s performance when the input image contains specular highlights and shadows in Fig.13. We see that these highlights and shadows in real photos do not “leak” into material maps, highlighting the model’s robustness to various lighting conditions.
+
+”Wood”
+
+”Leather”
+
+”Marble”
+
+SECTION: Appendix BAdditional Real Examples
+
+In Fig.14, we provide the material maps of the five examples used for texture synthesis in Fig.5of the main paper. In Fig.17,
+Fig.18, Fig.19, Fig.20, Fig.21and Fig.22, we show additional examples of material extraction using our model, along with the uncropped original images from our real photographs evaluation dataset (Sec.3.2). These examples include various indoor and outdoor materials captured under complex real-world lighting conditions. Our model generalizes well to real photos, producing renderings that are visually similar to the photographs and providing accurate masks, demonstrating our model’s generalization capabilities.

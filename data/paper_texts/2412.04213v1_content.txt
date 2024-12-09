@@ -1,0 +1,170 @@
+SECTION: Physics-informed Deep Learning for Muscle Force Prediction with Unlabeled sEMG Signals††thanks:This work was supported in part by the UKRI Horizon Europe Guarantee under Grant EP/Y027930/1, in part by the Royal Society under Grant IEC/NSF/211360, in part by the EU Marie Curie Individual Fellowship under Grant 101023097, and in part by the China Scholarship Council (CSC) under Grant 202208320117. (Corresponding author: Zhi-Qiang Zhang)††thanks:The first two authors contributed equally to this work.††thanks:Shuhao Ma, Ian D. Robertson, and Zhi-Qiang Zhang are with the School of Electronic and Electrical Engineering, University of Leeds, Leeds LS2 9JT, U.K. (e-mail: elsma@leeds.ac.uk; i.d.robertson@leeds.ac.uk; z.zhang3@leeds.ac.uk).††thanks:Jie Zhang is with the Centre for Wireless Innovation, Queen’s University Belfast, Belfast BT3 9DT, U.K. (e-mail: jie.zhang@qub.ac.uk).††thanks:Chaoyang Shi is with the Key Laboratory of Mechanism Theory and Equipment Design of Ministry of Education, School of Mechanical Engineering, Tianjin University, Tianjin 300072, China, and also with the International Institute for Innovative Design and Intelligent Manufacturing of Tianjin University in Zhejiang, Shaoxing 312000, China (e-mail: chaoyang.shi@tju.edu.cn).††thanks:Pei Di is with Rex Bionics Ltd, PO Box 316-063
+Auckland 0760, New Zealand (e-mail: pei.di@imaxhealth.com).
+
+Computational biomechanical analysis plays a pivotal role in understanding and improving human movements and physical functions. Although physics-based modeling methods can interpret the dynamic interaction between the neural drive to muscle dynamics and joint kinematics, they suffer from high computational latency. In recent years, data-driven methods have emerged as a promising alternative due to their fast execution speed, but label information is still required during training, which is not easy to acquire in practice. To tackle these issues, this paper presents a novel physics-informed deep learning method to predict muscle forces without any label information during model training. In addition, the proposed method could also identify personalized muscle-tendon parameters. To achieve this, the Hill muscle model-based forward dynamics is embedded into the deep neural network as the additional loss to further regulate the behavior of the deep neural network. Experimental validations on the wrist joint from six healthy subjects are performed, and a fully connected neural network (FNN) is selected to implement the proposed method. The predicted results of muscle forces show comparable or even lower root mean square error (RMSE) and higher coefficient of determination compared with baseline methods, which have to use the labeled surface electromyography (sEMG) signals, and it can also identify muscle-tendon parameters accurately, demonstrating the effectiveness of the proposed physics-informed deep learning method.
+
+SECTION: IIntroduction
+
+Human movements need the coordinated actions of various muscle elements, thus accurate muscle force estimation could support promising applications in diverse domains, ranging from efficacious rehabilitation protocol design[1], optimizing motion control[2,3], to enhancing clinical decision-making[4,5,6]and the performance of athletes[7,8]. The majority of muscle force estimation methods are based on physics-based modeling techniques. For instance, inverse dynamics techniques have been validated to generate reasonable estimations of muscle forces and muscular activation patterns usually based on static optimization[9,10,11,12,13]. The static optimization could find the set of muscle forces by minimizing the physiological criterion, such as muscle activation, volume-scaled activation, forces, stresses, metabolic energy or joint contact forces. However, it is challenging to provide the biologically consistent rationale for the selection of any objective function[14,15], due to the lack of knowledge about the method used by the central nervous system[16]. Furthermore, physics-based modeling methods also suffer from high computational latency, especially in complex modeling scenarios[17,18].
+
+To address the time-consuming issue of physics-based methods, data-driven methods have been investigated to establish relationships between the movement variables and neuromuscular status, such as from electromyography (EMG) signals to muscle forces, in the past few years[19,20,21,22]. Although the training of deep neural networks may be lengthy, as the inference only involves a relatively simple forward pass through the network, it is computationally inexpensive and thus very quick.
+For instance, Hua et al.[23]proposed a linear regression (LR) and long short-term memory (LSTM)-integrated method (LR-LSTM) to predict the muscle force under the isometric contraction state. Tang et al.[24]developed a modified framework to accurately predict muscle forces based on encoder-decoder networks.
+Moreover, Lu et al.[25]designed an integrated deep learning framework that combined a convolutional neural network (CNN) and a bidirectional LSTM (BiLSTM), complemented by an attention mechanism, for elbow flexion force estimation.
+However, all these models are established without explicit physical modeling of the underlying neuromechanical processes, and these conventional “black-box” tools do not consider the physical significance underlying the modeling process[26,27].
+
+In recent years, the integration of physics-based modeling and data-driven modeling has emerged as an effective strategy to overcome the limitations of these two methods, such as deep energy method-based deep neural network[28], deep Ritz method[29], physics-informed deep neural operator networks[30], and thermodynamics-informed neural network[31], etc.
+In musculoskeletal (MSK) modeling, some existing works also investigate the integration of physics domain knowledge and data-driven modeling. Specifically, Zhang et al.[32]proposed a physics-informed deep learning framework for muscle forces and joint kinematics prediction, in which the equation of motion was embedded into the loss function as the soft constraints to penalize and regularize the deep neural network training. They also designed a physics-informed deep transfer learning framework to strengthen the performance of the personalized MSK modeling[33]. Taneja et al.[34]designed a novel physics-informed parameter identification neural network for simultaneously predicting motion and identifying parameters of MSK systems. They also developed a multi-resolution physics-informed recurrent neural network to further enhance motion prediction and parameter identification[35]. Shi et al.[36]developed a physics-informed low-shot learning approach based on generative adversarial network for muscle forces and joint kinematics prediction, which first integrated the Lagrange’s equation of motion into the generative model to restrain the structured decoding of discriminative features, and a physics-informed policy gradient was then proposed to enhance the adversarial learning efficiency by rewarding the consistent physical representation of extrapolated estimations and physical references. Although the aforementioned physics-informed data-driven methods have achieved great progress for MSK modeling enhancement, there are still two main challenging issues: 1) Labeled data are required for model training[32,33,36], 2) For muscle force prediction,[34]and[35]need to reprocess the network’s output in conjunction with the MSK dynamics, making the running latency far over the maximum 75 ms considered optimal real-time biofeedback. Therefore, it is urgent to design a novel physics-informed neural network framework, that does not need to acquire a large amount and sufficient labeled data for deep neural network training, and can still work well in real-time application scenarios.
+
+In this paper, a novel physics-informed deep learning method is presented to predict muscle forces using unlabeled surface EMG (sEMG) data. Additionally, the proposed method could also identify muscle-tendon parameters of the Hill muscle model.
+In the proposed method, a fully connected neural network (FNN) is utilized to implement the designed physics-informed deep learning framework, and the Hill muscle model is embedded into FNN as the additional loss component to further penalize and regularize the behavior of FNN.
+To validate the proposed method, a self-collected dataset consisting of six healthy subjects performing wrist flexion/extension motion is used in the experiments. According to the experimental results, the proposed method with unlabeled sEMG data shows comparable and even better performance compared with selected machine learning and deep learning methods, which have to use labeled sEMG data.
+
+The remainder of this paper is organized as follows: The proposed physics-informed deep learning method is detailed in SectionII, including the main framework, the network architecture and training strategy, the loss function, and the incorporation of Hill-muscle-based forward dynamics. Dataset and experimental settings are described in SectionIII. Experimental results are reported in SectionIV, and discussions are presented in SectionV. Finally, conclusions are given in SectionVI.
+
+SECTION: IIMethods
+
+In this section, we first describe the details of the proposed method, in the context of muscle force prediction and muscle-tendon parameters identification from
+unlabeled sEMG signals, including the main framework, the network architecture and training, the loss function as well as the incorporation of Hill-muscle-based forward dynamics.
+
+SECTION: II-AMain Framework
+
+Fig.1shows the main framework of the proposed method, in the context of muscle forces prediction and muscle-related physiological parameters identification from unlabeled sEMG signals. Specifically, in the neural network surrogate, inputs to the-parameterized deep neural network are sEMG measurements and the corresponding time, while outputs are the joint movementand muscle forces, whereis the total number of muscles at the joint of interest. A FNN is utilized to extract more discriminative features and build the relationship between the inputs and outputs. Different from conventional loss functions, the novel total loss consists of the data-based loss and physics-informed losses. The data-based loss is based on mean squared error (MSE), while the physics-informed losses are based on the-parameterized underlying Hill-muscle-based forward dynamics, whereandis the EMG-to-activation coefficient.
+
+SECTION: II-BFNN Architecture and Training
+
+Without loss of generality, a FNN is utilized as the deep neural network to implement the proposed method, and it is composed of four fully connected (FC) blocks and one regression block. To be specific, each FC block has one linear layer, one ReLU layer and one dropout layer. The regression block consists of one ReLU layer and one dropout layer. The trainable parameters of FNN are obtained by minimizing the loss function (more details about the loss function refer to Section II-C). The training is performed using the Adam algorithm with an initial learning rate of 0.001, the batch size is 1, the maximum iteration is 1000, and the dropout rate is 0.3.
+
+SECTION: II-CLoss Function Design
+
+The designed loss function of the proposed method includes the data-based loss, and physics-informed lossesand, which can be represented as
+
+whereis the MSE of the actual joint angles and predicted joint angles,represents the Hill-muscle-based forward dynamics constraint,is an implicit relationship between muscle forces predicted by the neural network and calculated by the embedded Hill muscle model.
+
+The MSE of ground truths of the joint angle and the joint angle predicted by FNN is
+
+whereis as the ground truth of the joint angle andis the predicted joint angle of FNN with the trainable parametersat time.
+
+reflects underlying relationships among the muscle force and kinematics in human motion, which can be written as
+
+whereandare the mass matrix, the Centrifugal and Coriolis force, and the gravity.andare the predicted joint angular velocity and joint angular acceleration.represents the joint torque, which is calculated by the summation of the product of the moment arm and muscle-tendon force:
+
+whereis the number of muscles involved,is the moment arm of theth muscle which can be calculated using the polynomial equation and the scale coefficient against joint angle[37],is the estimated muscle force by the Hill muscle model with muscle-tendon parameters(Additional details about the calculation of the muscle forceare located in SectionII-D).
+
+There is also an implicit relationship between the muscle forcespredicted by FNN and the muscle forcecalculated by the Hill muscle model. Thus,is designed for estimating muscle forces by minimizing the difference betweenand, which can be written as
+
+Therefore, the optimal neural network parametersand the subject-specific physiological parameterscan be obtained by minimizing the composite loss function:
+
+SECTION: II-DHill Muscle Force Estimation
+
+For theth muscle-tendon unit, its muscle-tendon parametersinclude the isometric muscle force, the optimal muscle length, the maximum contraction velocity, the tendon slack lengthand the optimal pennation angle,, and the EMG-to-activation coefficient.
+
+The Hill-muscle-based forward dynamics model includes activation dynamics and contraction dynamics.
+Activation dynamics refer to the process of transforming pre-processed sEMG signalsinto muscle activation signals, which can be estimated by[38]
+
+Muscle forces will be determined, once muscle activation signalshave been obtained. Contraction dynamics used in this study are described by the rigid musculotendon model[39], in which the pennated muscle element, comprising a contractile element in parallel with a passive elastic element, is connected to an inextensible tendon element. Therefore, the muscle-tendon force can be calculated[40]:
+
+whereandare the active force generated by the muscle contraction and the passive force generated by the muscle stretch, respectively.
+The pennation angleis the angle between the orientation of the muscle fiber and tendon, and the pennation angle at the current muscle fiber lengthcan be calculated through Eq. (9).
+To update the muscle length, the muscle–tendon lengthis approximated by the higher-order polynomial with respect to the predicted joint angle, which is exported from OpenSim[41].is the tendon length, andis the contraction velocity which is defined as the time derivative of muscle fiber length.,andinterpret the force-length-velocity characteristics relating toand normalized muscle length.
+
+Before the model training, all the physiological parameters included inneed to be initialized by linear scaling based on the initial values of the generic model from OpenSim. These parameters will be continuously updated in each iteration during the model training process.
+
+SECTION: IIIDataset and Experimental Settings
+
+In this section, data collection and preprocessing are first detailed, physiological parameters used in this study, evaluation criteria and baseline methods are then presented, respectively.
+
+SECTION: III-AData Collection and Preprocessing
+
+As approved by the MaPS and Engineering Joint Faculty Research Ethics Committee of the University of Leeds (MEEC18-002), this study involves the participation of six subjects who have all provided signed consent forms. We collected data on the subjects’ weight and the length of their hands to calculate the moment of inertia of their hands.
+
+During the data collection process, participants were instructed to maintain a straight torso with their shoulder abducted at aangle and their elbow joints flexed at aangle. The continuous wrist flexion/extension motion was recorded using the VICON motion capture system, which tracked joint angles at a rate of 250 Hz using 16 reflective markers on the upper limb. In the meantime, sEMG signals were recorded by Avanti Sensors at a rate of 2000 Hz from the primary wrist muscles, including the Flexor Carpi Radialis (FCR), Flexor Carpi Ulnaris (FCU), Extensor Carpi Radialis Longus (ECRL), Extensor Carpi Radialis Brevis (ECRB), and Extensor Carpi Ulnaris (ECU). The sEMG signals and motion data were synchronized and resampled at a rate of 1000 Hz.
+Each participant completed two repetitive trials at different speeds with a three-minute break between the speed changes to prevent muscle fatigue[42].
+
+The collected sEMG signals underwent a series of processing steps, which included band-pass filtering (20 Hz to 450 Hz), full-wave rectification, and low-pass filtering (6 Hz). Subsequently, these signals were normalized based on the maximum voluntary contraction recorded prior to the experiments, resulting in enveloped sEMG signals. Each trial involving wrist movement included data on time, sEMG signals, and wrist joint angles. The muscle forces calculated by the computed muscle control (CMC) tool from OpenSim were used as ground truths in the experiments.
+
+SECTION: III-BInitialization of Physiological Parameters
+
+Among the physiological parameters of the muscle-tendon units involved, we choose the maximum isometric muscle forceand the optimal muscle fiber lengthfor the identification. The nonlinear shape factorin the activation dynamics also needs to be identified.
+Other physiological parameters are obtained by linear scaling based on the initial values of the generic model from OpenSim. TableIshows the details of the initialization of all the physiological parameters of a specific subject as an example. Since there may be differences in terms of magnitude and scale between each parameter due to their different physiological natures, it is necessary to normalize them before training.
+
+SECTION: III-CEvaluation Criteria
+
+In the experiments, root mean square error (RMSE) and coefficient of determinationare considered as the evaluation criteria to quantify the performance of the proposed method. RMSE is
+
+whereis the number of samples,andindicate the ground truth and the predicted value at time, respectively.
+
+could be calculated by
+
+wheredenotes the mean value of all the samples.
+
+SECTION: III-DBaseline Methods
+
+To verify the effectiveness of the proposed method, we select LSTM, gated recurrent unit (GRU), CNN, FNN, support vector regression (SVR) and extreme learning machine (ELM) as baseline methods in the experiments. Specifically, the hidden dimensional of LSTM and GRU is 64, and the number of layers is 2, and the batch size of them is 8. CNN has convolutional layers and one FC layer. For each convolutional layer, the kernel size, stride, and padding number are 3, 1 and 3, respectively. The Adam optimizer is employed for CNN training, the batch size is set as 8. FNN has four FC blocks and two regression blocks but without the physics-informed component. Adam optimizer is employed for FNN training, the batch size is set as 1, and the maximum iteration is set as 1000. The radial basis function (RBF) is selected as the kernel function of SVR, and the parameter, which controls the tolerance of the training samples, is set as 100, and the kernel function parameters, which controls the range of the kernel function influence, is set as 1. ELM is a kind of single hidden layer feed-forward neural network with randomly generated hidden layer parameters, its hidden node number is 64 and the Sigmoid function is utilized as the activation function.
+
+SECTION: IVResults
+
+In this section, we evaluate the performance of the proposed method using the self-collected dataset.
+The convergence of loss terms is first illustrated, and the parameter identification is then demonstrated. Next, the overall comparisons depict the outcomes of both the proposed method and baseline methods. The robustness and generalization of the proposed method are also investigated, including the performance in the intrasession scenario, effects of network architectures and parameters, and training data number.
+The proposed method and all the baseline methods are carried out under the framework of PyTorch, they are implemented on a laptop with a GeForce RTX 3070 Ti graphics card and 32 GB RAM.
+
+SECTION: IV-ADemonstration of Loss Function Convergence
+
+Fig.2shows the convergence of different loss terms.
+According to Fig.2, we can observe that despite the differences in the final convergence values, these four loss terms demonstrate remarkably consistent convergence trends throughout the entirety of the training process. Specifically, all these loss terms could converge after about 800 iterations and finally converge with fast speeds, indicating the effectiveness of the proposed loss function.
+Furthermore, the total loss, as well asand, exhibit a smooth and stable convergence pattern throughout the training period.
+In contrast, the MSE lossshows rapid convergence within the initial 200 epochs, followed by slight oscillations. This oscillation could be attributed to the relatively small absolute magnitude of.
+
+SECTION: IV-BEvaluation of Physiological Parameter Identification
+
+The subject-specific physiological parameters are identified during the training of the proposed method. TableIIpresents the estimation and physiological range of the parameters of a specific subject as an example.
+Physiological ranges of the parameters are chosen according to[43]. The ranges of the maximum isometric forceare set asof the initial guess, while the ranges of the optimal muscle fiber lengthare set asof the initial guess (Details of the initial guesses of these physiological parameters refer to TableI). The identified physiological parameters by the proposed method are all within the physiological range and possess physiological consistency. The identified muscle activation dynamics parameter A is -2.29, which is physiologically acceptable in the range of -3 to 0.01.
+
+Fig.3demonstrates the evolution of the identified physiological parameters during the training of the proposed method. In Fig.3, the blue solid line illustrates the variation process of the parameters and the black dashed line indicates the estimated value by the proposed method which is the final convergent value of evolution. According to TableIIand Fig.3, the identified physiological parameters are within the physiologically acceptable range, indicating that the muscle forces calculated by the personalized Hill muscle model embedded in the proposed method are reasonable, which would directly benefit the guidance of the muscle force prediction.
+
+SECTION: IV-COverall Comparison
+
+For the prediction of muscle forces, the proposed method uses the unlabeled sEMG data in the training phase, while the baseline methods use the labeled sEMG data. Fig.4shows the representative results of the proposed method for the prediction of muscle forces FCR, FCU, ECRL, ECRB, and ECU. According to Fig.4, we can find the proposed method could predict the muscle forces well.
+
+Detailed comparisons of all the subjects between the proposed method and baseline methods are presented in Table III and Table IV. In the experiment, we use the data with the same flexion speed to train and test the proposed method and baseline methods. We randomly select 70% of the data for training, while the rest 30% for testing. The number of training data is 10500, and the number of testing data is 4500. According to Table III and Table IV, deep learning-based methods, including the proposed method, LSTM, GRU, CNN and FNN, achieve better-predicted performance than machine learning-based methods, i.e., SVR and ELM, as evidenced by smaller RMSEs and higherin most cases. Because these deep learning-based methods could automatically extract high-level features from the collected data. Furthermore, the proposed method could achieve comparable performance with LSTM and GRU in some situations with unlabeled data, and the performance of the proposed method is better than that of FNN, which indicates the effectiveness of the designed loss function.
+
+Fig.5shows the average RMSEs of muscle forces prediction of the proposed method and baseline methods. The proposed method achieves an overall performance similar to that of LSTM, GRU, CNN and FNN without direct reliance on actual muscle force labels.
+In the training process, FNN used in the proposed method is not only trained based on the MSE loss but also enhanced by the physics-informed losses. The embedded physics laws provide the potential relationships between the output variables as learnable features for the training.
+
+TableVdetails the training time of deep learning-based methods, including GRU, LSTM, CNN, FNN and the proposed method. Accordingly, for all the methods, the training time is less with the increase of the batch size, and the proposed method has the longest training time compared to other baseline methods. This is because the proposed method is developed under the PINN framework, it not only involves the minimization of the MSE of FNN but also the regularization of physics-derived terms.
+
+SECTION: IV-DEvaluation of Intrasession Scenario
+
+The performance of the proposed method in the intrasession scenario is also demonstrated to validate its robustness.
+For each subject, we train the proposed method and baseline methods with the data of one flexion speed and then test them using the data of another flexion speed. In the experiment, we only demonstrate the comparison results of the proposed method and deep learning methods in Fig.6to make these results clearer.
+According to Fig.6, the proposed method demonstrates exceptional performance in datasets with different distributions, but the predicted results of some baseline methods are degraded. In particular, concerning the predicted results of muscle forces of ECRL and ECU, the predicted results yielded by the proposed method demonstrate a notably enhanced congruence with the underlying ground truth.
+LSTM, GRU, and CNN demonstrate the ability of motion pattern recognition since their muscle force prediction curves are generally consistent with the trend of ground truth.
+Additionally, these methods exhibit the proficiency of dynamical tracking in part of the predicted results but the error remains in other predicted results, especially when it comes to capturing peak and trough values, noticeable discrepancies can be observed in the predicted values, which reflects the limitation of the stability.
+Specifically, it demonstrates strong performance in the prediction of FCR, FCU, and ECRL, while it still exhibits significant discrepancies in the prediction of the ECRB and ECU.
+The proposed method manifests a discernible capability to predict muscle forces on data characterized by the diverse distribution without label information.
+
+SECTION: IV-EEffects of Network Architectures
+
+To investigate the effects of network architectures on performance, we implement the proposed method with different numbers of FC blocks. TableVIlists the detailed comparison results, we can find the proposed method could achieve the best performance with four FC blocks. Although the increase in the number of FC blocks would help extract more representative features, the proposed method may be overfitting when we continue to add FC blocks, which degrades its performance.
+
+SECTION: IV-FEffects of Network Parameters
+
+We also consider the effects of network parameters on the performance, including batch size, learning rate and type of activation function. TableVIIshows R2of the proposed method with different learning rates, it seems that its R2is without obvious fluctuations. TableVIIIlists R2of the proposed method with different types of activation functions, we can find when ReLU is selected as the activation function, the proposed method has the best performance. TableIXshows the effects of different batch sizes. When the batch size is 1, the proposed method achieves better performance, because the network could learn the representations better.
+
+SECTION: IV-GEffects of Training Data Number
+
+TableXshows the experimental results of the proposed method with a different number of training data. When the number of training data is more than 10500, the proposed method achieves satisfactory performance with little fluctuations.
+Increasing the training data beyond 10500 samples does not significantly enhance the performance of the proposed method, as evidenced by the minimal improvements seen with 14500 and 17000 samples. Such findings highlight the importance of a balanced approach to data collection and model training, emphasizing data quality and representativeness over sheer quantity.
+
+SECTION: VDiscussion
+
+In this section, we discuss the generalization of the proposed method, and potential ways to further enhance its performance from various aspects.
+
+In this paper, we only use muscle forces prediction of wrist flexion/extension as an example to demonstrate the feasibility and effectiveness of the proposed method. Actually, the proposed method can also be generalized to other joints. TableXI, TableXII, Fig.7and Fig.8show the details of physiological parameter identification and muscle forces prediction (including biceps femoris short head (BFS) and rectus femoris (RF)) of knee flexion/extension. To be specific, TableXIand Fig.7show the results of the identified physiological parameters, we can find all these physiological parameters are within the physiologically acceptable range. Additionally, TableXIIand Fig.8detail the predicted results of BFS and RF. Accordingly, the proposed method can fit the ground truth curve well and obtain comparable predictions compared with FNN even without any label information.
+
+During the implementation of the proposed method, we partially simplify the MSK forward dynamics model by reducing the number of individualized physiological parameters. Only the maximum isometric muscle force and the optimal fiber length are considered to be identified, and all the other physiological parameters are directly derived from the scaled wrist model. Moreover, five primary muscles have been selected as the key actuators for wrist flexion/extension, but these muscle-tendon units may also affect other degrees of freedom in wrist movements. In the future, we will try to relax these simplifications and assumptions by considering more physiological parameters and physics laws to obtain a more physiologically accurate representation of muscle tissues with connective tissues and muscle fibers, making it more feasible in practical and clinical applications. The computational time of the proposed method is longer than baseline methods because it is developed under the physics-informed neural network framework, which not only involves the minimization of the MSE of FNN but also the regularization of physics-informed terms during the network training. In the future, we will design a distributed framework for the proposed method to accelerate its training, and also consider pre-training an initial model with subject-specific data and then updating the model with other subjects’ data, which can simultaneously reduce the training time and enhance the generalization.
+
+SECTION: VIConclusion
+
+This paper presents a novel physics-informed deep-learning method mainly for muscle forces estimation with unlabeled sEMG data, and the proposed method could simultaneously identify parameters of the Hill muscle model. Specifically, the proposed method uses the MSK forward dynamics as the residual loss for the identification of personalized physiological parameters and another residual constraint based on the muscle contraction dynamics for the estimation of muscle forces without data labels. Comprehensive experiments indicate the feasibility of the proposed method.
+
+SECTION: References
