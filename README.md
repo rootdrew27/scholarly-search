@@ -11,3 +11,19 @@ The process is as follows:
 3. The output of the model is embedded by a Semantic Similarity model (also finetuned on the research papers).
 4. The similarity between the resulting embedding and the embeddings of the papers (calculated prior) is calculated.
 5. The title and URL of the most similar papers are returned to the user.
+
+
+**Terms used to fetch papers**
+- Autoencoder
+- Llama
+- GPT
+- GAN
+- Semantic Similarity
+- Machine Learning
+- Deep Learning
+- Transformer
+- Vision Transformer
+- Supervised Learning
+- Unsupervised Learning
+- Random Forest
+- AI
