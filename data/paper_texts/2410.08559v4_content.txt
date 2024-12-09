@@ -1,0 +1,214 @@
+SECTION: Learning General Representation of 12-Lead Electrocardiogram
+With a Joint-Embedding Predictive Architecture
+
+Electrocardiogram (ECG) captures the heart’s electrical signals, offering valuable information for diagnosing cardiac conditions. However, the scarcity of labeled data makes it challenging to fully leverage supervised learning in medical domain. Self-supervised learning (SSL) offers a promising solution, enabling models to learn from unlabeled data and uncover meaningful patterns. In this paper, we show that masked modeling in the latent space can be a powerful alternative to existing self-supervised methods in the ECG domain. We introduce ECG-JEPA, a SSL model for 12-lead ECG analysis that learns semantic representations of ECG data by predicting in the hidden latent space, bypassing the need to reconstruct raw signals. This approach offers several advantages in the ECG domain: (1) it avoids producing unnecessary details, such as noise, which is common in ECG; and (2) it addresses the limitations of naïve L2 loss between raw signals. Another key contribution is the introduction of Cross-Pattern Attention (CroPA), a specialized masked attention mechanism tailored for 12-lead ECG data. ECG-JEPA is trained on the union of several open ECG datasets, totaling approximately 180,000 samples, and achieves state-of-the-art performance in various downstream tasks including ECG classification and feature prediction. Our code is openly available athttps://github.com/sehunfromdaegu/ECG_JEPA.
+
+SECTION: 1Introduction
+
+Electrocardiography is a non-invasive method to measure the electrical activity of the heart over time, serving as a crucial tool for diagnosing various cardiac conditions. While numerous supervised methods have been developed to detect heart diseases using ECG data[1,2,3], these models often face significant performance degradation when applied to data distributions different from those on which they were trained. This challenge points to the need for more flexible approaches that can learn robust, transferable representations from ECG data.
+
+Self-supervised learning (SSL) offers an alternative approach by learning general representations in diverse domains, such as natural language processing (NLP)[4,5,6], computer vision (CV)[7,8,9], and video analysis[10,11]. Despite this promise, the application of SSL to ECG data presents unique challenges. For instance, data augmentation, which is essential in many SSL architectures, is more complex for ECG than for computer vision data. Simple transformations like rotation, scaling, and flipping, effective in CV, can distort the physiological meaning of ECG signals. Additionally, ECG recordings often contain artifacts and noise, which cause autoencoder-based SSL models to struggle with reconstructing raw signals. These architectures may also miss visually subtle but diagnostically critical features, such as P-waves and T-waves, which are imperative for diagnosing certain cardiac conditions.
+
+In this work, we propose ECG Joint-Embedding Predictive Architecture (ECG-JEPA) tailored for 12-lead ECG data, effectively addressing the aforementioned challenges. ECG-JEPA utilizes a transformer architecture to capture the semantic meaning of the ECG. By masking several patches of the ECG, ECG-JEPA predicts abstract representations of the missing segments, indicating a high-level understanding of the data. Additionally, we develop a novel masked-attention for multi-lead ECG data, chich we call Cross-Pattern Attention (CroPA). CroPA incorporates clinical knowledge into the model as an inductive bias, guiding it to focus on clinically relevant patterns and relationships across leads.
+
+Our contributions are as follows:
+
+ECG-JEPA achieves notable improvements in linear evaluation and fine-tuning on classification tasks compared to existing SSL methods without hand-crafted augmentations.
+
+CroPA introduces a specialized masked attention mechanism, allowing the model to focus on clinically relevant information in multi-lead ECG data, resulting in improved downstream task performance.
+
+ECG-JEPA can also recover important ECG features, including heart rate and QRS duration, which are classical indicators used in ECG evaluation. This is the first work to demonstrate that learned representations can effectively recover ECG features.
+
+ECG-JEPA is highly scalable, allowing efficient training on large datasets. For instance, ECG-JEPA is trained for only 100 epochs, yet outperforms other ECG SSL models on most downstream tasks, taking approximately 22 hours on a single RTX 3090 GPU.
+
+In summary, ECG-JEPA introduces a robust SSL framework for 12-lead ECG analysis, overcoming traditional SSL limitations with clinically inspired design elements, scalable architecture, and demonstrated effectiveness on a wide range of tasks.
+
+SECTION: 2Background
+
+Self-Supervised Learning (SSL) facilitates learning abstract representations from input data without the need for labeled data, which is particularly beneficial in medical domains where labeled data is scarce and expensive. SSL leverages inherent data patterns to learn useful representations, allowing models to adapt to various downstream tasks with greater robustness to data imbalances[12]. We begin in Section2.1with an overview of the ECG and its key features, highlighting the critical characteristics essential for understanding ECG data. In Sections2.2and2.3, we briefly explain key SSL techniques and their specific applications to ECG, respectively.
+
+SECTION: 2.1Electrocardiogram (ECG)
+
+The electrocardiogram (ECG) is a non-invasive diagnostic method that records the heart’s electrical activity over time using electrodes placed on the skin. The standard 12-lead ECG captures electrical activity of the heart from multiple angles. These 12 leads are categorized into limb leads (I, II, III), augmented limb leads (aVR, aVL, aVF), and chest leads (V1-V6). Each lead provides unique information about the heart’s electrical activity, offering a comprehensive view that aids in diagnosing various cardiac conditions. Refer to Figure1for an illustration.
+
+ECG features are specific characteristics of ECG signals that are critical for summarizing the overall signal. These features play an essential role in monitoring a patient’s health status and are instrumental in the application of statistical machine learning models for diagnosing heart diseases. Key ECG features include heart rate, QRS duration, PR interval, QT interval, and ST segment. These features are identified by measuring specific time intervals or amplitude levels in the ECG waveform. For instance, heart rate is calculated using the formulain beats per minute (bpm), where the RR interval is measured in milliseconds (ms). Refer to Figure2for a visual representation of these features.
+
+In this work, we use only 8 leads (I, II, V1-V6) as the remaining 4 leads (III, aVR, aVL, aVF) can be derived from linear combinations of the 8 leads following theEinthoven’s law[13]:
+
+This choice maintains the necessary diagnostic information while optimizing computational efficiency.
+
+SECTION: 2.2Self-Supervised Learning Architectures
+
+Self-supervised learning can be broadly categorized into contrastive and non-contrastive methods. Non-contrastive methods can be further divided into generative and non-generative architectures. For a broader introduction to SSL, see[14].
+
+Incontrastive learning, the model is encouraged to produce similar representations for semantically related inputsand, while pushing apart the representations of unrelated inputsand.SimCLR[7]is one of the most popular contrastive methods, using two different augmentations of a single inputto form semantically similar pairsand.
+
+Beyond contrastive methods,generative architectureshave been particularly successful in recent large language models[4,5,6]and in computer vision[8]. Generative architectures involve reconstructing a samplefrom its degraded versionusing an encoder-decoder framework. The premise is that reconstructing clean data from a corrupted version reflects the model’s deep understanding of the underlying data structure. The encoder maps the perturbed inputinto a latent representation, which the decoder then uses to reconstruct the original input[15]. Recently, the authors of[16]observed that generative architectures prioritize learning principal subspaces of the data, which may limit their capacity to capture semantic representations for perceptual tasks.
+
+As an alternative,non-generative methodshave shown promise across domains, including computer vision[17,18,19,9]and video analysis[11]. Among these, the Joint-Embedding Predictive Architecture (JEPA)[20]processes an input pairand its corrupted versionsto obtain representationsandthrough encoders. Unlike generative architectures that make predictions in the input space, JEPA performs prediction in the latent space by reconstructingfrom. This approach effectively avoids the challenge of predicting unpredictable details, a common issue in biological signals.
+
+SECTION: 2.3Related Works
+
+Several studies have worked on capturing semantically meaningful representations of 12-lead ECG data.Contrastive Multi-segment Coding (CMSC)[21]splits an ECG into two segments, encouraging similar representations for compatible segments while separating incompatible ones.Contrastive Predictive Coding (CPC)[22], applied in[23], predicts future ECG representations in a contrastive manner, but its reliance on LSTM modules makes it inefficient for large datasets. More recently,[24]introduced masked autoencoders for ECG, proposing temporal and channel masking strategies,Masked Time Autoencoder (MTAE)andMasked Lead Autoencoder (MLAE). Similarly,[25]proposedST-MEM, which masks random time intervals for each lead. However, both MLAE and ST-MEM may struggle with the high correlations between ECG leads, potentially oversimplifying the prediction task.
+
+SECTION: 3Methodology
+
+ECG-JEPA is trained by predicting masked representations of ECG data in the hidden representation space, using only a partial view of the input. The proposed architecture utilizes a student-teacher framework, as illustrated in Figure3. We subdivide the multi-channel ECG into non-overlapping patches and sample a subset of these patches for masking. However, reconstructing the raw signals of masked patches can be particularly challenging in the ECG domain due to the prevalence of noise in biological signals. Instead, our model predicts the masked patches in the hidden representation space, where this challenge can be effectively addressed. We validate the quality of the learned representations through various downstream tasks, including linear probing, fine-tuning on classification tasks, and ECG feature extraction tasks.
+
+SECTION: 3.1Patch Masking
+
+Letrepresent a multi-lead ECG of lengthwithchannels. We divide the intervalintonon-overlapping subintervals of length. Each subinterval in each channel constitutes a patch of, resulting inpatches. The masking strategy in multi-lead ECG must be carefully chosen because patches in different leads at the same temporal position are highly correlated, potentially making the prediction task too easy. To address this, we mask all patches across different leads in the same temporal space. With this in mind, we employ two masking strategies:random maskingandmulti-block masking.
+
+In random masking, we randomly select a percentage of subintervals to mask, while in multi-block masking, we select multiple consecutive subintervals to mask. Note that we allow these consecutive subintervals to overlap, which requires the model to predict much longer sequences of representations. In this paper, we use both masking strategies to evaluate the effectiveness of ECG-JEPA, with a random masking ratio ofand a multi-block masking ratio ofwith a frequency of 4. The unmasked patches serve as the contextual input for the student networks, while the masked patches are the ones for which we aim to predict the representations.
+
+The patches are converted into sequences of token vectors using a linear layer, and augmented with positional embeddings. We employ the conventional 2-dimensional sinusoidal positional embeddings for the student and teacher networks, while we use 1-dimensional sinusoidal positional embeddings for the predictor network.
+
+SECTION: 3.2Teacher, Student, and Predictor
+
+ECG-JEPA consists of three main components: the teacher network, the student network, and the predictor network. Both the teacher and student networks are based on standard transformer architectures. The weights of the teacher network are updated using an exponential moving average (EMA) of the student network, as detailed inB. The predictor network, a smaller transformer, operates on single-channel representations, which still encode information from all leads due to the self-attention mechanism.
+
+The teacher network handles the entirepatches, generating fully contextualizedrepresentations. The student network, however, processes onlyvisible (unmasked) patches, whererepresents the number of visible time intervals. Theserepresentations from the student are then concatenated with the (learnable) mask tokens, resulting inrepresentations. Subsequently, each lead’s representations are passed to the predictor, which processes single-channel representations. The predictor’s output, the predicted representations of the target patches, is compared with the target representations using a smooth L1 loss function.
+
+SECTION: 3.3Cross-Pattern Attention (CroPA)
+
+Multi-lead ECG signals require careful analysis of patterns that are often consistent across different leads, which is crucial for identifying potential cardiac abnormalities. This demands attention mechanisms that prioritize relationships within the same lead and within relevant time windows.
+
+To incorporate this structural insight, we introduce Cross-Pattern Attention (CroPA), a masked self-attention mechanism designed for multi-lead ECG data. CroPA imposes an inductive bias by allowing each patch to attend only to patches within the same lead and temporal space (Figure4). This aligns with the way ECG signals are typically interpreted, where intra-lead and temporally adjacent signals hold the most significance.
+
+By incorporating this inductive bias, CroPA helps the model focus on relevant intra-lead relationships, reducing interference from unrelated signals across different channels and time points. Compared to the standard self-attention mechanism, which treat all patches equally, CroPA reflects a structured approach that mirrors the process of multi-lead signal interpretation, leading to improved performance in downstream tasks.
+
+SECTION: 3.4ECG representation
+
+After training, we use only the student network as the encoder. The encoder outputs are average-pooled to obtain the final ECG representation, which serves as the feature vector for downstream tasks. See Figure5for an illustration.
+
+SECTION: 4Experimental Settings
+
+In all experiments, 10-second multi-lead ECG signals were resampled to 250Hz, yieldingtime points. We divided the intervalintonon-overlapping subintervals, each of length. The model was trained for 100 epochs without data augmentation, and the final checkpoint was used for downstream tasks. Additional experimental details are provided in AppendixA.
+
+SECTION: 4.1Pretraining Datasets
+
+Training SSL models with large datasets is crucial for developing generalized representations. However, most previous works have used relatively small datasets, with the exception of[25], where an SSL model was trained with a large number of 12-lead ECGs. Following[25], we use theChapman[26],Ningbo[27], andCODE-15[28]datasets for pretraining ECG-JEPA. The Chapman and Ningbo datasets collectively consist of 45,152 10-second 12-lead ECGs at 500Hz. CODE-15 includes 345,779 12-lead ECGs from 233,770 patients at 400Hz, with 143,328 being 10-second recordings. After excluding recordings with missing values, we have 43,240 ECGs from Chapman and Ningbo and 130,900 ECGs from CODE-15.
+
+SECTION: 4.2Downstream Datasets
+
+We use thePTB-XL[29]andCPSC2018[30]datasets to evaluate the performance of ECG-JEPA on downstream tasks.PTB-XLcontains 21,837 clinical 10-second 12-lead ECG records from 18,885 patients, recorded at 500Hz and annotated with 71 diagnostic labels, which are aggregated into five superclasses. We use these superclass labels for our experiments. TheCPSC2018dataset includes 6,877 12-lead ECG recordings with nine annotated cardiac conditions. These datasets are multi-label in nature, where each recording can have multiple labels simultaneously. The details of the datasets are provided in AppendixA.1.
+
+SECTION: 4.3Architecture
+
+Our model employs transformer encoder architectures for the student, teacher, and predictor networks. Both the teacher and student networks consist of 12 layers with 16 attention heads and a hidden dimension of 768. The predictor network, designed as a smaller transformer encoder, comprises 6 layers with 12 attention heads and a hidden dimension of 384. While the teacher and student networks process the multi-lead ECG data holistically, the predictor operates on each lead independently to reconstruct the masked representations. Importantly, this does not imply that the predictor relies solely on single-lead information for the reconstruction task; due to the self-attention mechanism, the input representations for each lead still encapsulate information from all leads.
+
+SECTION: 4.4Downstream Tasks
+
+We conduct extensive experiments to show that ECG-JEPA effectively captures semantic representations. Its performance is evaluated on classification tasks using linear probing and fine-tuning. Furthermore, we assess its capability in low-shot learning settings, as well as under reduced-lead conditions where the downstream dataset is limited to single or two leads. Reduced-lead configurations are common in clinical practice, especially in scenarios like wearable devices or remote monitoring, where using the full 12-lead ECG setup is impractical.
+
+To validate the expressiveness of the learned representations, we predict key ECG features such as heart rate and QRS duration. Notably, this work is the first to show that these learned representations can recover a variety of ECG features. The ability to predict these features highlights the informativeness of the representations and their potential to capture clinically relevant characteristics, which is crucial for reliable ECG analysis.
+
+ECG datasets, such asPTB-XLandCPSC2018, often include multiple simultaneous labels for a single recording, making them multi-label tasks. However, many prior studies have simplified this into a multi-class classification problem by focusing on single-label subsets of the data. To ensure a fair comparison, we pretrain competing methods using publicly available code and evaluate them on the multi-label classification task. In cases where the code is unavailable, we will convert our task into a multi-class problem to align with the reported performance in the literature.
+
+SECTION: 5Experiments
+
+Scores reported in[25]; results for multi-label tasks were not available.
+
+In this section, we evaluate the performance of the learned representations across various downstream tasks to demonstrate their generalizability and ability to capture essential ECG features. ECG-JEPA is compared against several state-of-the-art self-supervised learning (SSL) methods.
+
+For classification tasks, we use AUC (Area Under the ROC Curve) and F1 scores as evaluation metrics. AUC provides a comprehensive measure of discriminative ability by considering performance across all classification thresholds, making it more robust to variations in decision boundaries. In contrast, the F1 score balances precision and recall at a fixed threshold, offering insights into the model’s performance when a specific decision boundary is chosen.
+
+In multi-label classification, we compute AUC by averaging the scores from binary classification for each label, while for multi-class classification, AUC is calculated using the one-vs-rest approach. For both tasks, F1 scores are macro-averaged across all classes to ensure equal weighting of each class in the final score.
+
+In most cases, ECG-JEPA consistently outperforms other SSL methods that rely on hand-crafted augmentations, highlighting its effectiveness in learning generalizable representations. In our experiments, ECG-JEPArband ECG-JEPAmbrefer to ECG-JEPA models trained using random masking and multi-block masking strategies, respectively.
+
+SECTION: 5.1Linear Evaluation
+
+Table1present the results of our linear evaluation on thePTB-XLandCPSC2018datasets. We train a linear classifier on top of the frozen representations for 10 epochs and evaluate its performance on downstream tasks. Further training beyond 10 epochs does not lead to any significant improvement in performance. As shown in the tables, ECG-JEPA consistently outperforms other SSL methods, demonstrating superior efficiency and effectiveness with substantially reduced computational resources.
+
+SECTION: 5.2Fine-tuning
+
+Fine-tuning is another method to evaluate the quality of learned representations, as it tests the model’s ability to adapt its pre-trained features to new tasks. We add a linear classification head at the end of the encoder and train the entire network for 10 epochs. Similar to linear evaluation, training for 10 epochs is sufficient, as further training does not lead to additional performance gains. Fine-tuning can potentially enhance performance beyond what is achieved with linear evaluation alone.
+
+Table2presents the results of fine-tuning on thePTB-XLandCPSC2018datasets. ECG-JEPA is compared with other SSL methods as well as supervised methods in a multi-class classification setting, where the student network is trained directly from the scratch. The results indicate that ECG-JEPA achieves the highest AUC and F1 scores onPTB-XLand the highest AUC onCPSC2018.
+
+SECTION: 5.3Low-shot Linear Evaluation
+
+Table3presents the performance comparison on the low-shot task. Low-shot learning is particularly challenging, as models must generalize effectively with limited labeled data. Given the difficulty and resource-intensive nature of obtaining labeled data in medical research, low-shot learning represents a realistic and critical scenario in the medical field. In this experiment, we evaluate the performance of ECG-SSL models on thePTB-XLmulti-label task with only 1% and 10% of the training set, while keeping the test set fixed. As shown in the table, ECG-JEPA demonstrates a clear advantage over other SSL methods, with its effectiveness becoming particularly evident in low-shot learning tasks. This suggests that ECG-JEPA can be particularly well-suited for transfer learning where labeled data is scarce.
+
+Scores reported in[25].
+
+We did not fine-tune CPC due to its slow training process.
+
+SECTION: 5.4Reduced Lead Evaluation
+
+Since transformer architectures can handle variable input lengths, we evaluated ECG-JEPA’s performance with reduced leads. In this experiment, we conducted a linear evaluation on thePTB-XLmulti-label task using only a single lead (Lead II) and two leads (Lead II and V1), training linear classifiers on the learned representations for 10 epochs111We compare only with ST-MEM, as it is a transformer-based model whose pretrained weights are publicly available.. Table4presents the results. Notably, ECG-JEPA maintains strong performance even with fewer leads, which is valuable for practical applications in mobile health monitoring, where most devices typically output only one or two leads.
+
+SECTION: 5.5ECG Feature Extraction
+
+Extracting ECG features is crucial for diagnosing and monitoring cardiac conditions. In this experiment, we assess the model’s ability to extract key features such as heart rate and QRS duration from the learned representations of thePTB-XLdataset. Unlike classification tasks, which focus on perceptual patterns, ECG features are directly tied to the signal’s morphology.
+
+Various methods exist for segmenting ECG signals[31,32,33,34], which can be used to extract ECG features. For this experiment, we utilized a publicly available segmentation model[34]to generate ground truth labels for heart rate and QRS duration from the PTB-XL dataset. We then trained a linear regression model on the learned representations to predict these features, using mean squared error (MSE) as the loss function.
+
+Table5shows the performance comparison, reporting the means and standard deviations of the absolute differences between the predicted and extracted values for the heart rate and QRS duration across the PTB-XL test set.
+
+Interestingly, although the model’s representations are designed to capture high-level features, they retain the capacity to recover low-level ECG features. This dual ability to encode both high-level semantics and low-level morphology underscores the versatility of ECG-JEPA, highlighting its potential in both diagnostic and real-world applications.
+
+SECTION: 6Ablation Study
+
+SECTION: 6.1Effect of CroPA
+
+Table6presents the results of our evaluation of the effectiveness of CroPA. CroPA introduces a “human-like" inductive bias, enabling the model to be trained more efficiently on multi-lead ECG data. Without CroPA, models may require more epochs to converge. For a fair comparison, we trained ECG-JEPA with and without CroPA for 100 and 200 epochs and compared their performance on the PTB-XL multi-class task. The results show that CroPA improves the model’s performance, demonstrating its effectiveness in capturing inter-lead relationships and enhancing the model’s ability to learn meaningful representations.
+
+SECTION: 6.2Masking Ratio
+
+Table7presents the performance of ECG-JEPA in linear evaluation with different masking ratios and strategies. The results indicate that the model benefits from a high masking ratio. Notably, multi-block masking is advantageous for linear evaluation, while random masking is more effective for fine-tuning, as indicated in Table2. Although random masking with a ratio of (0.7, 0.8) achieves better performance in the PTB-XL multi-label task, a masking ratio of (0.6, 0.7) performs better in other tasks. Therefore, we chose the latter for our main experiments.
+
+SECTION: 6.3Comparison with 12-Lead Model
+
+We now investigate the practical sufficiency of using 8 leads for ECG-JEPA pretraining. To evaluate the impact of this reduction, we trained models using both 8 leads and 12 leads and compared their performance on the linear evaluation of a multi-label task for PTB-XL.
+
+Table8presents the results of this comparison using ECG-JEPArb. As expected, the performance difference between the 8-lead and 12-lead models is minimal, indicating that using 8 leads is sufficient for effective pretraining without significant loss of information.
+
+SECTION: 7Discussion
+
+SECTION: 7.1Insights and Interpretations
+
+The results demonstrate that ECG-JEPA effectively captures high-quality representations from 12-lead ECG signals, as evidenced by its superior performance across various downstream tasks, including classification, low-shot learning, and feature extraction. The model’s ability to maintain robust performance under reduced lead configurations underscores its practical applicability in resource-constrained scenarios, such as wearable devices and remote health monitoring.
+
+Moreover, the proposed Cross-Pattern Attention (CroPA) mechanism introduces a clinically inspired inductive bias, aligning with the physiological patterns of multi-lead ECG signals. This targeted attention contributes to enhanced model performance, particularly in tasks requiring inter-lead correlations. The findings validate the importance of incorporating domain-specific design elements into self-supervised learning frameworks for medical data.
+
+Compared to previous SSL approaches, ECG-JEPA offers significant advancements. While several methods rely on extensive augmentations or manual feature engineering, ECG-JEPA bypasses these requirements by learning semantic representations directly in the latent space.
+
+To the best of our knowledge, we are the first to demonstrate that ECG representations learned through self-supervised learning can successfully recover key ECG features such as heart rate and QRS duration. This finding highlights the dual capability of ECG-JEPA to encode both high-level semantic information and low-level morphological details, making it versatile for various diagnostic and monitoring tasks. These results pave the way for further exploration of self-supervised learning methods in uncovering clinically meaningful patterns in physiological signals.
+
+SECTION: 7.2Limitations and Challenges
+
+While ECG-JEPA achieves state-of-the-art performance, certain limitations remain. One notable limitation is the lack of inherent explainability in the model’s learned representations. Although ECG-JEPA effectively captures semantic and morphological features, it provides limited insights into how these features are utilized for specific predictions, which can be crucial in medical applications. The absence of a clear interpretability mechanism may hinder its adoption in clinical settings, where understanding the decision-making process is often as important as the results themselves.
+
+SECTION: 7.3Broader Implications
+
+The implications of this work extend beyond ECG analysis. The principles underlying ECG-JEPA, particularly the combination of latent-space prediction and domain-specific attention mechanisms, could inspire advancements in other multivariate physiological signal domains, such as EEG and EMG. By leveraging these principles, researchers could develop models capable of extracting meaningful representations from diverse biomedical data, potentially accelerating progress in multimodal diagnostic systems.
+
+SECTION: 7.4Future Directions
+
+Looking ahead, integrating ECG-JEPA with complementary diagnostic modalities, such as chest X-rays or echocardiograms, could provide a more holistic understanding of cardiac health. This multi-modal approach has the potential to improve diagnostic accuracy by leveraging the strengths of different data types, enabling a richer representation of patient conditions.
+
+One significant challenge in pursuing these extensions is the scarcity of large-scale datasets in other modalities. Addressing this limitation is crucial for advancing the multi-model foundation model.
+
+SECTION: 8Conclusion
+
+We proposed ECG-JEPA, a novel SSL method tailored for 12-lead ECG data. By utilizing a JEPA coupled with the innovative relative positional encoding method, CroPA, ECG-JEPA effectively learns meaningful representations of ECG signals. This approach addresses the challenges posed by noise and artifacts in ECG data, demonstrating substantial improvements over existing SSL methods in various downstream tasks, with the added benefit of significantly faster convergence.
+
+Our extensive experimental evaluations reveal that ECG-JEPA outperforms state-of-the-art SSL methods across several tasks, including linear evaluation, fine-tuning, low-shot learning, and ECG feature extraction. Moreover, our investigation into the use of 8 leads, as opposed to the full 12-lead ECG, indicates that this reduction does not compromise performance while optimizing computational efficiency. This finding is particularly significant for applications constrained by limited computational resources.
+
+SECTION: Appendix AExperimental Details
+
+SECTION: A.1Downstream Datasets Details
+
+Table9, and10show the distribution of the PTB-XL and CPSC2018 datasets, respectively. Note that the sum of samples in each class exceeds the total number of ECG recordings in multi-label task.
+
+The PTB-XL dataset is stratified into ten folds, where the first eight folds are used for training, the ninth fold for validation, and the tenth fold for testing. In our experiments, we used the first nine folds for training and the tenth fold for testing, as we did not observe overfitting during linear evaluation and fine-tuning.
+
+For the CPSC2018 dataset, only the training set is publicly available, which is stratified into seven folds. We used the first six folds for training and the seventh fold for testing, omitting the validation set. The original CPSC2018 dataset consists of 6,877 ECG recordings, but we excluded recordings with a length of less than 10 seconds, resulting in 6,867 ECG recordings.
+
+SECTION: A.2Hyperparameters for ECG-JEPA
+
+Hyperparameters for ECG-JEPA pretraining, linear evaluation, and fine-tuning are provided in Tables11,12, and13, respectively. In ECG-JEPAmb, the number of visible patches in ECG-JEPAmbvaries more than in ECG-JEPArb, resulting in higher GPU memory usage. Consequently, we reduced the batch size to 64 to fit the model on a single NVIDIA RTX 3090 GPU. Interestingly, ECG-JEPAmbbenefits from larger learning rates, even with the halved batch size.
+
+For fine-tuning process, the actual learning rate is calculated as, following the heuristic by[35].

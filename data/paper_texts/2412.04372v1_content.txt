@@ -1,0 +1,162 @@
+SECTION: Distributed Inference with Minimal Off-Chip Traffic for Transformers on Low-Power MCUs
+
+ContextualArtificial Intelligence (AI)based on emerging Transformer models is predicted to drive the next technology revolution in interactive wearable devices such as new-generation smart glasses. By coupling numerous sensors with small, low-powerMicro-Controller Units (MCUs), these devices will enable on-device intelligence and sensor control. A major bottleneck in this class of systems is the small amount of on-chip memory available in theMCUs. In this paper, we propose a methodology to deploy real-world Transformers on low-power wearable devices with minimal off-chip traffic exploiting a distributed system ofMCUs, partitioning inference across multiple devices and enabling execution with stationary on-chip weights. We validate the scheme by deploying the TinyLlama-42M decoder-only model on a system of 8 parallel ultra-low-powerMCUs. The distributed system achieves an energy consumption of 0.64 mJ, a latency of 0.54 ms per inference, a super-linear speedup of 26.1, and anEnergy Delay Product (EDP)improvement of 27.2, compared to a single-chip system. On MobileBERT, the distributed system’s runtime is 38.8 ms, with a super-linear 4.7speedup when using 4MCUscompared to a single-chip system.
+
+SECTION: IIntroduction
+
+Transformer models[1]have revolutionized the landscape ofAIby achieving breakthroughs in areas such asNatural Language Processing (NLP)andComputer Vision (CV)[2]. The success of transformer-based language models such as BERT[3], GPT[4], or Llama[5]is largely due to their capability to capture contextual relationships within data, which makes them particularly appealing to use in contextualAItasks commonly found in smart glasses, including personalized assistance and context-aware interactions.
+
+Despite their success, deploying these Transformers on resource-constrained devices at the extreme edge presents formidable challenges, resulting from their high computational and memory requirements. Conventional Transformer models, which feature many millions to many billions of parameters[3,6], are inherently too large to fit within the computation and memory budget of edge devices, necessitating reliance on off-chip memory or even cloud services. This dependency results in higher latency, increased power consumption, and privacy concerns, all critical in wearable devices.
+Smart glasses represent a promising wearable platform with the potential to enhance user experience through contextualAI[7]. By enabling seamless interaction with the environment, they could provide users with context-aware responses that enhance everyday life. However, deployingLarge Language Model (LLM)s on such edge devices is infeasible due to their size and computational requirements. Tackling this challenge,Small Language Model (SLM)s with tens to a few hundred million, rather than several billion parameters have been proposed[8,9,10]. Still, even forSLMs, one main bottleneck during Transformer inference on smart glasses is the limitation in on-chip memory, which typically does not exceed 8 MiB[11]. Even for small Transformer models, weights and intermediate tensors might need to be stored and accessed from off-chip memory, which is both latency and energy-intensive.
+
+Previous works have explored the distribution of Transformer models on multiple compute units, thus leveraging vast computational resources to execute intensiveLLMworkloads. These distributed methods[12,13]allow Transformer models to meet their computational and memory requirements by partitioning workloads across multiple nodes, thereby overcoming the limitations of a single compute node.
+However, most of these works target high-performance computer architectures likeCentral Processing Units (CPUs),Graphics Processing Units (GPUs)orTensor Processing Units (TPUs).
+While data centers focus on increasing throughput and parallelism by batching tokens from multiple users to reduce the memory boundedness of the workload, the same methods cannot be applied to edge devices that require real-time and sequential processing.
+Moreover, edge devices such as smart glasses are subject to very strict constraints on latency, power, and form factor compared to cloud systems.
+This discrepancy calls for a novel approach to deploy Transformers at the edge, requiring careful optimization of latency, power consumption, and form-factor constraints for devices like smart glasses.
+
+To tackle the challenges above, we propose a distributed inference scheme to facilitate the efficient deployment ofSLMson resource-constrainedSystems-on-Chip (SoCs).
+
+We deploy our scheme on a network of Siracusa[14]chips designed for smart glasses, featuring a cluster of 8 parallel RISC-V cores with instruction extensions forMachine Learning (ML)andDigital Signal Processing (DSP)workloads.
+
+Our approach enables running TinyLlama with 42 million parameters[15]and MobileBERT[10]models solely from on-chip memory[16], with minimal overhead associated with inter-chip communication. The main contributions of our paper include:
+
+A strategy to partition the Transformers’ Decoder and Encoder onto a distributed system ofMCUs. This scheme minimizes chip-to-chip communication and needs only two synchronizations per Transformer block. The weights are scattered and never duplicated to reduce the on-chip memory footprint. This strategy enables individual Transformer blocks to be run only from on-chip memory, leading to lower energy per inference and super-linear latency reduction.
+
+Benchmarking of our partitioning strategy for the autoregressive and prompt mode of the decoder-only TinyLlama model as well as MobileBERT’s encoder. We extended our results with a scalability study on up to 64 SiracusaMCUsto test the limits of our approach.
+
+We perform experiments using the open-source event-driven simulator GVSoC[17]. From the simulator, we extract latencies and the number of accesses to different memory levels, which are fed into an analytical model to estimate the system energy.
+Our partitioning improves the performance of autoregressive Tinyllama inference by, while incurring a similar energy per inference when usingchips compared to a single chip. This demonstrates a super-linear scaling for the autoregressive TinyLlama mode, as it relies solely on on-chip memory to run a single Transformer layer. By eliminating long-latency off-chip memory accesses during inference, we achieve the aforementioned super-linear speedup.
+A scaled-up model achievesperformance improvement andenergy reduction forchips, showing our approach’s scalability to larger networks.
+In the prompt mode of TinyLlama, usingchips improves performances more than linearly by. Finally, for the MobileBERT model, usingchips improves performance byper chip without costing any additional energy per inference.
+
+SECTION: IIBackground
+
+SECTION: II-ATransformer Networks
+
+Transformers have revolutionized the field ofNLPand achievedState of the Art (SotA)performance in many other domains, such asCV. InNLP, encoder-decoder and decoder-only models dominate, while forCV, mostly encoder-only models are employed. Despite their large memory and compute demands, Transformers have found use in resource-constrained environments[18].
+The two main building blocks of a Transformer are theMulti-Head Self-Attention (MHSA)and the Full-Connected Layer. Due to its computing intensity and high memory footprint, theMHSAis the most challenging to deploy, especially on resource-constraint devices.
+
+The dimensions specifying the Transformer operations are thesequence length S, theembedding dimension E, theprojection dimension P, and thehead dimension H. The first step projects the inputonto the queries, keys, and values,as shown in equation1.
+
+In the Attention step,,andare combined by
+
+whereis the dimension ofused to scale the Attention. The softmax function is applied to each row of the matrix and defined as
+
+for thei-thelement of a row of size. This operation is performed independently for each of theheads.
+
+The output of theMHSAis fed into the Fully-Connected Layer consisting of two Linear layers, a row-wise normalization, and aGaussian Error Linear Unit (GELU)[19]. The shapes of the weight matrices in the linear layers areandrespectively, whereis theintermediatedimension of the Transformer model.
+
+This paper focuses on two different modes of Transformer inference, namely autoregressive and prompt mode.
+In autoregressive mode, each output token is predicted sequentially, based on all the previously predicted tokens using a data structure calledKey-Value (KV)-Cache to store results of previous computations.
+In prompt mode, multiple outputs get predicted from multiple inputs simultaneously in one inference. Therefore, the main kernel of prompt mode inference is aGeneral Matrix Multiply (GEMM), whereas in autoregressive modeGeneral Matrix-Vector Multiply (GEMV)operations are dominant, which implies that prompt mode is more computationally intensive than autoregressive mode.
+
+SECTION: II-BDeployment platform
+
+We partition the model on a multi-chip architecture consisting of multiple generic Siracusa chips as shown in Fig.1. As chip-to-chip link, we use theMobile Industry Processor Interface (MIPI)serial interface withenergy consumption andbandwidth. All-reduce operations are performed hierarchically in groups of four to reduce the contention on the interconnect, as shown in Fig.1.
+
+Each chip of the multi-chip architecture is a Siracusa[14]low-power, heterogeneous RISC-VMCUwhich features an accelerator cluster of eight RISC-V cores, enablingSingle Program Multiple Data (SPMD)processing[14,23]. An overview of the Siracusa architecture is depicted in Fig.2. To keep assumptions about the deployment platform minimal and the setup general, we do not use Siracusa’s N-EUREKA accelerator.
+To enable single-latency access from cluster cores to the L1Tightly Coupled Data Memory (TCDM), the cores are connected to the 16 L1 memory banks through a logarithmic interconnect using one 32-bit port each, granting a total memory bandwidth ofto the compute cluster.
+While each chip is equipped with significant computing capabilities, its on-chip memory is not sufficient to run inference ofSLMssuch as MobileBERT[10]or TinyLlama[9].
+
+SECTION: IIIRelated Work
+
+SECTION: III-ASmall Language Models
+
+Foundation Models (FMs), such as decoder-onlyLLMs, like Llama[24]and Mixtral[25]come with large compute and memory demands, often requiring TBs of storage which makes them challenging to deploy on edge devices.SLMsaddress this gap by condensing Large Language ModelsLLMsinto tens to hundreds of MBs. Some notable examples ofSLMsinclude TinyLlama[9], the Phi series[26,27]and MobileLLM[28]. Methods like incorporating high-quality data[27]and structured pruning techniques[29]aim to improve the efficacy ofSLMs.
+
+EmbeddingFMsinto edge devices may enable a new wave of intelligent,
+responsive, and autonomous devices such as smart glasses.
+This work contributes to the goal of efficiently deployingSLMson edge devices by proposing and benchmarking a partitioning scheme that can be applied to a wide range of FMs, from autoregressive decoder-only to
+encoder-only ones.
+
+SECTION: III-BDistributed Model Inference
+
+One main bottleneck of Transformer inference on edge devices is the available on-chip memory that can be used to store model weights and intermediate tensors. Each Siracusa chip used in this work features onlyin L1 andin L2 memory (SeeII-B).
+
+ForDeep Neural Networks (DNNs), a commonly used method to overcome the bottleneck of available on-chip memory is to partition the inference workload across multiple devices to reduce the memory and compute demands for each chip. Deepthings partitionConvolutional Neural Network (CNN)inference across multipleInternet of Things (IoT)devices by splitting its input feature maps[20]. Follow-up works like EdgeFlow[30]introduced support for network and device heterogeneity. However, these methods are all tailored towardsCNNinference and are not directly applicable to Transformer models.[21].
+Recent work from Google partitions Transformer inference across multipleTPUs[13]tailored towards data center applications and inference of models with more than 500 Billion parameters. This makes memory considerations vastly different from the inference of small models at the edge.
+Groq proposes a software-defined datacenter-scale system that aims to minimize off-chip memory access during inference[16].
+PipeEdge[31]partitions Transformer models on edge devices leveraging pipeline parallelism. Hermes[22]chooses a similar pipeline parallel approach. However, pipeline parallelism is infeasible for real-time single-user applications like smart glasses as it requires a sufficient batch size to keep the pipeline utilized and is unable to optimize the latency of an individual request.
+Another work[21]that aims for low-power Transformer inference targetsCPUapplications and needs to replicate model weights across devices. While this approach can reduce computational demands, the reliance on off-chip memory persists.
+An overview of previous works on distributed model inference can be found in tableI.
+
+In this work, we propose a tensor parallelism-based distributed inference scheme across Siracusa chips to facilitate the efficient deployment ofSLMson resource-constraint low-powerMCUs. By not having to replicate any model weights, this partitioning enables running TinyLlama[9]and MobileBERT[10]solely from on-chip memory. This is especially beneficial in models that are bound by memory rather than compute latency, such as the autoregressive mode of TinyLlama. With previous approaches, these models would not fit into on-chip memory[21]or would lead to an insufficient chip utilization[31]for real-time inference. This partitioning scheme does not face the high communication cost common for tensor parallelism, as communication between chips is minimized.
+
+SECTION: IVPartitioning Scheme
+
+A visualization of our partitioning of theMHSAcan be found in3. In this example, we assume anMHSAwithattention heads distributed acrosschips for visualization purposes. The input to theMHSAis broadcast to all chips. The weight matrices,, andare evenly split across chips, which results in each chip holding one slice of the weight tensors of shape, divided across the attention head dimension. Note that in Fig.3, we assumefor ease of visualization. Each chip will hold a partition of dimensionof the tensors,and. Partitioning theMHSAacross the head dimension is favorable, as the computations alongare fully independent of one another, requiring the chips to communicate only once after theMHSA.
+
+Each chip holds a slice of thematrix of shape, which is applied to a slice of the intermediate tensor of shape. After the partialMHSA, each chip holds a partial output of shape, which means that an all-reduce operation is needed before the normalization can be applied. As an all-to-one reduce operation lacks the required scalability, we perform a hierarchical reduction in groups of chips. First, a reduction is applied in a group of four chips by sending all partial outputs to one specific chip of the group, on which the partial outputs are accumulated. The outputs of this reduction are then again reduced until the final output of theMHSAis computed on one of the chips as visualized in Fig.1. The skip connection from theMHSAinput to the output shown in Fig.3can be merged into the all-reduce operation as all chips hold the full input tensor. After this output is normalized on a single chip, it is then broadcast back to all chips in the same manner as it is reduced.
+
+For theFully-Connected (FC)layer, we perform a similar approach. Both weight matrices of the fully connected stageandare sliced across thedimension across chips, requiring no weight replication and resulting in each chip holding a slice of shapeof thetensor and a slice of shapeof thetensor. Similar to theMHSA, each chip produces a partial output of shape. From these partial outputs, the final output is produced in an all-reduce operation while also considering the skip connection. Note that this partitioning scheme replicates no weights across chips, which is crucial to save in on-chip memory of edge devices for Transformer applications. Furthermore, it requires only two synchronizations of chips at the end of theMHSAand fully connected layer.
+
+SECTION: VEvaluation & Results
+
+SECTION: V-AExperimental Setup
+
+We conduct experiments using the open-source event-driven simulator GVSoC[17]to emulate the multi-chip architecture consisting of multiple Siracusa-like chips.
+From GVSoC, we obtain the latency and the number of accesses to each memory level, which is used by an analytical model to extract the energy consumption.
+For chip-to-chip interconnects, we use an analytical model ofMIPIwithenergy consumption andbandwidth[32].
+The energy is computed analytically, assumingfor accessing L3 memory andfor accessing L2 memory.
+The average power consumption of one core is[14]and the cluster of eachSoCruns at[14]. The total system energy is computed as follows:
+
+Whereis the average power consumption,denotes the computation time of the chip,is the number of chip-to-chip transfer,andare the number of transfers and the transfer energy between L1 and L2 for the chip, respectively.
+
+To deploy the model partitions, we extend the open-sourceOpen Neural Network Exchange (ONNX)compiler Deeploy[33]that is tailored for Transformer models on edge devices. As workloads, we run a TinyLlama[15]and MobileBERT[10]model.
+We take the TinyLlama model from an open-source implementation with an embedding dimensionof, an intermediate size of, and, matching the configuration of the model released initially. In autoregressive mode, this model leverages a KV-Cache to avoid unnecessary recomputation.
+We distribute the TinyLlama model across up tochips. For our scalability study, we use a modified version of TinyLlama, containingheads, and perform inference distributed on up tochips. To do so, we leave all other model parameters unchanged.
+We use TinyLlama with a sequence length offor autoregressive mode andfor prompt mode.
+The MobileBERT model has an embedding dimension and intermediate size of,attention heads, and a sequence length of.
+
+In our experiments, we depict the runtime and energy for a single Transformer block.
+The weights of the next Transformer block are loaded into L2 memory from L3 memory during the execution of the current block in a double-buffered fashion.
+
+SECTION: V-BRuntime and Energy Consumption
+
+In the following subsection, we showcase the results of our partitioning scheme with the setup and networks described inV-A.
+First, we partition the autoregressive and prompt modes of TinyLlama and MobileBERT models in their original configuration across Siracusa chips. Fig.4shows runtime speedup results and a runtime breakdown for all three models.
+Fig.5depicts the energy and latency for all three models in a 2D plot. Note that Fig.5also contains results of our scalability study that we address in Sec.V-C.
+
+In autoregressive mode, we achieve a speedup of, when usingchips, compared to using only a single chip, resulting in a super-linear scaling as seen in Fig.4(a).
+Super-linear speedup is not achieved for 1, 2, and 4 chips because the model weights of one TinyLlama block are too large to fit on the aggregated on-chip memory.
+Hence, for 1, 2, and 4 chips, many off-chip transfers are required in the execution of one transformer block, and they are the major contributor to the total runtime.
+Fig.5(a) shows that usingchips reduces the energy consumption per inference.
+This is a consequence of minimizing the chip-to-chip connection, not replicating model weights across chips, and storing intermediate tensors in L2 instead of L3.
+
+In prompt mode, inference latency is reduced bywhen usingchips over a single chip, which again leads to a super-linear runtime scaling as shown in Fig.4(b).
+Fig.5(b) shows that the energy consumption is reduced when usingchips, as, similar to autoregressive mode, we don’t need off-chip transfer to process the current layer whenor more chips are used.
+Fig.4(a) and (b) show clearly that in autoregressive mode, accessing memory is the main contributor to overall runtime, whereas, in prompt mode, computation is the largest contributor.
+Therefore, in prompt mode, reducing the number of off-chip transfers to L3 leads to less speedup compared to autoregressive mode, as the workload is not bottlenecked by off-chip memory transfer in the first place.
+
+Finally, Fig.4(c) and Fig.5(c) depict the latency and energy for the partitioning of MobileBERT.
+Partitioning onchips results in a super-linear speedup ofdue to the suppression of off-chip transfers to L3.
+However, usingchips results in a slight increase in inference energy.
+This is caused by the increased partitioning that scales down the kernel size of the Transformer. Therefore, it becomes more challenging to achieve high utilization of the RISC-V cores in each chip, which slightly hurts energy efficiency. In particular, for example, the runtime of aGEMMkernel does not scale down linearly as the overall kernel size is reduced, resulting in a runtime reduction that is less than linear at the network scale.
+
+SECTION: V-CScalability Study
+
+Next, we study the scalability of our partitioning scheme to a larger number of chips. We increase the number of heads of the TinyLlama model fromtowhile keeping the other parameters constant.
+Fig.6shows the speedup of the scaled-up model for both the autoregressive and prompt mode up to 64 chips.
+
+In autoregressive mode, we achieve a speedup ofusingchips instead of a single-chip system, demonstrating that our partitioning scheme achieves a quasi-linear speedup. Additionally, the energy consumption per inference is reduced byas shown in Fig.4(a).
+Forandchips, we achieve a super-linear speedup for an individual Transformer block as one block can be run accessing only on-chip memory, whereas, for,, andchips, off-chip memory is required to hold model weights and intermediate tensors of the current block.
+During the processing of one layer, the weights of the next layer can be loaded into on-chip memory, incurring an additional energy penalty.
+However, withchips, all model weights fit on-chip, and double-buffering is no longer required, resulting in a further energy reduction that can be observed in Fig.5(a).
+
+In the prompt mode of TinyLlama inference, we achieve a linear speedup up until a-chip system as seen in Fig.6.
+Scaling the system further has diminished returns as the prompt mode is dominated by computation, and saving in off-chip memory accesses has a reduced benefit compared to autoregressive mode.
+Furthermore, theGEMMkernel’s runtime scale is sub-linearly as the dimensions are reduced. Additionally, the number of chip-to-chip transfers and the accumulation of partial tensors introduce a larger overhead.
+Similar to the autoregressive mode, model weights need to be double buffered forandchips, whereas forandchips, on-chip memory is sufficient to hold all model weights, which results in reduced inference energy as can be seen from Fig.5(b).
+
+Overall, the results demonstrate the scalability of our partitioning scheme for Transformer-based models, especially for models dominated by off-chip transfer to higher-level of the memory hierarchy, such as the autoregressive TinyLlama model for which we achieve super-linear speedup for 8-32 chips and a quasi speedup for 64 chips.
+
+SECTION: VIConclusion
+
+In this paper, we presented a partitioning scheme tailored for deploying Transformer models on edge devices. With an approach inspired by tensor parallelism, this partition does not replicate any model weights across chips and only requires two synchronizations between chips, which allows the deployment of larger Transformer models at the extreme edge. We benchmark the partitioning scheme on the TinyLlama and MobileBERT models and demonstrated an above linear speedup offor autoregressive and, for autoregressive and prompt TinyLlama mode, respectively, when usingchips instead of a single chip system. For MobileBERT, we achieve a speedup of. To demonstrate the applicability to larger models, we showcase the scalability of our model. This work contributes to the active research field of deploying powerful Transformer-based models in highly resource-constraint devices.
+
+SECTION: VIIAcknowledgement
+
+This work is funded in part by the dAIEDGE (#101120726) and CONVOLVE (#101070374) projects supported by the EU Horizon Europe research and innovation program.
+
+SECTION: References

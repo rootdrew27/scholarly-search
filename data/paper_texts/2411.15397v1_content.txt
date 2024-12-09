@@ -1,0 +1,374 @@
+SECTION: Efficient Online Inference of Vision Transformers by Training-Free Tokenization
+
+The cost of deploying vision transformers increasingly represents a barrier to wider industrial adoption.
+Existing compression requires additional end-to-end fine-tuning or incurs a significant drawback to runtime, thus making them ill-suited for online inference.
+We introduce theVisual Word Tokenizer(VWT), a training-free method for reducing energy costs while retaining performance and runtime.
+The VWT groups patches (visual subwords) that are frequently used into visual words while infrequent ones remain intact.
+To do so, intra-image or inter-image statistics are leveraged to identify similar visual concepts for compression.
+Experimentally, we demonstrate a reduction in wattage of up to 19% with only a 20% increase in runtime at most.
+Comparative approaches of 8-bit quantization and token merging achieve a lower or similar energy efficiency but exact a higher toll on runtime (up toor more).
+Our results indicate that VWTs are well-suited for efficient online inference with a marginal compromise on performance.
+
+SECTION: 1Introduction
+
+In recent years, deep learning has seen continuous integration into a variety of systems worldwide.
+From coding to gaming, neural networks are increasingly deployed in online scenarios, where asynchronous requests are processed in real-time.
+However, due to the size and complexity of modern architectures, such models are costly to run in practice.
+Various methods have been proposed to improve model efficiency such as Knowledge Distillation[22], Pruning[21,38], and Quantization[11].
+However, many of these methods either require end-to-end fine-tuning to recover performance or significantly reduce runtime.
+In the field of Natural Language Processing (NLP), there is a growing trend towards improving efficiency via tokenization[18,19,9,61,40].
+Newer large language models (LLMs)[53,14]exhibit a noticeably larger vocabulary than their earlier counterparts[12,42], thereby producing shorter sequences across various distributions.
+For computer vision, increasing interest is placed on reducing the cost of deploying the vision transformer (ViT)[13].
+As image encoders in larger vision-language systems, ViTs are used to process images as fixed sets of tokens.
+Similar to downsampling in convolutional neural networks, most research[25,30,45,37,5,4,24]has focused on merging and/or pruning tokens in the intermediate layers to reduce computational overhead.
+Given the analogous architecture of the transformer across image and text modalities, our work looks instead at the idea of tokenization for efficiency by splitting an image into variable sets of tokens.
+
+To introduce variability, we draw inspiration from subword tokenization algorithms used in NLP which follow the principle that common words should remain intact while infrequent words are broken down into meaningful subword units.
+Instead of a top-down approach – splitting words into subwords, our work for image data takes a bottom-up approach by grouping visual subwords (image patches) into visual words.
+We also twist the underlying principle: frequently used image patches should be grouped as they are more likely to describe common features or backgrounds while infrequent ones remain intact as they might carry task-relevant information.
+We propose two procedures to capture this principle.
+The first is anintra-image approach where patches with the lowest pixel variance within each image are grouped as they are more likely to represent uniform areas (e.g. backgrounds).
+The second is aninter-image approach, where basic features across multiple images such as colors or edges are discovered as visual words.
+Image patches are then grouped based on the similarity of these basic characteristics.
+Crucially, image patches that have distinct characteristics (i.e. high dissimilarity with any visual word) remain intact and form visual subwords.
+The code for our paper is publicly available111https://github.com/wearepal/visual-word-tokenizer.
+
+SECTION: 2Related Work
+
+Most works for improving the efficiency of ViTs have focused on reducing tokens in the intermediate layers by leveraging importance scores.
+In[30,60,25,4], redundancy is addressed by fusing tokens.
+Both[45]and[50]opt to prune such tokens instead.
+Recent efforts[7,8,6,24]attempt to combine the benefits of merging and pruning.
+In[54], an additional metric termed the energy score is used to better identify redundancy.
+Uniquely,[16]use inverse transform sampling to select important tokens.
+Most relevant to our work are[37]and[5].
+The former assigns tokens to centroids via clustering, while the latter progressively merges tokens in a training-free manner.
+
+Our method also takes inspiration from works in NLP for efficient inference.
+Increasingly, the tokenizer’s vocabulary is specialized to reduce the token length of the given distribution.
+In[18], domain adaptation of the tokenizer byFast Vocabulary Transfer(FVT) ensures fewer subword or character tokens are produced.[19]followed up by introducing n-grams for tokenization beyond the word-level boundary.
+Vocabulary specialization coupled with FVT has also been shown to accelerate code generation for modern LLMs[9].
+Meanwhile,[61]analyzed the effectiveness of various vocabulary adaptation techniques for efficient cross-lingual inference.
+Recently,[40]leveraged hypernetworks for zero-shot tokenizer transfer of newly domain-adapted vocabularies.
+
+The idea of discretizing continuous distributions has been explored in many works, most recently for image generation.[62]leveraged clustering for learning a codebook that maps keypoint descriptors to discrete visual words.
+In[58,3], discretization is applied as part of the modeling for ViTs.[55]learned discerete image representations by introducing theVector Quantised-Variational Autoencoder(VQ-VAE) approach.[15]and[65]further improved upon the VQ-VAE by combining the expressiveness of transformers with an adversarial framework.
+Increasingly, vision-language models paired with codebooks conduct image synthesis autoregressively[44,66,35,36,52,51,49].
+Lastly,[63]tackled disentangled representation learning and scene decomposition by tokenizing images into visual concepts.
+
+SECTION: 3Visual Word Tokenizer
+
+In ViTs, tokenization is a process that splits an image into patches (tokens) which are then projected into a series of embeddings.
+The number of patches is typically fixed (e.g.) based on the choice of architecture and hyperparameters.
+We seek to split the image into variable length inputs instead (i.e. certain images will usetokens, while others a).
+This variability is induced by conventional text tokenizers[17,48,59,26]for model efficiency.
+We propose to achieve this via visual words that group patches (visual subwords) based on some commonality in the image space.
+These visual words capture frequently used patches while retaining infrequent ones as is.
+A simple yet effective grouping can be done using either a criterion that looks at statistics of only one image (an intra-image approach) or across many images (an inter-image approach).Figure2summarizes theVisual Word Tokenizer(VWT).
+
+SECTION: 3.1An intra-image approach
+
+The pixel variance of the image patches is the simplest criterion that can be used for grouping.
+InFigure2, this approach only utilizes thedeploystep by grouping the top-k patches with the lowest pixel variance while leaving the rest separate.
+To compress the grouped tokens, we opt to drop them as they tend to exhibit excessive homogeneity.
+We do not include the [CLS] token for dropping.
+This approach is inspired by[39]which aimed to reduce the training cost of OWLv2, an open-vocabulary object detector.
+Dropping patches with the lowest pixel variance removes padding areas and uniform backgrounds from the input mosaics of raw images, thus increasing training efficiency.
+
+SECTION: 3.2An inter-image approach
+
+Inspired by text tokenizers and codebooks for image generation, we propose a variable length tokenizer that statistically discovers visual words across many images.
+The tokenizer consists of two steps:Pre-ProcessandDeploy
+
+The Bag-of-Visual Words (BoVW) is a popular method for modeling images via discrete representations.
+In[62], k-means clustering is applied to keypoint descriptors from SIFT[34]to learn a fixed set of centroids.
+These centroids represent the vocabulary to which multiple descriptors are mapped in a process termedVector Quantization(VQ).
+In our method, we adopt a variation of this framework by building the BoVW using patches from the image space.
+Our design choice is motivated by two main factors.
+First, we find keypoint descriptors to be costly for inference.
+In each forward pass, computing keypoints for each image would significantly increase runtime.
+Second, in our early experimentation, we observed that patches in the embedding space have little similarity to one another.
+Such issues were also described by[5], thus leading to their use of attention scores instead.
+Further justification for leveraging the image space is provided inSectionB.1.
+
+Given a dataset, we first patchify the images using the same patch size as the image encoder (e.g. 16 for ViT-B/16).
+We then cluster the patches via k-means to form the BoVW of a given vocabulary size, where each centroid represents a visual word.
+Patchification is done via basic tensor operations and not the pre-trained convolutional layer of the ViT to avoid projection into embeddings.
+We also execute this process in batches using the MiniBatchKMeans222from sklearn.cluster import MiniBatchKMeansalgorithm due to memory constraints.
+Note that MiniBatchKMeans uses the Euclidean distance by design.
+Since clustering is done in the image space, the BoVW may be reused by other ViTs with the same patch size regardless of model type.
+
+Once the BoVW is formed, we now turn toward the process of sequence compression.
+One way of leveraging the BoVW would be to merge similar patches in the image space before projecting them into embeddings.
+However, such a naive approach will significantly degrade performance as doing so necessitates the initialization of a new linear layer for projection.
+To avoid this, we begin by patchifying and computing the pairwise cosine distance between the patches and BoVW.
+For each patch, we retain only the minimum distance.
+Unlike text, we are unable to obtain exact matches with images.
+As such, distances higher than a given threshold are masked out to ensure dissimilar patches are not merged.
+This allows us to ensure that infrequently used image patches remain intact.
+At this point, we have determined the groupings of similar patches via their connections to the same visual words.
+We then apply the pre-trained convolutional layer of the ViT on the original image to patchify and project it into a series of embeddings.
+Before merging, we ensure that positional information is added to the embeddings as we found it to work better than adding them later.
+Lastly, we average the embeddings element-wise based on the earlier defined groupings.
+We do not include the [CLS] token for merging.
+
+For the inter-image approach, if batching instead of online inference is desired, the uniform requirement of tensors becomes a challenge.
+To maintain parallelism, any reduction has to be equal across samples.
+Due to the non-uniformity of tokenization, sequences have to be sequentially compressed before padding to the same length.
+We opt to append additional [PAD] tokens until the longest length within the batch is achieved.
+Similar to text transformers[56], the attention scores are set to negative infinity before the softmax to nullify the influence of padding.
+We do not add positional information to the [PAD] tokens as extrapolating such information to non-uniform sequences will significantly worsen model efficiency.
+
+SECTION: 4Experiments
+
+Consider a pre-trained image encoderwith parametersthat transforms inputsto encodings.
+The encodings can then be mapped to labelsfor some given task, be it classification or generation.
+More specifically, the ViT first transforms inputsto tokensbefore further processing by the attention layers.
+The number of tokensis a constant defined by, whereandare the image and patch sizes, respectively.
+Letbe the VWT associated with a vocabulary, whereis a visual word learned from some dataset.
+The tokenizer transforms the inputinto tokens, where.
+In our experiments, we seek to analyze the effect ofon online inference efficiency.
+We do so through the lens of (i) performance retention in visual recognition tasks of zero-shot classification, (ii) group robustness, and (iii) generative performance of visual captioning.
+
+To study the effects of tokenization on (i) performance retention in visual recognition tasks of zero-shot classification, we conduct two sets of evaluations: 1) using one dataset for large-scale evaluation and 2) using three datasets for robustness analysis detailed below.
+We focus on a zero-shot setting by eschewing any end-to-end fine-tuning of.
+For large-scale evaluation, we use the OpenImages v6 dataset[27].
+Following[23], the test split is divided intocommonandraresubsets that consist of 57 224 and 21 991 images, respectively.
+The former has 214 classes, while the latter has 200.
+To perform classification, we compute the cosine similarity between an image embedding and the encoded text label333The prefix ”a photo of a ” is also added to encode each text label..
+
+To study performance retention and (ii) group robustness in image classification, we utilize three publicly available datasets: Waterbirds[57], CelebA[33], and MetaShift[29], that are used as benchmarks in robustness and fairness research[47,32,64].
+To perform (zero-shot) classification, we compute the cosine similarity between an image embedding and the following encoded text labels3for Waterbirds, CelebA, and MetaShift, respectively: {’landbird’, ’waterbird’}, {’non-blond’, ’blond’}, {’dog’, ’cat’}.
+The same data splits and spurious attributes as[32]and[64]are used for the former two and latter datasets, respectively.
+Specifically, the following spurious attributes are studied: habitation {’water’, ’land’} for Waterbirds, gender {’female’, ’male’} for CelebA, and context {’indoor’, ’outdoor’} for MetaShift.
+Further details on the subgroups are provided inSectionA.1.
+We also compute the variance by shuffling samples among the data splits while maintaining subgroup proportions.
+We leverage attribute annotations not only for analyzing average and robust performance but also for the fairness of tokenization inSectionB.4.
+
+To analyze the effect ofon (iii) generative task of image captioning, we utilize the Karpathy test split of COCO dataset[31]and a validation set of NoCaps dataset[1]following the setting in previous work[28].
+
+Finally, to study inference efficiency, we utilize all datasets for the downstream visual tasks (i)-(iii) described above. We focus on the online setting where batch size is 1.
+
+For image classification, we load the pre-trained CLIP[43]model from HuggingFace444https://huggingface.co/openai/clip-vit-base-patch16.
+The prefix ”a photo of a ” is also added to each text category.
+An image size of 224224 is used with bilinear interpolation for CLIP.
+For image captioning, we load the pre-trained BLIP[28]model from HuggingFace555https://huggingface.co/Salesforce/blip-image-captioning-base.
+To perform zero-shot captioning, we use a beam size of 3 along with maximum and minimum lengths of 20 and 5, respectively.
+Unlike[28], we do not include the prefix ”a picture of ” as we found it to work better.
+An image size of 384384 is used with bicubic interpolation.
+Both CLIP and BLIP utilize the ViT-B/16 image encoder unless stated otherwise.
+
+Aside from the pre-trained model which we denote as, we also consider 8-bit quantization[11]and token merging[5]as additional baselines.
+We denote the former asand the latter as.
+Following[5], we utilize a reduction per layer forof 13 with CLIP and 23 with BLIP due to their respective input image sizes.
+For the VWTs, we set the top-k of the intra-image approach to 50% of the total number of patches which we denote as.
+For the inter-image approach, we set the threshold to 0.1 unless stated otherwise and denote it as, whereis the size of the vocabulary.
+Lastly, our experiments are conducted using a single NVIDIA A100 GPU.
+
+First we analyze the effects of VWTs on token length.
+We seek to understand how the choice of pre-processing data and vocabulary size affects the degree of compression.Table1shows the token length per sample (including [CLS]) on different datasets.
+Unlike, the sequence lengths induced byare not equal.
+First, we comparepre-processed on the in-domain dataset and ImageNet-1K[10].
+The in-domain dataset is represented by the training split if available.
+On text data, in-domain tokenizers[9,61,40]have been shown to produce shorter sequences by specializing the vocabulary on the given distribution.
+Interestingly, we observe no such effect with image data as seen by the similar lengths between In-Domain and ImageNet-1K.
+Only on CelebA, do we see a greater reduction withandpre-processed on ImageNet-1K.
+Second, unlike text tokenizers, a trend of decreasing compression is seen as vocabulary size increases.
+With text, larger vocabularies ensure that more tokens are kept as words rather than subwords.
+In our case, we posit that an increasing number of patches are matched to separate visual words, thus lowering the overall compression.
+We restrict our remaining analyses topre-processed on ImageNet-1K unless stated otherwise.
+
+Having analyzed the effects on token length, we turn our attention to the practical metrics of wattage and runtime.
+For online inference, savings in wattage should not incur a significant cost to runtime.
+InTable2, we compare the efficiency of tokenization to,, andon the datasets.
+First, we find the wattage of VWTs to be lower thanacross the datasets.
+On CelebA, this reduction is up to 19% with.
+Naturally, efficiency decreases as vocabulary size increases due to smaller compression.
+Althoughandresult in a lower wattage than VWTs, we note the drawbacks in runtime.
+In particular,results in a significantly longer runtime foras tensors need to be repeatedly quantized and dequantized.
+Meanwhile,can increase runtime by up toon Waterbirds, CelebA, and MetaShift.
+We observe increases of up to 20% at most withon the aforementioned datasets.displays lower runtimes thanacross the datasets whiledoes so on COCO and NoCaps.
+We have shown how VWTs are more suitable for online inference by striking a good balance between savings in wattage and costs to runtime.
+
+Another important factor in compression is the effect on model performance.
+InTable3, we tabulate the performance of image classification and captioning using CLIP[43]and BLIP[28], respectively.
+For classification and group robustness, we analyze the average and worst-group (robust) performance as done by[47,46].
+First, we find the degradation in average accuracy to be small forand.
+The largest drop of up to 2% only is shown by the former on MetaShift.
+Likewise,andretain a high average accuracy across the datasets.
+Second, we observe possible improvements in robustness with VWTs.
+On Waterbirds and CelebA, the worst-group accuracy withincreases by up to 29% and 8%, respectively.
+Only on MetaShift is robustness lower thanorrelative to.
+Like[20], we find compression to not always be harmful to group robustness.
+
+We conduct more evaluations on the large-scale OpenImages v6 dataset for zero-shot classification.
+We report mean Average Precision (mAP) as done by[23].
+FromTables2and3, we find VWTs to be more suitable for online inference thanorin the large-scale setting, while retaining comparable performance to themodel.
+
+For image captioning with BLIP, we evaluate our models following the setting in[28]by using the BLEU, CIDEr, and SPICE metrics w.r.t. the ground truth captions.
+On COCO, VWTs display a higher performance thanand are competitive with.
+On NoCaps, we see the largest degradation on the out-of-domain samples with.
+However, overall performance is still higher than.
+Onlydisplays a slight improvement over.
+Like, VWTs are shown to not require additional end-to-end fine-tuning for performance retention.
+
+To better understand the inter-image approach, we visualize the patch matching ofinFigure1.
+We highlight in identical colors patches that are matched with one another.
+First, we find that patches representing the background are more frequently grouped than those of the foreground.
+On Waterbirds, the merging of background patches may explain the improved robustness inTable3by mitigating the spurious correlation with the background.
+On CelebA,tends to avoid matching the eyes or mouths of the individuals.
+Second, we observe that patch matching is capable of grouping similar but non-adjacent visual concepts.
+In certain examples of MetaShift and NoCaps, multiple cats and foods are seemingly matched together, respectively.
+Our analysis shows that patch matching serves as a rudimentary form of image segmentation.
+
+InFigure3, we visualize the vocabulary ofto analyze the formation of the visual words.
+We show patches from ImageNet-1K (i.e. pre-processing data) that are matched to each visual word using the Euclidean distance.
+Since visual words are centroids, patches that are matched to the same visual word belong to the same cluster.
+We observe that visual words depict basic features such as colors or edges.
+These features are also formed as an average representation of the patches that belong to each cluster.
+By representing basic features, visual words serve as effective anchor points to which patches can be matched to.
+Analysis on the sparsity of the vocabularies in the inter-image approach can be found inSectionB.5.
+
+The generated captions by BLIP[28]can be used as priors for further training of other models.
+As such, longer descriptive captions may be more desirable than the typical short captions associated with Internet data.
+InFigure4, we visualize the long-form captions on COCO.
+To enable longer generations, we set the length penalty to 2.0 and double the maximum length to 40.
+All other generation settings are kept the same.
+With longer captions, the generation may degenerate into unnecessary repetitions on certain samples.
+Interestingly, descriptiveness and coherence improves more withthanor.
+Additional long-form captions by,, andare provided inSectionC.1.
+
+Earlier we stated how VWTs works optimally for online inference.
+InFigure5, we seek to better understand its effectiveness foroffline inferencewhere batch sizes are greater than 1.
+Using typical batches of, we compareandtoand.
+First, we find that as batch size increases, lower wattages relative toare seen withand, particularly at lower batch sizes.
+Both VWTs andeventually reach wattage parity withat larger batches (i.e. 32), withdoing so much earlier.
+Second, we observe different runtime trends between VWTs and.
+As batches grow,continues to show similar runtimes to.
+Meanwhile,anddisplay lower runtimes with the exception of batch size 4 for the latter.
+As such, during batching, the inter-image approach does not confer the same degree of efficiency improvements.
+
+Concerning the choice between the intra-image or inter-image approach, we posit that when global information is required, dropping tokens may be more advantageous by removing unnecessary noise from the visual input.
+On the other hand, when the task necessitates local information (e.g. long-form captioning, object detection, etc.), merging tokens may better preserve the visual concepts.
+For example, the image on the first row ofFigure7shows thatremoves the mountainous background, thus leading to the absence of ”mountain” in the long-form caption ofFigure4.
+Potentially, combining both approaches may maximize compression while preserving information by merging the mountains and dropping the bushes in said image.
+
+SECTION: 5Conclusion
+
+In this work, we set out to define a training-free tokenization for ViTs that lowers wattage while balancing costs to runtime and performance.
+In online scenarios, we have shown empirically that our intra-image and inter-image approaches are competitive with 8-bit quantization and token merging for image classification and captioning.
+Qualitatively, we observe how the inter-image approach groups analogous visual concepts via visual words that represent basic features.
+Analysis on large-scale classification further validates the viability of our method while long-form captioning shows its potential for improving descriptiveness and coherence.
+Lastly, the inter-image approach has limits for batch processing due to its non-parallelism.
+As a future work, further research can be made into combining both approaches.
+
+SECTION: Acknowledgements
+
+This research was supported by a European Research Council (ERC) Starting Grant for the project “Bayesian Models and Algorithms for Fairness and Transparency”, funded under the European Union’s Horizon 2020 Framework Programme (grant agreement no. 851538).
+Novi Quadrianto is also supported by the Basque Government through the BERC 2022-2025 program and by the Ministry of Science and Innovation: BCAM Severo Ochoa accreditation CEX2021-001142-S / MICIN/ AEI/ 10.13039/501100011033.
+Viktoriia Sharmanska is currently at Epic Games.
+
+SECTION: References
+
+SECTION: Appendix AFurther Details
+
+SECTION: A.1Datasets for Group Robustness
+
+Here, we detail the task of each dataset for group robustness.
+InTable4, we also tabulate the labels and attributes that define each subgroup along with their sample sizes.
+
+Given an image of a bird, the task is to predict whether it is a waterbird or landbird[57].
+The attribute is the background that the bird is on[47].
+
+Given an image of a person, the task is to predict whether their hair color is blond or not[33].
+The attribute is the binary gender of the person.
+
+Given an image of an animal, the task is to predict whether it is a dog or cat[29].
+The attribute is the environment that the dog or cat is in.
+
+SECTION: Appendix BSupplementary Experiments
+
+Here, we detail the supplementary experiments that we conducted.
+First, we explore additional design choices and effects of the inter-image approach.SectionB.1shows the ineffectiveness of patch matching with visual words formed in the embedding space.
+InSectionB.2, random matching is applied to further determine if matching by the visual words are meaningful.SectionB.3ablates the similarity threshold by relaxing it for further compression.
+The fairness of tokenization and sparsity of the vocabulary are shown inSectionsB.4andB.5, respectively.
+
+SECTION: B.1Ineffectiveness of the Embedding Space
+
+InTable5, we analyze the sequence compression using visual words formed in the embedding space.
+To do so, we initialize each vocabulary by clustering embeddings from the pre-trained convolution layer of CLIP or BLIP.
+During inference, we match the activations from the pre-trained convolution layer with the visual words.
+Compared toTable1, we observe a notable reduction in the degree of compression irrespective of pre-processing data and vocabulary size.
+In[50], embeddings are shown to become progressively more similar to one another due to self-attention.
+Hence, it is unsurprising that matching activations and visual words at the beginning of the network is ineffective.
+
+SECTION: B.2Random Matching of Visual Words
+
+InTable6, we study the effects of randomly matching the patches.
+We initialize the pairwise cosine distance by sampling from a uniform distribution of.
+First, we find the token length (including [CLS]) to differ noticeably fromTable1.
+For, sequences are further reduced across the datasets.
+Conversely,anddisplay little compression.
+Second, performance is shown to change fromTable3.
+We observe a significant degradation in average and worst-group accuracies withon Waterbirds and MetaShift.
+Forand, performance does not shift much fromas barely any compression occurs.
+With random matching, the captions become completely different than those ofinFigure10.
+
+SECTION: B.3Ablation of the Similarity Threshold
+
+We have shown how VWTs can improve the efficiency of online inference.
+To better understand their limitations, we ablate the threshold ofby setting it to values ofinTable7.
+We seek to determine if exploiting higher thresholds for increased compression is a viable strategy.
+Naturally, we observe a reduction in performance as increasingly dissimilar patches are merged.
+For Waterbirds and MetaShift, the worst-group accuracy degrades more significantly than the average, especially with the former.
+Interestingly, average accuracy remains relatively unchanged while worst-group accuracy improves significantly on CelebA irrespective of similarity threshold.
+We posit that at higher thresholds, the merging of core features represented by the foreground object results in the reduced performance of Waterbirds and MetaShift.
+
+SECTION: B.4Fairness of the Tokenization
+
+On text data, tokenizers have been shown to induce unfairness between languages[41,2].
+Since most LLMs are built using English data, tokenization of minority languages produces inherently longer sequences that raises compute costs.
+We seek to analyze if similar effects exist with VWTs as well.
+InTable8, we show the breakdown in token length (including [CLS]) and accuracy (w.r.t) by subgroup.
+First, we observe a notable difference in compression between the subgroups of Waterbirds.
+With, sequences might differ by up to 39 tokens as seen with subgroups 0 and 3.
+Smaller discrepancies are displayed on CelebA and MetaShift except foron the former.
+Second, we find that compression does not affect all subgroups equally.
+Accuracy improves on certain subgroups and degrades on others.
+A stronger compression does not correlate also with a large change in performance.
+Like text tokenizers, VWTs may induce inequality in compression that leads to varying inference costs and performance for different subgroups.
+
+SECTION: B.5Sparsity of the Vocabulary
+
+To better understand the utilization of the visual words, we plot the probability distribution of the matches inFigure6.
+Regardless of the dataset, we find that certain visual words are matched more frequently than others, thus leading to a large skew in the distributions.
+Greater sparsity is also displayed by larger vocabularies as many visual words remain unused across datasets.
+As such, pruning may be applied to achieve a more efficient vocabulary size post-clustering.
+
+SECTION: Appendix CAdditional Results
+
+Here, we provide additional results by other models and hyperparameters in our experiments.SectionC.1lists long-form captions by,, and.SectionsC.2andC.3detail the intra-image and inter-image approaches with various dropping ratios and vocabulary sizes, respectively.
+
+SECTION: C.1Long-form Captions
+
+InFigure7, we showcase long-form captions by,, and.
+First, we observe improvements in the accuracy of the descriptions withoverinFigure4.
+Although the captions relate better to the image, the overall length is shorter than those of other methods.
+The generation may continue to introduce unnecessary repetitions.
+Second, we findandto also be beneficial for descriptiveness and coherence.
+On certain samples, repeating n-grams may still occur.
+
+SECTION: C.2Dropping Ratio
+
+Following[39], we apply the intra-image approach with ratios ofto the total number of patches inTable9.
+We observe a natural degradation as the ratio increases with performance dropping steeply at 0.7.
+InFigures8and9, we visualize the dropped patches and captions on COCO, respectively.
+In most cases, the patches with the lowest pixel variance correspond to uninformative backgrounds.
+Dropping such patches may continue to preserve the foreground object.
+
+SECTION: C.3Vocabulary Size
+
+InTable10, we apply the inter-image approach with vocabulary sizes of.
+We find performance to be noticeably lower thaninTable3with the smaller vocabulary of.
+Meanwhile, performance retention is higher fordue to lower sequence compression inTable1.
+When visualizing the captions on COCO inFigure10, we also observe that increasing thresholds cause larger deviations fromthan reducing the vocabulary size.

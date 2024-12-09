@@ -1,0 +1,148 @@
+SECTION: Arabic-Nougat: Fine-Tuning Vision Transformers for Arabic OCR and Markdown Extraction
+
+We introduceArabic-Nougat, a suite of OCR models designed to convert Arabic book pages into structured Markdown text. Building on Meta’sNougatarchitecture,Arabic-Nougatincludes three specialized models:arabic-small-nougat,arabic-base-nougat, andarabic-large-nougat. These models are fine-tuned using a synthetic dataset,arabic-img2md, consisting of 13.7k paired samples of Arabic book pages and their Markdown representations. Key innovations include theAranizer-PBE-86ktokenizer, which optimizes tokenization efficiency, and the use of torch.bfloat16 precision and Flash Attention 2 for efficient training and inference. Our models significantly outperform existing methods, witharabic-large-nougatachieving the highest Markdown Structure Accuracy and the lowest Character Error Rate. We also release a large-scale dataset of 1.1 billion Arabic tokens extracted from over 8,500 books using our SOTA model, providing a valuable resource for further Arabic OCR research. All models and datasets are open-sourced, and our implementation is available athttps://github.com/MohamedAliRashad/arabic-nougat.
+
+Arabic-Nougat: Fine-Tuning Vision Transformers for Arabic OCR and Markdown Extraction
+
+Mohamed A. RashadFaculty of Engineering Ain Shams University, Cairo, Egyptm.rashadnow@gmail.com
+
+SECTION: 1Introduction
+
+The rapid digitization of information has heightened the demand for systems that can extract structured data from unstructured documents. Document parsing, which converts scanned or image-based documents into structured, machine-readable formats, is crucial for applications such as knowledge base creation, information retrieval, and training data generation. However, parsing documents in non-Latin scripts, especially Arabic, poses significant challenges due to the language’s cursive script, contextual letter forms, and diverse text layouts[15,4,16].
+
+Modern document parsing techniques fall into two categories: modular pipeline systems and end-to-end approaches. Modular systems decompose the parsing process into stages, including layout detection, text recognition, and relation integration, often using models like LayoutLM[15]or BERTGrid[16]for semantic understanding. End-to-end models, such as Meta’sNougat[1], simplify this process by directly converting visual document representations into structured outputs using vision and language transformers. While these advancements have improved parsing capabilities for scientific and Latin-script documents, they do not adequately address the complexities of Arabic text and layouts.
+
+To bridge this gap, we introduceArabic-Nougat, a suite of OCR models tailored for extracting structured text in Markdown format from Arabic book pages. Building on Meta’sNougatarchitecture,Arabic-Nougatincorporates language-specific enhancements, including an advanced Arabic tokenizer and a specialized synthetic dataset,arabic-img2md. These adaptations address critical challenges in Arabic OCR, such as handling diverse text layouts, improving tokenization efficiency, and extending sequence lengths for processing lengthy documents.
+
+In summary, our contributions are as follows:
+
+We introduce three specialized models,arabic-small-nougat,arabic-base-nougat, andarabic-large-nougat, designed to handle Arabic text parsing tasks with varying capacities and performance optimizations.
+
+We presentarabic-img2md, a synthetic dataset of 13.7k Arabic book pages paired with their Markdown representations, created using HTML scraped from the Hindawi website[7]. This dataset enables accurate and scalable Arabic OCR training and evaluation.
+
+We releasearabic-books, a large-scale dataset of 1.1 billion Arabic tokens extracted from over 8,500 books, providing an invaluable resource for downstream NLP tasks[14].
+
+We detail architectural and training innovations, such as torch.bfloat16, Flash Attention 2, and theAranizer-PBE-86ktokenizer[12], which significantly enhance tokenization efficiency and extend effective sequence lengths to 32k tokens for Arabic text.
+
+We analyze challenges encountered during model development, including hallucination inarabic-small-nougatand repetition issues in larger models, and propose solutions such as repetition penalties and advanced training strategies.
+
+The rest of this paper is organized as follows: Section2reviews related work in document parsing and OCR technologies. Section3discusses the architecture, datasets, and training strategies employed in developingArabic-Nougat. Section4presents evaluation results and compares the models’ performance. Section6identifies limitations and challenges, while Section5concludes with insights and future directions for Arabic OCR research.
+
+SECTION: 2Related Work
+
+Document parsing, crucial for extracting structured information from unstructured documents, has seen significant advancements. This section reviews relevant methodologies, datasets, and recent advancements that informed the development ofArabic-Nougat.
+
+SECTION: 2.1Document Parsing Systems
+
+Document parsing systems can be categorized into modular pipeline systems and end-to-end models. Modular systems decompose the task into stages such as layout detection, text recognition, and relation integration, often using models like LayoutLM[15]and BERTGrid[16]for semantic understanding. End-to-end models, such as Meta’sNougat[1], simplify this process by directly converting visual document representations into structured outputs using vision and language transformers. While these advancements have improved parsing capabilities for scientific and Latin-script documents, they do not adequately address the complexities of Arabic text and layouts.
+
+SECTION: 2.2OCR in Document Parsing
+
+Optical Character Recognition (OCR) remains central to document parsing. Modern approaches leverage deep learning, particularly CNNs and Transformers. Models such as TrOCR[11]and VisionLAN[10]have introduced encoder-decoder frameworks and multimodal pretraining, enhancing accuracy and context-awareness in OCR tasks. Specialized models for mathematical expressions and table recognition, like DS-YOLOv5[6]and FormulaDet[17], highlight the increasing focus on domain-specific OCR capabilities. These models informedArabic-Nougat’s design, particularly its ability to handle the complexities of Arabic script and Markdown structure.
+
+SECTION: 2.3Datasets for Document Parsing
+
+High-quality datasets are essential for training and evaluating document parsing models. Widely used datasets such as PubLayNet[9], FUNSD, and BCE-Arabic-v1 have supported advancements in layout analysis and OCR. Synthetic datasets likearabic-img2md, introduced in this work, build on these foundations by generating paired image-Markdown samples specifically for Arabic books, addressing gaps in Arabic OCR resources.
+
+SECTION: 2.4Challenges and Recent Advances
+
+Despite notable advancements, challenges persist in document parsing, including handling dense layouts, diverse languages, and multi-modal data. Recent models likeDonut[5],GoT[19], andFox[20]incorporate large-scale pretraining on multimodal datasets to improve generalization across tasks, while unified frameworks such as OmniParser[18]aim to streamline OCR and structured data extraction. However, these models primarily cater to English and scientific texts, leaving a gap for applications in Arabic literature.
+
+This gap motivated the development ofArabic-Nougat, which combines state-of-the-art architectural elements with Arabic-specific adaptations. By addressing the challenges of sequence length, tokenization, and hallucination,Arabic-Nougatcontributes to the broader field of document parsing while focusing on underrepresented languages and formats.
+
+SECTION: 3Methodology
+
+SECTION: 3.1Model Architecture
+
+TheArabic-Nougatsuite builds on Meta’sNougatarchitecture, usingDonutvision encoder andMBarttransformer-based decoder[5,2]. We extend this framework for Arabic OCR with three models:
+
+Arabic Small Nougat: A new Fine-Tune fromnougat-small, supports up to 2048 tokens, optimized for smaller documents.
+
+Arabic Base Nougat: A new Fine-Tune fromnougat-base, supports up to 4096 tokens, employs torch.bfloat16 precision with Flash Attention 2.
+
+Arabic Large Nougat: A new model with an expanded decoder andAranizer-PBE-86ktokenizer, supports sequences equivalent to 32k tokens.
+
+Figure1provides a detailed overview of theArabic-Nougatarchitecture. It illustrates the integration of the Donut Vision Encoder, which processes the visual input from Arabic book pages, with the MBART decoder, which generates the structured Markdown output. The Donut encoder converts the input images into a sequence of 588 tokens, where each token is a 1024-dimensional vector. This transformation is achieved through a series of downsampling operations: the input image size of 896×672 pixels is progressively reduced to 224×168, 112×84, 56×42, and finally 28×21, resulting in 588 tokens. Specifically, the calculation is as follows: (896×672) → (224×168) → (112×84) → (56×42) → (28×21) = 588 tokens. This encoded representation captures the visual features of the input images, which are then fed into the MBART decoder for text generation. The figure highlights key components such as the token processing pipeline, the use of theAranizer-PBE-86ktokenizer, and the overall decoding process. This architecture is designed to efficiently handle the complexities of Arabic text, ensuring high accuracy and performance in OCR and Markdown conversion tasks.
+
+SECTION: 3.2Tokenizer Enhancements
+
+TheAranizer-PBE-86ktokenizer, developed byriotu-lab, features an 86k vocabulary optimized for Arabic morphology. By representing one token as the equivalent of nearly four baseNougattokens, it achieves higher efficiency in tokenization and processing of lengthy Arabic texts[12].
+
+SECTION: 3.3Dataset Development
+
+The primary dataset used for training,arabic-img2md[13], contains 13.7k paired samples of Arabic book pages and their Markdown representations. These pairs were generated by scraping HTML content from the Hindawi website, converting it to PDFs, and extracting Markdown text. This dataset was exclusively used to trainarabic-base-nougatandarabic-large-nougat.
+
+SECTION: 3.4Training Strategy
+
+Models were trained on multiple GPUs using torch.bfloat16 precision, gradient checkpointing, and accumulation steps to manage large batch sizes. A learning rate ofwas used, and training was configured to run for a maximum of 100 epochs with an EarlyStopping callback to prevent overfitting. Flash Attention 2 enabled efficient memory usage, particularly forarabic-base-nougatandarabic-large-nougat[3].
+
+SECTION: 3.5Comparison with the Base Nougat Models
+
+Whilenougat-smallandnougat-basetokenize sequences of up to 3584 and 4096 tokens, respectively,arabic-large-nougatsupports up to 8192 tokens. This extended capability, combined with theAranizer-PBE-86ktokenizer, provides a practical decoder context length equivalent to 32k tokens, making it ideal for longer Arabic texts.
+
+SECTION: 4Empirical Evaluation
+
+SECTION: 4.1Experimental Setup
+
+To evaluate the performance ofArabic-Nougatmodels, we used a test set of 160 random, unseen Arabic book pages fromarabic-img2md, paired with their Markdown representations. The evaluation metrics included
+- **Markdown Structure Accuracy (MSA):** The accuracy of extracted Markdown formatting.
+- **Character Error Rate (CER):** The percentage of incorrect characters in the extracted text compared to ground truth.
+- **Token Efficiency Ratio (TER):** The ratio of tokens produced by the tokenizer to ground truth tokens.
+
+SECTION: 4.2Results
+
+We evaluated the performance of theArabic-Nougatmodels against Meta’sNougatmodels using several key OCR metrics: BLEU Score, Character Error Rate (CER), Word Error Rate (WER), and Structure Accuracy. Metrics where higher is better are indicated with an upward arrow (↑), and those where lower is better are indicated with a downward arrow (↓). The results are shown in Table1.
+
+As shown in Table1, we observe a clear performance gap between theBase Models(Meta’sNougat) and theFine-tuned Arabic Models(Arabic-Nougat). The base models, originally trained for Latin-script documents, perform poorly on Arabic text, reflected in their BLEU scores of 0.0037 and 0.0094, and high CER and WER values.
+
+In contrast, the fine-tunedArabic Small Nougatmodel achieves a BLEU Score of 0.7565, with a remarkably low Character Error Rate (CER) of 0.0819 and Word Error Rate (WER) of 0.1523. TheArabic Base Nougatmodel achieves the lowest Word Error Rate of 0.1042, while theArabic Large Nougatmodel achieves the highest Structure Accuracy (98.84%), making it suitable for handling complex documents with intricate layouts.
+
+These results demonstrate that theArabic-Nougatmodels are highly effective for Arabic OCR and Markdown extraction tasks, significantly outperforming models not specifically trained for Arabic text.
+
+SECTION: 4.3Evaluation Metrics
+
+We evaluate the models based on the following metrics:
+
+BLEU Score: Measures the overlap between the predicted Markdown text and the reference Markdown text, commonly used in machine translation tasks to assess text generation accuracy.
+
+Character Error Rate (CER): The ratio of incorrect characters to the total number of characters in the reference text. A lower CER indicates better character-level accuracy.
+
+Word Error Rate (WER): The ratio of incorrect words (substitutions, insertions, deletions) to the total number of words in the reference text. A lower WER indicates higher word-level accuracy.
+
+Structure Accuracy: A custom metric that evaluates the similarity between the structure of the predicted Markdown and the reference Markdown, focusing on elements such as headers and lists.
+
+SECTION: 4.4Efficiency Comparison
+
+arabic-large-nougatdemonstrated superior efficiency, achieving a TER of 1.05 due to its advanced tokenizer, compared to 1.25 forarabic-small-nougat. Training in bfloat16 with Flash Attention 2 significantly reduced memory usage, enabling larger batch sizes and improved processing times.
+
+SECTION: 4.5Recommendations
+
+For practical applications, we recommend usingarabic-base-nougatfor general text extraction tasks andarabic-large-nougatfor lengthy or complex documents. A repetition penalty larger than 1 is suggested to mitigate repetition issues observed in the larger models.
+
+SECTION: 5Conclusion
+
+In this paper, we introducedArabic-Nougat, a family of OCR models designed to extract structured text from Arabic book pages into Markdown format. Building on Meta’sNougatarchitecture, we developed three models—arabic-small-nougat,arabic-base-nougat, andarabic-large-nougat—optimized for Arabic script and layouts. Key innovations include theAranizer-PBE-86ktokenizer, which enhances tokenization efficiency, and thearabic-img2mddataset, a synthetic resource designed to improve Arabic OCR performance[12,13].
+
+Our experimental results demonstrate the effectiveness ofArabic-Nougat, witharabic-large-nougatachieving the highest Markdown Structure Accuracy (94.7%) and lowest Character Error Rate (6.1%), surpassing its smaller counterparts. These results underscore the value of advanced tokenization and extended sequence lengths in handling complex and lengthy Arabic texts. Additionally, the open-sourcing ofarabic-books, a 1.1 billion-token dataset extracted from Arabic literature, provides a valuable resource for future research in Arabic NLP and OCR[14].
+
+Despite these advancements, challenges such as hallucination and repetition persist, requiring further exploration. By addressing these issues and continuing to refine our models, we aim to contribute to the broader field of document parsing and promote the digitization of underrepresented languages like Arabic.
+
+SECTION: 6Limitations
+
+WhileArabic-Nougatmarks a significant advancement in Arabic OCR, several limitations remain:
+
+Hallucination inarabic-small-nougat:The olderarabic-small-nougatmodel occasionally generates irrelevant content, including non-existent URLs or images, due to its early training methodology and smaller training dataset[13].
+
+Repetition in larger models:Botharabic-base-nougatandarabic-large-nougatexhibit repetition issues, particularly in lengthy sequences. Although applying a repetition penalty can mitigate this, the problem remains an area for improvement in future training strategies[3].
+
+Dataset Biases:Thearabic-img2mddataset, derived from Hindawi’s web content, may not generalize well to other domains of Arabic text, such as scientific, religious, or historical documents. Expanding the dataset to include diverse genres and styles is critical for improving model robustness[7].
+
+Scalability Challenges:The computational resources required for trainingarabic-large-nougatare significant, which could limit accessibility for researchers and practitioners without access to high-performance hardware.
+
+Cross-Script Generalization:WhileArabic-Nougatis optimized for Arabic, its performance on multilingual documents or mixed-script content has not been extensively tested, presenting a potential area for future investigation.
+
+Complex Layouts:AlthoughArabic-Nougathandles standard book layouts effectively, documents with highly irregular or multi-modal layouts, such as those containing dense tables, charts, or images, may require additional preprocessing or model adaptations[17,6].
+
+Addressing these limitations will involve expanding datasets, refining tokenization methods, and improving training strategies. Future work could also explore integrating multimodal document parsing techniques, as seen in recent advancements in vision-language models, to enhance the handling of complex and diverse document types.
+
+SECTION: References

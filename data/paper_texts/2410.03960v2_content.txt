@@ -1,0 +1,333 @@
+SECTION: SwiftKV: Fast Prefill-Optimized Inference with Knowledge-Preserving Model Transformation
+
+LLM inference for popular enterprise use cases, such as summarization, RAG, and code-generation, typically observes orders of magnitude longer prompt lengths than generation lengths.
+This characteristic leads to high cost of prefill and increased response latency.
+In this paper, we present SwiftKV, a novel model transformation and distillation procedure specifically designed to reduce the time and cost of processing prompt tokens while preserving high quality of generated tokens.
+SwiftKV combines three key mechanisms: i) SingleInputKV, which prefills later layers’ KV cache using a much earlier layer’s output, allowing prompt tokens to skip much of the model computation,
+ii) AcrossKV, which merges the KV caches of neighboring layers to reduce the memory footprint and support larger batch size for higher throughput,
+and iii) a knowledge-preserving distillation procedure that can adapt existing LLMs for SwiftKV with minimal accuracy impact and low compute and data requirement.
+For Llama-3.1-8B and 70B, SwiftKV reduces the compute requirement of prefill by 50% and the memory requirement of the KV cache by 62.5% while incurring minimum quality degradation across a wide range of tasks.
+In the end-to-end inference serving using an optimized vLLM implementation, SwiftKV realizes up tohigher aggregate throughput and 60% lower time per output token.
+It can achieve a staggering 560 TFlops/GPU of normalized inference throughput, which translates to 16K tokens/s for Llama-3.1-70B in 16-bit precision on 4H100 GPUs.
+Our training, inference, and model implementations are open-sourced and can be found throughhttps://huggingface.co/collections/Snowflake/swiftkv-models-674f7d7474eb789e185d31cb.
+
+SECTION: 1Introduction
+
+Large Language Models (LLMs) are quickly becoming an integral enabler of enterprise applications and offerings, including code and data co-pilots(Chen et al.,2021; Pourreza & Rafiei,2024), retrieval augmented generation (RAG)(Lewis et al.,2020; Lin et al.,2024), summarization(Pu et al.,2023; Zhang et al.,2024), and agentic workflows(Wang et al.,2024; Schick et al.,2023). While it is clear that LLMs can add value to these applications, the cost and speed of inference determine their practicality. Therefore, improving the aggregate throughput and reducing latency of LLM inference has become an increasingly important topic of interest, with various efforts (Sec.2) tackling the problem from multiple angles.
+
+In this paper, we take a unique approach to improving LLM inference for enterprise applications based on the key observation that typical enterprise workloads process many more input tokens than output tokens. For example, tasks like code completion, text-to-SQL, summarization and RAG each submit long prompts but produce a small number of generated tokens, and a majority of enterprise LLM use cases in Snowflake incur a 10:1 ratio between prompt and generated tokens.
+
+Based on this observation, we designedSwiftKV, which improves throughput and latency by: i) reducing the computation required to pre-fill the KV cache for input tokens, and ii) enabling memory savings to support larger batch sizes needed to serve LLMs more cost effectively(Sheng et al.,2023; Pope et al.,2022; Yu et al.,2022). SwiftKV (Fig.1) consists of four key components:
+
+SingleInputKV.SingleInputKV rewires an existing model so that the pre-fill stage during inference can skip a number of later layers in the network, and their KV cache are computed by a single earlier layer. SingleInputKV is motivated by the observation that the output hidden states of the later transformer layers do not change significantly (see Sec.3.2, also independently discovered byLiu et al. (2024c)). With SingleInputKV, the computation required for pre-fill is reduced by approximately the number of layers skipped. We found that it is possible to skip at least 50% of the layers without significantly impacting the model quality (Sec.4.2), which translates to a 50% reduction of the pre-fill computation in inference.
+
+AcrossKV.While SingleInputKV reduces the pre-fill computation, it does not reduce the KV cache memory requirement. AcrossKV combines the KV projections from multiple adjacent layers into a single one, and share the KV cache across these layers to reduce its size in memory. AcrossKV allows significant memory savings, which unlocks higher throughput by enabling larger batches during inference. In Sec.3, we show that AcrossKV can reduce the KV cache size by 25% with less than a 1% quality gap. We also show in ablation studies (Sec.5) that AcrossKV is compatible with existing KV cache quantization methods, which combine to unlock 62.5% reduction in KV cache size.
+
+Knowledge Recovery.Although SingleInputKV and AcrossKV can be applied to existing LLMs with minimal changes to their architectures, we found that the resulting model parameters should still be adapted to the new architecture to recover their original prediction quality. This can be done via distillation from the original model. With SwiftKV, we found that a lightweight distillation is sufficient, with only a fraction of the model (Q, K, and V projections of the affected layers) trained on 680M tokens, which takes less than 3 hours on a singleH100 node for Llama-3.1-8B.
+
+SwiftKV Optimized Inference.To realize the computation and memory reductions of SingleInputKV and AcrossKV into end-to-end throughput and latency improvements, we implemented SwiftKV in vLLM(Kwon et al.,2023). Our implementation includes several additional optimizations, including fusing all KV-projections beyond layerinto a single GEMM operation, and integrated memory management needed to lower the KV cache memory footprint achievable via AcrossKV.
+
+SwiftKV increases the aggregate throughput of enterprise workloads by up to, while reducing time-to-first-token (TTFT) and time-per-output-token (TPOT) by up to 50% and 60%, respectively. In fact, for Llama-3.1-70B, SwiftKV can achieve a normalized throughput of 560 TFLops/GPU111Normalized throughput and MFU is based on number of floating point operations in the baseline model.. This is an unprecedented 56.6% MFU utilization for inference (Sec.4.3). We show that SwiftKV incurs minimal quality degradation averaged across a wide range of tasks (Sec.4.2), including ARC-Challenge(Clark et al.,2018), Winogrande(Sakaguchi et al.,2019), HellaSwag(Zellers et al.,2019), TruthfulQA(Lin et al.,2022), MMLU(Hendrycks et al.,2021), and GSM8K(Cobbe et al.,2021).
+
+In addition to these main results, in Sec.5we discuss the impact of distillation, datasets, choice of trainable parameters for training SwiftKV. We also present our analysis of the hidden state similarities, and how AcrossKV can be extended and combined with other KV cache compression works. Additionally, we also discuss how SingleInputKV can enable compute savings not just during pre-fill but also during decoding phase.
+
+Lastly, we open-sourced the training and inference code for SwiftKV that can be used to fully reproduce our results, as well as several SwiftKV models that can be used directly by the community athttps://huggingface.co/collections/Snowflake/swiftkv-models-674f7d7474eb789e185d31cb.
+
+SECTION: 2Related Work
+
+Hardware and System Optimizations.Lower-precision quantization like FP8(Kuzmin et al.,2024)can enable the use of tensor-cores to accelerate inference(Luo et al.,2024). System approaches like PagedAttention(Kwon et al.,2023), Tensor-Parallelism(Shoeybi et al.,2020), Split-Fuse(Holmes et al.,2024; Agrawal et al.,2024), FlashAttention(Dao et al.,2024), and their optimized implementations in TensorRT(NVIDIA,2019), FasterTransformer(NVIDIA,2021), vLLM(Kwon et al.,2023), and DeepSpeed-Inference(Aminabadi et al.,2022)enable better parallelization, batching, and scheduling to eliminate performance overheads and achieve better hardware peak utilization without impacting model quality. In contrast, SwiftKV is a model architecture optimization and is complementary to these works.
+
+Sparse attention optimizations.Systems such as ALISA(Zhao et al.,2024)and MInference(Jiang et al.,2024)leverage naturally-occurring sparsity patterns in transformer models to reduce the computation of the quadratic attention operation. Particularly, like SwiftKV, MInference also targets the prefill phase of inference. Sparse attention can be particularly effective for very long sequence lengths (e.g. 100K - 1M tokens) when attention is the dominant operation.
+In comparison, SwiftKV reduces prefill computation by skipping not just the attention operation, but also the query/output projections and MLP of certain layers. This means that (1) SwiftKV can be more suited for inputs with more moderate lengths when MLP is the dominant operation, and (2) SwiftKV, which either runs attention as-is or skips attention entirely, is complementary to sparse attention methods which are more concerned with the implementation of attention itself.
+
+Memory Compression.A wide range of techniques have been developed to reduce the memory need of inference. Lower-precision quantization techniques like FP8/FP4 can reduce the memory for both KV cache and parameters(Hooper et al.,2024). Attention optimization techniques like MQA(Shazeer,2019), GQA(Ainslie et al.,2023b), low-rank attention(Chang et al.,2024)also reduce the KV Cache.
+These approaches are complementary to SwiftKV, which we demonstrate in Sec.4.2and Sec.5.3.
+Like AcrossKV, MiniCache(Liu et al.,2024b)also considers merging the KV cache of consecutive layers. However, AcrossKV enables consolidating more than just two layers, allowing for higher level of compression, and does not require any token retention strategy where distinct KV caches are stored for special tokens, allowing for simpler implementation.
+
+Furthermore, while many of these approaches only focus on reducing the memory, SwiftKV can reduce both the prefill computation (via SingleInputKV) along with memory. As we show in Sec.5.1, compute reduction rather than memory reduction is crucial for accelerating inference in compute-bound scenarios with sufficient memory, which is common in production with modern GPUs (H100, A100).
+
+SECTION: 3SwiftKV: Design and Implementation
+
+SECTION: 3.1Preliminaries
+
+In transformer models(Vaswani et al.,2017), attention enables each token to focus on other tokens by comparingqueries() withkeys() and usingvalues() to compute the final representation. For a sequence of input tokens, the projections are defined as follows:, whereare the input embeddings, andandare trained model parameters with. Hereafter, we may also refer toandas a single matrix.
+
+During theprefill phaseof inference, the model processes the entire input sequence at once, computingandfor all tokens in parallel (or in chunks in the case of Split-Fuse(Holmes et al.,2024; Agrawal et al.,2024)). This typically occurs when the model handles an initial prompt or context.
+
+During thedecoding phaseof inference, new tokens are generated one at a time. When predicting the next token, only the query () for the new token needs to be computed, while the model must attend to the keys and values (,) of all previously processed tokens.
+
+To optimize efficiency in the decoding phase,KV cachingis employed. After processing each token, the newly computedandare stored in a cache. For the next token, only the new query, key, and valueare computed. The attention computation will then utilize the cachedandfrom all prior tokens, allowing for reduced computational overhead during inference.
+
+SECTION: 3.2SingleInputKV: Project KV cache from a single layer
+
+Assume the input of-th layer is, and its-th token is.
+Prior studies(Liu et al.,2024c; Gromov et al.,2024)showed thatbecomes more similar as the depth grows.
+Here, we conduct a similar study.
+
+We compute the average input similarity between-th layer’s input and all remaining layers’ input, i.e.,
+
+whereis the number of layers in the model andis the average cosine similarity between allandtokens.
+
+We use 50 random training examples fromHuggingFaceH4/ultrachat_200kto estimate, and
+the results of Llama-3.1-8B-Instruct, Mistral-7B-Instruct-v0.1, and Qwen2.5-7B-Instruct are shown in the left of Fig.2.
+As the layers get deeper,gets higher.
+Particularly, around half of the depth, the average similarity ofwithis abovefor all models, which shows that the difference of input hidden states are small in deeper layers.
+
+Based on this observation, the first key component of SwiftKV is to use-th layer’s outputto compute the KV cache for all remaining layers. More specifically, SwiftKV retains the standard transformer architecture up to and including the-th layer, but the KV cache for all remaining layers are computed immediately using, i.e.
+
+whereis the KV cache for-th layer andis its KV projection weight matrix.
+
+Prefill Compute Reduction.SingleInputKV can enable significant reduction in prefill compute during LLM inference. Originally, all input tokens must be processed by all transformer layers.
+With SingleInputKV, input tokens222The very last input token still needs to compute all layers to generate the first output token.only need to computefor layersto generate layer’s KV cache, and all other operations (i.e., QO projections, Attention, and MLP) of layerscan be skipped entirely. When prefill computation dominates generated token computation, this reduces the total inference computation to approximately. Fig.1illustrates the operations skipped by SingleInputKV, and Table1shows a more detailed example compute breakdown for Llama-3.1-70B.
+
+ModelVocabK,VQ,OMLPAttn.TotalRel.Baseline4.32.622113160302100%25% SingleInputKV4.32.6168512022875.5%50% SingleInputKV4.32.611568015451.0%50% SingleInputKV4.31.711568015350.7%+AcrossKV
+
+SECTION: 3.3AcrossKV: Sharing KV cache for consecutive layers
+
+GQA(Ainslie et al.,2023a), one of the most widely adopted KV cache compression methods, showed that the KV cache can be easily shared within a transformer layer. Later,Liu et al. (2024a)showed that the KV cache can be merged for certain pairs of adjacent layers.
+AcrossKV extends the ideas to cross-layer KV cache sharing.
+
+Particularly, instead of computing KV cache for all of the remaining layers as shown in equation2, AcrossKV selectively chooses one layer to compute the KV cache for several consecutive layers and share it within the small group. The key idea is shown in Fig.1. As AcrossKV can combine multiple layers’ KV caches into a single one rather than just two adjacent layers, it offers higher potential reduction ratio compared toLiu et al. (2024a)while simplifying the implementation to realize the benefits of the KV cache reduction. (See Sec.2for more detailed comparison withLiu et al. (2024a)).
+
+SECTION: 3.4Knowledge Recovery
+
+While SingleInputKV preserves all the original parameters, it re-wires the architecture so that the KV cache projections may receive different inputs. We found that this re-wiring (and AcrossKV) requires fine-tuning to recover the original capabilities from the modified model. As we only change the computation of the attention part for layer, this can be achieved by fine-tune just theweight matrices from the-th layer onwards. However, instead of directly fine-tuning these parameters using standard LM loss, we find that distilling using the output logits of the original model allows for better knowledge recovery (see Sec.5for more details).
+
+Implementing the Distillation.Since only a fewparameters need fine-tuning, we are able to do a memory efficient parameter-sharing based distillation. More specifically, we keep a single copy of the original model weights in memory that are frozen during training, and add an extra trainable copy of theparameters for layersinitialized using the original model (See Fig.1).
+
+During the training, we create two forward modes for the later layers, one with original frozen parameters using original architecture, and another with the SwiftKV re-wiring using new QKV projections i.e.,
+
+whereis the final logits,is the model, andis the input. Afterwards, we apply the standard distillation loss () upon the outputs with temperature () using(Hinton et al.,2015).
+After the distillation, the original KV projection layersare discarded during inference.
+
+This method allows us to perform the distillation for Llama-3.1-8B-Instruct on 680M tokens of data in 3 hours using 8 H100 GPUs, and Llama-3.1-70B-Instruct in 5 hours using 32 H100 GPUs across 4 nodes.
+
+SECTION: 3.5Optimized Implementation for Inference
+
+LLM serving systems can be complex and incorporate many simultaneous optimizations at multiple layers of the stack, such as PagedAttention(Kwon et al.,2023), Speculative Decoding(Leviathan et al.,2023), SplitFuse(Holmes et al.,2024; Agrawal et al.,2024), and more. One benefit of SwiftKV is that it makes minimal changes to the model architecture, limited to only a few linear projection layers. This means that SwiftKV can easily be integrated into existing serving systems without implementing new kernels (e.g. for custom attention operations or sparse computation) or novel inference procedures.
+
+Implementation in vLLM.To realize the performance benefits of SwiftKV, we integrated it with vLLM . Our implementation is compatible with vLLM’s chunked prefill, which processes prefill tokens in chunks and may mix prefills and decodes in each minibatch. During each forward pass, after completing layer, the KV-cache for the remaining layers () are immediately computed, and only the decode tokens are propagated through the rest of the model layers.
+
+GEMM and Memory Optimizations.Upon this basic implementation, we implemented two additional optimizations. First,SingleInputKV fusion: instead of computing the KV cachefor each layerone at a time, we fused allinto one large weight matrixso that their KV cache can be computed with a single efficient GEMM operation. Second,AcrossKV reduction: we modified vLLM to only allocate one layer’s KV-cache for each group of merged layers, which realizes the memory gains of AcrossKV.
+
+SECTION: 4Main Results
+
+SECTION: 4.1Setup
+
+Training and Evaluation.We use Llama-3.1-8B-Instruct and Llama-3.1-70B-Instruct as our base models for SwiftKV.
+Our training datasets include a mixture of the full supervised training data fromHuggingFaceH4/ultrachat_200k(Ding et al.,2023)andteknium/OpenHermes-2.5(Teknium,2023). We evaluated model quality using a modified LM-Eval-Harness(Gao et al.,2024)333https://github.com/neuralmagic/lm-evaluation-harness/tree/llama_3.1_instructdue to its support for the custom prompt format of Llama-3.1, particularly for MMLU and MMLU-CoT(Hendrycks et al.,2021), GSM8K(Cobbe et al.,2021), and Arc-Challenge(Clark et al.,2018). For more details, please see AppendixB.
+
+Compression Metrics.For prefill computation, we report the approximate reduction asdue to SingleInputKV, and for KV cache, we report the exact memory reduction due to AcrossKV. For example, SwiftKV with SingleInputKV () and 4-way AcrossKV is reported as 50% prefill compute reduction and 37.5% KV cache memory reduction. We further study how these theoretical compute and memory reductions translate into end-to-end inference improvements in Sec.4.3.
+
+Inference Performance.In our inference evaluation, we focus on two common scenarios:batch-inferencefor cost sensitive scenarios andinteractive-inferencefor latency sensitive scenario.
+
+Batch-InferenceWhen processing text in bulk or when serving a model under high usage demand, it is important to achieve highcombined throughputin terms of input + output tokens processed per second. For bulk processing, the combined throughput determines the time it takes to finish the job. For interactive use, it determines the volume of concurrent users and requests that can be supported per unit of hardware. In both scenarios, the combined throughput is a key determinant of the cost of serving the model.
+
+Interactive-InferenceIn interactive scenarios (e.g., chatbots, copilots), not only the combined throughput is important, but also metrics that define the end-user experience. Chief upon them are the time-to-first-token (TTFT) and time-per-output-token (TPOT). TTFT is the time between the user sending a message and receiving the first token in the response. TPOT is the time between each output token after the first token has been received. Low TTFT and TPOT are desirable by interactive applications to deliver smooth usage experiences.
+
+For all experiments on Llama-3.1-8B-Instruct, we use 1 NVIDIA H100 GPU with 80GB of memory, and for all experiments on Llama-3.1-70B-Instruct, we use 4 NVIDIA H100 GPUs running the model with 4-way tensor parallelism. We provide the full hardware and vLLM configurations in AppendixB.2
+
+SECTION: 4.2Model Quality with Prefill Compute Reduction
+
+Llama-3.1-8B-Instruct.The top rows of  Table2show that SwiftKV can preserve model quality well until 50% prefill reduction using SingleInputKV. For 25% prefill reduction, the accuracy degradation is only about 0.12 points and for 50% reduction, the gap is about 1 point444Note that we did not try to find the best training recipe, regarding to either training data (e.g., we did not include any math or coding datasets) or training pipeline (e.g., we did not include reinforce-learning rated steps, like DPO/RLHF). Yet, the quality of SwiftKV is close to the original base Llama-3.1-8/70B-Instruct models. In Sec.D, we show that better data recipe could boost the model performance and close the quality gap further.. When we push to 62.5% reduction (i.e. SingleInputKV withand), the accuracy drops to 66.09 points, which is significantly lower than the baseline. This can be explained by the drop in activation similarity from 0.61 to 0.51 between layer 16 to layer 12 (Fig.2).
+
+The bottom rows of Table2show the model quality when adding AcrossKV to 50% SingleInputKV. From pure SingleInputKV to 2-way AcrossKV, the accuracy drops about 0.9 points with 25% KV cache reduction.
+The accuracy drops by another 0.32, going from 2-way to 8-way sharing, and 0.62 when going all the way to 16-way sharing.
+Particularly, for the extreme case, i.e., using a single KV cache for all remaining layers, the accuracy is only about 2.5 points lower than pure SingleInputKV, and could be useful for more memory constrained cases, e.g., embedding and/or mobile devices.
+
+Furthermore, the design of AcrossKV is complementary to many existing KV cache compression methods. In Sec.5.3, we show that AcrossKV can be combined with quantization to achieve 62.5% reduction in KV cache memory with only a 1-point accuracy gap compared to SingleInputKV only.
+
+ModelSingleInputKVAcrossKVArc-ChallengeWinograndeHelloSwagtruthfulqaMMLUMMLU-CoTGSM-8KAvg.(Prefill Reduction)(Cache Reduction)0-shot5-shots10-shots0-shot5-shots0-shot8-shotsBaselineN/AN/A82.0077.9080.4054.5667.9070.6382.5673.71SwiftKV✓(25%)✗82.0877.9880.6354.5967.9570.4581.4373.59SwiftKV✓(50%)✗80.3878.2279.3054.5467.3069.7379.4572.70SwiftKV✓(62.5%)✗71.7675.7778.2152.7361.5553.6868.9266.09SwiftKV✓(50%)2-way (25%)80.2977.8279.0354.6666.9668.3975.5971.82SwiftKV✓(50%)4-way (37.5%)79.3577.5178.4454.9665.7167.7576.7271.49SwiftKV✓(50%)8-way (43.75%)79.1877.1977.3854.7965.7366.8872.3370.50SwiftKV✓(50%)16-way (46.875%)78.2476.8076.8756.8664.6565.8672.2570.22
+
+ModelSingleInputKVAcrossKVArc-ChallengeWinograndeHelloSwagtruthfulqaMMLUMMLU-CoTGSM-8KAvg.Prefill ReductionCache Reduction0-shot5-shots10-shots0-shot5-shots0-shot8-shotsBaselineN/AN/A93.3485.1686.4259.9583.9786.2195.1584.31SwiftKV✓(25%)✗93.0084.6985.9859.4382.8285.8195.0783.83SwiftKV✓(50%)✗93.0983.8284.4558.4082.5185.0093.5682.98SwiftKV✓(50%)2-way (25%)92.9282.9584.1057.7982.6684.5593.4882.63SwiftKV✓(50%)4-way (37.5%)92.9283.7484.7258.2882.6084.7993.7182.96
+
+Llama-3.1-70B-Instruct.Table3shows that with 50% prefill reduction using SingleInputKV, Llama-3.1-70B-Instruct incurs a 1.3 point drop in accuracy which is slightly higher than the results of Llama-3.1-8B-Instruct. However, Llama-3.1-70B-Instruct is more resilient to AcrossKV, incurring less than a 0.35 point drop in accuracy even for 4-way sharing across layers.
+
+ModelSingleInputKVAcrossKVLlama-3.2-3B-Llama-3.1-405B-Mistral-Small-Deepseek-V2-Prefill ReductionCache ReductionInstructInstruct (FP8)Instruct-2409Lite-ChatBaselineN/AN/A66.4786.678.264.12SwiftKV✓(~25%)✗66.55––64.19SwiftKV✓(40–50%)✗65.5585.977.263.51SwiftKV✓(40–50%)2-way (25%)65.13––63.07SwiftKV✓(40–50%)4-way (37.5%)65.19–76.759.32
+
+Other models and diverse architectures.In addition to Llama-3.1-Instruct 8B and 70B, we integrated and evaluated four other models with SwiftKV, which span a more diverse spectrum of model architectures. Of particular note, Llama-3.1-405B-Instruct is run at 8-bit precision using W8A8 quantization, and Deepseek-V2-Lite-Chat is an mixture-of-experts model that also implements a novel attention mechanism that compresses its keys and values using a latent vector(DeepSeek-AI et al.,2024).
+
+Table4summarizes the results, and the full per-task evaluation scores can be found in AppendixB.3. Overall, we find that SwiftKV generalizes well to all these models, with few minor exceptions. First, Llama-3.2-3B-Instruct experiences a steeper quality degradation at 50% SingleInputKV, but performs well at 40% SingleInputKV (detailed comparison in AppendixB.3). Second, Deepseek-V2-Lite-Chat experiences a steeper quality degradation at 4-way AcrossKV, but performs well at 2-way AcrossKV.
+
+SECTION: 4.3Inference Performance
+
+Batch Inference Performance.Fig.3shows the results of Llama-3.1-8B and Llama-3.1-70B across several workloads with a range of input lengths. SwiftKV achieves higher combined throughput than the baseline model across all the workloads we evaluated.
+
+For Llama-3.1-8B-Instruct, with 2K input tokens per prompt, SwiftKV achieveshigher combined throughput than the baseline model, and our benefits increase further tohigher combined throughput with 128K inputs. Note that for an input length of 8K tokens, SwiftKV achieves a staggering 30K tokens/sec/GPU (480 TFLOPS/GPU). For Llama-3.1-70B with 2K input tokens per prompt, SwiftKV achieveshigher combined throughput than the baseline model, which improves tobetter combined throughput for 128K inputs.555While the total compute savings is roughly, the end-to-end speedup is lower due to two main reasons: i) the performance improvement is limited to the decoding computation which needs the output activation of all the layers. Fig.2(right) shows the max possible speedup for Llama-3.1-8B-Instruct during model forward pass despite the decoding overhead, and ii) due to additional vLLM overheads outside of the model forward pass, such as sampling, optimizing which is beyond the scope of the paper.As expected, SwiftKV provides greater improvements when the inputs are long.
+
+We also observe AcrossKV can further improve the combined throughput due to its ability to reduce the memory usage for the KV-cache and supporting larger batch sizes. For sequence length of 8K, Llama-3.1-70B-Instruct with SwiftKV achieves a combined throughput of over 16K toks/sec over 4xH100 GPUs which corresponds to 560 TFLOPS/GPU of bf16 performance when normalized to baseline. This is an unprecedented throughput for BF16 inference workloads.
+
+Interactive-Inference Performance.Fig.4shows the TTFT and TPOT of Llama-3.1-70B-Instruct across a range of request arrival rates and input lengths. When the arrival rate is too high, the TTFT explodes due to the request queue accumulating faster than they can be processed by the system. However, SwiftKV can sustainhigher arrival rates before experiencing such TTFT explosion. When the arrival rate is low, SwiftKV can reduce the TTFT by up to 50% for workloads with longer input lengths. In terms of TPOT, SwiftKV achieves significant reductions for all but the lowest arrival rates, up to 60% for certain settings. A similar story unfolds for Llama-3.1-8B, which can be found in Fig.B.1in the Appendix.
+
+SECTION: 5Ablation and Discussion
+
+SECTION: 5.1Compute Reduction vs Memory Compression
+
+A key aspect of SwiftKV is combining prefill compute reduction (SingleInputKV) and KV cache compression (AcrossKV). While many prior works address KV cache compression alone, they are only effective in scenarios with limited GPU memory, and can have limited impact on recent datacenter GPUs (e.g., A100 and H100) with sufficient memory and inference is compute-bound.
+
+To illustrate, we consider an “ideal” KV compression scheme, where every layer’s KV cache is merged into a single layer (Merge-all-Layers). We retain the computation for all KV operations (i.e.,) but eliminate the memory for all layers > 1, leading to a single layer of KV cache. Merge-all-Layers represents a “best case compression scenario” with (1) extreme compression ratio beyond any published technique, e.g.andfor Llama-3.1 8B and 70B, respectively, and (2) zero overhead, while most techniques (e.g., quantization, low-rank decomposition) add extra computations or data conversions.
+
+Table5shows the throughput attained by Merge-all-Layers compared with the baseline model and its SwiftKV variants under various memory constraints. As shown, Merge-all-Layers outperforms only in very low memory scenarios (e.g. 16GB and 20GB) when there is barely enough memory for just the model weights, and is only marginally (10%) better than the baseline model when using all 80GB memory. On the other hand, SingleInputKV attains 35% higher throughput than the baseline at 80GB even without any AcrossKV. When combined withAcrossKV using FP8-quantized KV cache, SwiftKV can approach the throughput of Merge-all-Layers even at a more limited 20GB of memory.
+
+Throughput (tokens/s)MemoryBaselineMerge-all-50% SingleInputKV50% SingleInputKV50% SingleInputKVLayers+AcrossKV+AcrossKV (FP8)80GB22.9K25.1K31.0K31.2K32.0K40GB20.6K25.2K27.3K28.4K28.9K20GB10.8K25.2K12.2K18.0K23.2K16GBOOM24.8KOOM4.22K7.28K
+
+SettingArc-ChallengeWinograndeHellaswagTruthfulQAMMLUMMLU-CoTGSM-8KAvg.0-shot5-shots10-shots0-shot5-shots0-shot8-shots(a) The effect of distillationW/o Distillation79.4477.2778.7151.1465.5565.6072.7170.06W Distillation80.3878.2279.3054.5467.3069.7379.4572.70(b) Full model finetuning vs. part model finetuningFull Model76.7974.8276.4253.0862.9464.2069.3768.23Part Model80.3878.2279.3054.5467.3069.7379.4572.70
+
+SECTION: 5.2The impact of distillation
+
+To demonstrate the effectiveness of our distillation, we train Llama-3.1-8B-Instruct with 50% SingleInputKV and no AcrossKV using the standard language model loss, and compare it with our distillation based approach discussed in  Sec.3.4.
+The results are shown in Table6(a).
+As we can see, the model trained with distillation has a 2.64 point higher average.
+Particularly, for generative tasks, i.e., MMLU-Cot and GSM-8K, the performance improvement is 4.13 and 6.74, respectively.
+
+Our distillation method only fine-tuned theparameters, as discussed in Sec.3.4, with the hypothesis that it preserves the knowledge from the original models compared to fine-tuning the entire model. This hypothesis aligns withMeng et al. (2024),Geva et al. (2021), andElhage et al. (2021), which suggest that MLP layers player a more prominent role in storing knowledge.
+
+To validate this, we fine-tuned a model with 50% SingleInputKV on Llama-3.1-8B-Instruct where all parameters in the latter 50% of layers are trained.
+The results are shown in Table6(b).
+The model quality of full model distillation is about 4.5 points lower than our proposed partial model distillation.
+
+SECTION: 5.3Combining with other KV cache compression methods
+
+SwiftKV explores an orthogonal design space from many KV cache compression methods, which means that it can be easily combined with them, e.g., sliding window(Jiang et al.,2023), token-level pruning(Liu et al.,2024d), quantization(Hooper et al.,2024)etc.
+In this section, we show the combined effect of SwiftKV with per-token KV cache FP8 quantization(Yao et al.,2022)using PyTorch’s natively supportedfloat8_e4m3fn.  Table7shows the accuracy degradation is within 0.4 points for all cases, even though we applied post-training quantization with no quantization-aware finetuning.
+
+AppendixCexplores a second, potentially interesting, trade-off between AcrossKV (inter-layer) vs GQA (intra-layer) KV cache sharing.
+
+ModelAcrossKVKV QuantizationArc-ChallengeWinograndeHellaswagTruthfulQAMMLUMMLU-CoTGSM-8KAvg.(Cache Reduction)0-shot5-shots10-shots0-shot5-shots0-shot8-shotsSwiftKV✗✗80.3878.2279.3054.5467.3069.7379.4572.70SwiftKV✗✓80.2977.6679.2354.4067.1069.5177.9472.30SwiftKV2-way (25%)✗80.2977.8279.0354.6666.9668.3975.5971.82SwiftKV2-way (62.5%)✓80.0377.3578.8654.4466.8968.2775.9771.69SwiftKV4-way (37.5%)✗79.3577.5178.4454.9665.7167.7576.7271.49SwiftKV4-way (68.75%)✓79.2777.4378.3854.7665.6268.0075.9771.35
+
+SECTION: 5.4Other Ablation Studies
+
+We show additional ablations that explore the impact of the distillation dataset in AppendixD, and how SwiftKV can enable simple early-exiting for decode tokens in AppendixE.
+
+SECTION: 6Conclusions
+
+In this paper, we presented SwiftKV, a novel model transformation for reducing inference cost for prompt-dominant workloads, combined with a KV cache reduction strategy to reduce memory footprint, and a light-weight distillation procedure to preserve model accuracy. While we presented strong results on the effectiveness of SwiftKV, exploration of parameter-preserving model transformations for inference optimization is still in its early stages. We have identified both limitations as well as areas of improvement. Given the simplicity and effectiveness of SwiftKV, we hope that this will spark further exploration which we hope will continue to lower the latency and cost of inference.
+
+SECTION: Limitations and Future Work
+
+It is important for every work to acknowledge its limitations and suggest future directions, particularly for LLM-related works.
+In our work, we did not aim to optimize the training data selection though we provide potential ways in Sec.D.
+Additionally, we did not include a detailed benchmark analysis for our method.
+However, as shown in Sec.D, we ensured that our datasets were not cherry-picked to overfit the reported tasks.
+Furthermore, we did not finetune our model with advanced post-training approaches, like DPO and RLHF, which we leave for future work.
+Finally, we hypothesize that our method can work even better when combined with pretraining or continued-pretraining,
+but due to resources constraints, we did not explore this direction.
+We hope to revisit these ideas in the future.
+
+SECTION: References
+
+SECTION: Appendix AAdditional Motivation
+
+SECTION: Appendix BExperimental Details
+
+SECTION: B.1Training and evaluation details
+
+We directly use the Huggingface LLama-3.1 checkpoints, particularly, “meta-llama/Meta-Llama-3.1-8B-Instruct” and “meta-llama/Meta-Llama-3.1-70B-Instruct”.
+For datasets, we use the supervised finetuning datasets from “HuggingFaceH4/ultrachat_200k” and “teknium/OpenHermes-2.5”, which in total is about 1.2M samples, and about 160M tokens.
+We set training epochs to be 2, learning rate to be 3e-4, weight decay to be 0.05, warm up ratio to be 5%, maximum sequence length to be 8192 with attention separated sequence packing, the distillation temperature to be 2.0, and the training batch size to be 32 for both Llama-3.1-8B-Instruct and Llama-3.1-70B-Instruct.
+
+Our evaluation followshttps://huggingface.co/neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8using the github repositoryhttps://github.com/neuralmagic/lm-evaluation-harness/tree/llama_3.1_instruct.
+The main reason behind this is that the implemention from the repository aligns with original Llama-3.1 evaluation, which has superme scores over the original Lm-eval-harness repository.
+One issue we found in the provided commands is the one used to run MMLU-5-shots.
+Directly using the command does not give us desired accuracy.
+Therefore, we added both--apply_chat_templateand--fewshot_as_multiturn, and the accuracy is even slightly higher than what they reported.
+
+For all tasks, we follow the same number of few shots and/or chain of thoughts as the provided commands.
+We present the number of shots and metrics used in the paper in TableB.1.
+
+Arc-ChallengeWinograndeHelloSwagtruthfulqaMMLUMMLU-CoTGSM-8K0-shot5-shots10-shots0-shot5-shots0-shot8-shotsexact_match,multi_choiceaccacc_normtruthfulqa_mc2 (acc)exact_match,multi_choiceexact_match,strict-matchexact_match,strict-match
+
+SECTION: B.2Inference Speedup Evaluation Details
+
+We ran all inference speedup experiments on a AWS p5.48xlarge instance, with 8 NVIDIA H100 GPUs, 192 vCPUs, and 2TB memory. Llama-3.1-8B-Instruct experiments are run using 1 of the 8 GPUs, and Llama-3.1-70B-Instruct experiments are run using 4 of the 8 GPUs.
+
+We ran all experiments withenforce_eagerand chunked prefill enabled withmax_num_batched_tokensset to 2048. To run each benchmark, we instantiated vLLM’sAsyncLLMEngineand submitted requests using itsgeneratemethod according to each benchmark setting. For each request, the inputs are tokenized before being submitted, and the outputs are forced to a fixed length of 256.
+
+See Fig.B.1.
+
+SECTION: B.3Additional Model Evaluations
+
+Full per-task evaluation scores for Llama-3.2-3B-Instruct, Llama-3.1-405B-Instruct (FP8), Mistral-Small-Instruct-2409, and Deepseek-V2-Lite-Chat can be found in TableB.2, TableB.3, TableB.4, and TableB.5, respectively.
+
+ModelSingleInputKVAcrossKVArc-ChallengeWinograndeHelloSwagtruthfulqaMMLUMMLU-CoTGSM-8KAvg.Prefill ReductionCache Reduction0-shot5-shots10-shots0-shot5-shots0-shot8-shotsBaselineN/AN/A75.1768.5973.3251.4562.0162.4872.3266.47SwiftKV✓(25%)✗75.5969.7772.3452.8061.8962.3971.1166.55SwiftKV✓(40%)✗75.3468.9871.3751.1061.8061.6268.6865.55SwiftKV✓(50%)✗71.2568.7570.7751.2959.6359.9467.0264.09SwiftKV✓(40%)2-way (25%)74.8268.6671.4150.6761.5561.0367.7765.13SwiftKV✓(40%)4-way (37.5%)75.5969.2170.7950.8961.3560.8267.7065.19
+
+ModelSingleInputKVAcrossKVArc-ChallengeWinograndeHellaswagTruthfulQAMMLUMMLU-CoTGSM-8KAvg.Prefill ReductionCache Reduction0-shot5-shots10-shots0-shot5-shots0-shot8-shotsBaselineN/AN/A94.787.088.364.787.588.196.186.6SwiftKV✓(50%)✗94.086.388.164.285.787.595.285.9
+
+ModelSingleInputKVAcrossKVArc-ChallengeWinograndeHelloSwagtruthfulqaMMLUMMLU-CoTGSM-8KAvg.Prefill ReductionCache Reduction0-shot5-shots10-shots0-shot5-shots0-shot8-shotsBaselineN/AN/A84.1284.6887.2756.8573.3374.8686.5078.23SwiftKV✓(25%)✗84.0484.8487.0355.9772.8874.6985.2177.80SwiftKV✓(50%)✗83.5383.9786.3055.6372.9174.0484.3077.24SwiftKV✓(50%)2-way (25%)83.3684.0586.2256.2072.3073.7084.6877.21SwiftKV✓(50%)4-way (37.5%)82.9383.8286.1756.0072.2973.0082.4876.66
+
+ModelSingleInputKVAcrossKVArc-ChallengeWinograndeHelloSwagtruthfulqaMMLUMMLU-CoTGSM-8KAvg.Prefill ReductionCache Reduction0-shot5-shots10-shots0-shot5-shots0-shot8-shotsBaselineN/AN/A65.5374.6681.5650.9856.8650.6168.6964.12SwiftKV✓(25%)✗65.4475.0581.5250.5356.9150.9268.9964.19SwiftKV✓(45%)✗65.6173.9580.8250.2056.3351.5666.1163.51SwiftKV✓(45%)2-way (25%)65.5274.2680.2349.8555.5950.5165.5763.07SwiftKV✓(45%)4-way (37.5%)61.3475.2179.8048.3954.8230.8064.8959.32
+
+SECTION: Appendix CInter-layer AcrossKV vs Intra-Layer KV cache Reduction
+
+In this section, we share different design choices of AcrossKV, which considers the tradeoff between GQA(Ainslie et al.,2023a)and the acorss layer sharing into the design.
+Particularly, when, we can either use GQA and AcrossKV together or we can simply use AcrossKV to get all savings.
+For instance, when(a.k.a., the second row of the final session in Table2), we have KV cache reduction from both GQA and AcrossKV.
+However, we can either do multi-query attention (MQA) for all 16 layers or do multi-head attention (MHA) but share the KV cache for all 16 layers.
+
+MethodArc-ChallengeWinograndeHellaswagTruthfulQAMMLUMMLU-CoTGSM-8KAvg.0-shot5-shots10-shots0-shot5-shots0-shot8-shotsMQA66.8972.2267.3355.0055.9639.1222.3754.13AcrossKV-MHA77.9975.8577.3755.5063.5565.4872.6369.76AcrossKV-GQA79.3577.5178.4454.9665.7167.7576.7271.49
+
+We present theSingleInputKV reduction with MQA, GQA plus AcrossKV, and GQA plus MHA in TableC.1, that all have the same KV cache reduction, 37.5%.
+AcrossKV-GQA actually provides the best performance.
+One thing to notice is that the AcrossKV-MHA is actually worse than the result of AcrossKV-16x from from Table2even though AcrossKV-MHA has larger KV cache than AcrossKV-16x.
+We hypothesis that this might be related to hyper-paramter tuning but did not invest deeper.
+Also, note that pure MQA leads to worst performance, which is about 17 points lower than AcrossKV-GQA
+
+How to effectively balance inter/intra-layer KV cache sharing is an interesting direction to explore.
+We hope that our initial experiments here shed some light for future research.
+
+SECTION: Appendix DThe impact of fine-tuning datasets
+
+Note that in Sec.4, we did not try to maximize the performance of SwiftKV from the data recipe perspective since the search space is very large and outside the scope of our paper. However, we want to share some initial findings about the dataset recipe.
+
+How good is the data used to train SwiftKV?We chose the datasets to train SwiftKV due to their popular adoption and broad domain and task coverage.
+However, as compared to other high-quality domain specific fine-tuning datasets, they may have weaknesses.
+To measure the quality of these two datasets, we directly fine-tuned a model using the Llama-3.1-8B base model, and compared this trained model with the Llama-3.1-8B-Instruct model released by Meta.
+
+The results are shown in TableD.1(a).
+The original Llama-3.1-8B-Instruct has a average score of 73.71 but the model trained using our two datasets only achieved 65.77.
+This indicates the training data used for SwiftKV is not optimal and there may be opportunities to further improve the results we reported in Sec.4as discussed next.
+
+Does more math/coding data help GSM-8K?From Table2, the main degradation among 7 tasks for 50% SingleInputKV is GSM-8K.
+This may be due to the lack of math and coding examples in the two datasets we picked to train the model.
+To verify this, we distilled SwiftKV using one extra math-related dataset,gretelai/synthetic-gsm8k-reflection-405b(GretelAI,2024), and one extra coding dataset,ise-uiuc/Magicoder-OSS-Instruct-75K(Wei et al.,2023), in total aboutsamples, and about 16M tokens.
+
+The results are reported in TableD.1(b).
+The performance of all tasks except Winogrande are slightly improved, with the average score being 0.23 higher.
+Particularly, GSM-8K improves the most, with a 0.53% improvement. This is expected since we added extra math and coding datasets.
+Considering the small amount of new data (83k vs. 1.2M), the improvement is remarkable.
+
+This study indicates that improvements in distillation data is potentially an important direction for future work, particularly domain-specific datasets to reduce the quality gap compared to the original model when using SwiftKV.
+
+SettingArc-ChallengeWinograndeHellaswagTruthfulQAMMLUMMLU-CoTGSM-8KAvg.0-shot5-shots10-shots0-shot5-shots0-shot8-shots(a) Quality of Llama-3.1-8B-Instruct vs model fine-tuned using “ultrachat_200k” and “OpenHermes-2.5”.Llama-3.1-8B-Instruct82.0077.9080.4054.5667.9070.6382.5673.71Our fine-tuned model71.4276.5680.2955.3759.1454.0363.6165.77(b) Adding more data improves model quality.Original SwiftKV data80.3878.2279.3054.5467.3069.7379.4572.70Plus math & code data80.8977.9879.5454.7067.4170.0079.9872.93
+
+SECTION: Appendix ESimple Early Exit for Decoding Tokens
+
+SingleInputKV allows all the KV cache needed for generating future tokens to be computed without having to forward-pass though the entire LLM. This means that even the decoding phase could exit earlier without worrying about missing KV cache for subsequent tokens.
+
+To test the feasibility, we added an early exit language modeling head. We then used the input to SingleInputKV layer to calculate output logits, and incorporated them as part of the distillation training. Our results are preliminary and requires further evaluation, but we found that the alignment between early exit logits and the final output logits to be over 66% when the largest probability from the early exit logits is over 95% (Fig.D.1). We used this as our early exit criteria (i.e., decoding tokens exit early if it predicts an output token with 95%+ probability), and  TableD.2shows a sample result. See AppendixFfor more details.
+
+SECTION: Appendix FEarly Exit Details
+
+Thanks to SingleInputKV, there is no need to go through the entire network to compute all KV cache for later tokens generation.
+This also brings another unique opportunity as compared to standard transformer architecture design: it allows the model to perform early exit to speedup both the prefill and generation phases without worrying about missing KV cache.
+
+To add early exit upon SwiftKV, we add an extra language modeling head and use the input to calculate SingleInputKV to directly compute the output logits.
+We apply the same distillation loss of this early exit logits with the original teacher’s logits and directly sum the two distillation losses together as our final optimizing loss.
+
+After training, we first look the alignment between the early exit logits and the final logits.
+The figure is shown in Fig.D.1.
+The left axis plot the density of early exit largest probabilities.
+And the right axis shows the probabilities when the maximum of early exit logits aligns with the final logits for each bin.
+As can be seen, when the maximum logits is larger than, the alignment likelihood is larger than 66%.
+Note that this is achieved within 160M token training and longer training should help the alignment.
+
+How to use early exit is always an interesting directly and research topic.
+Fully exploring this is out of the scope of this paper.
+Here we adopt a simple heuristic approach.
+When the largest probability is larger than 0.95, we directly use the early exit prediction.
+Otherwise, we still process the remaining layers to get the final prediction.
+We apply this logic to some questions we selected from Alpaca(Taori et al.,2023)and the results are shown in TableD.2and AppendixF.1.
+
+SECTION: F.1Early Exit Examples
+
+Here we provide more examples of early exit from Alpaca dataset.

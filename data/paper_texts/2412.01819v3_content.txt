@@ -1,0 +1,426 @@
+SECTION: Switti: Designing Scale-Wise Transformers for Text-to-Image Synthesis
+
+This work presentsSwitti, a scale-wise transformer for text-to-image generation.
+Starting from existing next-scale prediction AR models, we first explore them for T2I generation and propose architectural modifications to improve their convergence and overall performance.
+We then argue that scale-wise transformers do not require causality and propose a non-causal counterpart facilitatingfaster sampling and lower memory usage while also achieving slightly better generation quality.
+Furthermore, we reveal that classifier-free guidance at high-resolution scales is often unnecessary and can even degrade performance. By disabling guidance at these scales, we achieve an additional sampling acceleration ofand improve the generation of fine-grained details.
+Extensive human preference studies and automated evaluations show thatSwittioutperforms existing T2I AR models and competes with state-of-the-art T2I diffusion models while being up tofaster.
+
+Yandex Research22footnotemark:2HSE University33footnotemark:3MIPT44footnotemark:4Skoltech55footnotemark:5ITMO University
+
+https://yandex-research.github.io/switti
+
+SECTION: 1Introduction
+
+Diffusion models (DMs)[66,65,26,67,29,30]are a dominating paradigm in visual content generation and have achieved remarkable performance in text conditional image[51,4,15,39], video[52,5]and 3D modeling[17,48].
+Inspired by the unprecedented success of autoregressive (AR) models in natural language generation[13,74,72], numerous studies have focused on developing AR models specifically for visual content generation[41,16,73,38,14,69,88]to offer a more practical solution to the generative trilemma[81].
+
+Traditional visual AR generative models performnext-tokenprediction[14,3,69,38,44,79,44,71].
+These models flatten a 2D image into a 1D token sequence, and a causal transformer then predicts each token sequentially, resembling the text generation pipeline[53,54,13,74].
+While this direction aims to unify vision and language modeling within a single AR framework, it still does not reach state-of-the-art diffusion models in terms of both speed and visual generation quality.
+
+This discrepancy raises an important question: why do traditional AR models struggle in vision domains, whereas diffusion models excel?Tian et al.[73]andChang et al.[6]argue that next-token prediction imposes an unsuitable inductive bias for visual content modeling.
+In contrast, diffusion models generate images in a coarse-to-fine manner[11,58,2], a process that closely resembles human perception and drawing — starting with a global structure and gradually adding details.
+Moreover,Rissanen et al.[58]andDieleman[11]show that image diffusion models approximate spectral autoregression: progressively generating higher-frequency image components at each diffusion step.
+
+Recently, scale-wise AR modeling has emerged as a natural and highly effective image generation solution via anext-scaleprediction paradigm[73,47,91,70].
+Unlike next-token prediction or masked image modeling[6,41,16,40,7], scale-wise models start with a single pixel and progressively predict higher resolution versions of the image, while attending to the previously generated scales.
+Therefore, next-scale prediction models perform coarse-to-fine image generation and may also share the spectral inductive bias observed in diffusion models[58,11], as upscaled images are generally produced by adding higher frequency details.
+This makes scale-wise AR models a highly promising direction in visual generative modeling.
+An important advantage of scale-wise models over DMs is that they perform most steps at lower resolutions, while diffusion models always operate at the highest resolution during the entire sampling process.
+Therefore, scale-wise models yield significantly faster sampling while having the potential to provide similar generation performance to DMs[73].
+
+This work advances the family of scale-wise image generation models by introducing a novel transformer architecture for large-scale text-to-image generation.
+We begin by implementing next-scale prediction AR models for text-to-image generation, drawing on recent developments[73,47].
+However, the basic architecture encountered instabilities during training, resulting in suboptimal convergence.
+To address these issues, we introduce several architectural modifications to the transformer backbone, resulting in a strong next-scale prediction AR model for text-to-image synthesis.
+
+Then, we investigate whether the scale-wise AR models require attending to all previous scales.
+We notice that an input image at the current resolution already contains information about all preceding scales by design.
+Therefore, we hypothesize that the model may not need explicit attention to these levels within its architecture.
+To test this, we remove the causal component from next-scale prediction transformers, enabling faster inference and improved scalability.
+In addition to the efficiency gains, we find that non-causal models deliver slightly better generative performance.
+
+Also, we explore the influence of text conditioning across different resolution levels and observe that higher scales show minimal reliance on textual information.
+Leveraging this insight, we disable classifier-free guidance (CFG)[25]at the last scales, thereby reducing inference time by skipping extra forward passes required for CFG calculation.
+Interestingly, this not only accelerates sampling but also tends to mitigate generation artifacts in fine-grained details.
+
+To sum up, the paper presents the following contributions:
+
+We introduceSwitti, a text-to-image next-scale prediction transformer that employs architectural modifications improving training stability and convergence and excludes explicit autoregression for more efficient sampling and better scalability.
+As evidenced by human preference studies and automated evaluation,Swittioutperforms previous publicly available visual AR models.
+Compared to state-of-the-art text-to-image diffusion models,Swittiis up tofaster while demonstrating competitive performance.
+
+We demonstrate that using a non-causal transformer makesSwittimore efficient forimage generation due to cheaper attention operations.
+Additionally,Swittireduces memory consumption during inference, previously needed for storing key-value (KV) cache, enabling better scaling to higher resolution image generation.
+Moreover,Swittislightly surpasses its causal counterpart in generation quality under the same training setups.
+
+We find thatSwittihas weaker reliance on the text at high resolution scales.
+This observation allows us to disable classifier-free guidance at the last two steps, resulting in furtheracceleration and better generation of fine-grained details, as confirmed by human evaluation.
+
+SECTION: 2Related work
+
+SECTION: 2.1Text-to-image diffusion models
+
+Text-conditional diffusion models (DMs)[4,56,15,60,51,93,3]have become the de facto solution for text-to-image (T2I) generation.
+Despite their impressive performance, a well-known limitation of DMs is slow sequential inference, which hampers real-time or large-scale generation tasks.
+Most publicly available state-of-the-art T2I diffusion models[4,51,15,59,93,39]operate in the VAE[33]latent space, allowing for more efficient sampling of high-resolution images.
+However, these models still requirediffusion steps in the latent space.
+
+Diffusion distillation methods[49,68,46,61,62,86,85,32]are the most promising direction for reducing the number of diffusion steps to just.
+Current state-of-the-art approaches, such as DMD2[85]and ADD[61], demonstrate strong generation performance insteps and may even surpass the teacher performance in terms of image quality thanks to additional adversarial training on real images.
+
+SECTION: 2.2Visual autoregressive modeling
+
+Autoregressive (AR) models is a promising alternative paradigm for image generation that can be categorized into three main groups: next-token prediction[69,14,88,38], next-scale prediction[73,47,70], and masked autoregressive models[41,16].
+
+Next-token prediction AR models are similar to GPT-like causal transformers[53,54,13,74]and generate an image token by token using some scanning strategy, e.g., raster order (left to right, top to bottom).
+The tokens are typically obtained using VQ-VAE-based discrete image tokenizers[75,14,87,38].
+VQ-VAE maps an image to a low-resolution 2D latent space and assigns each latent "pixel" to an element in the learned vocabulary.
+
+Masked autoregressive image modeling (MAR)[41,16]extends masked image generative models[6,40,7]and predicts multiple masked tokens in random order at a single step.
+Notably, MAR operates with continuous tokens, using a diffusion loss for training and a lightweight token-wise diffusion model for token sampling.
+Fluid[16]applies this approach to T2I generation and explores its scaling behavior.
+
+Next-scale prediction AR modeling, introduced by VAR[73], represents an image as a sequence of scales of different resolutions.
+Unlike next-token prediction and masked AR modeling, the scale-wise transformer predicts all tokens at a higher resolution in parallel, attending to previously generated lower-resolution scales.
+
+To represent an image with a sequence of scales, VAR[73]uses a hierarchical VQ-VAE that maps an image to a pyramid of latent variables of different resolutions (scales), progressively constructed using residual quantization (RQ)[38].
+In the following, we will refer to this VAE model asRQ-VAE.
+Each latent variable in RQ-VAE is associated with a set of discrete tokens from a shared vocabulary across all scales, similar to a single-layer VQ-VAE.
+
+During sampling, scale-wise AR modeliteratively predicts image tokens scale-by-scale, formulated as:
+
+whererepresents RQ-VAE tokens at the current scale,is the total number of scales, andis the conditioning information.
+The model is a transformer[54]with a block-wise causal attention mask, as shown inFigure5(Left).
+VAR[73]adopts a transformer architecture from DiT[50].
+
+Recent works have applied next-scale prediction models to T2I generation[47,91,70].
+STAR[47]uses the pretrained RQ-VAE model from VAR and modifies its generator to effectively handle text conditioning.
+Although STAR has not been released as of the writing of this paper, we consider STAR as our baseline architecture, from which we gradually progress towards the proposed model,Switti.
+
+A concurrent work, HART[70], proposes a lightweight T2I scale-wise AR model with onlyB parameters.
+It mainly addresses the limitations of the discrete RQ-VAE in VAR by introducing an additional diffusion model to model continuous error residuals, resulting in a hybrid model: a scale-wise AR model combined with a diffusion model for refining the reconstructed latents.
+In contrast, we focus solely on designing the scale-wise generative transformer using the pretrained RQ-VAE from VAR[73], slightly tuning it forresolution.
+Combining our scale-wise generative model design with HART’s hybrid tokenization could be a promising direction for future work.
+
+MAR[41]can also be considered as a hybrid model that combines both autoregressive and diffusion priors.
+Disco-diff[84]conditions a diffusion model on discrete tokens produced with a next-token prediction transformer.
+DART[19]introduces AR transformers as a backbone for non-markovian diffusion models.
+Opposed to this line of works,Swittidoes not use any diffusion prior.
+
+SECTION: 3Method
+
+SECTION: 3.1Basic architecture
+
+As a starting point, we design a basic text-conditional architecture closely following VAR[73]and STAR[47].
+Scale-wise AR text-to-image generation pipeline comprises three main components: RQ-VAE[38]as an image tokenizer, a pretrained text encoder[55], and a scale-wise block-wise causal transformer[73].
+
+Our model adopts the pretrained RQ-VAE from VAR[73], which represents an image withscales.
+We slightly tune it onresolution, as discussed inSection4.3.
+
+To ensure strong image-text alignment of the resulting model, we follow the literature in T2I diffusion modeling[51,15]and employ two text encoders: CLIP ViT-L[55]and OpenCLIP ViT-bigG[27].
+The text embeddings extracted from each model are concatenated along the channel axis.
+
+The basic transformer architecture is adopted from VAR[73], where we incorporate cross-attention[76]layers between a self-attention layer and feed-forward network (FFN) in each transformer block.
+A pooled embedding from OpenCLIP ViT-bigG is propagated to the transformer blocks via Adaptive Layer Normalization (AdaLN)[82].
+
+We also incorporate conditioning on the cropping parameters following SDXL[51]to mitigate unintended object cropping in generated images.
+Specifically, we transform center crop coordinatesinto Fourier feature embeddings and concatenate them.
+Then, we map the obtained vector to the hidden size of OpenCLIP ViT-bigG via a linear layer and add it to the pooled embedding.
+
+Layer-normalization (LN) layers[1]are applied to the inputs of attention and FFN blocks.
+RMSNorm[90]layers are used for query-key (QK) normalization.
+We also use normalized 2D rotary positional embeddings (RoPE)[47,22], which allow faster model adaptation to higher resolutions.
+The FFN block uses GeLU activation function[21].
+The visualization of the basic architecture is inAppendixA.
+
+SECTION: 3.2Training dynamics of the basic architecture
+
+Here, we analyze the training performance of the basic model withtransformer blocks and introduce the modifications improving the model stability and convergence.
+
+We train the model in mixed-precision BF16/FP32 forK iterations on theimage-text dataset described inSection4.1.
+The detailed training and evaluation setups are inAppendixB.
+During the training, we track activation norms and standard metrics, such as FID[24], CLIPscore[23]and PickScore[34].
+
+First, we observe stability issues during training, leading to eventual divergence in our large scale experiments or suboptimal performance.
+Our investigation reveals that the root of this issue lies in the rapid growth of transformer activation norms, as illustrated inFigure3(Blue).
+Activation norms of the last transformer block grow throughout training iterations, reaching extremely large values of.
+
+Therefore, the first step towards stabilizing the training is to cast the model head to FP32 during training.
+We find this as a critical technical detail that significantly reduces activation norms, resulting in much better convergence, as we show inFigure4(Orange).
+However, this trick does not fully address the problem since activation norms still keep growing and reach high values ofby the end of training.
+
+To further reduce the growth of activation norms during training, we employ “sandwich”-like normalizations[12,93], to keep the activation norms in a reasonable range.
+Specifically, we insert additional normalization layers right after each attention and feed-forward blocks and replace LN layers with RMSNorm for efficiency.
+As we show inFigure3, this modification further mitigates the growth of activation norms during training, resulting in slightly better model performance, as evidenced inFigure4(Green).
+
+Finally, following standard practices in language transformers[74,13], we replace the GELU[21]activation in the FFN blocks with a SwiGLU[64]activation that allows the model to dynamically control the information flow via a learnable gating mechanism.
+Although SwiGLU is a prevalent choice in LLMs, we notice that it provides negligible effect on the final performance.
+
+We illustrate the transformer block of the described architecture inFigure2and denote the scale-wise AR model with the proposed architecture asSwitti (AR).
+
+SECTION: 3.3Employing a non-causal transformer
+
+Next, we delve into the autoregressive next-scale prediction inference of the original VAR[73].
+At each generation step, the VAR transformer predicts a sequence of tokensconditioned on the previously generated tokens.The embeddings of these tokens form a feature map of the spatial size.
+This feature map is then upscaled toand combined with previously predicted feature maps to serve as input for the next prediction step.
+
+Therefore, we observe that the conditioning on the preceding scales occurs twice in VAR’s image generation: first, when forming the model’s input, and second, via the causal transformer.
+Based on this observation, we update the attention mask to allow self-attention layers to attend only to tokens at the current scale, as shown inFigure5(Right).
+This implies that the transformer is no longer causal, enabling more efficient sampling due to cheaper attention operations and eliminating the need for key-value (KV) cache.Figure6illustrates the next-scale prediction sampling using a non-causal transformer.
+Interestingly, this modification also slightly improves the performance in terms of CLIP score and PickScore, as shown inFigure4.
+
+Overall, we refer to the scale-wise model with the non-causal transformer architecture asSwitti.
+
+SECTION: 3.4The role of text conditioning
+
+Finally, we examine the effect of text conditioning at different model scales.
+Specifically, we analyze cross-attention maps and the model behavior when the textual prompt is switched during sampling.
+
+We plot a cross-attention map between image and text tokens, averaged across transformer blocks and image tokens at different scales.
+Figure7shows a typical pattern for a randomly selected prompt.
+The attention scores are primarily concentrated on the first and last tokens at most scales, while the highest scales tend to focus more on the beginning of the prompt.
+This pattern suggests that the model relies less on the prompt at higher scales.
+Such behavior is consistent across different prompts.
+
+Then, we investigate the impact of text-conditioning at various scales by switching the text prompt to a new one starting from a certain scale.
+The visualization of prompt switching is presented in Figure8, with additional examples provided in AppendixC.
+Indeed, the prompt has minimal influence on the image semantics at the last two scales.
+Interestingly, switching a prompt at the middle scales results in a simple image blending approach.
+
+Classifier-free guidance (CFG)[25]is an important sampling technique for high-quality text-conditional generation that requires an extra model forward pass at each step.
+Specifically for the scale-wise models, calculations at the last scales take up most of the computing time of the entire sampling process.
+To save costly model forward passes in high resolution, we propose disabling CFG at the last scales, expecting little effect on generation performance,
+as also was recently noted in diffusion models[36].
+
+SECTION: 4Model Training
+
+SECTION: 4.1Pretraining
+
+We collect the dataset of 100M image-text pairs that are prefiltered with a particular emphasis on relevance from the base set of 6B pairs from the web.
+We consider only images of sufficiently high aesthetic quality, based on the AADB[35]and TAD66k[20]aesthetic filters.
+We additionally consider sufficiently high-resolution images with at least 512px on each side. The dataset contains central crops of the images with an aspect ratio in.
+The images are recaptioned using the LLaVA-v1.4-13B, LLaVA-v1.6-34B[45], and ShareGPT4V[9]models.
+The best caption is selected according to OpenCLIP ViT-G/14[63].
+
+Following the transformer scaling setup in VAR[73], we set the number of transformer layersfor our main model, resulting inB trainable parameters.
+
+During the first stage of pretraining, we train the model onresolution using a batch size offorK iterations that takesK NVIDIA A100 GPU hours.
+We start with a learning rate ofwith a linear decay to.
+We use FSDP with a hybrid strategy for effective multi-host training and mixed precision BF16/FP32.
+To additionally reduce memory usage and speed up the training steps, we use precomputed textual embeddings from the text encoders.
+
+Next, we train onresolution forK iterations using a batch size ofand a learning rate of, linearly decaying to.
+This stage takes anotherK NVIDIA A100 GPU hours.
+
+SECTION: 4.2Supervised fine-tuning
+
+After the pretraining phase, we further fine-tune the model usingtext-image pairs, inspired by practices in large-scale T2I diffusion models[31,43,39].
+The pairs are manually selected by assessors instructed to capture exceptionally aesthetic, high quality images with highly relevant and detailed textual descriptions.
+
+The model is fine-tuned forK iterations with a batch size ofand a learning rateon image central crops of resolution.
+We show the effect of supervised fine-tuning inAppendixD.
+
+In addition, we slightly perturb the RQ-VAE latents prior the quantization step with Gaussian noise () as an augmentation to mitigate overfitting.
+We observed that the perturbed latents after the quantization and dequantization steps produce almost identical images while resulting indifferent tokens in a sequence.
+
+SECTION: 4.3RQ-VAE tuning
+
+In this work, we use the released RQ-VAE from VAR[73]that was trained onimages and fine-tune its decoder to adapt it forresolution.
+The encoder and codebook are kept frozen to preserve the same latent space, allowing to fine-tune the autoencoder independently from the generator.
+Following the standard practice in super-resolution literature[37], we use a combination ofreconstruction, LPIPS perceptual[92]and adversarial[37]losses, resulting in the following fine-tuning objective:
+
+We adopt a UNetSN discriminator fromWang et al.[78]for adversarial loss.
+The generator and discriminator are trained forK steps with a batch size ofand a constant learning rate of.
+
+To compare the reconstruction quality of the original RQ-VAE and the one with a tuned decoder, we compute classic full-reference metrics PSNR, SSIM[80], LPIPS[92]and no-reference CLIP-IQA[77]metric on a held-out dataset of 300 images.
+Results presented inTable1demonstrate that the fine-tuned RQ-VAE outperforms an original model with respect to all metrics.
+Additionally, we provide several representative comparisons inAppendixE.
+
+We believe that more pronounced gains can be achieved via more thorough investigation of RQ-VAE and training the entire model.
+We leave this direction for future work.
+
+SECTION: 5Experiments
+
+We compare our final models with several competitive text-to-image baselines from various generative families:
+
+Diffusion models: Stable Diffusion XL[51], Stable Diffusion 3 Medium[15], Lumina-Next[93].
+
+Diffusion distillation: SDXL-Turbo[61], DMD2[85]
+
+Autoregressive models: Emu3[79], Lumina-mGPT[44],
+LlamaGen-XL[69], HART[70].
+
+SECTION: 5.1Automated evaluation
+
+To comprehensively evaluate the performance of our models, we use a combination of established automated metrics and a human preference study.
+For automated metrics, we report CLIPScore[23], ImageReward[83], PickScore[34], FID[24]and GenEval[18].
+For all evaluated models, we generate images in their native resolution and resize them to.
+More details about the evaluation pipeline are inAppendixF.
+
+We calculate metrics on two validation datasets frequently used for text-to-image evaluation: MS-COCO[42]and MJHQ[39].
+For both datasets, we generate one image for each ofvalidation prompts.
+
+We present the metric values inTable2.Swittiachieves comparable performance to the baselines, ranking top-3 for 8 out of 9 automated metrics while exhibiting higher efficiency than most competitors.
+We do not provide automated metrics for Emu3 and Lumina-mGPT due to their exceptionally long sampling times, that makes generating 60,000 images infeasible in a reasonable time.
+
+SECTION: 5.2Human evaluation
+
+While automated metrics are widely adopted for evaluating text-to-image models, we argue that they do not fully reflect all aspects of image generation quality.
+Therefore, we conduct a rigorous human preference study and consider it as our primary evaluation metric.
+This models are compared across several aspects: the presence of defects, textual alignment, image complexity and aesthetics quality.
+Our evaluators are specially trained experts who receive detailed and fine-grained instructions for each evaluation aspect.
+More details about the human evaluation setup are provided inAppendixG.
+For human evaluation, we generate two images for each ofcaptions from Parti prompts collection[89], a set specifically curated for human preference study[15,85,61].
+
+For a side-by-side comparison, we generate images with classifier-free guidance set to 4 and deactivate it at the last two scales, as described inSection3.4.
+We follow the original VAR inference implementation and apply Gumbel softmax sampling[28]with a decreasing temperature, starting from the third scale.
+At the first two scales, we use nucleus sampling with top-and top-.
+
+We provide the results of a side-by-side comparison ofSwittiagainst the baselines for various image quality aspects inFigure9.
+As follows from the human evaluation,Swittioutperforms all AR baselines in most aspects, only lagging behind the much heavier models, Lumina-mGPT and Emu3, in terms of image complexity.
+As for diffusion models, DMD2 slightly outperformsSwittiin terms of defects presence, which can be attributed to its adversarial training, whereas SD3 is better at text alignment, likely due to an additional text encoder.
+In other comparisons,Swittiis on par with the diffusion models and their distilled versions, with respect to statistical error.
+We provide qualitative comparisons inFigures10and15.
+
+SECTION: 5.3Inference performance evaluation
+
+Next, we analyze the efficiency ofSwitti’s sampling and compare it to the baselines.
+We consider two settings: measurement of a single generator step without considering time for text encoding and VAE decoding; and inference time of a full text-to-image pipeline.
+All models are evaluated in half-precision with a batch size of. KV-cache is enabled for all AR models.
+SinceSwitti’s generation resolution is currently limited to, we evaluate all models in this resolution to ensure a fair comparison.
+All models are evaluated on a single NVIDIA A100 80GB GPU.
+
+As follows fromTable3,Swittiis by far the most efficient among other image generation models of similar size, beingfaster than SDXL.
+Notably,Swittitakes onlyseconds more than HART to generate a batch of images while being more than three times larger.
+This efficiency stems from the fact that we do not employ an additional diffusion model during de-tokenization in RQ-VAE, from the transitioning to a non-causal architecture, and from disabling classifier-free guidance at the latest scales.
+
+SECTION: 5.4Ablation study
+
+Finally, we evaluate the effect of our architectural choices on the image generation quality and inference time.
+The human evaluation results inTable4demonstrate that theSwittiis not only more sample efficient than its AR alternative, but also exhibits slightly better visual quality with respect to all aspects of human evaluation.
+Moreover, disabling classifier-free guidance at the last two scales noticeably reduces defect presence inSwitti’s synthesized images without affecting other aspects of evaluation, as illustrated inFigure11.
+Nevertheless, it should be noted that enabling CFG at the last scales can still be beneficial.
+For example, in scenarios where prompts contain text to be rendered in a small font size, guidance can improve the spelling.
+
+In terms of sampling efficiency, as we show inTable5, disabling CFG on the last two scales reduces the latency by nearly, whereas transitioning to a non-autoregressive architecture further reduces latency by an additional.
+
+SECTION: 6Limitations and future directions
+
+We believe that one of the major limitations of the existing scale-wise models is the inferior hierarchical discrete VAE performance compared to the recent continuous[8,57,51,4]or discrete single-level[57,69]counterparts.
+
+Typical failure cases are distorted middle/long-shot faces, text rendering and checker-board artifacts on high-frequency textures such as distant foliage or rocky surfaces.
+We hope that future advances in hierarchical image tokenizers, either discrete or continuous, may significantly improve the performance of scale-wise generative models without using an additional diffusion prior[70,41].
+
+This work uses a publicly available RQ-VAE that is not designed forresolutions or higher.
+In future work, we expect to see effective RQ-VAE models for higher-resolution sampling.
+
+SECTION: 7Conclusion
+
+We introduceSwitti, a novel scale-wise generative transformer for text-to-image generation.
+In contrast to previous next-scale prediction approaches,Swittiincorporates the revised architecture design for improved convergence, eliminates explicit autoregressive prior for efficient inference and makes use of more effective sampling with guidance.
+Trained on a large-scale curated text-image dataset,Swittisurpasses prior text-conditional visual autoregressive models and achieves up tofaster sampling than state-of-the-art text-to-image diffusion models while delivering comparable generation quality.
+
+SECTION: References
+
+Supplementary Material
+
+SECTION: Appendix ABasic architecture
+
+Figure12illustrates the design of our basic transformer architecture described inSection3.1.
+Note that the normalization layers are applied only to the inputs of the attention and FFN blocks.
+
+SECTION: Appendix BTraining details in analysis
+
+For the experiments inSection3.2, we train more light-weight models, withtransformer blocks, resulting in approximatelyB parameters.
+All models are trained in mixed precision BF16/FP32 foriterations using Adam (,) with a learning rate of, linearly decaying to.
+Batch size is.
+Image resolution is.
+In the normalized RoPE, we useand max size.
+For these experiments, we disable the conditioning on the cropping parameters.
+
+For evaluation, we useprompts from the COCO2014 validation set[42].
+
+SECTION: Appendix CAdditional prompt switching visualizations
+
+InFigures17and18, we provide additional examples of the prompt switching analysis, discussed inSection3.4.
+
+SECTION: Appendix DEffect of supervised fine-tuning
+
+To evaluate to which extent supervised fine-tuning affectsSwitti, we conduct a human evaluation study.
+As illustrated inTable6, SFT largely improves the generation quality in terms of all aspects.
+
+SECTION: Appendix EVisual comparison between original and finetuned RQ-VAE
+
+To illustrate the difference between the original RQ-VAE checkpoint and fine-tuned version, we depict several representative examples in Figure14.
+One can observe that the fine-tuned
+VAE decoder is less prone to reconstruction artifacts and color shifts and produces more contrast images.
+
+SECTION: Appendix FEvaluation details
+
+We compute the CLIP Score[23], using features from a pre-trained CLIP-ViT-H-14-laion2B-s32B-b79K encoder[63], to assess image-text alignment.
+
+FID is measured onK generated images reduced toresolution using bicubic interpolation.
+Then, the resolution is further reduced tousing Lanczos interpolation following the practices in FID calculation on COCO2014.
+Real data statistics are collected for all images in the validation sets:K images in COCO2014 andimages in MJHQ.
+
+For GenEval, we generate 4 images for each of the 533 evaluation prompts, followed by the original evaluation protocol using Mask2Former[10]with Swin-S backbone as an object detector.
+
+SECTION: Appendix GHuman evaluation setup
+
+The evaluation is performed using Side-by-Side (SbS) comparisons, i.e., the assessors are asked to make a decision between two images given a textual prompt.
+For each evaluated pair, three responses are collected and the final prediction is determined by majority voting.
+
+The human evaluation is performed by professional assessors.
+They are officially hired, paid competitive salaries, and informed about potential risks.
+The assessors have received detailed and fine-grained instructions for each evaluation aspect and passed training and testing before accessing the main tasks.
+
+In our human preference study, we compare the models in terms of four aspects: relevance to a textual prompt, presence of defects, image aesthetics, and complexity.Figures19,20,21and22present the interface for each of these criteria.
+Note that the selected answers on the images are random.
+
+SECTION: Appendix HVisual comparison against T2I models
+
+We provide qualitative comparison ofSwittiagainst the baselines considered in this work inFigure15andFigure10.
+
+SECTION: Appendix IEffect of disabling CFG at different scales
+
+InFigure16, we provide some examples of disabling CFG at various level ranges.
+One can observe that presence of CFG at first scales improves image quality and relevance.
+At the same time, It can be turned off at the last scales without noticeable quality degradation or loss of details.
+
+SECTION: Appendix JExploring self-attention maps
+
+Below, we analyze attention maps across different scales of the pretrainedSwitti (AR).
+Specifically, for each pair of scalesandwhere, we calculate the average attention score fromtousing the formula.
+Here,represents the original self-attention map, andindicates the number of tokens at scale.
+The visualization, averaged over a batch of textual prompts, is in Figure13.
+It can be seen that self-attention among image tokens primarily focuses on the current scale and is significantly weaker for preceding scales.
+
+SECTION: Appendix KList of prompts used in our figures
+
+1)“Cute winter dragon baby, kawaii, Pixar, ultra detailed, glacial background, extremely realistic.“
+
+2)“Cat as a wizard”
+
+3)“An ancient ruined archway on the moon, fantasy, ruins of an alien civilization, concept art, blue sky, reflection in water pool, large white planet rising behind it”
+
+4)“A lizard that looks very much like a man, with developed muscles, leather armor with metal elements, in the hands of a large trident decorated with ancient runes, against the background of a small lake, everything is well drawn in the style of fantasy”
+
+5)“The Mandalorian by masamune shirow, fighting stance, in the snow, cinematic lighting, intricate detail, character design”
+
+6)“Phoenix woman brown skin asian eyes silver scales, full body, high detail“
+
+7)“Portrait of an alien family from the 1970’s, futuristic clothes, absurd alien helmet, straight line, surreal, strange, absurd, photorealistic, Hasselblad, Kodak, portra 800, 35mm lens, F 2.8, photo studio.”
+
+8)“32 – bit pixelated future Hiphop producer in glowing power street ware, noriyoshi ohrai, in the style of minecraft tomer hanuka.“
+
+1)“A beautiful, pleasant, cute, charming young man in a futuristic suit with elements of white and green, a powerful eco-friendly motif, against the background of a beautiful landscape design with an abundance of green vegetation and water, harmony of color, shape and semantic content, light positive emotional coloring, random angle, high detail, photorealism, highly artistic image.”
+
+2)“A squirrell driving a toy car.”
+
+3)“Baby Yoda Walking in Manhattan.”
+
+1)“A young badger delicately sniffing a yellow rose, richly textured oil painting.”
+
+2)“3D,game background,beach,shell, conch,starfish,the sea is far away, cloudy day.”

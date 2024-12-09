@@ -1,0 +1,860 @@
+SECTION: Exploration of Parameter Spaces Assisted by Machine Learning
+
+We demonstrate two sampling procedures
+assisted by machine learning models via regression and classification.
+The main objective is the use of a neural network
+to suggest points likely inside regions of interest,
+reducing the number of evaluations of time consuming calculations.
+We compare results from this approach with results from other sampling methods,
+namely Markov chain Monte Carlo and MultiNest,
+obtaining results that range from comparably similar to arguably better.
+In particular, we augment our classifier method with a boosting technique
+that rapidly increases the efficiency within a few iterations.
+We show results from our methods applied to a toy model
+and the type II 2HDM, using 3 and 7 free parameters, respectively.
+The code used for this paper and instructions are publicly available on the web555https://github.com/AHamamd150/MLscanner.
+
+SECTION: 1Introduction
+
+Technological advancements bring computers with more powerful processing capabilities
+but at the same time bring more diverse, advanced and precise
+experimental probes.
+A considerable part of the scientific community
+is tasked with applying these powerful computers
+to adjust known and new theoretical models
+to the most up to date constraints
+found by experiments.
+This usually involves taking a set of free parameters from the model,
+calculate predictions for the observables that depend on them
+and comparing with the experiments of interest.
+Then we can judge the success of the model
+based on how well it can predict said observables
+within the experimental errors.
+One common starting point for new models
+is extending the model that works best, e.g.,
+the standard model (SM) of particle physics for high energy physics (HEP)
+or the cold dark matter model with a cosmological constant (CDM) for cosmology.
+For extensions that attempt to explain
+many deviations observed in experiments
+as well as provide missing pieces,
+one may end up with a considerably large parameter space.
+In the case of the SM,
+for a supersymmetric extension
+the full number of parameters reaches the order of hundreds[1],
+and for experimental studies using the SM effective field theory (SMEFT)
+the number of parameters could be several tens or more[2].
+Regarding the SMEFT, it has been show that machine learning techniques
+can aid in the estimation of likelihood ratios and setting limits
+in LHC analysis when large number of dimensions and many observables are considered[3,4].
+With an increase of parameters the number of points required
+for proper sampling increases exponentially—the well-knowncurse of dimensionality.
+Multiplying this number by the time required to calculate
+an ever growing number of experimental constraints[1]can give an estimation of the required effective time.
+
+Besides parallelizing computations,
+to simplify and accelerate the task of exploring large
+parameter spaces (both in size and range of parameters),
+several techniques efficiently use any information gathered about the problem
+to infer parameter distributions.
+Two successful and well known examples
+are Markov chain Monte Carlo (MCMC)[5]and MultiNest[6,7](see Ref.[8,9,10,11,12,13,14,15,16,17]for examples of studies that use these tools).
+These tools are cleverly designed
+to use the results from likelihood calculations
+to infer distributions of model parameters
+and provide sampling consistent with this distribution.
+Expectedly, in the course of working with these tools,
+one may find particularly complicated subspaces
+or regions with problematic features that may result
+in excessive evaluations of the likelihood function
+or poorly sampled regions[18,19].
+It is worth noting that issues may be found for any sampling method
+and depend on the implementation of the algorithm.
+
+Machine learning (ML) techniques are natural contenders
+for alleviating such difficulties
+for their ability to find concealed patterns
+in large and complex data sets
+(See Ref.[20]for a review and references therein).
+In fact, in Ref.[21],
+an algorithm for
+blind accelerated multimodal Bayesian inference (BAMBI)
+is proposed that combines MultiNest
+with the universal approximating power of neural networks.
+Recently, a general purpose method known as ML Scan (MLS)[18,22]was proposed,
+where the authors used a deep neural network (DNN)
+to iteratively probe the parameter space,
+starting with points randomly distributed.
+In there, the sampling is improved incrementally with active learning.
+Conversely, the active learning methods proposed in Refs.[19,23]are based on findingdecision boundariesof the allowed subspace.
+Application to HEP can be found in Ref.[24].
+In Ref.[25], the authors introduce dynamic sampling techniques for beyond the SM searches.
+
+In this work, we have implemented two broad classes of ML based efficient sampling methods of parameter spaces,
+using regression and classification.
+Similarly to Refs.[18,22,19,23],
+we employ an iterative process
+where the ML model is trained on a set of parameter values
+and their results from a costly calculation,
+with the same ML model later used to predict
+the location of additional relevant parameter values.
+The ML model is refined in every step of the process,
+therefore, increasing the accuracy
+of the regions it suggests.
+We attempt to develop a generic tool
+that can take advantage of the improvements
+brought by this iterative process.
+Differently to Refs.[19,23],
+we set the goal in filling the regions of interest
+such that in the end we provide a sample of parameter
+values that densely spans the region as requested by the user.
+Moreover, considering the steps followed in each iteration,
+we consider ways to improve the efficiency,
+particularly by employing a boosting technique
+that improves convergence during the first steps.
+With enough points sampled,
+it should not be difficult to proceed with more detailed studies
+on the implications of the calculated observables
+and the validity of the model under question.
+We pay special attention to give control to the user
+over the many hyperparameters involved in the process,
+such as the number of nodes, learning rate, training epochs, among many others,
+while also suggesting defaults that work adequately in many cases.
+The user has the freedom to decide whether to use regression or classification
+to sample the parameter space,
+depending mostly on the complexity of the problem.
+For example, with complicated fast changing likelihoods
+it may be easier for a ML classifier to converge
+and suggest points that are likely inside the region of interest.
+However, with observables that are relatively easy to adjust,
+a ML regressor may provide information useful to locate points of interest
+such as best fit points,
+or to estimate the distribution of the parameters.
+After several steps in the iterative process,
+it is expected to have a ML model that can accurately predict
+the relevance of a parameter point
+much faster than passing through the complicated time consuming calculation
+that was used during training.
+As a caveat, considering that this process requires iteratively training a ML model
+during several epochs, which also requires time by itself,
+for cases where the calculations can be optimized to run rather fast,
+other methods may actually provide good results in less time.
+
+The organization of this paper is as follows. In Sec.2we describe in detail
+the two iterative processes for sampling parameter spaces
+using regression and classification.
+We expand in Sec.3by applying said processes
+to two toy models in 2 and 3 dimensions,
+including a description of how
+we can boost the convergence of the ML model.
+In Sec.4we describe how we sample regions of interest
+of the two Higgs doublet model (2HDM) using well-known HEP packages
+and the processes described in this paper.
+In the end, we conclude with a summary of the most relevant details presented in this work.
+
+SECTION: 2Machine Learning Assisted Parameter Space Finding
+
+The process starts with a set of random values,,
+for the parameters that will be scanned over,
+and their results from a calculation of observables,.
+This random set of parameter values and their results
+are used to train a ML model
+with the purpose of predicting meaningful regions
+in successive iterations where the model will be further refined.
+After the initial () training step,
+we will follow an iterative process
+that, in its most basic form,
+is summarized with the following steps:
+
+Use the ML model to obtain a prediction,,
+for the output of a HEP calculation
+for a large set of random parameter values,.
+
+Based on this prediction, select a smaller set of points,,
+using some criteria that depends on the type of analysis of interest.
+Up to this step we should have a setand its corresponding predictions.
+
+Pass the setof parameter values to the HEP calculation
+to obtain the actual results.
+
+Use the setand its resultsto refine the training of the ML model.
+
+The loop closes when we use this refined model
+to predict the HEP calculation output for a larger set of parameter values
+as in step 1 above.
+
+Later in the text and in specific examples
+we will expand on the implementation of this brief summary.
+
+It is assumed that the calculation of the observables
+is done through an expensive, time consuming computation,
+such that it is worthwhile spending additional time
+training a ML model with its results.
+Taking these basic steps as the starting point,
+one can further fill in the details of the sampling,
+considering that there is a number of ML models to choose from
+and that the selection of the setdepends highly on the region of interest.
+Regarding the choice of the set,
+in general it is a good idea to add an amount of points chosen at random
+to enforce exploration of new parameter space regardless of the suggestion of the ML model.
+It is useful to gather theset and the results from the HEP calculation
+in every iteration as they represent the sampling of the parameter space.
+For the training step
+we always use the new points from the corresponding iteration,
+but we have the choice to add all or some of the set of accumulated points.
+After a large amount of points have been accumulated
+training on the full set may be time consuming,
+therefore, it would be a good idea to devise rules on how to include them.
+For example, in Ref.[19]the full set of
+accumulated points is used to train after a fixed number of iterations.
+In what follows we will describe our implementation of two broad types of models:
+ML regressors and ML classifiers.
+
+SECTION: 2.1Sampling with a regressor
+
+We will use a ML regressor
+whenever we are interested in training a model
+to predict actual outputs from the calculation of observables.
+In this case the training requires parameter values
+and their numerical results from the HEP calculation.
+When we pass a large number of parameter values
+we get a set of predictions for the observables,,
+that can aid in the selection of the regions of interest.
+In this case, theset could be composed of relevant points
+based on, e.g.,or likelihood values.
+However, one could devise any number of selection mechanisms
+that take advantage of the access to predictions for the observables.
+
+One of the first complications of sampling with the regressor
+is the possibility that the sample for training in each step
+does not contain points close enough to the
+regions of interest.
+Another one is that succesive training sets may be heavily biased
+towards particular results,
+e.g., when most of the parameter space yields similar observations
+and far from the ones we are interested in.
+In the case of the first complication,
+one may use known maximums as seeds and sample
+around them.
+For the second complication,
+it is important to make a selection of points for training
+that teaches the model the diversity of the output.
+Otherwise we risk training a model that is biased
+to predict results closer to the majority of the training set.
+In fact, here is where the use of the predictions
+from the model could have more power.
+Using the model predictions we can infer a set of points
+that could have a diverse and relevant set of results,
+worthy of passing to the HEP calculation
+and later to the training step.
+
+The precision of the predictions is expected to improve with
+more iterations and this can be checked easily via measures
+such as the mean absolute error (MAE).
+After several iterations, this process
+should result in a parameter space sampling
+heavily weighted towards the region of interest used to select theset
+and a model specialized in giving accurate and fast predictions for this region.
+
+SECTION: 2.2Sampling with a classifier
+
+A different approach would be training a ML classifier
+to predict if a point in the parameter space
+would be classified as inside or outside the region of interest
+according to conditions set by the study being performed.
+Examples of this conditions would be
+whether or not the parameter point is theoretically viable
+and if the point is still inside constraints set by experiments,
+among several others options.
+In contrast to the regressor described above,
+in this case, we expect a HEP calculation with a simple binary output,
+say, 1 if the point is inside a region of interest or 0 if otherwise.
+After training the ML model,
+the predictions,, would be distributed in the range.
+This predictions can be considered as an encoding
+of the confidence the model has to classify points in different regions.
+This presents different opportunities for the selection of points.
+For example, a simple choice would be to takefrom the points most likely to be inside.
+Another choice could be taking points around,
+where the model is more uncertain,
+or even a combination of different ranges.
+
+One advantage of having this classification of points,
+is that we can try to balance training with sets of equal size for
+the two classes of points and apply boosting techniques if any class is undersampled.
+One example of boosting technique is the synthetic minority oversampling technique (SMOTE)[26]that will be explained later in the text.
+This is helpful in cases where one of the classes is difficult to sample randomly,
+helping with the first few iterations when the model not accurate enough.
+Another advantage of a classification is that it allows the accumulation
+of a sample of points inside the allowed parameter space
+in separation from the sample of points outside that needs to be kept
+to train the model.
+
+While for the regressor the objective was a model accurately trained
+on highly relevant regions,
+here the goal is to train a model that can accurately draw a boundary
+between points of each class.
+For the resulting samples, it is expected to see
+a concentration of points around said boundary
+indicating where the model has been trained more extensively.
+Additionally, considering that the training
+happens with balanced samples,
+there could be a concentration of points
+in the class with the smallest space,
+which most of the times is the class of interest.
+Obviously, the model can be used to predict
+which additional points could belong to the
+class we want to study.
+
+SECTION: 2.3General comments
+
+It is entirely possible
+that during training
+the model specializes in the training set
+and gives inaccurate predictions when
+presented with new points.
+However, in our approach this overtraining is avoided, in every iteration,
+by comparing with the results from the true calculation and correcting regions where
+the ML model is giving wrong advise.
+For the regressor,
+since we focused mostly on training with points in regions of large importance,
+there is a chance of larger error in predictions
+outside this region.
+Obviously, the expectation is that the process outlined above
+keeps this error under control to avoid missing relevant regions.
+The case of the classifier is different.
+Since here we deal with a calculation
+that decides whether or not a point is in the target region,
+the trained model responds with how confident
+it is that a new point belongs inside or outside.
+Therefore, we require the model to accumulate enough
+confidence to give certain enough predictions for both classes.
+
+In Fig.1we show flowcharts
+of the iterative process followed
+for both the ML regressor (left) and the ML classifier (right).
+Both of them start with an initialtraining step
+and proceed to the first prediction step inside the iterative steps.
+The green arrows indicate the places
+where sets of random parameters have to be inserted
+and orange arrows indicate the steps where points are accumulated
+in the sampled parameter space pool.
+
+SECTION: 3Application to a multidimensional toy model
+
+In this section we apply the iterative process
+described in the previous section
+to a simple model in 3 dimensions.
+For this model it is possible to find
+several curved regions of interest that are completely disconnected
+while also encircling regions of low relevance.
+While these two features hardly capture all the complexity
+that can appear when scanning the parameters of a realistic multidimensional model,
+with this toy model it is shown how, by means of the processes outlined in the last section,
+these two generic complications are easily addressed.
+
+The 3-dimensional toy model is given by the function
+
+where we will use a preferred region
+with center atand a standard deviation of.
+We will take a gaussian likelihood given by.
+This choice of central values and deviations
+results in shell-shaped regions of interest
+for this 3-dimensional model.
+For all the dimensions of the toy model ()
+we will scan in the range.
+
+To the toy model we will apply
+sampling with both regression and classification
+to illustrate the advantages of each approach
+and demonstrate the differences in the obtained results.
+The particular type of DNN
+that we will use for these examples is a multilayer perceptron (MLP)
+with fully connected layers.
+The summary of hyperparameters that we use
+is contained in Table1.
+
+SECTION: 3.1Exploring the toy model with the regressor
+
+The neural network for the regressor
+will be constructed with 4 hidden layers,
+each of them with 100 neurons,
+and rectified linear unit (ReLU) activation function.
+The final layer will have one neuron
+with a linear activation function.
+For the loss function we will use the mean absolute error.
+To optimize the weights we will use the Adam algorithm with a learning rate of 0.001,
+exponential decay ratesand,
+and train during 1000 epochs.
+
+To test the ML regressor,
+in every iteration
+we make predictions for the observable from a large set of points,,
+that we use to calculate the likelihood.
+Then we select a smaller set of points,,
+A fraction of 90% of the setwill be selected with a likelihood above 0.9,
+while the other 10% will be taken randomly from the parameter space.
+Remember that this setcontains the points
+for which we will calculate
+the actual observable and likelihood.
+In every iteration we accumulate all thesets and their results
+and this accumulated set constitutes the output sample and also the training set.
+For training, we will include all the accumulated points
+every 2 iterations and in the final iteration
+to improve the accuracy of the model,
+in other iterations we use a partial set.
+We accumulate all the suggested points
+which after a few iterations should start to accrue around the region of interest
+().
+
+For the sample displayed in the upper left panel of Fig.2, under DNNR,
+we stop the process after collecting 20 000 points with the condition.
+we start with an initial set of 500 random points
+and in every iteration we use the DNN to predict the value
+of 50 000 points and select 500
+that are passed to the likelihood calculation.
+It is worth noting in this point,
+that if the likelihood had to be computed
+via a complicated, heavy, time consuming calculation
+we would be using the DNNR to guess the values
+of 100 times more points than we pass to the actual calculation.
+Here is where the process described above could be more powerful.
+
+SECTION: 3.2Exploring the toy model with the classifier
+
+The construction of the neural network for the classifier
+is very similar to the construction used for the regressor.
+We again use 4 hidden layers with 100 neurons each and ReLU
+activation function.
+The output layer has an output of 1 dimension
+and we use the sigmoid activation function
+to obtain values between 0 and 1.
+the output of the classifier
+consist on the probability
+that the input belongs in the class.
+In this case the class will be defined as points with.
+For the loss function we use binary cross entropy
+and we train with the Adam optimizer
+using a learning rate of 0.001,
+and parametersand.
+The training happens during 1000 epochs.
+
+In the case of the classifier,
+the output of the DNN is a probability
+of how confident the model is that the point
+belongs to the class.
+Considering this,
+we base our selection of points on this confidence,,
+calculated from the larger set.
+The smaller setwill be made with a fraction of 10% points chosen randomly
+as with the regressor.
+For the remaining 90%, we will choose 50%
+from points such that,
+and 50% from points predicted uncertain or outside,.
+There is nothing special about the number 0.75,
+but it is convenient to take a number
+that divides the set of points
+in one with points likely inside
+and another with points that are uncertain or unlikely to be
+in the class.
+As before, this setis passed to the calculation
+that outputs the correct classification.
+Differently from the regressor,
+in this case we can accumulate only the points that belong towhile the points that are outside the class can be kept
+for training.
+If after obtaining the correct classes
+the training set is dominated by points inside or outside the class,
+we need to perform an extra step
+where the minority class is oversampled
+or the majority class undersampled.
+This is to ensure that the network learns
+the distribution of both sets properly.
+To oversample the minority class
+we can use a boosting method
+as will be explained after the next subsection.
+Something to note here
+is that it is important to train the network
+on the points that where missclassified
+and the points where.
+
+The sample with the most uniform distribution out of 10 runs
+is displayed in the upper right panel of Fig.2.
+For this figure we collected 20 000 points that belong to the class.
+In this case we attempt to train with an initial set of 500 random,
+and in every iteration obtain predictions for 50 000 test points (set).
+We select 500 points (set) according to the rules stated above
+and calculate the true classes.
+Due to the balancing of the classes, in the first few steps
+the algorithm may oversample or undersample imbalanced sets
+and change the size of the set.
+
+SECTION: 3.3Comparison of coverange with other sampling methods
+
+To compare the coverage against other sampling methods,
+we usePyMultiNest[27]andemcee[28]implementations
+of MultiNest[6,7]and MCMC[5], respectively.
+Foremceewe use 500 walkers with other setting left as default.
+In the case ofPyMultiNestwe increased the number of active points
+to 6200 (n_live_points) and reduced the efficiency to 0.5 (sampling_efficiency).
+The increase of live points is aimed at collecting around 20 000 points with.
+In order to force bothemceeandPyMultiNestto concentrate on the region with,
+we apply a weight depending on the value ofaccording to
+
+where the last case is justgrowing linearly to connect the two differentregimes.
+For all the examples shown in Fig.2,
+we run the sampling method 10 times,
+storing around 20 000 points with the condition.
+In the four upper panels,
+we show the samples accumulated for each method
+with the most consistent distribution of points
+among disconnected regions.
+The color represents deviation from the average number of points in each region,
+with the average normalived to 1.
+Expectedly, using MCMC results in the least uniformly covered regions (most color variation)
+with DNNR having the most consistent coverage (least color variation).
+Visually, the spread of points using DNNR and DNNC appears more
+uniform that in the other two examples.
+In the bottom panel of the same figure
+we show the average deviation for all the 10 runs
+in solid light color.
+The strong colored markers
+show the deviations in all 13 regions
+for the samples with the least deviation,
+corresponding to the 4 upper panels.
+Again, the deviations correspond to the number of points per region
+with average normalized to one.
+The DNNR shows the least deviation ()
+while DNNC sits at.
+DNNC performs somewhere in between MultiNest ()
+and MCMC ().
+The redmarkers for DNNC
+show that it is possible to have runs
+with much less deviation than the average.
+
+To comment on the most notable difference between the ML regressor and classifier,
+the fact that the classifier explicitly distinguishes two classes
+makes possible to operate differently on the points
+depending on where they have been classified.
+Above we mention that we have control
+over how we pick up points for the training step
+from the accumulated pools of the two classes.
+To expand on the classifier,
+in the next section we show
+how we can use a small amount of points
+to actively balance situations where
+one of the classes tends to be oversampled.
+
+SECTION: 3.4Toy model in higher dimensions
+
+To display convergence in higher dimensions,
+we apply the idea above to andimensional toy model by extending
+the toy model of Eq. (1)
+with an extra toy observable indimensions
+
+which can be interpreted as a radius using the lastdimensions
+of thedimensional toy model.
+We will requireto satisfy a central valuewith corresponding error.
+The total likelihood will be given by
+
+This can be seen as trying to find the regions aroundin three dimensions
+while the otherdimensions try to accommodate such that.
+We test the process described above withand.
+Forand, as before, we use 100 and 20, respectively.
+For thedimensional part we useand.
+For the first 3 dimensions we scan in the range,
+and for the rest of the dimensions we scan in the range.
+For this two cases,
+the biggest change is the need to concentrate around regions of larger likelihood
+when suggesting the large set.
+Therefore, in every iteration the setcontains points
+closer to points with large likelihood
+found until that iteration.
+This points are selected using gaussian jumps
+with standard deviation that varies between 1/10 to 1/3 of the dimensions ranges.
+Moreover, training in higher dimensions, expectedly, requires more points,
+therefore, we decrease the threshold value
+of the points we want to accumulate
+to.
+We also increased the number of points in the large settoand in the selected setto 5000.
+The result from accumulating 20 000 points forandusing the regressor is shown in Fig.3.
+The coverage is less uniform than in the 3-dimensional case
+shown in Fig.2.
+Particularly, in the 40-dimensional case,
+some parts show a more sparse coverage.
+Remember that the inside of the ball-like regions of interest
+have a low likelihood region,
+so it is not expected that the center is densely filled.
+The results using the classifier are similar and, therefore, not displayed.
+Considering that the points tend to appear distributed and not excessively clumped,
+the sparsity could be reduced by a longer running time and/or removing a burn-in set.
+
+SECTION: 3.5Boosting the start up convergence
+
+Unlike the ML regressor, in the case of the ML classifier
+both classes of points are of equal importance.
+Accordingly, points outside the region of interest are also accumulated
+to train the model to find their subspace.
+Therefore, we train the model using data sets of the same size.
+When the subspace of points of one class
+is comparably much smaller than that of the other class,
+the ML model is inefficient to suggest enough points of the smaller class
+to pass to the HEP calculation in the initial steps,
+leading to slow convergence.
+Moreover, we end up training the model with much more points from one class than the other.
+There are several ways to rectify this imbalance of the data:
+
+Undersampling the majority class. In this case we loose much of the information from the undersampled class causing the model to converge more slowly.
+
+Oversampling the minority class by creating random copies from the underrepresented set[19]. This makes the model overestimate the majority class during the test step.
+
+Oversampling the minority class using SMOTE[26]. The SMOTE transformation is an oversampling technique in which the minority class is enhanced by creating synthetic samples rather than by oversampling with replacement.
+This technique involves taking each point from the minority class and introducing synthetic samples along the line segments joining them to their nearest neighbors. Depending on the amount of oversampling required, a numberof nearest neighbors can be randomly chosen.
+After this, a synthetic sample is generated
+from the lines between a point and itsnearest neighbors
+depending on the amount of oversampling required.
+
+The result of oversampling the minority class using SMOTE is shown in Fig.4where the minority class (dark blue points) with 100 points is oversampled to around 5000 points according to the description of the process given above.
+
+As mentioned above, we attempt to take a setmade of 90% with predictedexpecting that the HEP calculation finds most of them with, while the other 10% is taken randomly.
+If the corrected classes, as given by the HEP calculation, have different sizes we use SMOTE to oversample the minority class.
+The points suggested by SMOTE are then passed to the HEP calculation for proper classification.
+It is important to mention that the number of the nearest neighbors used by SMOTE is a hyperparameter that has to be adjusted according to the study under consideration.
+In Fig.5we compare the number of accumulated points after 100 iterations when SMOTE is applied (orange) and not applied (blue) to oversample the minority class (in this case) and in case of undersampling the majority class.
+We found that for the 3-dimensional toy model, Eq. (1), with,andthe model is able to accumulate 5 times more points when SMOTE is employed.
+
+SECTION: 4Learning the Higgs signal strength in type II 2HDM
+
+In this section we show the performance of ML models scanning over the
+parameter space of the type II 2HDM scalar potential to match the measured
+Higgs signal strength.
+
+SECTION: 4.1The model
+
+The 2HDMs[29,30]are extensions of the SM scalar sector containing twodoublets,and, sharing identical charge assignments under the SM gauge symmetry group:
+
+The 4 real fields are labeled, with;
+the complex charged fields are, with;
+the vacuum expectations values (VEVs) are, with.
+
+The scalar setup in the 2HDM allows for flavor changing neutral currents (FCNC) from the Yukawa terms, which are restricted by current measurements.
+A 2HDM with no FCNC can be obtained by adding a softly broken globalsymmetry[31]where. In this case, the most general scalar potential is given by
+
+wheresoftly breaks thesymmetry.
+In, the parametersandare real, whileandare complex parameters that allow for CP violation[37,38].
+In the following we consider a real potential with vanishing complex phases,.
+The VEVsandare related to the SM VEV byGeV,
+and their ratio is defined as.
+
+The mass terms,and, are determined from the minimization conditions of the scalar potential.
+Four physical scalars are obtained after diagonalizing the mass matrices, with two CP even Higgses (), one CP odd scalar () and one charged Higgs () with masses given by
+
+with
+
+For the type-II 2HDM, the Yukawa terms that respect thesymmetry are written in the form
+
+where,is thegenerator corresponding to the Pauli matrixandareYukawa coupling matrices.
+
+We perform a scan over seven free parameters of the potential,(),and soft-breaking mass,
+to adjust the SM-like Higgs properties to match current measurements, taking into account other constraints from the electroweak global fit and B meson decays.
+Note that one has the freedom to scan over physical parameters instead.
+Each parameter base has their own advantages, for example,
+using parameters of the potential allows to choose ranges
+where stability and perturbativity test are automatically passed.
+We use SPheno-4.0.5[32]to calculate the particle spectrum of the physical eigenstates,FlavorKit[41]for B meson decays whileHiggsBounds-5.3.2[33,34]andHiggsSignals-2.2.3[35,36]are used to constraint the parameter space using recent Higgs boson measurements.HiggsBoundsconstrains the parameter space by computing the theoretical prediction for the most sensitive channel for each scalar,, and dividing by the observed experimental value to obtain the ratio,.
+The computation ofrequires production cross sections,, and decay branching ratios,,
+as in
+
+where a valuecorresponds to a parameter point excluded by theC.L. limit.HiggsSignalsconstrains the parameter space by evaluating the statistical compatibility of the SM-like Higgs boson in the model using recent data for theGeV Higgs resonance observed at the LHC.HiggsSignalsreports a totalvalue for testing the model hypothesis as a combination offrom the signal strength modifiers andfrom corresponding predicted Higgs masses as
+
+The best fit value is calculated according to
+
+withthe minimum.
+We adjust our selection to accept all points with, with a SM Higgs mass uncertainty ofGeV. It is worth mentioning that all selected points are required to pass theHiggsBoundsselection.
+
+SECTION: 4.2Additional constraints
+
+The oblique parameters from the electroweak observables fit receive contributions from the 2HDM at one-loop level,
+constraining the 2HDM parameter space.
+From the global fit of the oblique parameters we have[40]:
+
+Additionally, measurements from B meson decays add extra constraints onplane.
+For large,
+the dominant constraints come fromand[39].
+The ranges for mentioned branching ratios are displayed in the left side of Fig.6.
+
+SECTION: 4.3Numerical scan details
+
+Since the ML classifier is only concerned with points passing the conditions mentioned above,
+it is less affected by a fast changing totalthan the regressor
+
+Therefore, we can consider wider ranges without a dramatic increase in the required initial number of points.
+Considering this, we scan over the following ranges
+
+where positiveandare required for vacuum stability.
+In order to keep the light Higgs,, as the SM-like Higgs of the model we consider a rather narrow range forand use negative values for the soft-breaking mass parameter.
+
+We use a sequential MLP with four hidden layers with 100 neurons in each layer and ReLU activation function. The output layer has one neuron with Sigmoid activation which maps the output to probabilities between 0 and 1. We train during 1000 epochs. The loss function, binary cross entropy, is minimized by Adam optimizer with learning rate of 0.001 and exponential decay ratesand. In each iteration we selectpoints from the ML predictions. The sampledpoints are then passed to the HEP packages to classify them. In the steps where the data sets are imbalanced, SMOTE is automatically called to oversample the minority class.
+Additionally, the training data are normalized according to the standard normal distribution.666The MLP model is very sensitive to the ranges of the input features and we have to normalize the input before we use it to fit the model. Other models, like random forest, are robust against the outliers and can be used without normalization of the input features.
+
+For the ML regressor, We use a sequential MLP with four hidden layers each with 100 neurons and ReLU activation function. The final output layer contains only one neuron with linear activation function. The loss function in this case is the mean squared error which is minimized by Adam optimizer with learning rate of 0.001 and exponential decay ratesand. We train during 1000 epochs in every step. The collected samples are fully utilized to train the ML model after every two iterations, without validation and test samples, since calculating observables precisely using HEP packages is time consuming.
+
+As for the toy model, here we compare against sampling using MCMC and MultiNest.
+Considering that in this case we do not have several identically shaped regions as in the case of the toy model,
+we compare against the efficiency in every iteration, defined as the number of in-target points
+over the number of tried points.
+For the MCMC we useemcee, we start with 300 in-target points with walkers 300 walkers using as log(likelihood) function theHiggsSignalsplus all the other constraints discussed above.
+For Multinest we usePyMultiNestwith log-likelihood function as the MCMC.
+
+In Fig.7we show the efficiency for the 4 different methods,
+ML classifier (DNNC), regressor (DNNR), MCMC and MultiNest as the number of collected points per iteration over batch size (300). For all methods we require to collect 20 000 points.
+
+Considering that the convergence efficiency for the DNNC and DNNR depends on the initial number of in-target points, we compare the efficiency with different sizes for initial in-target points, 10 and 1000 points. For both, DNNC and DNNR, we sample the batchfromwithrandom points. For DNNR with 1000 initial in-target points (blue line) we accumulate 20 000 points after 88 iterations while for DNNC with the same initial in-target points (red line) it requires 77 iterations.
+Here we point out that the maximum efficiency issincepoints are chosen randomly in each iteration.
+DNNR with 10 initial in-target points (orange line)
+has a far slower convergence requiring 700 iterations to accumulate 20 000 points in-target.
+In the case of the DNNC with 10 initial in-target points (green line), the SMOTE technique suggests enough new synthetic points in the target region, resulting in an increase of efficiency.
+For this case, efficiency is calculated after correcting with SMOTE (see Fig.1).
+This case requires 100 iterations to accumulate the 20 000 points.
+For MCMC accumulating 20 000 points requires 140 iterations,
+adding each time more in target points, although, at a lower rate than DNNR(1000), DNNC(10) and DNNC(1000).
+And MultiNest expectedly spends several iterations in the beginning exploring the regions with
+lower likelihood, requiring a total of 1560 iterations.
+
+SECTION: 4.4MLP classifier results
+
+As already discussed,
+MCMC and MultiNest require the evaluation
+of the log-likelihood from the HEP package
+for all the tested points,
+which may lead to longer computation time
+when acceptance is low.
+Moreover, convergence for the DNNR
+depends heavily on having a big enough set of in-target points.
+This means that for large sampling space
+and small target region
+the regressor model tends to take longer to start converging.
+In the case of the DNNC, we handle this problem with SMOTE
+as technique to collect more in-target points in the first steps
+and accelerate the initial convergence.
+As the DNNC method shows better performance on efficiency as iterations accumulate,
+we show the allowed ranges for the 2HDM-II scalar potential parameters
+and physical observables from our DNNC scan.
+
+Accumulated points satisfy all theoretical and experimental constraints mentioned in Secs.4.1and4.2.
+The obtained allowed ranges are the following
+
+Considering these ranges for the scalar potential parameters,
+in Fig.8we show 3-dimensional projections
+for several parameters
+with color for the masses of different physical scalars.
+The SM-like Higgs,, the lightest scalar in our setup,
+shows a large dependence on,
+that results in a narrowly distributed region
+in the upper left panel of Fig.8.
+This sharp dependence incan be explained with Eq. (11)
+where, for large, the largest contributions comes from.
+Considering that largeimpliesandis fixed,
+from Eq. (7) we can deduce thatdepends heavily on the value of.
+Conversely, the mass of the heavier Higgs,,
+depends onandthroughin Eq. (7),
+as shown in the upper right panel of Fig.8.
+For the charged Higgs,, the mass depends on a combination of,,and.
+In the lower left panel of Fig.8can be seen clearly
+thatdepends on the combination ofand.
+It is also possible to see that larger values ofare obtained for larger.
+In the case of the mass of the pseudoscalar,, it depends on a combination of,and.
+Considering the scan range for,
+the pseudoscalar mass is strongly sensitive toas shown the lower right panel of Fig.8.
+
+Branching ratios for,andscalar bosons are shown in Fig.9.
+In the case of the SM-like Higgs,, branching ratios have been fixed to experimental measurements byHiggsSignals.
+The dominant decay ofis viaquark pair andlepton pair,
+both proportional to.
+Here,comes from the combination,
+which is the angle that diagonalizes the CP-even Higgses squared mass matrix.
+The di-gauge boson decay ofis suppressed byand hence subdominant,
+as shown in the left pane of Fig.9.
+This supression is expected,
+since it is a consequence of experimental constraints
+that force the 2HDM-II closer to the decoupling limit,.
+In the middle panel of Fig.9,
+we show the branching ratios of the pseudoscalar,,
+which, forGeV, is dominated byquark pair andlepton pair.
+This is expected sincedecaying to pair of down-type quark pair or lepton pair
+is proportional towhich we assume to be large.
+In the case of decays into pairs of up-type quarks, like, we have suppression by.
+The dominant decay mode forGeV is Br,
+whenever,
+which is proportional to.
+For the charged Higgs,
+decay is dominated by Brwhich is proportional to,
+while the fermionic decays are suppressed by,
+as can be seen in the right side of Fig.9.
+
+SECTION: 5Conclusion
+
+In this paper we have discussed
+the implementation of two broad types of ML based approaches
+for efficient sampling of multidimensional parameter spaces:
+regression and classification.
+The ML model is employed as part of an iterative process
+where it is used to suggest new points
+and trained according to the results of this suggestion.
+In the case of the regression we train a ML model
+to precisely predict observables in regions favoured by observations.
+For the classification we train the model
+to be able to separate the points that belong to the region of interest
+from those outside of it.
+In the case of the classification
+we devise a process to alleviate undersampling of small regions
+employing SMOTE.
+We find that both approaches can efficiently sample regions of interest
+with features like several disconnected regions
+or regions of low interest inside regions of high interest.
+In particular, we applied the two types of model to a 3-dimensional toy model
+using sphere-like shell regions as target space.
+We compared sampling in this toy model
+against results from other methods
+used to determine relevant regions in parameter space,
+namely MCMC (as implemented inemcee)
+and MultiNest.
+We found that, for both regressor and classifier,
+it is possible to achieve a uniform sampling
+of all regions of interest with comparable or better distribution.
+Moreover, for the classification model we found that using the SMOTE technique
+to balance the sampling of the classes
+can considerably improve the accumulation of points
+when compared to not applying any balancing method.
+To illustrate results for a HEP model,
+we sampled the parameter space of the 2HDM
+by integrating our iterative implementation with popular HEP packages
+that take care of calculating the theoretical and experimental results.
+We found that we can accumulate points on regions of interest, defined byranges, even when some parameters are narrowly distributed
+inside the scanned region.
+In particular, the classifier using the SMOTE technique to accelerate
+convergence of the model in the first few iterations
+can rapidly approach maximum efficiency.
+We compare against the efficiency obtained
+when sampling with MCMC and MultiNest.
+Expectedly, efficiency for our classifier is much higher
+since it is designed to concentrate on the target region.
+However, the use of neural networks and iterative training
+allow uniform sampling of parameters
+regardless of whether their distribution is wide or narrow.
+We finalize showing results for the sampled parameter space,
+including masses of the physical scalars
+and their obtained branching fractions.
+Note that there is plenty of space for extensibility,
+beyond the characteristics of the employed neural networks.
+For example, different types of problems
+may benefit from more sophisticated choices of points for training,
+using information like disagreement between the trained model
+and the full calculation.
+This possibilities are left for future improvement
+of the techniques described in this work.
+The code used for the examples presented here and corresponding documentation is freely available on the web777https://github.com/AHamamd150/MLscanner.
+
+SECTION: Acknowledgements
+
+This work is supported by NRF-2021R1A2C4002551. PS is also supported by the Seoul National University of Science and Technology.
+
+SECTION: References

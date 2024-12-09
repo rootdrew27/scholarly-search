@@ -1,0 +1,224 @@
+SECTION: A Theoretical Framework forAcoustic Neighbor Embeddings
+
+This paper provides a theoretical framework for interpreting acoustic neighbor embeddings, which are representations of the phonetic content of variable-width audio or text in a fixed-dimensional embedding space.
+A probabilistic interpretation of the distances between embeddings is proposed, based on a general quantitative definition of phonetic similarity between words.
+This provides us a framework for understanding and applying the embeddings in a principled manner.
+Theoretical and empirical evidence to support an approximation of uniform cluster-wise isotropy are shown, which allows us to reduce the distances to simple Euclidean distances.
+Four experiments that validate the framework and demonstrate how it can be applied to diverse problems are described.
+Nearest-neighbor search between audio and text embeddings can give isolated word classification accuracy that is identical to that of finite state transducers (FSTs) for vocabularies as large as 500k.
+Embedding distances give accuracy with 0.5% point difference compared to phone edit distances in out-of-vocabulary word recovery, as well as producing clustering hierarchies identical to those derived from human listening experiments in English dialect clustering.
+The theoretical framework also allows us to use the embeddings to predict the expected confusion of device wake-up words.
+All source code and pretrained models are provided.
+
+SECTION: IIntroduction
+
+Vector representations of words, called word embeddings, have been proven to be useful in diverse computational settings because any word of arbitrary length can be represented in a numeric form of constant length.
+Anacousticword embedding[1,2,3], in particular, captures how a word sounds, as opposed to a semantic word embedding that captures what a word means.
+The distance between any two embeddings represents their acoustic similarity, and has been applied to query-by-example search[3], lattice rescoring in automatic speech recognition (ASR)[1], and keyword spotting[4].
+A number of different embedding methods have been proposed in the literature.
+These include linear and nonlinear embedding transformations[2], extraction of embeddings from a sequence-to-sequence speech recognizer[5], transformation via convolutional neural networks trained with contrastive loss[6], likewise with recurrent neural networks[7], and unsupervised methods using recurrent audioencoders[8,9].
+Of particular interest to us is the training of an audio embedding network and a text embedding network in tandem such that an audio recording of a word would map to the same (or close) location in the embedding space as its corresponding text[10].
+
+Fundamental questions remain on how exactly acoustic word embeddings from neural networks, which specifically aim to represent speech, can modelphonetic similarity[11,12,13,14], and what the distances between embeddings truly represent.
+While a comprehensive discussion of all the different meanings of phonetic similarity is beyond the scope of this paper, we are largely interested in two perspectives of phonetic similarity: 1. Theacousticsimilarity in terms of what the speech signals are, and 2. Theperceptualsimilarity in terms of how the speech signals are perceived by humans.
+In either case, it is often taken for granted that acoustic word embeddings model such similarity in some way, with little further attempt at theoretical interpretation and illumination that could enhance our understanding.
+It is probably difficult to definitively show how an abstract space of vectors posited by a neural network coincides with a mathematical or psychoacoustic definition of phonetic similarity.
+However, in this paper we will show that with some quantitative assumptions and approximations, a connection can be established that allows us to gain better understanding on the interpretation and usage of an acoustic word embedding, and apply it to various problems in a principled manner with greater clarity and confidence.
+
+In particular, we will concern ourselves with a specific type of embedding learned via supervised training that we callacoustic neighbor embeddings111Previously appeared in a preprint article in 2020[15].
+The embedding is based on a modification of stochastic neighbor embedding[16], and has been applied to query rewriting in dialogue systems[17], embedding-matching automatic speech recognition (ASR)[18], and retrieval augmented correction of named entity errors[19].
+Like[10], our system gives rise to two broad types of embedders: An audio embedderthat transforms audio, and a text embedderthat transforms text.
+In our system, we further divide the text embedder into a phone embedder that transforms a sequence of phones (which we also refer to as “pronunciation”), and a grapheme embedder that transforms a sequence of graphemes.222We could furthermore have separate embedders for written-form graphemes (“I paid $5”) and spoken-form graphemes (“I paid five dollars”), but here we are tied to whatever text is provided in Libriheavy, which can mostly be regarded as spoken-form. It should also be noted that throughout this paper, a “word” can be any arbitrary string, such as “New York” or “A midsummer night’s dream,” because we regard the space character (“ ”) as another grapheme.
+
+We will begin our discussion with a fundamental quantitative definition of phonetic similarity.
+Next, we will describe how acoustic neighbor embeddings are trained, and show how they fit into our aforementioned definition.
+We give theoretical and empirical evidence that supports an approximation of constant cluster-wise isotropy, which allows us to use a simplified equation that justifies nearest-neighbor search based on Euclidean distances.
+A fundamental interpretation of the distance between an audio embedding and a text embedding, and the distance between two text embeddings, is proposed.
+Finally, we describe four different experiments using the Libriheavy[20]corpus in word classification, out-of-vocabulary(OOV) word recovery, dialect clustering, and wake-up word confusion prediction that demonstrate how the framework can be applied in diverse problem settings and also serve as a validation of the proposed framework.
+All source code and pretrained models333github.com/apple/ml-acn-embedare provided so that experiments can be replicated and models can be used for future research.
+
+SECTION: IIA Fundamental Definitionof Phonetic Similarity
+
+While the definition we chose for our framework is more easily understood as an acoustic similarity, we will later argue that it can also be a perceptual similarity.
+
+SECTION: II-AA hypothetical experiment
+
+We consider the hypothetical experiment concerning the two words“crater” and“creator”.
+We visit every English speaker in the universe and ask them to choose and speak one of the two words.
+The utterance is recorded, and labeled with the chosen word.
+If enough recordings are collected from enough speakers, we will eventually encounter a recording of “crater” that is exactly identical to another recording of “creator” (e.g. assume the recordings are in WAV format and are compared bit-by-bit).
+We can draw a Venn Diagram as in Fig.1(a), where such identical pairs are placed in the overlapping area of the two ovals.
+If we haverecordings of “crater”,recordings of “creator”, andidentical pairs, we define the phonetic similarity between “crater” and “creator” as the ratio between the number of identical pairs and the total number of recordings:444This ratio is like the Jaccard similarity, but using pairs instead of total counts in the numerator
+
+Sincecannot be negative, and is at most, the similarity in (1) is limited to the range.
+When the two words are totally different, no identical pair will exist, so the similarity metric will be.
+When the two words are the same (e.g. both are “crater”) and, all recordings will form identical pairs in the limit, so the similarity will be the maximum value.
+
+Since such an experiment cannot be carried out practically, we abstract the experiment in probabilistic terms.
+If we assume the audio recordings are projected onto a 1-dimensional acoustic feature spacewhere each sound is represented by a point, we can consider the audio recordings in a small rangein Fig.1(b).
+The number of recordings in this range is. Out of this number, the proportion of recordings for “crater” is, so the number of recordings of “crater” in the given range is.
+Likewise, the number for “creator” is.
+The number of identical pairs is the lower of the two numbers, which, in the case of the example location in Fig.1(b), is the latter.
+Since we want to do this over all possible values ofand compute the sum, it follows that the phonetic similarity defined in (1) is the area of overlap betweenandover, shown by the gray shade in Fig.1(b).
+Hence, we define the phonetic similarity, whereis the set of all model parameters, as
+
+where we have now generalizedto a multidimensional variable, and we note thatcan also be written as.
+
+Eq. (2) is the well-known Bayes Error Rate[21]for the two-class classification problem, where the two classes areand.555The Bayes Error Rate is easily extensible toclasses, but in this paper we will deal only with pairwise comparisons, and do multiple pairwise comparisons when there areclasses (e.g. see Sec.V-D).The more similar the acoustic observations ofand, the harder it is to discriminate between them, and therefore the higher the classification error rate.
+Two caveats are worth noting when discussing the Bayes Error Rate: 1. The features must be sufficiently discriminative (e.g. ifis simply signal energy, there would always be very large overlap in Fig.1(b)for any pair of words and the similarity metric would be useless), and 2. we almost never know the true probability distributions in Fig.1(b), and all the distributions we use in practice are only estimates.
+Even if we are able to exactly evaluate the integral in (2), we would be obtaining anestimatedsimilarity.
+
+Note that (1) and (2) are affected by the choice of the total countsand, which is equivalent to choice of priorsand.
+The choice of priors is application-dependent.
+If the speakers in our hypothetical experiment are allowed to freely choose between the two words, the priors are unigram stochastic language model (LM) probabilities.
+In most cases, however, it is reasonable to assume equal priors, i.e., we flip a fair coin to decide which word should be spoken by each hypothetical speaker such that, in the limit,and.
+In all the applications discussed in the rest of this this paper, we will assume equal priors in (1) and (2).
+Note that LMs can still be later combined with our framework in a different manner (e.g. SectionV-E).
+
+SECTION: II-BApproximation of phonetic similarity
+
+In general, the similarity measure in (2) is not analytically tractable (e.g. one could use kernel density estimation methods[22]).
+A well-known upper bound is the Bhatacharyya Bound[21], which we use as an approximation:
+
+A closed form equation exists for the RHS of (3) whenandare Gaussian with meanandand covariancesand, respectively[21]:
+
+where we have also assumed equal priors forand.
+Furthermore, if the two distributions areequally isotropic, i.e., both covariance matrices equalwhereis a constant variance andis the identity matrix, the Bhatacharrya Bound simplifies to
+
+SECTION: II-CRelation to asymmetric confusion probabilities
+
+We digress for a moment to note that, compared to the symmetric similarity in (2), a popular notion of asymmetric phonetic confusion[23]is usually formulated as a conditional probability[24]where given an utterance labeled, we ask what is the probability of the utterance being classified as.
+A phonetic confusion matrix can be constructed from estimates of the conditional probabilities, via physical human listening experiments[23]or by gathering statistical data on an ASR’s misrecognitions[25].
+However, such methods are usually only limited to pairs of single phones, and are hard to scale directly to arbitrary sequences of phones without relying on further heuristics (see SectionV-C).
+
+In the case of the two words in Fig.1(b), it is straightforward to see that the left half of the area of overlap will be the probability of the utterance being classified asgiven that it is, and the right half of the overlap will be the probability of classification asgiven that the utterance is.
+If we assume equal priors and variance, both halves are also equal, and the conditional confusion is the same as our similarity metric in (2).
+Note, however, there can be another subtly different way of measuring the confusion, which is to measure the probability that an audio signal labeled asis labeled asin the training data.
+In this case, we have a different formulation:
+
+Even with the assumption of Gaussianity, it is hard to find a closed form approximation for (6).
+In this paper, we will not concern ourselves with asymmetric confusion probability and focus only on the similarity metric in (3), (4), and (5).
+
+SECTION: IIIAcoustic Neighbor Embeddings
+
+SECTION: III-AReview of stochastic neighbor embeddings
+
+Stochastic neighbor embedding (SNE)[16]is a method of reducing the dimensions of vectors in a set of data while preserving the relative distances between vectors.
+Given a set ofcoordinateswhere eachis a multidimensional vector, we train a functionthat maps eachto another vector of lower dimensionswhere the relative distances among the’s are preserved among the corresponding’s.
+The distance between two pointsandin the input space is defined as:
+
+for some scale factor.
+The probability of“choosing”as its neighbor in the input space is defined as:
+
+In the embedding space, a corresponding “induced” probability is defined as
+
+The loss function for trainingis the Kullback-Leibler divergence between the two distributions:
+
+which can be differentiated to obtain
+
+SECTION: III-BAudio embedder training for acoustic neighbor embeddings
+
+Acoustic neighbor embeddings are obtained by training audio embedders using a loss function similar to that of stochastic neighbor embeddings, with the following two key differences:
+
+The transformation is applied to variable length sequences instead of vectors, such that instead of projecting a vectorto a vectoras in SNE, we project asequenceof vectorsto a single vector.
+
+SNE has no notion of labels, only distances in the input space. We, on the other hand, have only labels, and assign binary distances in the input space based only on whether samples have the same label or not.
+
+Assuming a training data set ofutterances of variable length, the’th utterance is described bywhereis a sequence of acoustic feature vectors,is a sequence of phones (e.g. [g, uh1, d, jh, aa1, b]), andis a sequence of graphemes (e.g. [g, o, o, d, _, j, o, b] where _ indicates a space character).andrepresent the reference transcription of, and can all have different lengths.
+Typically, onlyis originally available, and we obtainby force-aligning the audio againstusing a DNN-HMM hybrid ASR with a pronunciation dictionary.
+The vectors inmay be any known acoustic features such as MFCCs[26]or filterbank outputs.
+In our implementation, we used the outputs of a monophone DNN-HMM hybrid acoustic model – which are the phone-wise posteriors at every frame, also called posteriorgram[27]– as our acoustic features.
+This allows the actual acoustic embedder networkto be small, since speaker and channel normalization is already done by the DNN-HMM acoustic model.
+
+Since eachis a sequence, the Euclidean distance in (7) is not applicable in our input space.
+Instead, for each pair of pointsand, we assign a binary distance based on whether their phone transcriptionsandare exactly the same or not (see SectionIV-Cfor further discussion on the use of a binary distance instead of the edit distance):
+
+The distance in (12) results in the following input probability for (8):
+
+whereis the number of utterances (other than the’th) that have the same subword sequence.
+In the embedding space, we use the same induced probabilityin (9), and we apply the same loss functionin (10) to train the neural network.
+
+Since our training data consists of millions of utterances, it is not possible to optimize the loss in (10) over the entire data.
+Instead, we divide the data into random, fixed-sizemicrobatches, where each microbatch of sizehas a random “pivot” sample, and for the remainingsamples there is at least one sample that has the same transcription as the pivot.
+For further simplicity, instead of computing the loss in (10) over all possiblepairs in the microbatch, we fixto, so that we only consider pairs that include the pivot.
+For each microbatch, we have:
+
+and the overall loss that we minimize (via minibatch training) is the average microbatch loss.
+We show examples of this construction in AppendixA.
+
+SECTION: III-CText embedder training
+
+Once we have fully trained, we train a text encoder(s)such that its outputfor every subword sequence will match the output offor audio samples that have that subword sequence.
+For a phone encoder, said subword sequence is, whereas for a grapheme encoder, it is.
+We apply a mean square error loss for this purpose:
+
+In the ideal case, the mean square error criterion will cause the embedding for a given text to converge to the mean of all the audio embeddings with that text label in the training data:
+
+whereis the audio embedding trained in SectionIII-B.
+
+SECTION: IVInterpretation of the distances
+
+SECTION: IV-AApproximation of constant cluster-wise isotropy
+
+If we assume that each cluster of audio embeddings for a given word takes on a Gaussian distribution, we can directly apply (3) to compute the approximate phonetic similarity between words, where the distribution means are the text embeddings for each cluster.
+However, it is generally hard to reliably estimate full covariances.
+If we can make a further approximation that all the clusters areequally isotropic, we can use the much simpler form in (5).
+We are highly motivated to make this approximation because the reduction to a Euclidean distance simplifies computation and allows us to exploit many large-scale nearest neighbor search techniques[28,29,30].
+While it is difficult to prove formally how isotropic our embedding clusters are, in AppendixBwe show theoretical and experimental evidence that partially supports our approximation of equal cluster-wise isotropy666Not to be confused withglobalisotropy[31].
+We redraw Fig.2(b)as Fig.3, where each cluster of audio embeddings for each pronunciation has an isotropic distribution, all of equal size.
+
+Strictly speaking, because the audio embedder is trained using the phone-based label in (12), the isotropy assumption in (5) only holds for the phone embedder, not the grapheme embedder.
+To better ensure isotropy in the grapheme embeddings, one would need to train a new audio embedder usingandin (12).
+However, every time a new audio embedder is trained, the embeddings can change completely.
+Using the same audio embedder to train both the phone and grapheme embedders has the added benefit of making all three embedders consistent with each other, allowing applications to use phones and graphemes interchangeably.
+
+SECTION: IV-BTwo fundamental distances
+
+In summary, we characterize the Euclidean distance between embeddings as follows, whererepresents the parameters for all our neural network embedders:
+
+When computing thedistance between an audio embeddingand a text embeddingfor a word, we are in effect evaluating a Gaussian acoustic likelihood:
+
+When computing thedistance between two text embeddingsandfor two wordsand, respectively, we are in effect computing the phonetic similarity betweenand:
+
+In many applications, we do not need to knowand can drop most of the operations in (17) and (18), which leaves us with only thedistances.
+
+SECTION: IV-CBinary distances in the input space
+
+Returning to the hypothetical experiment in Sec.II-Aand the fundamental definition in (1), we see there is no need to assign explicit distances and similarities in the input space in (12) and (13).
+The hypothetical experiment imposes only a binary label to each recording (e.g. each speaker simply declares their utterance as either “crater” or “creator”, never “75% crater and 25% creator”), and cares only about the proportion of times the same audio is labeled as “crater” versus “creator.”
+Likewise, in (13) the same audio input will sometimes be assigned a positive score for some wordand sometimes a positive score for some word.
+As long as we have a sufficient amount of data, many such training samples will exist for the same audio input, and the samples’ binary labels will “compete” against each other in (26).
+We will eventually reach some equilibrium state where the location of the embedding reflects the proportion of times the embedding belongs to each cluster.
+In fact, we observed significantly worse experimental results when we tried to enforce some prenotion of similarity by settingusing dynamic time warping (DTW) betweenand(in a manner similar to[27]) or the edit distance betweenand.
+The simple binary distance in (12) always gave the best result.
+A related observation was made in[6]where a neural network trained on binary labels indicating whether a pair of words are the same or different outperformed dimension reduction techniques applied to DTW-based reference scores[2].
+
+SECTION: IV-DAcoustic vs. perceptual similarity
+
+If the feature spacein Eq. (2) is based on a model of perception (such as mel-frequency warping[26]in the energy filterbanks in our acoustic frontend), it can be argued that the acoustic similarity measure is also a perceptual similarity.
+Furthermore, it can be generally argued that any statistical speech model trained on human-transcribed or human-read speech is perceptual – albeit to varying degrees – since the training audio is already labeled and organized according to how it is perceived by humans.
+Even if we used pure WAV bits to compute the similarity in (1), the similarity function would have perceptual properties because the data samples and labels in Fig.1(a)come from humans.
+If the speakers in the hypothetical experiment in Sec.II-Awere aliens who perceived sound waves differently from humans, for instance, and as a consequence voiced the words differently, the similarity measure would result in a different value.
+One experiment that supports our argument that our similarity is perceptual is described in Sec.V-D.
+
+SECTION: VExperiments
+
+In this section, we discuss four experiments using acoustic neighbor embeddings to demonstrate how to apply the proposed theoretical framework as well as provide evidence of its validity, as summarized in Tab.I.
+Implementation details that are too numerous to describe here can be found in the source code.
+We used the Libriheavy[20]corpus for all audio data and corresponding transcriptions.
+Where applicable, we also used the Kaldi[32]speech recognition toolkit, PyTorch[33], the Carnegie Mellon Pronouncing Dictionary[34], and the LibriSpeech[35]pronunciation lexicon, grapheme-to-phone (G2P) model, and LMs[36].
+
+SECTION: V-AData preparation and embedder training
+
+From the Libriheavy “large” data, we randomly extracted four non-overlapping sets of utterances:TR-A,TR-B,CV, andEXP, as shown in Table.II.
+Due to limitations in the G2P, we excluded any utterances containing Arabic or Roman numerals.
+First, a conformer[37]DNN-HMM hybrid acoustic model[38]that converts 80 mel filterbank features to 5,744 HMM-state-level framewise posterior scores was trained usingTR-Adata and a cross-entropy loss.
+The network had 10 heads, 23 layers, 300 internal embedding dimensions, a kernel size of 31, and a total 50M trainable parameters.
+When used with the LibriSpeech3-gram.pruned.1e-7[36]LM without further rescoring, the hybrid AM had word error rates (WERs) of 4.9% and 10.3% on the Libriheavy “test-clean” and “test-other” data.777Earlier versions of this hybrid model were also used to scrub the “large” data so that utterances that failed force alignment against the transcriptions (usually due to mismatch between audio and text) would be discardedThis hybrid AM was used to force-align theTR-Atraining data to the reference transcriptions to obtain frame-wise monophone sequences, which were used to train a second conformer DNN-HMM hybrid acoustic model – with identical configuration as the first model except the final linear layer – that outputted 70 monophone posterior scores (69 non-silence ARPAbet phones[36]+ silence phone) and had a total 48M trainable parameters.
+When used in the same manner as the first hybrid AM, the monophone AM gave WERs of 8.6% and 14.8% on “test-clean” and “test-other,” respectively (there was significant degradation due to the reduced outputs).
+This monophone model served as the acoustic frontend for the proposed audio embedder.
+
+To prepare training samples for the embedders, we estimated a distribution of input lengths for the English language using the LibriSpeech3-gram.pruned.1e-7LM and G2P[36].
+The probability of an utterance having a pronunciation of lengthis
+
+whereis a sequence of words,is a pronunciation,is the set of all words with pronunciation, andis the set of all pronunciations with length (number of phones).

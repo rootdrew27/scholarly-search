@@ -1,0 +1,587 @@
+SECTION: Fast and flexible range-separated models for atomistic machine learning
+
+Most atomistic machine learning (ML) models rely on a locality ansatz, and
+decompose the energy into a sum of short-ranged, atom-centered contributions. This
+leads to clear limitations when trying to describe problems that are dominated by
+long-range physical effects – most notably electrostatics. Many
+approaches have been proposed to overcome these limitations, but efforts to
+make them efficient and widely available are hampered by the need to incorporate an ad
+hoc implementation of methods to treat long-range interactions. We develop a framework
+aiming to bring some of the established algorithms to evaluate non-bonded interactions –
+including Ewald summation, classical particle-mesh Ewald (PME), and particle-particle/particle-mesh
+(P3M) Ewald – into atomistic ML.
+We provide a reference implementation forPyTorchas well as an
+experimental one forJAX. Beyond Coulomb and more general long-range potentials, we introduce purified descriptors which disregard the immediate neighborhood of each atom, and are more suitable for general long-ranged ML applications. Our implementations are fast, feature-rich, and
+modular: They provide an accurate evaluation of physical long-range forces that can
+be used in the construction of (semi)empirical baseline potentials;
+they exploit the availability of automatic
+differentiation to seamlessly combine long-range models with conventional, local ML
+schemes; and they are sufficiently flexible to implement more complex architectures
+that use physical interactions as building blocks.
+We
+benchmark and demonstrate ourtorch-pmeandjax-pmelibraries to perform
+molecular dynamics simulations, to train range-separated ML potentials, and to
+evaluate long-range equivariant descriptors of atomic structures.
+
+SECTION: IIntroduction
+
+Machine learning (ML) has become essential in atomistic simulations, especially as a
+surrogate for quantum mechanical methods like density functional theory (DFT). Early
+works by Behler and Parrinello[1]and Bartók et al.[2]demonstrated that ML models are able to predict the energy and forces of an atomic
+structure at close to DFT accuracy with significantly reduced computational cost.
+Since then, the field has rapidly expanded in many directions: On one hand, various
+architectures including kernel-based approaches[2,3,4]and message-passing neural networks have emerged to further improve accuracy and
+efficiency[5,6,7,8,9].
+Furthermore, beyond just the energy or other rotationally invariant target properties,
+the field has seen the rise of equivariant model architectures that can also handle
+tensorial target properties such as dipoles and polarizabilities[10,11,12],
+the electron
+density[13,14,15], the Hamiltonian
+operator[16,17]and many-particle wavefunctions[18,19,20]. Thanks to
+the mathematical field of representation theory, there is now a systematic understanding
+about how to incorporate any type of behavior under rotations in ML models[21,22,23].
+
+Despite these advancements, a persistent limitation in many of the ML models is the use
+of finite cutoff radii, which had been justified in terms of the “nearsightedness of
+electronic matter”[24,25]. While this
+allows for efficient methods with computational costs that scale linearly with the
+number of atoms, the trade-off is the introduction of systematic errors in scenarios
+where long-range interactions play a crucial role. For instance, electrostatic
+interactions from the direct Coulomb potential to induced multipolar interactions are critical in ionic and polar materials, affecting dielectric constants,
+phonon spectra, and structural stability[26,27,28]. Dispersion (van
+der Waals) forces are equally vital in layered materials, molecular crystals and
+interfaces, as they contribute to cohesion and adhesion energies[29,30,31].
+Ignoring these interactions
+in ML models restricts their applicability.
+
+This work presents libraries for thePyTorchandJAXframeworks that implement efficient methods for computing a family of long-range features as well as classical long-range energy corrections in an automatically differentiable manner. Due to the use of popular and flexible ML libraries, the features can easily be integrated into any pre-existing ML framework for invariant and equivariant target properties, with or without gradients.
+
+Insection II, we begin by providing an overview of the scientific background concerning algorithms for long-range electrostatics developed by the molecular dynamics (MD) community, as well as long-ranged ML methods.
+Insection III, we discuss some of the specific technical choices and the core features of our implementation.
+Insection IV, we demonstrate and benchmark in several different use cases our referencetorch-pmeimplementation, providing also some comparisons with its more experimentaljax-pmecompanion.
+
+SECTION: IIBackground
+
+Long-range interactions are not new to ML, and have in fact already been studied
+extensively since the outset of traditional atomistic simulations. Here we briefly summarize the key ideas.
+
+SECTION: II.1Notation and Conventions
+
+We focus the discussion in this subsection on the Coulomb potential, and define the bare (or full) potential function
+
+for, even though the general setting of the problem applies to any pair potential, and we will discuss a few concrete cases of other-type interactions.
+In a system ofatoms with positionsand weights (charges)for, the Coulomb potentialat the location of an atomand the total energyof the system can be defined as
+
+whereis the distance between atomsand, and we also include the factor ofto account for double-counting directly in the definition of.
+
+We can extend the atomic potentials to periodic systems by also including all interactions with periodic images of the atoms. Thus,
+
+whereruns over the lattice vectors of the periodic cell. The sum overalso includesin the periodic case to take into account the interactions between atomand its own periodic images. For this special case of, the prime symbol in the second summation sign indicates that the term withshould be omitted.
+
+While conceptually straight-forward, this definition of the potential in periodic space is problematic for the Coulomb potential since its slow decay makes the sum overconditionally convergent. A naive implementation (such as spherical summation) does not even converge in the first place[32].
+
+SECTION: II.2Ewald Summation
+
+The Ewald summation, published in 1921, remains a foundational method that effectively defines how
+to extend this computation to periodic systems[33]. The proposed solution is to perform a range-separation of the Coulomb potential: We write
+
+whereis a “smearing” parameter that defines the range-separation and() is the (complementary) error function(and). The first termcontains the singularity of the Coulomb potential asand decays quickly as. Thus, we call this the short-range part of the Coulomb potential.on the other hand decays asasjust like the Coulomb potential, but remains smooth and finite for. We call it the long-range part of the Coulomb potential. The transition between the two happens roughly at. We will shortly discuss how to choosein practice.
+
+Using this range-separation, the potential of atomcan be written as
+
+Due to the fast decay of, the sum overandin the first term converges quickly. We can thus efficiently implement it by introducing a cutoff radius, and only summing up the contributions up to this distance.
+
+The second sum is still conditionally convergent, sincecontains the slowly decaying behavior of the Coulomb potential. However, since the singularity ashas been removed,is now a smooth function and hence has a quickly decaying Fourier transform given by
+
+is the norm of the reciprocal space vector.
+
+We can now use the Poisson summation formula, which allows us to convert a sum over a periodic lattice into a dual sum in reciprocal space. The details on the used conventions for Fourier transforms and a proof of the Poisson summation formula for the convenience of readers can be found inLABEL:si-sec_conventionsof the supporting information. The final result for the potential of atomis
+
+whereis the volume of the unit cell, the sum overis a sum over all nonzero reciprocal space lattice vectors andis the total charge of all atoms in the unit cell. We have kept the overall factor ofthat arises from double counting at the front for better comparison with results from some authors which omit this factor. The extra termis required to enforce charge neutrality, a requirement of the method. If the provided chargesdo not lead to a charge-neutral cell, a homogeneous background charge is added to the system to ensure overall neutrality in the unit cell. The term is then the interaction between an atom and this background charge.is the self-term which compensates the interaction of an atom with itself via, which is an artifact of the reciprocal space sum.
+
+Due to the fast decay ofas, the long-range sum can now also be computed efficiently by choosing a cutoffand truncating the sum by only including terms for which. The naive Ewald algorithm has a computational cost scaling quadratically with the number of atoms,,
+while optimizations – lettingscale with the size of the unit cell – can bring the exponent in the scaling down to[34].
+
+SECTION: II.3Generalization to Arbitrary Exponents
+
+Beyond the Coulomb potential, this work has been extended a few decades later to other
+interactions, including more general power-law potentialswith an
+interaction exponent[35,36,37,38]. The Coulomb interaction corresponds to, while dispersion corresponds to. Summarizing their results using our
+conventions and notations, the range-separationis
+performed using
+
+whereis the (complete) Gamma function,is the upper incomplete Gamma function andthe lower incomplete Gamma function.
+Up to a prefactor, we see that the functional form ofis identical to, the difference being thatgets replaced byandby. This high degree of symmetry is one reason that makes this particular choice ofefficient. Note that some packages likePyTorchimplement the incomplete Gamma functions with an extra prefactor.
+
+To get the atomic potentials, the decomposition
+
+is still valid, where the first two terms are computed using the identical method but using the generalized expressions forand, while
+
+SECTION: II.4Mesh-Based Approaches
+
+The Ewald sum provided the first absolutely convergent formulation for the potential in a periodic system, and remains important to this day. It suffers, however, from a relatively inefficient computational scaling with the number of atoms. Thus, many algorithms have been developed to significantly reduce the computational
+cost of the Ewald sum, enabling the use of long-range methods for the simulation of
+large-scale systems. The most important family for this work consists of the
+particle-mesh methods, such as particle-particle
+particle-mesh (P3M) which was published first[39,40], the original particle mesh Ewald (PME)[41]and its extension called smooth PME (SPME)[42]. These are based on
+the fast Fourier transform (FFT), and bring the asymptotic scaling of the computational cost down to. Due to the use of Fourier transforms, they assume
+periodicity in the system just like the Ewald sum, but can also be used for aperiodic systems with some
+care and modifications.
+
+The key idea is that the two sums appearing inEquation 13can “almost” be interpreted as discrete Fourier transforms: We can in fact break down the computation ofinto the two sums
+
+BothEquation 22andEquation 23look quite similar to Fourier transforms, but with one key difference: The positionsandare in general not equally spaced. Thus, despite the apparent similarity, these cannot directly be computed using algorithms for the discrete Fourier transform.
+
+The similarity however motivates the following trick: In order to use the efficient FFT algorithm, we can interpolate the weightsonto an equally-spaced mesh. This generates an effective (charge) densitythat is only defined on the mesh. While this changes the position of the particles, and hence introduces discretization errors, the regular nature of the particle positions now allows us to compute the appropriately modified versions of bothEquation 22andEquation 23efficiently using three-dimensional FFT. The computational cost typically scales as, assuming a fixed mesh spacing and that the system volume is proportional to the number of atoms. This general description and scaling is common to all mesh-based methods.
+
+The PME, P3M and SPME methods simply differ in (1) the choice of interpolation scheme between the particle positions and the mesh, (2) the particular choice ofthat is used inEquation 23, and (3) the method to perform the differentiation to compute the electric field or forces. We briefly summarize the first two key distinguishing points for PME and P3M, as these are particularly relevant for this work. Deserno and Holm[40]provide a more detailed discussion for each of these.
+
+The original version of PME[41]is the simplest for both (1) and (2). The interpolation is performed using (piecewise) Lagrange interpolation, a well-known technique in numerical analysis[43]. Furthermore,remains the same as for the Ewald summation,Equation 10for Coulomb andEquation 18for the general case. It can in fact be shown that for this choice of, the Lagrange interpolation scheme is optimal regarding the discretization errors arising due to the mesh[40].
+
+This is the simplest of the three variants to implement, and therefore serves as a convenient testing ground for new implementations. One key downside, however, is that the interpolation scheme leads to non-smooth behavior or even discontinuities, making the method less suitable for our approach that fully exploits the autodifferentiable nature ofPyTorchandJAX. The authors of PME have in fact addressed this issue by presenting the SPME algorithm just two years after the original version[42].
+
+The P3M algorithm, despite being more complex than the original PME, was historically presented first. It is widely used due to its superior accuracy[40]. The key idea is that in a periodic system, the effective Coulomb potential is different than in vacuum due to the periodic neighbors. This is what suggests a modification ofby taking into account the periodic cell. Since the crystal lattice breaks rotation symmetry,no longer is spherically symmetric and now depends on the three-dimensional vectorrather than just its norm. In practice,is obtained by minimizing an estimated force error due to discretization. P3M further uses a custom interpolation scheme that is obtained from requiring a smoother interpolation. The combination of the interpolation scheme and optimizedmakes P3M more accurate, and hence a popular choice despite its higher complexity compared to naive PME.
+
+Beyond the mesh-based ones, many other algorithms have been developed to efficiently compute electrostatic interactions, including the fast
+multipole method that was the first linearly scalingmethod for
+electrostatics[44,45]. Despite the better asymptotic
+scaling, the larger prefactor typically makes the particle-mesh methods more suitable
+for system sizes relevant to our field, which is why we focus on the latter in this work.
+
+SECTION: II.5Long-Range ML Models
+
+Inspired by these developments for long-range interactions in the last century, it has become increasingly popular
+for ML models in atomistic modeling to incorporate long-range corrections as well. In fact, one
+of the founding works by Bartók et al.[2]already included an explicit
+dispersion term in the prediction of the energy for GaAs structures. A similar strategy
+has been used by many subsequent works[46,47,48,49,50], in which the energy and optionally the forces of
+a structure are predicted as the sum of a more sophisticated ML part, and an explicit
+long-range term of the form. Typically, each chemical species is assigned a fixed weight (or charge in the case of Coulomb interactions) in these interactions. This makes it simple
+to train the models, and has the advantage that it can be combined with essentially any
+model architecture.
+
+In the last five years, the field has also seen the rise of more sophisticated
+approaches going beyond simple point charge models to handle more complex datasets. One
+extension is to make the particle weights or charges themselves dependent on the atomic
+environments[51,52], and to learn this relationship directly
+from the data. Alternatively, it has been proposed to learn the Wannier centers[53,54]. This allows the center of the electron
+charge to be different from the positively charged ion, naturally capturing dipolar
+effects. Alternatively, it is possible to learn electronegativities rather than the
+charges, and to compute the charges from a subsequent charge equilibration scheme[55,56,57,58]. This approach has the advantage that the final charges can
+depend on atoms beyond a local cutoff, and hence can capture nonlocal charge transfer.
+A general property of these methods is that they are most naturally designed to have the
+energy (and forces) as the target property. This specialization makes the methods very
+powerful for this task, but less suitable to other target properties. In addition, the
+original implementation lacked efficiency and scalability, but this was recently
+resolved by also using a mesh paradigm[58]improving the
+scaling significantly.
+
+While these approaches work well to incorporate the energy corrections, there is one common deficit: The fact that the
+Coulomb potential (or more general power-laws) at the position of an atom, despite being a long-range property that
+also depends on atoms that are far away, is still primarily determined by neighbor atoms
+that are close by. This makes such potentials ill-suited to be used as a truly general
+long-range descriptor.
+
+An alternative approach, developed by some of the authors in this work, emphasizes
+constructing general equivariant features that encode long-range on top of short-range
+information, rather than focusing directly on the energy as a target property[59,60,61]. These
+long-distance equivariant (LODE) features can be applied in various ML models to predict
+a range of target properties, from scalar invariants to higher-order equivariants. While
+prior studies have primarily explored the method’s capabilities, the implementation used
+an Ewald-like summation approach[61], leading to anscaling. This quadratic scaling limits the method’s applicability to
+larger systems. As already mentioned, LODE in its original formulation is not a range-separated descriptor, but
+contains all short-range and long-range contributions of a system, which limits its
+descriptive power. However, this can be resolved by constructing a modification of the original formulation that only includes long-range information[61,62]. In addition, recently there is
+strong evidence[58,63,64]that using a full spherical
+expansion of the potential is not necessary to describe long-range effects in machine learning models,
+but so far there is no rigorous investigation of these observations.
+
+SECTION: IIIMethod
+
+Our primary goal is to design a library to compute long-range interactions that can be easily integrated with existing short-range architectures, essentially providing an easy-to-use framework to build
+range separated models for atomistic machine learning.
+To this end, our referencetorch-pmelibrary provides
+
+A modular implementation of range-separated potentials,
+
+Full integration withPyTorch, featuring differentiable and learnable
+parameters,
+
+Efficient particle-mesh-based computation with automatic hyperparameter tuning,
+
+Pure long-range descriptors, free of noisy short-range contributions,
+
+Support for arbitrary invariant and equivariant features and ML architectures.
+
+We discuss these features in general terms, without focusing too much on the specific API, because similar ideas can be readily implemented with other ML frameworks, as we are currently doing with an experimentaljax-pmelibrary.
+
+SECTION: III.1A modular implementation of range-separated models
+
+As discussed insection II, the key concept underlying all efficient methods to model long-range interactions is to split the calculation of the pair interactions between two particles into a short and
+long-range parts, i.e.. The short-range part,
+that decays to (effectively) zero beyond a set cutoff distanceis
+computed summing over the neighbors of each particle. The required pair distancesfor the short range part have to be calculated with an externalNeighborlistcode, which is also needed for any short-range component of a ML model, and can be easily precomputed during training.
+The long-range part is
+computed in-space, based on its Fourier transformand requires
+the absolute position vectorsas well as the particle weights(that correspond to charges for an electrostatic potential).
+Furthermore, the methods with an efficient scaling in the asymptotic limit, such as PME
+or P3M, convert the particle-based description into a smooth particle density,
+discretizing it on a real-space mesh, and using fast Fourier transforms to
+perform a Fourier convolution.
+
+These ingredients can be used for more general tasks than computing explicitly physical
+interatomic potentials. To make this possible, the implementation we propose follows a
+modular design, in which aPotentialclass exposes methods to compute,,,; aMeshInterpolatorconverts particle positionsand pseudo-chargesinto a density mesh, and vice-versa interpolates a scalar field defined
+on the mesh at arbitrary positions; aKSpaceFilterperforms the Fourier-domain
+convolution.
+
+These elements can be combined in aCalculatorobject that applies one of the
+classical algorithms to compute long-range interactions, evaluating the potential at the
+atomic positions,(seeFigure 1).
+However, the same modular
+components can also be used in more complex ways.
+For example, users can compute descriptors
+based on the local potential in a neighborhood around each atom, such as LODE[59,61]features (subsection IV.5).
+As long as all components are implemented within an
+auto-differentiable framework, both the base calculators and any custom architecture
+allows to easily evaluate derivatives of the predictions with respect to particle
+coordinates, cell matrix, and model parameters.
+
+SECTION: III.2Fully Differentiable and Learnable Framework
+
+The integration of long-range calculators with ML libraries built around automatic evaluation of gradients enables seamless differentiation and parameter
+optimization, making them easy to combine with anyPyTorch- andJAX-based ML model.
+This includes optimizing parameters such as the particle weightsand even the type of
+interaction itself by e.g. parametrizing the interaction as, where,, andare learnable. This flexibility is illustrated for both simple toy systems (subsection IV.3) and complex model architectures (subsection IV.4).PyTorchuses automatic differentiation to efficiently obtain gradients of target properties. This makes the implementation of models that learn both the energies and forces effortless.
+
+SECTION: III.3Hyperparameter Tuning
+
+Range separated calculations like Ewald and its mesh-based variants require careful distribution
+of the computational load between the real-space and the Fourier space contributions. This is relevant both for computational performance
+and correctness; poor choices of parameters can lead to severe errors of the potential and the forces. This
+includes parameters like the mesh spacing and the real-space interaction cutoff.
+UsingPyTorch’s optimization capabilities, the package comes with a built-in tuning
+functionality that simplifies the process for non-experts for the Coulomb potential
+based on known error estimates for the force error[65,66].
+To this end, the relevant parameters, which we call, are optimized to minimize the
+estimated absolute convergence errorsin the forces below
+a target accuracy.
+
+The accuracy can be set by the user, with some default
+suggestions. The minimization is performed using gradient descent starting from an
+initial guessobtained from heuristics. The force error
+estimatealso depends on the algorithm used, as it is different for Ewald
+summation, PME, and P3M. Further details and the concrete mathematical expressions can
+be found inLABEL:si-sec:accuracyof the supporting information. Benchmark results
+insubsection IV.1demonstrate and compare the obtained accuracy
+with the desired value, as well as the resulting speed.
+
+SECTION: III.4Exterior potential features
+
+When computing physical interactions, the potential generated on a central atomby a set ofatoms with weightsat at distancescan be expressed as
+
+whereis the exponent associated with the interaction, e.g.,for Coulomb andfor dispersion forces.
+The sum can be performed explicitly for a finite system, while a more general definition is necessary in the periodic case, as discussed insection II.
+This atom-centered potential contains information on the position of atoms in the far-field. It is however not an ideal descriptor of long-range interactions: Despite being physically motivated, it also contains unwanted short-range effects from particles in the vicinity of the atom of interest.
+
+In practice, short-ranged ML models are already excellent at extracting short-ranged
+information from neighbor atoms up to a cutoff radius.
+To realize “range-separated”, multi-scale models, it is therefore preferable to obtain purely long-ranged features.
+To this effect one can introduce “exterior potential features” (EPFs)
+
+that eliminate the contributions from atoms within the cutoff, that are already well-modeled by the short-range part of the model (seeFigure 2A and B). The transition functionessentially eliminates the contribution from interior atoms, but does so in a smooth way to ensure the differentiability of the features as atoms leave or enter the interior region. It is explicitly given by
+
+with some exponentthat controls how quickly the contributions of the interior atoms vanishes as they approach the cutoff.
+
+To illustrate the benefit of the exterior variant, consider the electrostatic (Coulomb)
+potential generated by a one-dimensional chain of Gaussian charge distributions.Figure 2C shows the full variant, while D corresponds to the exterior
+variant. The stark difference in the two curves around the location of the center atomshows that even for the very slowly decaying Coulomb potential, the potential around
+an atom is most strongly influenced by the immediate neighbors. If the goal is to obtain
+long-ranged features to combine them with a short-ranged model, we can see that the
+exterior variant offers a clean signal, while the full potential features are
+contaminated by the redundant short-range contributions.torch-pmeprovides an implementation of this idea, similar to a construction that has already been used in our previous
+work[61]. This is a key difference with approaches that are based on the explicit modeling of physical interactions.
+
+SECTION: III.5Implementing range-separated ML architectures
+
+There are two main approaches one can take to incorporate long-range terms in an ML
+architecture. One involves re-purposing traditional range-separated calculators to
+evaluate potential-like values at the atomic positions, and combine them with
+short-range model architectures to compute short-range interactions, atomic
+pseudo-charges, or arbitrary non-linear combinations of local descriptors and
+atom-centered potentials. Given that the atom-centered potential values are (in the
+limit of a converged mesh) translationally and rotationally invariant, this approach can
+be easily applied to make invariant or equivariant predictions. In addition, a full
+separation of a short and long-range model allows that with an appropriate architecture
+one can safely use multiple time stepping schemes to further reduce the overhead
+stemming from the long-range evaluation[67,68].
+
+The second approach exploits the fact that mesh-based range-separated calculators return
+the potential values on a grid that covers the entire system. This makes it possible to
+evaluate equivariant atom-centered features (along the lines of the LODE
+framework[59,61]) and
+combine them with equivariant local descriptors within an equivariant architecture.
+
+Even though the latter approach is more general (and can be used, for instance, to describe
+many-body non-covalent interactions[61])
+analytical considerations indicate that the most important information on long-range
+pair interactions is contained in the invariant part of the descriptors (see also the SI
+for a more thorough discussion). For this reason, the core components of the library we
+developed focus on the evaluation of invariant features, which facilitate constructing
+fast, flexible and streamlined range-separated models. Nevertheless, thetorch-pmeAPI
+does allow to evaluate fully equivariant LODE features quite easily, as we show insubsection IV.5.
+
+SECTION: IVBenchmarks and Model Architectures
+
+Having discussed some of the general principles, and the overall structure of our implementation, we now move on to discuss some practical examples and benchmarks.
+If not
+stated otherwise, all presented results are obtained using thetorch-pmeimplementation in single precision. Insubsection IV.1we begin by
+presenting benchmarks on the speed and accuracy of the implementation.
+To further
+validate the correct behavior of the “full potential” for more complex systems,subsection IV.2presents MD trajectories in which our algorithms have been used to
+compute the electrostatic forces via a LAMMPS interface, and compare the results against
+LAMMPS’s own P3M implementation. In order to showcase the flexibility oftorch-pme,subsection IV.3illustrates how
+our implementations easily allows learning different interaction types and charges.
+Beyond these toy systems,subsection IV.4provides an example of a more
+involved model architecture, and compares the results to previous work. Finally,subsection IV.5discusses how to use the building blocks oftorch-pmecan be used to evaluate more complicated equivariant features.
+
+SECTION: IV.1Benchmark: Speed and Accuracy
+
+We begin by discussing the results on the automatic hyperparameter tuning, as this also
+determines the parameters used for the remaining tests on speed and accuracy. For many
+simple crystal structures, lattice energies assuming purely electrostatic interactions
+and ideal formal charges (commonly referred to as Madelung constants) are known and
+tabulated with great accuracy. We define the actual (relative) accuracy as
+
+whereis the obtained energy andare the tabulated
+reference energies.Figure 3show the relative accuracy of the predicted
+energies after tuning the parameters for the Ewald summation and the mesh calculators in
+double precision for a given desired accuracy, whereis the constant force created by two elementary charges at
+separated by 1 Angstrom to convert absolute errors into an estimated relative error as is also done in LAMMPS. We compute and show results for crystal structures that were
+replicated 8 times in each direction, so that each structure contains at least 1000
+atoms. For each structure, the actual accuracyis plotted
+against the desired accuracy, meaning that ideally, all
+points should lie below the black dotted line defined by. Points are color-coded according to the computational cost
+of the calculation performed on a single AMD EPYC 9334 CPU and one NVIDIA H100 SXM5 GPU.
+InLABEL:si-sec:accuracyof the supplementary material we show figures presenting the actual
+relationship between the accuracy and the computational cost for the different methods
+and precisions. As expected, we find that tighter parameters lead to higher
+computational cost. InLABEL:si-fig:tuningin the supplementary material we show the
+same results for single precision where we find that the accuracy saturates aroundfor Ewald summation andfor the mesh calculators.
+
+For a diverse dataset containing structures with different numbers of atoms, we
+recommend tuning the parameters on the system with the largest cell and largest number
+of particles. A more detailed discussion of these considerations, as well as more detailed plots on the auto-tuning of the parameters and the convergence can be found in the supporting information.
+
+Accuracy is only one aspect of successful numerical software. InFigure 4, we demonstrate that our implementations are also competitive in
+terms of computational cost by comparing them against LAMMPS’s Ewald and P3M
+implementations using the same replicated crystal structures shown inFigure 3. The LAMMPS benchmarks are performed using the version from
+August 2, 2023 (Update 3), in combination with the Kokkos 4.3.1 package. For our Ewald and
+P3M benchmarks, we used the same parameters optimized by LAMMPS for a relative force accuracy of. For PME, we utilize our own tuning code, aiming for an absolute force
+accuracy of. In all cases, we employed a fixed cutoff ofÅ, which
+provided the best performance for our largest structure, containing approximatelyatoms in a cubic cell with a side length ofÅ. SeeLABEL:si-fig:grid-searchfor a visualization of the grid search used to determine
+this cutoff value. All reported timings include only the evaluation of the short- and
+long-range components of the Coulomb potential, as well as its derivatives. Notably, they do not account for the
+computation of the neighbor list. This exclusion is justified because, in typical
+machine learning applications, the long-range part of the architecture is often combined
+with a short-range one, where the neighbor list can usually be reused.
+Additionally, in MD applications, the neighbor list can be reused for multiple timesteps.
+
+Figure 4shows that for small system sizes up to aboutatoms,
+LAMMPS Ewald (Figure 4A) is the fastest implementation, followed by the PME method injax-pmeand thentorch-pme. We can see that the cost for our implementation is more or
+less constant across this range, meaning that this is not due to an inefficiency in the
+actual algorithm, but rather a general overhead required during the initialization. Even
+though these overheads are hard-to-quantify, probably they are related to a better CUDA
+kernel initialization and dispatch on the GPU byJAX. After a transition region betweenand, we observe that our Ewald implementations outperform the LAMMPS
+one, while all codes show the expected scaling of[34]. The mesh-based algorithms are competitive with
+the LAMMPS P3M implementation, while also showing the correct scaling of[34]. For a system size of, the mesh-based algorithms are
+already faster than the Ewald ones by a factor of about, with the gap widening
+quickly due to theasymptotic scaling of the latter. From these
+observations, we conclude that the implementations are fast enough for most practical
+applications and further recommend using the Ewald codes during the training step, as it
+usually involves small structures and is up to an order of magnitude faster compared to
+PME. After training, and when running production simulations, one should switch to the
+PME or P3M calculators to achieve the best performance for larger systems. Note that
+switching between the two calculators is unproblematic as both can be tuned to achieve
+high, and consistent, accuracy as demonstrated inFigure 3, and provide a drop-in replacement with fully compatible APIs.
+
+SECTION: IV.2Molecular Dynamics
+
+Even thoughtorch-pmeis designed with ML applications in mind, it is a good sanity
+check to verify it can be used as an empirical forcefield engine. To this end, we build
+a model that evaluates the electrostatic contributions for a SPC/E water model, and use
+the Metatensor framework[71]to export aTorchscriptmodel that can
+be loaded and executed within the LAMMPS simulation engine[72].
+We then perform aNpT simulation ofrigid water molecules. The
+time step of the simulation is set toand the positions are recorded
+everysteps (). Temperature is controlled
+using the CSVR thermostat[73]and the pressure using a
+Nosé-Hoover barostat. During the simulation the Coulomb interaction between the
+particles was either handled by LAMMPS or thetorch-pmeimplementation, both tuned to
+achieve a target accuracy of. Note that any of the grid-based
+implementations could also be used, but our benchmarks show that, since the number of
+atoms is still small (), the Ewald implementation is faster. All other
+interaction such as Lennard-Jones were handled using the LAMMPS package. InFigure 5(a) we show the time evolution of the system volume, in which the
+cell equilibrates from the initial configuration (a cubic cell with a side of 22 Å),
+reaching the same equilibrium volume. From the volume fluctuations we can compute the
+isothermal compressibility
+
+The literature value for SPC/E water is[74]which agrees well with our
+obtained result ofand for LAMMPS. We obtain our values by leaving out the firstof the simulation for equilibration and calculate the error by an
+block average using 10 blocks. InFigure 5(b) to (d), we show the radial
+distribution function between the two methods which are essentially identical.
+
+SECTION: IV.3Learning charges and potentials
+
+To illustrate how to usetorch-pmeas a flexible module for machine learning tasks, we design two toy examples that demonstrate the the possibility of optimizing atomic pseudo-charges, and the functional form of the pair interactions.
+For both, we use a dataset of 1000 NaCl structures each consisting ofrandomly placed atoms in cubic boxes of various side lengths that was already
+used in previous work[59,61]. Half of the atoms are Na atoms and
+assigned a fixed charged of, while the other half are Cl atoms with a
+charge of.
+The total energy and forces of the systems are then
+computed assuming a pure Coulomb interaction between the atoms with an external
+reference calculator.
+
+In both of the models that we will now discuss, the optimization
+was performed using the Adam optimizer with a maximum learning rate ofas implemented inPyTorch.
+In the first model, we make the atomic chargesandlearnable
+parameters, and initialize them to a small but nonzero value. Note that we do not explicitly
+enforce charge neutrality, even though it could help for more complex systems. The two charges
+are then optimized by fitting on the energy of the structures.Figure 6(a) shows the charges as a function of the number of epochs
+in the training procedure. We can see that even though the convergence is not monotonic, the
+charges reach the correct values after aboutepochs.
+
+In the second model, we fixandbut this time
+modify the interaction potential to be of the form
+
+with learnable weightsand.Figure 6(b) shows the
+evolution of these weights, again as a function of the number of epochs. We can see that
+after aboutepochs, both weights converge to the expected, reference values ofand.
+
+Example files that were used to run these calculations are provided as examples in the
+package repositories and documentation. They demonstrate the flexibility to effortlessly
+optimize various intermediate parameters that appear during calculations.
+
+SECTION: IV.4A model with learnable local charges
+
+To demonstrate a more realistic application, we developed a complete end-to-end machine
+learning model and evaluated its performance on the organic molecules dataset developed
+in our previous work Ref61as shown inFigure 7A. The model has the overall structure of a “third-generation” neural network potential[75].
+It predicts the potential energy of a system,
+which we decompose into atom-wise energy contributions:whereis the total potential energy of the
+system,is the number of atoms, andrepresents the energy contribution from
+a single atom. We further decompose the atom-wise energy into short-range (SR) and
+long-range (LR) components:. The SR part is
+computed using an atomic Neural Network (NN) which takes as input an invariant
+descriptor representing the local atomic environment within a predefined cutoff radius:whereis a vector describing
+the environment of atom. For our implementation, we used the Smooth Overlap of
+Atomic Positions (SOAP)[2]parameterization with the same parameters as
+in Ref61. The NN consists of three
+layers, each with 256 neurons. Training was conducted for 200 epochs using the Adam
+optimizer with the OneCycleLR policy[76]and a maximum learning rate of. Besides predicting thethe same model predicts also
+the atomic charges, which serve as inputs to atorch-pmeCalculatorto compute the long-range potentialand energy. InFigure 7B, we show a comparison of the
+results obtained using our pipeline. Specifically, we consider four cases for: (1)
+using the full Coulomb potential (), (2) using the Coulomb EPFs (; EPF), (3)
+using a linear combination of the Coulomb potential and aterm with learnable
+weights (), and (4) using linear combination of the Coulomb EPFs and aterm EPFs with learnable weights (, EPF). We compare the obtained results to
+those from Ref.61, where LODE
+descriptors were employed which includes on the order offeatures per atom,
+whereas our current pipeline generates only a single descriptor. We find that we achieve
+similar accuracy for the charge-charge partitioning, which is the dominating
+contribution in the dataset. However, we tend to perform slightly worse on other
+partitions, as these are no longer dominated by simple Coulomb-like interactions. This
+discrepancy is unsurprising because the LODE descriptors use more features to capture
+appearing long-range interactions beside the Coulombic ones. Similar to what was
+observed in Ref.61, the inclusion of an
+additional exponent (e.g.,in our case) does not yield better results.
+This finding indicates that, for the studied dataset, the most significant contribution to
+the long-range energetics is provided by electrostatic terms.
+Combined with learnable charges, a single descriptor restricted to long-range information is sufficient to capture the most prominent energetic contributions.
+Finally, we observe that using EPFs provides only a marginal improvement in most cases (except for the charge-charge pair,
+where a decrease in accuracy is expected due to the EPFs breaking strict physical
+description).
+For this simple model and small dataset, the fact thatcontains a short-range contribution can be compensated by the flexibility of.
+A clear-cut range separation is still very useful – e.g. to accelerate the evaluation of the model with multiple time stepping – and it may prove beneficial in more complex models, or when used for long-range effects that are not dominated by electrostatics.
+
+SECTION: IV.5Long distance equivariant features
+
+As an example of how modular design and automatic differentiation help adapt classical
+algorithms for long-range interactions to modern machine learning tasks, we discuss
+how to evaluate long-distance equivariant (LODE) features. The basic idea behind
+LODE[59], and its generalization topotentials[61], is to first compute the potential, generated by the atoms with weights, and then to expand it in an atom-centered basis
+
+whereare a set of basis functions. Usually, the basis functions are factorized in radial functions and spherical harmonics,
+but this is inconsequential from the point of view of the implementation (see Fig.8).
+
+The first step involves computingon a real-space grid. This can be
+achieved with a Fourier convolution, exactly as in a grid-based long-range calculator. A
+subtlety is that it is less convenient to include a short-range correction, because one
+would have to evaluate it at all grid points, and not only at atomic positions,
+requiring one to build an additional neighbor list and to compute a much larger number of
+real-space pair interactions. Alternatively, and given that the objective is to build
+long-rangedescriptorsrather than to compute a precise physical interaction, one
+can use exclusivelyand compute only the reciprocal space component. If
+one wants to do this while also subtracting the interior contribution, the cutoff
+function has to be included in the computation of; given that this
+cannot be done analytically for a general, smooth cutoff function, we implement a
+potential based on real-space cubic splines, which is numerically processed to generate
+the Fourier kernel.
+
+After having obtainedon a regular mesh, we have to evaluate the
+integral (31). To do so, one can define an atom-centered mesh within
+a ball with the desired radius, and interpolate the potential at the grid points. Then,
+the integral can be performed as a dot product with the basis function, pre-computed on
+the same grid, and appropriate quadrature weights. Given that theMeshInterpolatorclass allows interpolating on arbitrary points, this
+architecture can be realized very easily, and the resulting method is quite fast given
+also the the basis functions are pre-computed at initialization, competitive with the existing implementations of LODE[77]also for systems of moderate size.
+
+SECTION: VConclusion
+
+We have presented a highly flexible framework to perform
+long-range ML efficiently, and provide two reference implementations inPyTorchandJAX.
+Our method allows us to compute not only electrostatic and more general inverse
+power-law potentials of the form, but also to produce purified descriptors that
+exclusively contain information about atoms outside of the cutoff radius.
+This is useful when combining these features with short-range ML models, and can be used
+to predict any invariant or equivariant target property. The features can be computed
+using a variety of methods: Ewald summation is well-suited for
+small to moderate system sizes with hundreds of atoms, while the particle-mesh algorithms such
+as PME and P3M scale almost linearly with system size,, and are
+hence well-suited for larger structures.
+
+Our reference implementation fully exploit the flexibility and automatic differentiation capababilities of
+thePyTorchandJAXlibraries, allowing for smooth integration into any preexisting ML
+architecture. The ML capabilities of the libraries is also used to automatically
+optimize hyperparameters, further streamlining ease of use, with benchmarks confirming
+the competitive speed and accuracy of the implementations. Besides the direct
+application to improve existing short-range models our implementations also allow an
+easier inclusion of applied external potentials or fields into machine learning models[11,78]. The modular structure
+also allows for various modifications for power-users who wish to fully exploit the
+flexibility of the implementations. We hope that the availability of these libraries will encourage the development
+of more standardized, efficient and scalable long-range ML models, and that their
+modular design will allow to develop more flexible, general models than the simple
+point-charge examples we discuss here.
+
+SECTION: VISupplementary Material
+
+The electronic supporting material for this publication include further details on the
+implementation, different models and datasets, and additional results on benchmarks. The
+source codetorch-pmeandjax-pmepackages are publicly available athttps://github.com/lab-cosmo/torch-pmeandhttps://github.com/lab-cosmo/jax-pme. Some results are compared with the
+generalized LODE descriptors introduced in previous work by the authors, which have been
+computed using thefeatomic(formerlyrascaline) package[77], available athttps://github.com/metatensor/featomic.
+
+SECTION: Acknowledgments
+
+MC, KKHD, MFL, PL and WBH acknowledge funding from the European Research Council (ERC) under the research and innovation programme(Grant Agreement No. 101001890-FIAMMA). MC, PL, ER and MH acknowledge funding from the NCCR
+MARVEL, funded by the Swiss National Science Foundation (SNSF, grant
+number 182892), which also supported a research internship for MH through an Inspire Potentials Fellowship.
+We would like to thank the members of the Laboratory of Computational Science and Modeling, and especially Guillaume Fraux, Filippo Bigi and Arslan Mazitov, for their contributions to the software infrastructure that enabled this study.
+We further thank Philipp Stärk for the discussions.
+
+SECTION: Data Availability Statement
+
+The source code to ourPyTorchandJAXlibraries are available on Github athttps://github.com/lab-cosmo/torch-pmeandhttps://github.com/lab-cosmo/jax-pme. Code to reproduceFigure 6as well as how to construct LODE densities are available as tutorials in thetorch-pmedocumentation. All other codes and input files for computing the accuracies, running
+benchmarks, MD simulations, and the model with learnable local charges are as well
+available on Github athttps://github.com/PicoCentauri/ewaldAD-code.
+
+SECTION: References

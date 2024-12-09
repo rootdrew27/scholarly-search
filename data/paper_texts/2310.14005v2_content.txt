@@ -1,0 +1,116 @@
+SECTION: Ophthalmic Biomarker Detection Using Ensembled Vision Transformers and Knowledge Distillation
+
+In this paper, we outline our approach to identify ophthalmic biomarkers from Optical Coherence Tomography (OCT) images presented in the OLIVES dataset, obtained from a diverse range of patients. Using robust augmentations and 5-fold cross-validation, we trained two vision transformer-based models: MaxViT and EVA-02, and ensembled them at inference time. We find MaxViT’s use of convolution layers followed by strided attention to be better suited for local feature detection while EVA-02’s use of normal attention mechanism and knowledge distillation is better for detecting global features. Our solution brought us the champion title of the IEEE SPS Video and Image Processing (VIP) Cup 2023, achieving a patient-wise F1 score of 0.814 in the first phase and 0.8527 in the second and final phase of the competition, scoring 3.8% higher than the next best solution.
+
+SECTION: 1Introduction
+
+Accurate ophthalmic biomarker detection using Optical Coherence Tomography (OCT) images has received tremendous attention in contemporary research in ophthalmology, with significant implications in the diagnosis and treatment of eye conditions. To explore innovative learning approaches in the field of ophthalmic biomarker detection,
+this paper outlines our study methodology and experiment results focusing on utilizing vision transformer-based models to analyze OCT images.
+
+On this backdrop, to solve this ophthalmic biomarker detection task, we employed two distinct models, the Multi-Axis Vision Transformer (MaxViT)[1]and EVA-02[2], carefully selected following a systematic exploration, for their respective proficiency in identifying local and global features within the images. The intricate exploration and subsequent integration of these models were pivotal in formulating a solution that
+not only fulfilled the criteria of the IEEE VIP Cup 2023 competition but also
+helped advance the state-of-the-art of ophthalmic biomarker detection in both understanding and methodology.
+
+SECTION: 2Methodology
+
+SECTION: 2.1Dataset
+
+We utilized OLIVES[3], a rich dataset encompassing 9408 labeled image-biomarker pairs collected from 96 patients and an additional 78185 unlabeled OCT images, each accompanied by clinical labels.
+We evaluated our solution in two different phases as follows. In Phase 1, the test dataset consisted of 3871 images from 40 different patients. In Phase 2, the test dataset consisted of 250 images collected from 167 new patients.
+
+Each OCT scan segment was labeled to denote the presence or absence of 6 biomarkers, namely Intraretinal Hyperreflective Foci (IRHRF), Partially Attached Vitreous Face (PAVF), Fully Attached Vitreous Face (FAVF), Intraretinal Fluid (IRF), Diffuse Retinal Thickening or Diabetic Macular Edema (DRT/DME) and Vitreous Debris (VD). Depending on the spatial extent, IRHRF and IRF can be loosely grouped aslocalfeatures, meaning they could be detected by looking at just a subsection of the image. On the other hand, PAVF, FAVF, and VD areglobalfeatures with DRT/DME falling somewhat in between. We elucidate the rationale behind the dataset partitioning in relation to model architecture in section3.3.
+
+SECTION: 2.2Models Considered
+
+We considered multiple variants of ResNet[4]models and Inception[5]models (collectively referred to as Convolution-based Models henceforth).
+
+Inspired by[6], we added Convolutional Block Attention Modules (CBAM)[7]to InceptionResnetV2 (referred to as IRV2_CBAM for brevity). We added three such CBAMs after the Stem, Reduction A, and Reduction B modules of InceptionResnetV2. The improved performance of IRV2_CBAM (to be presented in Section3) inspired us to move to vision transformer models, including ViT[8], MaxViT[1], and EVA-02[2].
+
+Our early tests indicated an important role for image dimensions when detecting biomarkers. This observation was corroborated through a consultation with an ophthalmologist, wherein the discussion came up that downsizing images to a resolution of 224x224 pixels might have made it harder to identify these biomarkers.
+As such, we focused on models pre-trained on larger images. ViT[8], MaxViT[1]and EVA-02[2]support image resolutions of,andrespectively. Notably, we could only use the base version of these models due to computational constraints.
+
+SECTION: 2.3Hyperparameters
+
+We used AdamW[9]optimizer with default initialization and set the initial learning rate to. We used the Exponential Learning Rate Scheduler, with a weight decay of 0.9. For convolution-based models, we used 128 as the batch size and trained models for 35 epochs, with early stopping based on the best cross-validation F1 score. For transformer-based models, we used the largest possible batch size supported by our hardware, which was 1 for MaxViT and 2 for both EVA-02 and ViT. To account for the small batch size, we set the gradient accumulation steps to 8. We trained all vision transformer models for two epochs. We found all ViT models to be prone to overfitting the training data after 2 epochs.
+
+SECTION: 2.4Data Augmentation
+
+In Phase 1, we used random greyscale transformation with, color jitter with, random resized crop with, random horizontal flip, and finally, normalization with a mean of 0.1706 and a standard deviation of 0.2112. We found 0.7 to be the optimal scale for random resized crop while keeping other augmentations constant. Other augmentation parameters were not optimally tuned.
+
+For Phase 2, we add a random perspective shift augmentation with,, andto make the training data similar to the Phase 2 evaluation dataset. In both phases, we did not augment the test data beyond resizing and normalization.
+
+SECTION: 2.55-fold Cross Validation
+
+We performed a 5-fold cross-validation where we partitioned the data into 5 folds with 80% in the train set and 20% on the validation set. On these 5 different folds, we trained our models and ran inference on the test set after every epoch, and combined the confidence scores to obtain the final binary decision for each biomarker.
+
+SECTION: 2.6Ensembling MaxViT and EVA-02
+
+The complementary strengths of MaxViT and EVA-02 naturally imply that ensembling their outputs has the potential to improve upon their individual performance across all biomarkers. One straightforward way to implement this is by using MaxViT to detect local biomarkers and using EVA-02 for global biomarkers. In this scheme, MaxViT’s predictions for global biomarkers are entirely ignored (as well as EVA-02’s predictions for local ones). We also apply a finer-grained ensembling scheme, where we average both model’s output probabilities. Fig.1presents a schematic overview of our overall pipeline. We will refer to this (finer-grained) ensemble as MaxViT-EVA-02.
+
+SECTION: 2.7Evaluation Metrics
+
+In the domain of medical imaging where severe class imbalance is the norm, the F1 score often is the metric of choice instead of accuracy. To test the generalization ability of solutions, the F1 score was calculated over all the images in the test set for phase 1. For Phase 2, to measure personalization: how well a model performs on individual patients, patient-wise F1 scores were calculated over images from the same patient and these scores were averaged over all patients in the test dataset. More details on this evaluation strategy can be foundhere.
+
+SECTION: 2.8Hardware Specification and Environment Setup
+
+For convolution-based models implemented in Tensorflow[10], we usedKaggleTPU VM v3-8 instances paired with 330GB RAM. Due to the limited support of state-of-the-art models on TPU, we mainly used this setup for pilot experiments. For transformer-based models (implemented in PyTorch 2.0.1[11]and ‘timm’[12]library with the weights hosted onHugging Face), we usedKaggleNvidia P100 GPU instances with 16GB VRAM, 13GB RAM, and 19GB disk space. We used scikit-learn[13]libraries for other auxiliary needs. The runtime of our complete MaxViT pipeline, including training, validation, and inference, was approximately 11 hours, while that of our EVA-02 pipeline was approximately 7 hours.
+
+SECTION: 3RESULTS AND DISCUSSIONS
+
+SECTION: 3.1Model Selection Results
+
+To establish a baseline, we trained multiple variants of ResNet[4]models and Inception[14]models. We find that model size or model performance on ImageNet dataset[15]are not reliable indicators of its suitability for the task at hand (Table1). InceptionResnetV2[5](55.84 M parameters) proved to be the most effective model with an F1 score of 0.686 and the much smaller InceptionV3 (23.83 M parameters) model performed comparably with an F1 score of 0.682 (Table1).
+
+SECTION: 3.25-fold Cross Validation Results
+
+5-fold cross-validation boosts out Phase-1 test scores substantially. Initial experiments revealed that our best-performing convolution-based model, InceptionResnetV2 consistently scored  0.66 when trained on random 80% splits of the train set. However, using cross-validation, InceptionResnetV2 consistently scored around  0.68. As such, we used cross-validation in all further experiments.
+Individually, MaxViT and EVA-02 models scored  0.68 while with cross-validation they scored  0.71.
+
+SECTION: 3.3Classification of Biomarkers according to Spatial Extent
+
+Upon reviewing the images, we noticed that biomarkers B1 (IRHRF), B4 (IRF), and B5 (DRT/DME) werelocal, meaning they could be detected by looking at just a subsection of the image. This observation was confirmed by an ophthalmologist, who also mentioned that B5 is somewhat in between local and global.
+
+SECTION: 3.4Analysis Of Adding CBAM
+
+Adding CBAM[7]to InceptionResnetV2 substantially boosted the F1 score from 0.686 to 0.696 (Table2) for a negligible increase in the network complexity (i.e., parameter count increased by only 0̃.37%; not reported in the table). Notably, this boost in performance actually inspired us to move to vision transformer models.
+
+To understand the reason for the improved F1 scores, we calculated the F1 score across biomarker types individually and discovered that CBAM improved the performance on certain biomarkers substantially while showing marginal improvement in others. It even registered a deterioration, albeit only slightly, in one case. Therefore, we hypothesize that the attention module improved the detection of local biomarkers.
+
+SECTION: 3.5Comparison of Convolution-based and Transformer-based Models
+
+Although adding an attention mechanism in the form of CBAM to InceptionResnet specifically improves the performance on local biomarkers, we find no such correlation when comparing convolution-based models and the purely attention-based ViT[8]architectures. This suggests the need for explicit convolution in addition to attention for optimal biomarker detection.
+
+SECTION: 3.6Effectiveness of Convolution and Attention
+
+MaxViT[1]is a vision transformer model composed of multiple MaxViT blocks where each block performs convolution, strided/block attention, and dilated/grid attention. The addition of explicit convolution makes MaxViT ideal for biomarker detection. We achieved an F1 score of 0.718 (Table3) using the base variant of the MaxViT model, which is a substantial improvement over IRV2_CBAM and ViT_BASE. However, MaxViT does not utilize true attention across all image tokens, which motivated us to test EVA-02[2], a plain Vision Transformer model that improves upon the standard ViT[8]by using a 1B parameter EVA-CLIP model as its teacher. The parameter counts of MaxViT and EVA-02 are 119.88M and 87.12M respectively. Comparing MaxViT and EVA-02 across the 6 biomarkers, we see that EVA-02 performs noticeably better on global biomarkers despite being smaller between the two. we hypothesize that MaxViT’s sparse attention improves the detection of local biomarkers while EVA-02’s true attention excels at detecting global features.
+
+SECTION: 3.7Ensembling Results
+
+While our simple ensembling does boost the test set F1 score to 0.720 (not shown in the table for brevity), the finer-grained ensembling scheme yields an even greater performance with an improved F1 score of 0.724.
+
+SECTION: 3.8Patient-wise F1 score
+
+Our MaxViT-EVA-02 ensemble pipeline achieved a patient-wise F1 score of 0.814 averaging over 40 patients and 3781 images in the first phase and 0.8527 in the second phase (167 patients and 250 images). Our second phase F1 score is 3.8% higher than the next best solution (0.8215) in the competition as per theleaderboard.
+
+SECTION: 3.9Leveraging Unlabeled Training Data
+
+We initially explored contrastive learning[16]with Inception-based models in our pilot experiments. We were not able to reproduce the gains observed by[16]and Inception-ResnetV2 performed no better than the finetuing baseline. Since the dataset contained 2 additional clinical labels besides the 6 target biomarkers, we explored predicting all 8 labels in hopes of a stronger signal during gradient back-propagation. However, this modification did not improve over the baseline. Afterward, we exploredpseudo-labeling; using a fine-tuned InceptionResnetV2 model to label the large unlabelled set of images and keeping predictions with a high confidence score. We used a confidence threshold ofwhich yieldedthousand pseudo-labeled images. However, training on this dataset significantly deteriorated the model’s performance, plummeting the score to 0.519. Furthermore, we experimented with I-JEPA[17]for this task, an unsupervised pretaining method that aims to learn better internal representations of images. Similar to pseudo-labeling, we observed a significant decline in performance with each iteration, indicating that its methodology may not be well-suited for this specific application.
+
+Post-competition, we leveraged our winning solution to pseudo-label the unlabeled data. Using these pseudo-labels, we pre-trained a MaxViT model from scratch with a Mean Squared Error (MSE) loss and subsequently fine-tuned it on the labeled data. This pipeline resulted in substantial performance improvements. We believe our initial attempt with pseudo-labeling lacked a strong baseline model. As we now use predictions for a total of 10 models (5-fold MaxVIT and 5-fold EVA02) to label the data, the pseudo-labels are of much higher quality. We performed an ablation study (see Table4for the results) using an off-the-shelf MaxViT model to assess the impact of different combinations of pseudo-label pretraining and fine-tuning.
+
+This knowledge distillation from our larger ensemble model enabled a single MaxViT to slightly outperform our winning solution, while requiring only a fraction of the inference time and computational resources. Incorporating this distilled MaxViT into our original pipeline would undoubtedly yield further performance gains, but we leave this exploration for future work.
+
+SECTION: 3.10Analysis of Outlying Patient-wise F1 Scores
+
+In the analysis of cases where the model exhibited a low F1 score in detecting biomarkers from OCT scans, several patterns were observed. Patient 01-002 at week 40 and patient 02-044 at week 0 presented with severe spots, resulting in F1 scores of 0.64 and 0.55, respectively. Moderate spots were identified as the likely cause for the low F1 scores of 0.6 in patients 01-007 at week 100 and 01-049 at week 0. Additionally, patient 01-043 at week 100 exhibited a severe artifact, leading to the lowest F1 score of 0.37. Moderate artifacts were also noted in patients 01-049 and 02-044 at week 100, with F1 scores of 0.6 and 0.52, respectively. However, the likely cause for the low F1 scores observed in patients 01-019, 01-036, and 01-054 at week 100 (F1 scores of 0.51, 0.62, and 0.48) are not immediately evident to non-medical professionals. We leave a more thorough analysis and subsequent pipeline adjustments as future work.
+
+SECTION: 4CONCLUSION
+
+In this work, we outlined the methodology of our
+Ophthalmic Biomarker Detection study. We also presented the underlying motivation for pipeline design decisions. We find that Vision Transformer (ViT) models have begun to consistently outperform their Convolutional Neural Network (CNN) counterparts. Furthermore, we find that k-fold cross-validation and model ensembling continue to be effective means to utilize the entire dataset and to improve the generalization of predictions.
+
+SECTION: 5ACKNOWLEDGEMENT
+
+We would like to extend our sincere gratitude to Dr. S.M. Rezwan Hussain, a distinguished ophthalmologist at the Eye Department, Combined Military Hospital(CMH), Dhaka. Bangladesh, for his invaluable insights and expertise regarding biomarker classification according to their spatial extent.
+
+SECTION: References

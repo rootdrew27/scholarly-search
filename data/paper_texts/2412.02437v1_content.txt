@@ -1,0 +1,255 @@
+SECTION: Reproduction of AdEx dynamics on neuromorphic hardware through data embedding and simulation-based inference
+
+The development of mechanistic models of physical systems is essential for understanding their behavior and formulating predictions that can be validated experimentally.
+Calibration of these models, especially for complex systems, requires automated optimization methods due to the impracticality of manual parameter tuning.
+In this study, we use an autoencoder to automatically extract relevant features from the membrane trace of a complex neuron model emulated on theBrainScaleS-2neuromorphic system, and subsequently leveragesequential neural posterior estimation (SNPE), asimulation-based inferencealgorithm,
+to approximate the posterior distribution of neuron parameters.
+
+Our results demonstrate that the autoencoder is able to extract essential features from the observed membrane traces, with which theSNPEalgorithm is able to find an approximation of the posterior distribution.
+This suggests that the combination of an autoencoder with theSNPEalgorithm is a promising optimization method for complex systems.
+
+SECTION: IIntroduction
+
+In science, researchers endeavor to develop mechanistic models for physical systems.
+Subsequently, these models can be utilized to comprehend the behavior of the system and to formulate predictions that can be subjected to experimental verification.
+Once a model candidate has been identified, the model parameters must be calibrated to ensure that the model can reproduce the observed behavior of the system.
+
+In the case of complex models, manual tuning of the parameters is not a viable option; instead, automated optimization methods are required[vanier1999comparative].
+Genetic algorithms have been demonstrated to be an effective approach for identifying parameters in complex models within the field of neuroscience[gouwens2018systematic,druckmann07_nourl,vanier1999comparative].
+Gradient-based optimization methods are capable of directed optimization, which makes them potentially more efficient for finding suitable model parameters[deistler2024differentiable].Simulation-based inference (SBI)methods can be employed to approximate the posterior distribution of model parameters, thereby providing additional insight into the sensitivity and correlation of the parameters[cranmer2020frontier,lueckmann2017flexible,greenberg2019automatic,goncalves2020training,deistler2022truncated].
+
+In previous applications of thesequential neural posterior estimation (SNPE)algorithm, anSBIalgorithm, to neuroscientific problems, experiments relied on handcrafted features which were extracted from the recordings of neural traces[goncalves2020training,kaiser2023simulation].
+In the present study, we utilize an autoencoder to extract relevant features from the membrane trace of a complex neuron model emulated on theBrainScaleS-2(BSS-2)neuromorphic system[pehle2022brainscales2,kaiser2023simulation]and subsequently employ theSNPEalgorithm to approximate the parameters of the neuron model.
+It is our hope that the automatic feature extraction facilitated by autoencoders will prove instrumental in enabling the application ofSBImethods to more complex problems, thereby alleviating the need for handcrafted features.
+
+SECTION: I-ATheBrainScaleS-2System
+
+BSS-2is a mixed-signal neuromorphic system;
+while synapse and neuron dynamics are emulated in analog circuits, spike communication and configuration is handled digitally[pehle2022brainscales2,billaudelle2022accurate].
+The system providesanalog neuron circuits which emulate the dynamics of theadaptive exponential integrate-and-fire (AdEx)[brette2005adaptive]neuron model in continuous time[billaudelle2022accurate]:
+
+whereis the membrane potential,the membrane capacitance,the leak potential,the leak conductance,the threshold slope factor andthe effective threshold potential.
+
+describes the synaptic current and will not be used in this study;is an arbitrary current injected on the membrane.represents an adaptation current with the following dynamics
+
+hereis the subthreshold adaptation andthe adaptation time constant which is determined by the ratio of the capacitanceand the conductance.
+
+As soon as the membrane potentialreaches the threshold potential, the membrane potential is set to the reset potentialand the adaptation current is increased by the spike-triggered adaptation:.
+The membrane potentialis kept at the reset potentialduring the refractory period; afterwards it evolves according toeq.1again.
+
+The circuits are implemented incomplementary metal-oxide semiconductor (CMOS)technology.
+Compared to the biological time domain, the neuron dynamics evolve in accelerated time with a tunable speed; in this study, we choose a speed-up factor of.
+
+The parameters of each neuron can be configured individually using a capacitor-based memory array[hock13analogmemory];
+the array is configured using digitalvalues and provides analog currents and voltages which control the behavior of the neuron111The last value is reserved such that the parameters are adjustable in a range from..
+
+SECTION: I-BSimulation-based Inference
+
+SBIoffers the possibility to approximate the posterior distribution of model parameters even if the likelihood is not tractable, i.e. it can not be calculated or is too expensive to calculate.
+More precisely, given a modelwhich is configured by the parametersand creates observations,SBIcan be used to approximate the posterior distributionfor a given target observation.
+In this manuscript we will use theSNPEalgorithm[papamakarios2016fast,lueckmann2017flexible,greenberg2019automatic]to approximate the posterior distribution ofAdExparameters.
+The algorithm takes a mechanistic model, a prior distribution of the model parametersand a target observationas an input.
+
+As a first step, random parametersare drawn from the prior.
+These parameters are injected in the modelto produce observations.
+Therefore, we implicitly sample from the likelihood.
+
+The random parameters and observationsare then used to train aneural density estimator (NDE)222NDEsare flexible sets of probability distributions which are configured by neural networks; we will use amasked autoregressive flow (MAF)[papamakarios2017masked,papamakarios2019sequential,goncalves2020training]as anNDE.which approximates the posterior distribution.
+During training the negative log-likelihood of the posterior density estimate of the drawn samplesis minimized and theNDElearns to approximate the posterior distributionfor any observation.
+
+This posterior can then be used to draw additional samples for a given target observationand to train theNDEagain to improve the approximation of the posterior for the given observation333After this step the posterior approximation is no longer amortized, i.e. it cannot be used to infer parameters for any observationbut only for the target observation..
+This step can be repeated several times to further improve the approximation.
+For further details on theSNPEalgorithm and its applications see[lueckmann2017flexible,greenberg2019automatic,goncalves2020training,kaiser2023simulation].
+
+SECTION: I-CAutoencoder
+
+High-dimensional data often contains redundant or irrelevant information for the task at hand.
+In deep learning, this can necessitate higher model complexity, prolong training times, and increase the risk of overfitting, which leads to worse performance in generalization on new, unseen data.
+Therefore, dimensionality reduction techniques can be employed to learn a lower-dimensional representation of the original data.
+
+An autoencoder is an unsupervised deep learning model that can be leveraged for such a dimensionality reduction task.
+It consists of two neural networks: an encoder and a decoder.
+The encoder transforms the data into a lower-dimensional feature space, referred to as the latent space.
+Conversely, the decoder then maps the features from the latent space back to the original input space, aiming to recover the original input.
+The autoencoder is thus trained by minimizing a distance metric, quantifying the difference between the original data and its reconstruction.
+Once the model is successfully trained, the encoder can be used independently to obtain a lower-dimensional representation for each data sample.
+
+For more information on autoencoders, see[li2023comprehensive,yildirim2018efficient].
+
+SECTION: IIMethods
+
+We first introduce the experimental routine with which we will record the behavior of anAdExneuron onBSS-2.
+Next, we explain how we create a dataset which will then be used to train an autoencoder.
+Finally, we employ that trained autoencoder to extract relevant features from the experiment observation and utilize theSNPEalgorithm to approximate the posterior distribution of model parameters.
+
+SECTION: II-AExperimental Setup
+
+Similar to[naud2008firing], we investigate the behavior of a singleAdExneuron when stimulated with a step current, compareeq.1.
+We emulate the dynamics on theBSS-2system and record the membrane potentialfor444Due to the-fold speed up of theBSS-2system, this corresponds toin biological time.after the step current was enabled.
+The recorded membrane trace is then down sampled todata points to reduce memory consumption and computational cost in subsequent steps.
+We manually chose parameters which will be used to create a target observation.
+Four of these parameters will later be altered to create a dataset and to see if theSNPEalgorithm is able to find an approximation of their posterior distribution: the adaptation parameters,andas well as the reset potential, comparesectionI-A.
+
+TheBSS-2operating system was used for experiment definition as well control[mueller2022scalable_noeprint]and experiments are written in thePyNNdomain specific language[davison2009pynn].
+
+SECTION: II-BDataset
+
+In order to train the autoencoder, we create a dataset with traces recorded from the hardware.
+To create a diverse set of samples, we will draw random values from a uniform distribution which covers the whole configuration range of theBSS-2system for the four parameters we want to infer with theSNPEalgorithm, seesectionII-A.
+
+We draw a total ofparameterizations, emulate the model onBSS-2and store the recorded membrane traces in a dataset.
+
+SECTION: II-CData Embedding
+
+We use a convolutional autoencoder based on[yildirim2018efficient]to compress our high-dimensional observation.
+The model consist of several one-dimensional convolutions, ReLU activation functions, batch normalizations and max pooling layers, seetableI.
+The input is compressed fromdata points todata points.
+
+Before feeding the data in our network, we preprocess it.
+First, we further down sample the recorded membrane traces fromtodata points such that they fit the input layer of our network.
+Next, we normalize the recorded membrane voltagesto be in the range from.
+Since we use ananalog-to-digital converter (ADC)withresolution to sample the membrane voltage, this can be archived by dividing all values by555TheADCis configured such that the maximum of the readout range is never reached..
+
+The dataset is split into training, validation and test set with a ratio of.
+Afterwards, the training set is divided in batches of sizeand the autoencoder is trained forepochs.
+The mean-squared-error between the original trace and the reconstructed trace was used as a loss function.
+In each epoch, we record the loss of each batch on the training as well as the validation set.
+After each epoch, we save the model parameters if the validation loss has decreased.
+
+We used the Adam optimizer[kingma2014adam]for updating the weights of the autoencoder.
+During a warm-up phase, the learning rate was linearly increased fromto the base learning rate ofin the firstbatches.
+After epoch, the learning rate was decreased exponentially with a factor of.
+
+The model and training are implemented in thePyTorchlibrary[paszke2019pytorch].
+
+SECTION: II-DSimulation-based Inference
+
+After successful training of the autoencoder, we use it in conjunction with anNDEto approximate the posterior of the parameters we altered during the generation of the dataset.
+The experimental observation is fed into the encoder section of the trained autoencoder, while the NDE receives the output from its latent space.
+We use aMAFwith five transformations – each transformation is made up of two blocks withhidden units per block – as anNDE; thisNDEhas been extensively used in previous publications[lueckmann2021benchmarking,goncalves2020training,kaiser2023simulation].
+
+Similarly to the generation of the dataset, we use uniform priors over the whole parameter range as an input to theSNPEalgorithm.
+We train theNDEforrounds withsamples in each round.
+The pre-trained encoder is used to reduce the dimensionality of the observed data.
+During the training of theNDE, the encoder is further retrained in parallel to improve inference performence.
+This transfer learning approach for the encoder is motivated by the idea that the optimal features for reconstruction may not necessarily be the most suitable for parameter inference.
+At the same time, it allows for faster convergence compared to training from scratch.
+
+We used the implementation of thesbiPython package[tejero2020sbi]for theSNPEalgorithm.
+This package supports the parallel training of the autoencoder and theNDE.
+
+SECTION: IIIResults
+
+In the following, we will first present the generated dataset.
+Next, we train an autoencoder using this dataset and evaluate how well the reconstruction agrees with the original traces.
+Finally, we use the encoder part of the trained autoencoder to reduce the dimensionality of our observations and train aNDEusing theSNPEalgorithm.
+
+SECTION: III-ADataset
+
+Figure1displays examples of traces in the dataset.
+In most cases, the neuron fires over the whole displayed range.
+
+The variation in the reset potentialis most visible in the given example traces.
+In cases where the reset voltage is high, the membrane potential remains at high values and spikes are not clearly visible.
+In one case, a clear adaptation is visible: the inter-spike interval increases from spike to spike and the neuron stops firing after the third spike.
+
+SECTION: III-BData Embedding
+
+We trained the autoencoder introduced insectionII-Cforepochs.
+The training as well as the test loss decrease during training and start to saturate at the end of the training,fig.2, indicating that the chosen number of epochs is sufficient.
+The difference between the two losses remains small, indicating that the model does not tend to overfit.
+We recorded the lowest validation loss afterepochs and will use this model for all future evaluations.
+At this point, the validation loss () is close to the test loss (); further suggesting that our model does not overfit.
+
+Infig.3, we drew random samples from the test set and fed them into the trained autoencoder.
+Overall, the reconstructions follow the original samples closely.
+The reconstructions of periodic membrane traces are slightly better than of traces for which the inter-spike interval changes due to adaptation.
+On a fast time scale, the reconstructions show fluctuations which are not present in the original trace.
+
+SECTION: III-CSimulation-based Inference
+
+After estimating the posterior with theSNPEalgorithm, we drew samples from it,fig.4.
+The samples are closely scattered around the parameters which were used to create the target observation.
+
+The distribution of parameters is narrowest for the reset potentialand the conductancecontrolling the adaptation time constant.
+This indicates that the observations are more sensitive to these two parameters than to the subthreshold adaptationand the spike-triggered adaptation.
+
+Most of the parameters seem uncorrelated.
+Only for the spike-triggered adaptationand the conductancea negative correlation can be observed: smaller values incan be compensated by higher values in.
+Based on the design of the circuit, a dependency of the strength of the adaptation currenton the adaptation time constantis expected[billaudelle2022accurate].
+This effect can be compensated by adjusting the spike-triggered adaptation.
+
+In order to get an impression how well parameters drawn from the posterior distribution reproduce the target observation, we drew random values from the posterior,fig.4, and emulated the neuron behavior with them,fig.5.
+The recorded membrane traces match the target trace closely until the second spike.
+Afterwards, the traces start to diverge from the target observation.
+The divergence can to some extent be attributed to temporal noise in the analog core onBSS-2.
+As a comparison,fig.5also shows membrane recordings for the same parameters with which the target observation was recorded.
+Here, the traces also start to diverge after the second spike.
+
+In comparison to the trial-to-trial variations, the variations in the traces recorded for different parameters drawn from the posterior seem more pronounced.
+Nevertheless, given the diversity seen in the traces of the dataset,fig.1, the approximated posterior seems to yield parameters which closely resemble the given target observation.
+
+SECTION: IVDiscussion
+
+In this study, we demonstrated that thesequential neural posterior estimation (SNPE)algorithm can be successfully leveraged to infer model parameters for theadaptive exponential integrate-and-fire (AdEx)neuron model emulated on the neuromorphicBrainScaleS-2(BSS-2)system when utilizing membrane recordings as observations.
+Despite the presence of temporal noise on the hardware, the algorithm was able to approximate the posterior distribution, thereby enabling adequate emulation of the target trace.
+
+We began by generating a dataset consisting of diverse voltage traces.
+After initial preprocessing of the data, a convolutional autoencoder was successfully trained, whose encoder was then used to compress the time series data into just 32 features.
+Subsequently, this lower-dimensional representation of the data was fed into theneural density estimator (NDE)of theSNPEalgorithm.
+To further enhance inference performance, we chose to simultaneously retrain the pretrained encoder alongside theNDE.
+Our method yielded promising results, as the algorithm was able to identify the correct region within the 4-dimensional parameter space, even in the presence of the trial-to-trial variations inherent to the hardware.
+
+The reconstructions of the autoencoder could have been improved by selecting a larger latent space dimension.
+However, a balance must be struck between reconstruction accuracy and dimensionality reduction for theSNPEalgorithm.
+As shown infig.3, the reconstructions of traces with stronger adaptation are worse than those of other traces.
+This is due to the low occurrence of adaptation traces in the training set — only a small subset of the chosen parameter space produces such traces.
+Since our observation was an adaptation trace, this reinforces our decision to simultaneously retrain the encoder with theNDE.
+
+Temporal noise in the analog components leads to the approximation of the posterior being broader, as parameter values that would typically produce a different voltage trace might resemble one that closely matches the initial target trace.
+Thus, these values are interpreted as if they produce results similar to those of the true parameters.
+At the same time, the target trace itself could represent a variation of the typical trace at the target parameters.
+This would explain the slight offset between the peak of the posterior distribution and the true parameter values, as displayed infig.4.
+
+Forand, more narrow marginals could be identified than for the other two parameters, seefig.4.
+However, a broader posterior does not necessarily indicate a worse performance of the approximation method, as certain variations in a parameter may not significantly impact the resulting trace.
+Furthermore, compensation mechanisms between parameters might exist.
+For instance, such a relationship was particularly evident between the spike-triggered adaptationand the conductance, exhibiting a negative correlation due to the specific circuit design[billaudelle2022accurate].
+
+Finally, taking trial-to-trial variations into account, most of the emulated traces of randomly sampled posterior values closely resemble the original target trace, as shown infig.5.
+Hence, our method utilizing the autoencoder proved effective and eliminated the reliance on handcrafted features for the dimensionality reduction of the traces.
+
+The future objective of this work is to develop an inference pipeline for membrane voltage recordings from biological neurons to enable precise emulation.
+However, this requires the accurate inference of more parameters of theBSS-2system[pehle2022brainscales2].
+To achieve this, several optimizations of our method can be explored.
+
+First, extensive testing and hyperparameter searches for theNDEin higher-dimensional parameter spaces are needed to assess the robustness of our current method.
+
+Furthermore, different autoencoder architectures could be explored to improve compression efficiency.
+The input size of the network could be increased too, allowing it to handle traces emulated for longer durations.
+
+In addition, approaches to address temporal noise could be considered to potentially achieve a more accurate posterior, as this noise also complicates posterior analysis.
+Building on this, ensembles comprising multiple posteriors from various emulations of the true parameters might counteract overconfident posterior estimates[hermans2022crisis].
+
+Finally, the posterior distribution needs to undergo more rigorous testing.
+A suitable metric for measuring the similarity between different voltage traces must be established, such that systematic posterior-predictive checks can be performed[hermans2022crisis].
+These would filter out posterior estimates that do not align well with the observation.
+Moreover, the posterior could be used to explore further correlations between different parameters.
+Additionally, sensitivity analysis could help identify critical directions in the parameter space where changes in the parameters have a strong impact on the resulting trace[constantine2014active].
+
+To date, studies have primarily applied theSNPEalgorithm to reproduce the behavior of spiking neurons in numerical simulations[goncalves2020training,deistler2022truncated,lueckmann2017flexible]or of passive neurons on neuromorphic hardware[kaiser2023simulation].
+Thus, this work represents a novel approach and an initial step towards applying the algorithm to reproduce biological neuron behavior on neuromorphic hardware.
+Fast emulation on accelerated neuromorphic hardware has the potential to explore new questions that are difficult to address by slower numerical simulation techniques[zenke2014limits].
+Consequently, the combination of automatic feature extraction with the application of theSNPEalgorithm for emulation on neuromorphic hardware could contribute to shaping future methodologies in neuroscience research.
+
+SECTION: Acknowledgements
+
+This research has received funding from
+the European Union’s
+Horizon 2020 research and innovation programme under grant agreement No. 945539 (Human Brain Project SGA3)
+and Horizon Europe grant agreement No. 101147319 (EBRAINS 2.0),
+and theDeutsche Forschungsgemeinschaft(DFG, German Research Foundation) under Germany’s Excellence Strategy EX 2181/1-390900948 (the HeidelbergSTRUCTURESExcellence Cluster).
+
+SECTION: Author Contributions
+
+We give contributions in theCRediT(Contributor Roles Taxonomy) format:JH: Investigation, visualization, methodology, software;JK: Conceptualization, methodology, supervision, software, visualization;EM: Conceptualization, methodology, supervision, software, resources;JS: Conceptualization, methodology, supervision, funding acquisition;all: writing — original draft, writing — reviewing & editing.

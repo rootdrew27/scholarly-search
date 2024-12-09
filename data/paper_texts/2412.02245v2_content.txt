@@ -1,0 +1,161 @@
+SECTION: SparseLGS: Sparse View Language Embedded Gaussian Splatting
+
+Recently, several studies have combined Gaussian Splatting to obtain scene representations with language embeddings for open-vocabulary 3D scene understanding. While these methods perform well, they essentially require very dense multi-view inputs, limiting their applicability in real-world scenarios. In this work, we propose SparseLGS to address the challenge of 3D scene understanding with pose-free and sparse view input images. Our method leverages a learning-based dense stereo model to handle pose-free and sparse inputs, and a three-step region matching approach to address the multi-view semantic inconsistency problem, which is especially important for sparse inputs. Different from directly learning high-dimensional CLIP features, we extract low-dimensional information and build bijections to avoid excessive learning and storage costs. We introduce a reconstruction loss during semantic training to improve Gaussian positions and shapes. To the best of our knowledge, we are the first to address the 3D semantic field problem with sparse pose-free inputs. Experimental results show that SparseLGS achieves comparable quality when reconstructing semantic fields with fewer inputs (3-4 views) compared to previous SOTA methods with dense input. Besides, when using the same sparse input, SparseLGS leads significantly in quality and heavily improves the computation speed (5speedup). Project page:https://ustc3dv.github.io/SparseLGS
+
+SECTION: 1Introduction
+
+3D language field modeling is an important research problem in computer vision, offering extensive application prospects in fields such as autonomous driving, robotic manipulation[31,45], and VR/AR. To obtain and enhance the quality of a 3D language field, high-precision 3D reconstruction is often necessary. Following the advent of NeRF[26], numerous works focusing on 3D semantic fields have emerged[46,23]. Initially, these semantic fields were more akin to rendering mask segmentation for each view, heavily reliant on semantic annotations of the data and lacking the capability for open language queries. To address these shortcomings, LERF[16]distills the required features from the language-image model CLIP and integrates them into NeRF. However, the bottlenecks of slow training and volumetric rendering in NeRF, as well as the quality limitations due to CLIP features being image-aligned rather than region or pixel-aligned, remain unresolved.
+
+The recently proposed explicit 3D reconstruction method, 3D Gaussian Splatting[15], offers fast training and real-time rendering, effectively addressing the speed issues associated with previous NeRF-based methods. Additionally, by using SAM[18]for mask segmentation and integrating semantic models such as CLIP[3,12]or DINOv2[28], it tackles the quality issues caused by unclear semantic boundaries. These methods[34,30]optimize the semantics of Gaussians by downscaling the original CLIP features through techniques such as autoencoding and quantization with MLP. However, after obtaining the downscaled semantic features, they need to reconstruct the raw CLIP features. This restoration process can result in information loss, causing the resulted features to be inconsistent with the original features. In addition, like Gaussian Splatting, these methods usually require very dense input (usually more than 20 views) and highly accurate camera poses. The high input requirements and long training process make such methods difficult to apply in real-world scenarios. From a practical application standpoint, we prefer to use very sparse inputs (such as 3-4 images) to quickly obtain high-quality 3D language fields. This can significantly reduce the complexity of the data acquisition process and shorten training time, making it much more suitable for real-world applications.
+
+In this paper, we propose Sparse View Language Embedded Gaussian Splatting (SparseLGS) to address the challenge of acquiring 3D language fields from sparse view inputs. To overcome the limitations of traditional off-the-shelf methods like COLMAP[32,33], which often fail with extremely sparse views for point cloud reconstruction, we employ a learning-based dense stereo method, MASt3R[19], to estimate camera poses and generate the initial point cloud. Subsequently, we utilize SAM and CLIP to obtain object-level semantic results. In scenarios with dense view inputs, inconsistencies in multi-view semantics can be corrected because the abundance of views allows the accurate information to overshadow the few incorrect pieces. However, with sparse inputs (e.g., only 3-4 views), the incorrect results can distort the correct ones. The second column of Figure1shows the results of LangSplat[30], which serves as a typical example of how multi-view inconsistency leads to a degradation in rendering quality when using sparse view inputs. To address this issue, we adopt a three-step multi-view semantic alignment approach that utilizes techniques such as pixel matching and region fusion to achieve accurate alignment. To mitigate information loss during the reconstruction of the original features, we establish a bijection between the low-dimensional results and the original CLIP features. This allows us to use tile-based rendering to obtain the rendered semantic results and then utilize the bijection to restore the original CLIP features, thus enabling open-language queries.
+
+Since the semantic masks provide regionalized information, with the interior of the same mask region being identical except for the boundary information, simply using semantic as ground truth does not provide sufficient geometric constraints. Therefore, we first train the Gaussian parameters using RGB images to initialize Gaussians. Subsequently, we incorporate a semantic loss to guide the training of the semantic field and fine-tune the Gaussian parameters.
+
+To summarize, the contributions of this paper include:
+
+We propose SparseLGS, which, to the best of our knowledge, is the first work to explore the reconstruction of 3D language fields from sparse pose-free view inputs.
+
+We propose “three-step semantic multi-view matching” to resolve the inconsistencies in semantics and masks across input views. Additionally, we establish a bijection between the original CLIP features and the reduced-dimensional features to prevent degradation during the reconstruction of the original features.
+
+After optimizing the Gaussian parameters using RGB image supervision, we retain this supervision during the semantic field learning to better constrain the scene geometry. This strategy effectively enforces the 3D consistency of the learned semantic field under sparse input.
+
+SECTION: 2Related Works
+
+SECTION: 2.13D Gaussian Splatting for 3D representation
+
+Unlike implicit reconstruction methods represented by NeRF[26], 3D Gaussian Splatting[15], being an explicit model, is highly regarded for its ability to achieve real-time rendering while maintaining high-quality visual effects. Many approaches have combined 3D Gaussian Splatting to achieve improvements in both speed and quality. Some generalizable methods[25,2,1]enhance the model’s ability to generalize by extracting image features and integrating multi-view common information into the constructed neural network architecture. 3D surface reconstruction[11,10], generation[36,48]also use Gaussian Splatting and have achieved significant improvements in terms of visual effects and other related aspects. Some works[27,43,8]combine Gaussian Splatting to make their reconstruction of digital human and avatar much more efficient, with higher quality and better editability. Different from the applications mentioned in the above works, we aim to leverage language-embedded Gaussians to better construct a 3D language field to support open-vocabulary queries.
+
+SECTION: 2.2Sparse View 3D Reconstruction
+
+3D reconstruction tasks often require dense views and precise camera poses for supervision. Due to The difficulty of meeting these needs, a series of works circumvent the requirements of dense input views. BARF[22]and NeRF–[41]jointly optimize the radiance field and camera parameters with initial noise. GARF[4]proposes a matching method and uses a different activation function to ease the pose estimation. Simple-RF[35]chooses to reduce the fitting and expressive capabilities of NeRF-like models, and HG3-NeRF[9]uses CLIP feature to assist in this coarse-to-fine reconstruction process. SPARF[37]uses virtual views and pixel matching, designing two related losses to help optimize camera poses. These works are all related to NeRF. As Gaussian Splatting becomes increasingly popular, a significant amount of work has emerged focusing on sparse reconstruction based on it. CoR-GS[44]simultaneously trains two Gaussian fields and optimizes based on the inconsistencies between these two fields. DNGaussian[20]and FSGS[49]emphasize depth information and focus on optimizing the Gaussian distribution using both global and local information. These methods focus on learning RGB and do not address the issue of 3D semantic field reconstruction. Therefore, similar to InstantSplat[7], we utilize the learning-based MASt3R to provide excellent camera poses and point clouds to address the challenge of sparse reconstruction of 3D semantic fields.
+
+SECTION: 2.33D Language Fields
+
+After making significant progress in 2D semantics in computer vision, researchers have begun to venture into the more challenging domain of 3D semantic fields. Semantic-NeRF[46]easily combine semantic masks with NeRF to get 3D segmentation field. GSNeRF, Semantic-Ray, RT-GS2[23,5,14]have developed different network architectures and pipelines, resulting in the training of generalizable scene segmentation models. The aforementioned methods are capable of achieving 3D semantic segmentation, but they can not perform text-to-image content queries. Subsequently, many methods have been developed to get open-ended 3D language fields based on CLIP features. Feature 3DGS[47]uses SAM feature to get 3D segmentation field and uses CLIP to enable text-to-specific-object queries. CLIP-GS[21]focuses on real-time 3D semantic understanding of videos and employs a codebook for dimensionality reduction. LEGaussians[34]combines both DINOv2 and CLIP and uses MLP with softmax to obtain the semantic feature. LangSplat[30]uses autoencoder to reduce the CLIP feature’s dimensionality and restore the encoded feature and FastLGS[13]uses feature grid to distinguish and bind the mapping from high-dimensional to low-dimensional features. OpenGaussian[42]constrains spatial semantics in 3D and uses a coarse-to-fine codebook for object semantic differentiation. Unlike the aforementioned methods, we focus on how to efficiently obtain high-quality 3D language fields from pose-free sparse inputs to support open-vocabulary queries.
+
+SECTION: 3Method
+
+The whole pipeline is illustrated in Figure2. We provide a brief introduction to Gaussian Splatting and describe how to obtain object-wise semantic features for semantic field training in Section3.1. In Section3.2, we introduce the multi-view stereo models to accurately estimate camera poses and generate initial point clouds. We address the issue of multi-view inconsistencies under sparse inputs in Section3.3. Finally, we elaborated on our two-step training ideas and specific practices in Section3.4.
+
+SECTION: 3.1Preliminary
+
+Gaussian Splatting[15]is an explicit 3D scene representation approach, where the entire scene is explicitly modeled as a series of anisotropic 3D Gaussians. Using these 3D Gaussian primitives along with the camera’s intrinsic and extrinsic parameters, the colorfor each pixel can be computed.
+
+Specifically, each 3D gaussian can be parameterized by a mean vectorand a covariance matrix:
+
+To ensure thatis positive semi-definite, we represent it using a scaling matrixand a rotation matrixsuch that. Finally, the 3D Gaussians are efficiently rendered onto a 2D image plane using tile-based rasterization. The alpha blending process proceeds as follows:
+
+whererepresents the color of each Gaussian,denotes the collection of Gaussians that the ray intersects, and, whereis composed of the opacityof the-th Gaussian and the 2D projectionof the-th Gaussian.
+
+To achieve semantic Gaussian Splatting, each Gaussian is additionally assigned a semantic feature. Therefore, similar to the previous rendering process, we can also obtain the rendered semantic features through alpha blending as follows:
+
+To optimize thesewith object-wise semantic features, we use the SAM[18]model to get the image’s object segmentation and the CLIP[3,12]model to obtain the semantic information of each object region, instead of relying on the unclear patch-wise semantic features from DINOv2[28].
+
+SECTION: 3.2Camera Pose and Point Cloud Estimation
+
+First, we need to estimate the camera pose and the initial point cloud from sparse inputs to train these Gaussians. Current methods typically rely on Structure from Motion[32](SfM) and Multi-View Stereo[33](MVS) to precompute camera poses and sparse point clouds from dense inputs. While this approach is effective for 3D reconstruction with dense views, it often fails to estimate correct poses when the input views are sparse and exhibit significant variations in viewpoints (e.g., with three views and camera angle differences exceeding 90 degrees). Therefore, directly applying methods similar to COLMAP may not yield accurate initializations.
+
+Recently, new models such as DUSt3R[39,40]and MASt3R[19]have integrated the SfM and MVS processes into a single pipeline, enabling end-to-end reconstruction of camera poses and dense point clouds from pose-free sparse view inputs. By replacing the COLMAP process with these methods, a robust initialization is provided, significantly improving the issue of poor sparse reconstruction quality caused by limited input constraints. This forms a solid foundation for enhancing the quality of the 3D semantic field.
+
+SECTION: 3.3Sparse View Semantic Alignment
+
+We first introduce our inputs and corresponding notations. Given a set of input images, for each image, we can get whole segmentation masksfor three different granularities (whole, subpart, part) and compute the corresponding CLIP features.
+
+Now that we have obtained camera pose, initial point cloud, and semantic map through the previous data preprocessing steps, we can begin training the 3D semantic field. However, under the setting of sparse view inputs, a significant challenge remains. Specifically, for the same object viewed from different perspectives, ensuring 3D consistency in semantics becomes difficult due to factors such as view direction, cluttered backgrounds, and occlusions. When dense input views are available, slight inconsistencies can be averaged out through a sufficiently large number of training samples. However, as the number of views decreases, semantic inconsistencies between different views become more pronounced and severe. These inconsistencies degrade the effectiveness of the trained 3D semantic field and lead to a reduction in the accuracy of text queries.
+
+To mitigate the impact of sparse view semantic inconsistency, we propose a semantic alignment method consisting of three parts: RoMa-based pixel matching, inconsistent mask fusion, and reprojection matching fine-tuning.
+
+First, we use RoMa[6]to complete the matching between different semantic masks. For imagesand, assume that the mask area inis. Each pixelincan find a corresponding matchin. Thesewill each belong to different semantic masks in. The SAM maskwith the highest number of matching points is the semantic mask thatmatches in. Then, using the matching area ratiobetweenand, along with the cosine distancebetween the corresponding featuresand(as defined in Equation4), we can evaluate the alignment consistency between masks.
+
+The truly matched SAM mask pairscan be selected when, wherecontrols the confidence level of the filtering process. Here,is defined in Equation5, whererepresents the weight of
+
+After matching, the semantic inconsistency problem is resolved. However, inconsistencies in SAM segmentation across different views persist. For example, two regions may appear within the same mask inbut belong to different masks in.
+
+For coarser segmentation, we aim for each mask to represent a complete object. Based on the previously matched mask pairs, if multiple masks incorrespond to the same maskin, and these pairs meet the screening criteria, we merge the mask regions inand assign them the semantics of. For finer segmentation, however, we avoid mask fusion to ensure that the same object can be divided into smaller, more detailed segments.
+
+After the previous two steps, the issue of semantic inconsistency across sparse views is largely alleviated. However, RoMa may struggle to accurately match points that are spatially close but observed from significantly different viewing angles. To address this, we use the pixel’s corresponding 3D position to assist in refining the matches.
+
+Specifically, for a SAM mask, each pixel incan be back-projected into 3D space and then reprojected onto another view, such as. Similar to Step 1, the corresponding maskincan be identified. For, we can likewise find the corresponding maskinthrough back-projection. The bilateral matching results could be calculated respectively usingas in step 1. The correct SAM mask pairsare retained ifand.
+
+SECTION: 3.4Training Sparse View 3D Language Fields
+
+In previous dense-input 3D language field representation methods, RGB supervision is abandoned when training semantic features. However, if we rely solely on semantic loss to train the Gaussians in the sparse input setting, they tend to become excessively elongated or overly large, failing to capture the correct geometric distribution of the scene. This is entirely due to the semantic map providing minimal information that is highly regionalized, with almost no additional information contained within the interior of each region. This leads to the Gaussian shape being able to grow indiscriminately and not being well controlled. In contrast, the RGB image contains richer information and could provide much stronger geometric constraints. Therefore, we first train the Gaussians without semantic constraints, which serves as a robust initialization for modeling the 3D semantic field. Additionally, during the initial training of the Gaussians, we incorporate camera pose optimization to correct slight errors in the estimated camera poses. The training process is as follows:
+
+During semantic training, if we directly combine hundreds of thousands of Gaussians with CLIP features, it results in unacceptable storage overhead and inefficient rendering and training. To address this, we need to reduce the dimensionality of the raw semantic features. Current methods typically rely on training an autoencoder for dimensionality reduction or use quantization and MLPs. However, both approaches suffer from the issue that the reconstructed semantic features often do not align well with the original CLIP features.
+
+Our solution is to perform dimensionality reduction on the original features using techniques such as PCA, MLP, or one-dimensional convolution, and then directly link the corresponding low-dimensional and high-dimensional features to establish a one-to-one correspondence. This approach minimizes errors caused by reconstructing the original features. We denote the low-dimensional semantic features inas
+
+Subsequently, during the training of semantic features, to ensure that the Gaussian properties change only slightly, apart from the semantic properties, and to provide some geometric constraints, the loss function for training the semantic Gaussians combines the image loss with the semantic loss. Letdenote the corresponding rendered semantic features for segmentation level, and the total loss function can be expressed as:
+
+where.
+
+SECTION: 4Experiments
+
+SECTION: 4.1Implementation Details
+
+We implement our framework using PyTorch[29]and incorporate the modified CUDA kernels from 3D Gaussian Splatting to enable the rendering of semantic features. During the initialization training of the Gaussian parameters, we incorporate the prune and densify process. This process is not performed during the semantic training. We setandin our training stage and set,in sparse view semantic alignment stage. These parameters could be fine-tuned for different scenes, which could make the visual quality better. Due to the sparsity of our inputs, We require approximately 30 seconds to estimate camera poses and point clouds, around 4 minutes to obtain the semantic segmentation, and about 30 seconds to complete multi-view semantic alignment. Our model takes approximately 3 minutes to complete the semantic training on one RTX3090 GPU. We use the Adam[17]optimizer for training, with a learning rate set tofor semantic features. Due to the good initialization, each of the three granularity levels of the semantic Gaussian fields is trained for only 1000 iterations.
+
+SECTION: 4.2Datasets and Baseline
+
+We conduct experiments on two widely-used datasets: 3D-OVS[24]and LERF[16]. The LERF dataset consists of 13 scenes containing a mixture of in-the-wild and posed long-tail scenes. It features complex and varied scenes with a wide range of objects, showcasing the method’s capability to handle real-world data. Inspired by LERF and LangSplat[30], we use the mIoU metric to evaluate the quality of the predicted mask for open-vocabulary queries and mACC to assess accuracy in the object localization task. The 3D-OVS dataset comprises distinct scenes with a set of long-tail objects situated in various poses and backgrounds, making it well-suited for evaluating the quality of object masks under open-vocabulary tasks. Therefore, we use mIoU as the evaluation metric for the 3D-OVS dataset.
+
+We compare our SparseLGS with recent SOTA language-embedded Gaussian splatting methods such as LangSplat[30]and LEGaussian[34]. For the LERF dataset, using COLMAP in the original workflow does not yield camera poses due to the very sparse views and the complexity of the scene. Therefore, when conducting experiments on the LERF dataset, we use all images to obtain camera poses and initial point clouds. Additionally, since there is no existing work specifically addressing sparse reconstruction of 3D language fields, we created a combination of InstantSplat[7]and LangSplat as our comparative method.
+
+SECTION: 4.3Evaluation Results
+
+Table1shows the quantitative Results of our method in object localization and semantic segmentation compared to other methods. We use four views for all the experiments on LERF dataset. “DC.” denotes using dense inputs (e.g., all images) to obtain camera poses and point clouds through COLMAP. The reason we did this is that these methods use COLMAP as initialization for dense inputs, but COLMAP cannot provide camera poses for very sparse inputs (3-4 views) with significant view changes. Therefore, we relaxed the conditions for initialization in these methods. As shown in Table1, even with more information given to these methods, our method still achieves much better results in object localization and semantic segmentation tasks. Moreover, due to our use of multi-view stereo for obtaining great initialization, we only need to train our model for 1k iterations, which makes us much faster than other methods in terms of training time (Tr.T.) and total time (almost five times faster). ‘total time’ here refers to the sum of data preprocessing time and training time, denoted by T.T.
+
+Figure3displays the qualitative comparisons of 3D object localization task of each method. It can be observed that under sparse inputs, we are able to more accurately locate the positions of objects, and the relevance heat map also indicates that our predicted regions are highly concentrated. Figure4shows the comparisons on 3D semantic segmentation tasks with open-vocabulary queries. It is evident that the semantic mask regions we obtained closely match the Ground Truth (GT) and essentially do not query any irrelevant semantic parts.
+
+We also compare SparseLGS with other methods on the 3D-OVS dataset. Unlike the original 3D-OVS[24]method, which requires obtaining a complete list of objects in the scene beforehand, we only use textual descriptions to query and obtain object masks for all methods.
+
+Table2presents the numerical results of our method compared to other SOTA 3D language field reconstruction methods. We used only three views as input for experiments on the 3D-OVS dataset. It can be observed that our method has achieved great results and has strong numerical stability across different datasets. Other methods, such as Langsplat, rely on autoencoders to reconstruct the original CLIP features. As a result, their performance is directly influenced by the quality of the autoencoder, leading to fluctuating results. In the case of the ’room’ dataset, this dependence on the autoencoder caused complete prediction failures. Despite multiple repeated training experiments, we were unable to achieve satisfactory results. This further emphasizes the necessity of establishing a direct mapping from high-dimensional to low-dimensional spaces in our method.
+
+Figure5showcases the superiority of our method in terms of visual results. It demonstrates better boundary information and regularization of masks.
+
+SECTION: 4.4Ablation Study
+
+Table3presents the numerical results obtained using different dimensionality reduction methods. It can be observed that training without reducing the dimension of feature will lead to ‘CUDA OUT OF MEMORY’ (denoted by O.O.M). We could also know that constructing a low-dimensional to high-dimensional bijection significantly outperforms the use of an autoencoder for language field reconstruction.
+
+We conduct ablations on the ‘teatime’ scene in LERF Dataset and present the visualization results in Figure6. We conducted experiments without and with matching up to step 1-3, respectively. The results showed that step 1 significantly corrected many matching errors. Step 2 further merged regions with inconsistent SAM segmentation granularity, while step 3 fine-tuned the matching results on a spatial level.
+
+We compare the results of training language field with image loss and training singly with semantic loss for novel view synthesis. From Figure7, it can be observed that the stronger geometric constraint brought by the image loss prevents the Gaussian shape from growing uncontrollably and overfitting the training views, which makes the Gaussian distributions in space more reasonable in terms of shape and positional distribution.
+
+SECTION: 5Conclusion
+
+We proposed SparseLGS, a method for sparse, pose-free view 3D language field reconstruction that supports open-vocabulary queries. We combined multi-view stereo models to obtain a strong prior from sparse and pose-free inputs and then addressed the challenge of multi-view inconsistency caused by CLIP and SAM via multi-view semantic alignment. By establishing a bijective mapping, we transformed the high-dimensional CLIP features into low-dimensional features that served as Gaussian attributes for tile-based rendering. We combined image loss with semantic loss to produce a high-quality 3D language field. Compared to existing methods, our method requires only a small number of input views (3-4 views) to support highly accurate open vocabulary queries and is at least 5 times faster than existing SOTA methods.
+
+SECTION: References
+
+Supplementary Material
+
+SECTION: 6About Learning Based Stereo Model
+
+We adopt a learning-based stereo model instead of COLMAP because SFM+MVS lack the capability to estimate camera poses and point clouds from sparse view inputs. In our framework, we use MASt3R[19]to get these information and further optimize them in our initial Gaussians training step. DUSt3R[40,39], VGGsfM[38], or other similar methods can also serve as viable alternatives.
+
+SECTION: 7More Implementation Details
+
+SECTION: 7.1Relevancy Score of Open-vocabulary Queries
+
+Inspired by LERF[16], we fisrt compute the CLIP embedding of the text queryand a set of canonical phrases. Then compute cos similarity of the rendered semantics and each. Finally, compute the pairwise softmax between the semantic mapand the text embedding. We could get the relevancy score below:
+
+Where canonical phrases “object”, “things”, “stuff”, “texture” are used for all experiments. This score quantifies the correlation between the rendered semantics and the text query’s CLIP embedding.
+
+Note that we train three different granularity levels of semantic fields. For each query, we set the most relevant one (with highest relevancy score) as the result relevancy map.
+
+SECTION: 7.2The Evalution Metrics
+
+We use Mean Intersection over Union (mIoU) and Mean Accuracy (mAcc) to measure the performance of each method in open-vocabulary semantic mask query tasks and semantic localization tasks. For each specific object query, we search within each granularity using different strategies to decide the best semantic level.
+
+We firstly use mean convolution filter to mitigate the impact of outliers in each relevancy map. For 3D object localization tasks, we select the one with the highest relevancy score and its corresponding position as our predicted localization. For 3D semantic segmentation tasks, we select the area where the relevancy score surpasses our preset threshold (the default value is 0.6) as our predicted semantic mask. Our numerical estimations and visualization results on the LERF dataset are based on adaptations of the evaluation code from LangSplat.
+
+For 3D-OVS dataset, select the region with a relevancy score exceeding the thresholdas the corresponding mask. The thresholdcan be fine-tuned for various datasets to achieve more optimized masks. Here, the most relevant mask across three distinct granularity levels is determined based on both the area and the average relevancy score within the mask. Specifically, we calculate the area and the average score of each level’s mask, the one with an area greater than 2000 that also achieves the highest score will be selected as our final output. The default setting foris 0.8.
+
+SECTION: 8Additional Results
+
+Similar to our main paper, we choose LangSplat[30], LEGaussian[34]combined with COLMAP[32,33]as our baselines. For LERF dataset, we use all images of each scene to run COLMAP. For 3D-OVS dataset, we use sparse input to run COLMAP. Since the results of MASt3R combined with LangSplat are similar to those obtained by directly using dense view training, we do not present the results of MASt3R combined with LangSplat here.
+
+In Figure8, we show more open-vocabulary 3D object localization results compared with other methods. It can be seen that on various scenes of LERF dataset, we achieve more accurate localization results and more concentrated relevancy maps compared to similar methods.
+
+In Figure9, we present additional comparative results on open-vocabulary 3D semantic segmentation tasks. It is evident that our method outperforms others across various scenes in different datasets. Our resulting mask aligns more accurately with the ground truth (GT) mask compared to the other methods.

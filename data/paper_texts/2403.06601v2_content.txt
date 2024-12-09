@@ -1,0 +1,231 @@
+SECTION: Cross-domain and Cross-dimension Learning for Image-to-Graph Transformers
+
+Direct image-to-graph transformation is a challenging task that involves solving object detection and relationship prediction in a single model. Due to this task’s complexity, large training datasets are rare in many domains, making the training of deep-learning methods challenging. This data sparsity necessitates transfer learning strategies akin to the state-of-the-art in general computer vision. In this work, we introduce a set of methods enabling cross-domain and cross-dimension learning for image-to-graph transformers. We propose (1) a regularized edge sampling loss to effectively learn object relations in multiple domains with different numbers of edges, (2) a domain adaptation framework for image-to-graph transformers aligning image- and graph-level features from different domains, and (3) a projection function that allows using 2D data for training 3D transformers. We demonstrate our method’s utility in cross-domain and cross-dimension experiments, where we utilize labeled data from 2D road networks for simultaneous learning in vastly different target domains. Our method consistently outperforms standard transfer learning and self-supervised pretraining on challenging benchmarks, such as retinal or whole-brain vessel graph extraction.111Code:github.com/AlexanderHBerger/cross-dim_i2g
+
+SECTION: 1Introduction
+
+Representing physical relationships via graph representations has proven to be an efficient and versatile concept with vast utility in machine learning. Prominent examples are road network graphs[2], neuron representations and connections in the brain[45], blood vessels[8], and cell interactions[55]. Here, typically used voxelized images disregard the physical structure’s semantic content. Hence, constructing graph representations from images (image-to-graph, see Fig.1) is a critical challenge for unlocking the full potential in many real-world applications[27].
+
+Traditionally, image-to-graph transformation involves a complex multi-stage process of segmentation, identification of physical structures and their relations, and iteratively pruning the constructed graph, which leads to inaccuracies and information loss at each step[14]. These disadvantages negatively impact prediction accuracy and limit the application to downstream tasks that require more information from the underlying image (e.g.,[44,43]). Hence, there is a clear need for machine learning solutions that facilitate accurate image-to-graph transformation in a single step[22,4]. Recently, vision transformers have been proposed for this task and showed superior performance to traditional multi-stage approaches[42,54]. However, these approaches require large sets of annotated 2D data and have not been shown to generalize to diverse 3D datasets where graph-level annotations are not widely available.
+
+To address this challenge, we adopt and extend concepts from the field of inductivetransfer learning(TL) (see taxonomy in[38]), which have not been explored for image-to-graph transformation. Inductive TL simultaneously uses large annotated datasets in the source domain (e.g., 2D satellite images) and a small set of labeled data in the target domain (e.g., 3D microscopy images of vascular networks).
+
+Guided by the hypothesis that theunderlying graph representations of physical networks are similar across domains, we introduce a set of methodological innovations for image-to-graph transformation:
+
+We introduce a loss formulation that regularizes the number of sampled edges during training, allowing simultaneous learning in domains that differ in terms of the number of objects and relations (Sec.3.1).
+
+We propose a supervised domain adaptation framework for image-to-graph transformers that aligns features from different domains (Sec.3.2).
+
+We propose a framework for training 3D image-to-graph models with 2D data. Our framework introduces a projection function from the source representation to a space similar to the target domain (Sec.3.4).
+
+In extensive experiments on six datasets, we demonstrate our method’s utility and outperform all baselines, validating our initial hypothesis. Our method leads tofour main results: 1) we show compelling improvements in image-to-graph transformation on existing datasets; 2) our method enables image-to-graph transformation in previously unsolvable sparse data scenarios; 3) our method outperforms self-supervised pretraining by a margin and 4) our method bridges dimensions during training, i.e. we solve the previously unsolved direct image-to-graph inference for complex 3D vessel images by utilizing 2D road data in an additional training step. Further ablation studies highlight that each of our methodological contributions addresses a specific weakness in the state-of-the-art.
+
+SECTION: 2Related Works
+
+Image-to-graph transformation is an increasingly important field in computer vision with application to various domains, including road network extraction from satellite images[51]or 3D vessel graph extraction from microscopy images[3,1]. Traditional methods solve this task through a multi-step approach involving input segmentation[11,2,7], skeletonization, and pruning to generate the graph[51,14]. Deep learning-based approaches frequently use an object detector followed by relation prediction[3,1]or require a segmentation map as input[54]. These approaches’ performances are determined by the performance of the pipeline’s intermediate stages. Furthermore, information loss at each stage limits performance and applicability to downstream tasks. Lastly, these methods are tailored to specific domains, rendering them unsuitable for cross-domain applications, includingTL.
+
+We select theRelationformeras our base concept because it is the most general single-stage transformer concept that can directly predict the graph from diverse image data in various domains[42,39]. This generalizability makes it especially suitable for cross-domainTL.
+
+Recent studies showed effective pretraining for transformers on natural images. Prevailing architectures involve supervised pretraining of the model’s backbone on, e.g., ImageNet, coupled with random initialization of the encoder-decoder component[42,33,7]. Dai et al.[12]extend DETR[7]with a specific pretext task for object detection. Li et al.[28]compared self- and supervised pretraining methods with random initialization of a ViT-backbone[13]. They showed how self-supervised pretraining improves downstream object detection without a specific pretext task. Ma et al.[33]pretrained a transformer architecture on synthetic data and outperformed self-supervised methods for object detection. However, generating synthetic data, especially for specialized tasks, is typically domain-specific or requires expert knowledge[25]. Ma et al.[33]find that random weight initialization remains a robust baseline, often achieving competitive downstream performance. To this date, no study has exploredTLfor image-to-graph transformers.
+
+Existing cross-domainTLapproaches are generative or discriminative. Generative approaches translate images from source to target domain on a pixel-level using a generative network[56]. In restricted settings, they have shown promising results, e.g., object detection for day-/nighttime shifts in road scenes[23]or MRI to CT translation[21]. However, generative approaches require additional training of the translation network, which is computationally expensive and suffers from training instability[31]. Discriminative approaches train a single model to learn a general representation that is transferable between domains[50]. Some utilize a domain adversarial network that distinguishes whether a sample is from the source or target domain based on its feature representation. Combined with agradient reversal layer(GRL)[17], this approach has proven effective in classification[17], segmentation[49], and object detection[10]. Chen et al.[10]introduced adomain adaptation(DA) framework for object detection using theGRLconcept with two domain classifiers at the image and instance levels. Both are based on-divergence theory[5]. To reduce the bias towards the source domain, a consistency regularization penalizes the-distance between the domain classifiers[10]. To this day, all existing approaches are limited to a relatively small domain shift (e.g., from day to night scenes or synthetic to real images) instead of afundamentaldomain shift, such as from satellite images to medical scans. Also, none of the existing approaches have been applied to the image-to-graph transformation problem.
+
+2D to 3DTLis a highly challenging but promising research direction because of the abundance of labeled 2D data compared to the scarcity of 3D data. The few existing approaches[41,29,53,52]address the challenge, either data-based or model-based. Data-based approaches augment and project 2D data into 3D space, while model-based approaches aim to adjust the model to work with multi-dimensional input. Shen et al.[41]introduced a method that projects 3D point clouds to pseudo-2D RGB images. Liu et al.[29]introduced a pixel-to-point knowledge transfer that pretrains a 3D model by generating 3D point cloud data from 2D images with a learned projection function. A model-based approach by Xie et al.[53]used dimension-specific feature extractors and a dimension-independent Transformer. Similarly, Wang et al.[52]proposed a special tokenizer that creates 2D-shaped patch embeddings in a standard 2D ViT-model.
+All existing approaches either require changes to the target model, which may limit performance, a specifically crafted projection function, or additional training (e.g., for learning an explicit projection function). In our approach, we seek simplicity in implementation and training as well as generalizability to new domains and tasks.
+
+SECTION: 3Methodology
+
+In this section, we describe our three key contributions to efficiently transfer knowledge from a source domain with image and graph space denoted as ato a target domain with image and graph space denoted asfor an image-to-graph transformer.
+
+SECTION: 3.1Regularized Edge Sampling Loss
+
+A leading difference between the source and target domain in our cross-domainTLsetting is the different node and edge distribution, which poses a challenge because they dictate the relation loss calculation.
+Previous works arbitrarily pick the number of ground truth edges and fix it for the relation loss calculation () for a specific dataset[42], which evidently generalizes poorly across varying domains. Generally, such a loss originates from object detection, where pair-wise relations are classified with a cross-entropy (CE) loss over a fixed number of edges. This includes all active edgesand an irregular number of randomly sampled background edges. An active edge is defined as a pair of nodesthat is connected by an edge, i.e.,. Similarly, for a background edge,holds. Then,is the CE loss on the set of sampled edgeswith:
+
+whereis the model’s relation prediction for the respective pair of nodes. Crucially, this formulation ignores the subsetwhen calculating the loss.
+
+In previous works[42],is a manually chosen global hyperparameter, strongly affecting the model’s performance. Ifis too small, not enough background edges are sampled; hence, the loss does not penalize over-prediction. Ifis too large, background edges dominate the edge loss calculation because the edge space is sparse. In that case, the network under-predicts edges. Furthermore, with only a small subset of all edges being sampled, the loss gives a noisy signal regarding edge prediction, which worsens the learning process overall.
+
+To address these limitations, we introduce our regularized edge sampling loss for transformers, short. In simple terms,adaptively chooses the number of sampled edges. If necessary,upsamples the edges up to a fixed ratio between active and background edges.
+With our novel approach, we achieve a consistent loss across samples from different domains. Formally, we introduce our regularized edge sampling below:
+
+is the set of a batch’s upsampled edges. The number of elements in the upsampled multisetsandhave the pre-defined ratiowhere. Multisets are necessary because the ratio is achieved by duplicating random edges inor.
+
+A batch’s labels consist of a ground-truth graphfor each sample.is defined as a tuple of the sample’s nodes and edges,.
+The set of a batch’s nodesand edgesis thus defined as:
+
+Each active edgeis a tuple of two nodesthat are connected by the respective edge:
+
+Each background edgeis a tuple of two nodesthat are not connected by an edge:
+
+Then, the upsampled multiset of active edgesis:
+
+withSimilarly, we define the upsampled multiset of background edgesas:
+
+with:.
+Notably, only one of the sets is upsampled while the other stays the same because only one of the conditions inEq.5orEq.6can produce a valid.
+
+Hence, we define our regularized edge sampling loss as:
+
+Although the edge ratiois a hyperparameter, the model’s performance is relatively insensitive to its value. A default value ofshowed good results across all datasets (seeSec.4and Supplement), which makesbeneficial compared to the previous works’ stochastic edge losses. Furthermore,gives a precise signal regarding edge prediction and increases convergence speed.
+
+SECTION: 3.2Supervised Domain Adaptation
+
+In our setting, the stark differences between the source and target domain in image and graph features further amplify theTLchallenge. Specifically, source and target domains significantly differ in image characteristics such as background and foreground intensities, signal-to-noise ratio, and background noise, as well as graph characteristics such as the structures’ radii or edge regularity. Edge regularity refers to the geometrical straightness of the underlying structure. While roads in the U.S. (e.g., highways) typically have a high edge regularity, vessels in microscopic images are highly irregular (i.e., the vessel does not follow a straight line and has high intra-edge curvature).
+To address this challenge, we utilize a domain adversarial network on the image and graph level, respectively. These adversarial networks are used when jointly pretraining in both domains. Similar to previous methods[17,48,30], the image-level adversarial network is a small neural network that classifies the domain based on a sample’s feature representation after the feature extractor. We treat each image patchat positionas an individual sample and compute the CE loss
+
+wheredenotes whether the respective sample is from the source or target domain[10].
+
+To align graph-level features, we view the concatenated tokenized transformer outputas a sample’s abstract graph representation whereandare the numbers of object and relation tokens, respectively, andis the amount of the tokens’ hidden channels. We train a domain classifier on this abstract graph representation using the CE loss:
+
+Both domain classifiers are preceded by aGRL[17]reversing the gradient such that the main network is learning to maximize the domain loss. This framework forces the network to learn domain invariant representations and, thus, aligns the source and target domain. Furthermore, we apply a consistency regularization between both domain classifications to reduce the bias towards the source domain, as shown in[10]. This consistency regularization is expressed by an objective function minimizing the-distance between the domain classifiers’ predictions (i.e., the output of the classification functionsand):
+
+where we take the average over the image-level patch classifications of a sample consisting ofpatches.
+
+SECTION: 3.3Combined Training Loss
+
+Our new regularized edge loss is combined with the other essential loss components to a final optimization function. The final loss consists of theregression loss (), the scale-invariant, generalized intersection over union loss () for the box predictions (with predicted boxesand ground truth), and a CE classification loss () for object classification[42]. Further, our new regularized edge sampling lossand our threeDAlosses (,, and) are included. Furthermore, in order to achieve unique predictions, we compute a bipartite matching between the ground truth and predicted objects utilizing the Hungarian algorithm[42].,, andare calculated over all object predictionsthat are matched to a ground truth, i.e. where, whereasis calculated over all object predictions. The combined loss term for ourobject tokens in a batch is defined as:
+
+with,,,, andas weights.
+
+SECTION: 3.4Framework for 2D-to-3D Transfer Learning
+
+This section describes our framework for the challenging setting of a 2D source domain and a 3D target domain. This setting is especially relevant given the scarcity of completely annotated 3D image datasets. At the core of our framework is a simple projection functionthat transforms source instances into a space similar to the target space, i.e.,. Since our regularized edge sampling loss (Sec.3.1) and domain adaptation framework (Sec.3.2) automatically optimize the alignment of source and target domain characteristics, we do not need to engineer our projection to resemble the target domain characteristics (e.g., signal-to-noise ratio or the structures’ radiuses). Thus, we can design our projection function in the most simple and generalizable form. Intuitively,projects 2D data to a 3D space by simply creating an empty 3D volume, placing the 2D image as a frame in it, and randomly rotating the entire volume. Formally,is described by:
+
+Resizefromto the target domain’s spatial patch size () by a linear downsampling operator, where.remains unchanged as we use normalized coordinates.
+
+We initializein 3D withand placeinat slice location. We also augment the node coordinates ofby. New graph.
+
+We apply a random three dimensional rotation matrixonand obtain. We apply the sameon the nodes ofand obtain. New graph.
+
+Notably, our approach works out of the box without requiring segmentation masks, handcrafted augmentations, specifically engineered projections, or changes to the target model. Furthermore, it naturally extends to new domains and is trainable end-to-end together with the target task.
+
+SECTION: 4Experiments and Results
+
+We validate our method on a diverse set of six public image datasets capturing physical networks. We choose two 2D road datasets, namely a dataset from Munich (a European city with green vegetation-dominated land cover) and from Agadez (a historic Tuareg city in Niger in the Sahara desert). The appearance in satellite images of these cities and their network structure substantially differ from the pretraining set as well as from each other; seeFig.2. Accurately extracting road graphs is a highly important task for traffic forecasting and traffic flow modeling[15,34]. Next, we choose a synthetic OCTA retina dataset[35]and a real OCTA dataset[26]. Additionally, we present experiments on two 3D datasets, namely a synthetic vessel dataset[40]and a real whole-brain microscopy vessel dataset[47]. Details on the datasets and data generation can be found in the Supplement.
+
+We pretrain our method on the 20 U.S. cities dataset[22]jointly with the target dataset. We crop the source images to overlapping patches, in which we eliminate redundant nodes (i.e., nodes of degree 2 with a curvature of fewer than 160 degrees) to train our model on meaningful nodes[4]. After pretraining, we finetune the model on the target dataset for 100 epochs. For more details, please refer to the Supplement and our repository.
+
+We evaluate our method on six metrics from object detection and graph similarity tasks. For graph similarity, we report the 2D TOPO-score[6]and the street mover distance (SMD), which approximates the Wasserstein distance of the graph[4]. From object detection, we report mean average recall (mAR) and mean average precision (mAP) for node- and edge-detection. For more implementation details, please refer to the Supplement.
+
+No prior work has developed transfer learning techniques for the structural image-to-graph transformation problem. To evaluate the significance of our proposed methods, we compare the downstream task performance against three competing approaches with varying pretraining and initialization methods. Our first baseline,no pretraining, is random weight initialization[18], which is considered standard practice for model initialization when no suitable pretraining is available. Second, we benchmark against a state-of-the-art method forself-supervised pretraining, MoCo v3[9], which even outperformed supervised pretraining in some tasks[9]. Self-supervised pretraining is typically used when the amount of unlabeled data significantly exceeds that of labeled data in the same (or very similar) domain. Hence, we pretrain on a large set of unlabeled data from the same domain in each experiment for the self-supervised baseline. For more details regarding the unlabeled dataset, please refer to the Supplement. Third,supervised pretraining, where we pretrain the target model on the source data without using our methodological contributions. This approach has been successfully applied for various vision transformers, including the relationformer[42]. Note that thesupervised pretrainingbaseline is impossible in 3D scenarios; only a projection function enables the use of 2D data for pretraining 3D models.
+
+SECTION: 4.1Results on Cross-domain TL (2D)
+
+Our proposed transfer learning strategy shows excellent results across 2D datasets. We outperform the baseline without pretraining and self-supervised pretraining on all datasets across all object detection and graph similarity metrics; seeTab.1. As the domain shift increases, we significantly outperform naive pretraining.
+
+First, we show that we can learn to extract road graphs in topographically diverse locations with vastly variant land cover via TL. On both datasets (seeTab.1A), we tripled the performance across almost all metrics compared to our baseline. Our results show that edge detection fails without any form of transfer learning. Although the self-supervised method improves the baseline across all metrics, the performance does not reach the level of supervised pretraining. While our approach yields the best performance, the difference to the baseline with naive pretraining is small. We attribute this small difference to the small domain shift between the source (U.S. roads) and the target domains, which eases knowledge transfer.
+
+In the next experiment, we introduce a larger domain shift in our TL. Our target sets are two retinal blood vessel datasets (seeTab.1B and C). Our method doubles the node and edge detection performance on the OCTA-500 dataset[26]compared to "no pretraining." Furthermore, we significantly increase object detection and graph similarity metrics across both datasets compared to all baselines. The qualitative examples (Fig.3) indicate that this improvement is associated with identifying more correct nodes and edges. We observe that the self-supervised method does not improve performance on the synthetic dataset but still achieves minor improvements for OCTA-500. We attribute this to the differences between the target sets: in the OCTA-500, only the arterioles and venules are annotated, leading to an easy topological structure. The main difficulty here lies in differentiating foreground from background, a task in which contrastive self-supervised training shows excellent performance. While this differentiation is easy in the synthetic OCTA dataset, the main difficulty is learning the topological structure with many (often overlapping) edges (seeFig.3and the Supplement). Learning this complex structure requires label information, as visible in the superior performance of the supervised pretraining methods. Naive pretraining still improves performance, but we observe a large (compared to A) performance difference between naive pretraining and our method. We attribute this to the larger domain shift, which is better addressed by our proposed methodology.
+
+SECTION: 4.2Results on Cross-dimension TL (2D to 3D)
+
+Finally, we explore dimensional shifts in addition to a stark domain shift. Leveraging our new proposed loss (Sec.3.1), ourDAframework (Sec.3.2), and our 2D-3D projection function (Sec.3.4), we pretrain models on raw satellite images for the challenging task of 3D vessel graph extraction on a synthetic and a real dataset. Our experiments on the VesSAP dataset[47]show strong improvements in all graph similarity and object detection scores (seeTab.1E). The self-supervised method also displays improvements, which, however, do not reach our method’s performance. Similarly, our method roughly doubles the object detection metrics on the 3D MRI dataset compared to the baselines (seeTab.1D).
+
+We do not report results for naive pretraining because, in contrast to our method, it simply does not allow for 2D-to-3D TL. Our ablation inSec.4.3shows results for applying our projection function only, without any use of our other proposed contributions. When studying the lower-performing baselines, we observe that self-supervised pretraining with MoCo v3 leads to higher improvements in the real microscopic vessel data compared to the synthetic MRI dataset. Both datasets have complex topologies that require supervised training (seeSec.4.1), but only the real dataset has high-intensity variations, which can be efficiently learned in a self-supervised setting.
+The qualitative results inFig.3and the Supplement indicate that the 3D tasks were often unsolvable without our contributions.
+
+SECTION: 4.3Ablations on our Methods
+
+InTab.2and3, we present ablations on the regularized edge sampling loss (3.1) andDAframework (3.2) for the 2D OCTA-500[26](Tab.2C), the 3D MRI[40](Tab.2D), and the 3D brain vessel dataset[47](Tab.3E).
+Expectedly, we observe that ourDAalone leads to compelling performance gains for the 3D setting (almost double the performance) and 2D setting across all metrics; seeTab.2. This is expected since the domain shift between the source dataset of satellite images and our medical images is large. Note that our projection function is always employed for the 3D dataset since pretraining is otherwise impossible. We further observe that employing the projection function alone diminishes the performance because of the domain gap, which is only alleviated by our other contributions.
+
+Next, we ablate on our loss. When applying theDA, adding ourloss further improves the performance (Tab.2), indicating its strength in stabilizing and improving the loss landscape to train better networks. Additionally, we ablate our proposedin an experiment with and withoutTL. Importantly, our experiments show thatis a general contribution that improves image-to-graph transformation forTLas well as for general network training (Tab.3). In aTLsetting,is particularly useful as it reduces the data-specific hyperparameter search. Interestingly, our loss improves not only edge detection but also node detection metrics across our ablations. These improvements can be attributed to the transformer’s cross-attention modules, which treat node and edge detection as joint prediction tasks instead of separate problems. Consequently, both metrics improve jointly. For further ablation studies, e.g., experiments without the domain adversarial networks or an alternative over-sampling of the parameter, please refer to the Supplement. In conclusion, we note that each individual contribution enhances the overall performance of the graph prediction task.
+
+SECTION: 5Discussion and Conclusion
+
+In this work, we propose a framework for cross-domain and cross-dimension transfer learning for image-to-graph transformers. At the core of this work are our strong empirical results, which show that our proposed inductive transfer learning method outperforms competing approaches across six benchmark datasets that contain 2D and 3D images by a margin. We achieve these results through our three methodological contributions, which we ablate individually.
+We conclude that transfer learning has the potential to substantially reduce data requirements for highly complex geometric deep learning tasks, such as transformer-based image-to-graph inference, see Supplement.
+Our work shows that this holds especially when the targeted graph representations are defined by a similar physical principle or physical network. In the presented work, this shared principle is the transport of physical units (cars and blood) in a physical network.
+
+Our problem setting is specific to image-to-graph tasks and our learning scenario in which we have some labeled data in both domains. Future work should investigate how our solution translates to different settings. Furthermore, we use a dimensionality-dependent feature extractor, which might limit generalizability to other dimensions. Future work should explore the development of strong dimension-invariant graph extractors to allow further generalization.
+
+Acknowledgments.AB is supported by the Stiftung der Deutschen Wirtschaft. MM is funded by the German Research Foundation under project 532139938. GK received support from the German Ministry of Education and Research and the Medical Informatics Initiative as part of the PrivateAIM Project and from the Bavarian Collaborative Research Project PRIPREKI of the Free State of Bavaria Funding Programme "Artificial Intelligence – Data Science". This work was partially funded by the Konrad Zuse School of Excellence in Reliable AI (relAI).
+
+SECTION: References
+
+Supplementary Material
+
+Cross-domain and Cross-dimension Learning
+
+for Image-to-Graph Transformers
+
+SECTION: 6Additional ablation studies
+
+Additionally to our main experiments, we present ablation studies on further aspects of our proposed framework. These ablation studies give a deeper understanding of the components’ dynamics and guide future reimplementations and adaptions.
+
+SECTION: 6.1Generalizability
+
+In Table4, we present the results of our experiment E) (see Table1) with one additional configuration. In this configuration, we pretrain the model on the synthetic OCTA dataset[35]instead of the U.S. cities dataset[22]. This pretraining strategy outperforms all baselines and increases the performance compared to our main experimental setting (see Section4). We attribute this improvement to the smaller domain gap between the new source domain (i.e., retinal blood vessels) and the target domain (i.e., a mouse’s cerebrovasculature). These results show how our method generalizes seamlessly to new domains. Furthermore, they substantiate the rationale behind our experimental design: by showcasing the utility of our method in a challenging setting, focused on the most intricate transfer learning scenarios, we establish its effectiveness in more straightforward transfer learning situations (as presented in Table4as well.
+
+SECTION: 6.2Regularized edge sampling loss
+
+Next, we conduct an ablation study on the effect of the regularized edge sampling loss. As explained in Section4, the new loss stabilizes training and increases convergence speed. This effect is shown in Figure4, where the training loss decreases faster from the beginning on and convergences towards a lower level compared to the baseline loss formulation. This effect can be observed across all datasets and training strategies. Also, we experiment with different foreground-to-background-edge ratios(see Section3.1). Table5shows that the performance stays stable across a large range of-values. These results underline our hypothesis from Section3.1thatreduces the hyperparameter space because it does not require careful optimization.
+
+Furthermore, we study the effect of different edge-sampling strategies on our loss formulation in Table6. Specifically, we compare our fixed-ratio upsampling strategy with a varying-upsampling (i.e., for each batch, we randomly choosewith a uniform distribution in), and a fixed-ratio subsampling strategy. The decreased performance with a varying-upsampling strategy shows that a fixedis important for our loss formulation. We further find that subsampling is a valid alternative in scenarios where data is extremely scarce (e.g., Experiment A) but performs worse when more data is available (e.g., Experiment E). Notably, Shit et al.[42]proposed a one-sided subsampling strategy, i.e., subsampling only the background edges if the ratio isabovea certain ratio. This strategy is problematic when the target dataset contains dense graphs, in which our loss formulation upsamples the background edges (see Table7for dataset statistics). Furthermore, the official relationformer repository does use a dynamic subsampling strategy but selects background edges up to an absolute threshold, which introduces strong hyperparameter sensitivity. Table7shows that up- or sub-sampling only one edge type (e.g., the background edges) would not be sufficient.
+
+SECTION: 6.3Domain adaptation framework
+
+Table8shows an ablation study of our domain adaptation framework’s components.,, andrefer to the optimization terms from Section3.2. Using the image-level alignment alone already yields a performance increase of around 30 % compared to not using our framework at all. We attribute this observation to the large image-level differences between the source and target domain, which hinders knowledge transfer in the feature extractor if an adversarial does not mitigate it. The graph-level adversarial slightly decreases the performance when being applied without consistency regularization (i.e.,). This decrease is likely caused by the abstraction level of the transformer’s tokenized graph representation. Without any further guidance (e.g., by the image-level domain classifier through consistency regularization), the graph-level classifier does not provide a precise gradient toward a domain-invariant representation. Combining all three components yields the best results, supporting our hypothesis that the graph-level adversarial needs regularization by the image-level adversarial.
+
+Furthermore, we study the impact of our projection function and loss formulation without applying our domain adaptation framework. Table9shows that our other contributions alone enable transfer learning across dimensions. This enables transfer learning without access to the target domain during pretraining. However, even in these cases, our DA framework yields the best performance. Table2shows a similar trend in cases without dimension shift.
+
+SECTION: 6.4Adversarial learning coefficient
+
+In Table10, we ablate on the domain adversarial learning coefficient.is the factor with which the gradient in theGRLis multiplied before passing it to the respective model component, i.e., the feature extractor for the image-level adversarial and the encoder-decoder for the graph-level adversarial (see Section3.2). We use theschedule proposed by Chen et al.[10], which increasesduring the training until reaching a fixed maximum. Table10shows that the right choice ofis crucial and that a sub-optimal value can decrease downstream performance. We attribute this observation to the model’s tradeoff between learning to produce domain-invariant features (i.e., domain confusion) and task learning (i.e., graph extraction). Ifis too large, the adversarial loss dominates the task loss, and the network does not learn how to produce meaningful features. If it is too small, the domain gap between the source and target domain stays too large, and knowledge transfer is impeded. Figure5shows how a small(e.g.,) is not sufficient to learn domain-invariant features while an-value that is too large does not increase domain confusion but obstructs learning the core task. Note that the specificvalue must be optimized for the used datasets and is not domain-invariant.
+
+SECTION: 6.5Target dataset size
+
+Lastly, Figure6shows the results of an ablation study on the target dataset size. We plot the harmonic mean of node and edge mAP (see Section4) of our method and theno-pretrainingbaseline against the size of the target dataset. We observe that our method consistently outperforms the baseline across all dataset sizes. However, as the number of samples increases, the performance difference between the two methods decreases. This observation is expected because transfer learning becomes less effective (and is also less required) when enough target domain samples are available. Our framework is especially useful if target data is scarce.
+
+SECTION: 7Model & training details
+
+To find the optimal hyperparameters, we follow a three-step approach. First, we optimize the model architecture hyperparameters (e.g., model size) with a random weight initialization (i.e., no transfer learning) on the target task. Then, we fix these hyperparameters for the remainder of the optimization process. An overview of the model hyperparameters for each experiment can be found in Table11. Second, we optimize the training hyperparameters (e.g., learning rate or batch size) for pretraining on the source task with the fixed model architecture hyperparameters from step 1. Third, we use the pretrained model with the best performance on the source task and optimize the training parameters on the target task for each training strategy separately on the validation set. We follow this approach because optimizing the whole pipeline (including pretraining and fine-tuning) in a brute-force manner would require too many resources in terms of computational power and energy consumption. Table12depicts the training hyperparameters for the target task for all the experiments listed in Section4.
+
+SECTION: 8Datasets
+
+In the following, we describe the properties and sampling of our six diverse image datasets and the unlabeled datasets we used for the self-supervised baseline.
+
+SECTION: 8.1Training set - 20 U.S. Cities
+
+[22]is a city-scale dataset consisting of satellite remote sensing (SRS) images from 20 U.S. cities and their road graphs covering a total area of 720 km2. The satellite images are retrieved in the RGB format via the Google Maps API[19]. The corresponding road network graphs are extracted from OpenStreetMap[20]. We cut the resulting images and labels into overlapping patches of 128x128 pixels with a spatial resolution of one meter per pixel. In these patches, we eliminate redundant nodes (i.e., nodes of degree 2 with a curvature of fewer than 160 degrees) to simplify the prediction task[4].
+
+SECTION: 8.2Agadez and Munich, cities around the globe
+
+We create our own image dataset from OpenStreetMap222https://www.openstreetmap.orgcovering areas that differ from those covered by the 20 U.S. cities dataset in terms of geographical and structural characteristics. Geographical characteristics refer to the area’s natural features (e.g., vegetation), while structural characteristics relate to anthropogenic (human-made) structures that affect an area’s surface (e.g., street type) or layout (e.g., city type). The complete dataset contains a 4 km2area of 11 cities with different characteristics in different parts of the world. Both source images and labels were obtained in the same manner as for the 20 U.S. cities dataset[22]. Our dataset is accessible in our GitHub repository333GitHub repository will be made publicly available upon acceptance.
+
+For our experiments, we choose two cities, Agadez and Munich, whose characteristics differ from the 20 U.S. cities dataset in different aspects as displayed in Table13. We strategically choose those cities to investigate how differences in specific characteristics between the source and target domain affect knowledge transfer and how transfer learning strategies should be adapted to these differences. We especially test our hypothesis that surface-level characteristics are captured by different components than layout-level characteristics. These new datasets enable the verification because Agadez differs from 20 U.S. cities in surface-level characteristics (e.g., vegetation, street type, and buildings) but shares a similar city layout (i.e., grid plan). Note that although Agadez has a historical city center, we chose a part of the city that follows the typical grid layout. Contrary to this, Munich is similar to U.S. cities in surface-level characteristics while following a different city layout (i.e., a historical European city layout). We test each city dataset separately.
+
+SECTION: 8.3Synthetic OCTA
+
+The synthetic Optical Coherence Tomography Angiography (OCTA) dataset[35]consists of synthetic OCTA scans with intrinsically matching ground truth labels, namely the corresponding segmentation map and the vessel graphs. The images were created using a simulation based on the physiological principles of angiogenesis to replicate the intricate retinal vascular plexuses[40], followed by incorporating physics-based modifications to emulate the image acquisition process of OCTA along with the usual artifacts. We project the 3D OCTA images along the main axis, split them scan-wise between training and testing sets, and extract 2600 overlapping samples ofpixels. For training our self-supervised baseline, we use the same procedure on 200 additional synthetic OCTA scans to extract almost 100,000 patches.
+
+SECTION: 8.4OCTA-500
+
+The OCTA-500 dataset[26]includes 300 OCTA scans with a 6 mm6 mm field of view. Thelargeen-faceprojection images were manually annotated with sparse vessel labels. We extract the graphs from these segmentation maps using the method presented by Drees et al.[14]. We split the scans patient-wise between training and testing sets and create around 3000 overlapping patches with a spatial size of. Furthermore, we combine the OCTA scans fromOCTA-500with the scans of theROSEdataset[32]to obtain around 40,000 patches for training our self-supervised baseline. This combination is necessary for an unlabeled dataset large enough for self-supervised pretraining.
+
+SECTION: 8.5Synthetic MRI
+
+The Synthetic MRI dataset[46]is a synthetical 3D dataset that simulates the characteristics of clinical vessel datasets. The original dataset provides ground truth labels for vessel segmentation, centerlines, and bifurcation points. The ground truth graphs are obtained with the method described by Drees et al.[14]. We cut the volumes and their graphs in overlapping patches ofvoxels. We use the same dataset with all 80,000 patches for our self-supervised pretraining.
+
+SECTION: 8.6Whole Brain Vessels
+
+The Whole Brain Vessel dataset[37]is a publicly available open graph benchmark dataset for link prediction (ogbl-vessel444https://ogb.stanford.edu/docs/linkprop/#ogbl-vessel). It consists of a graph representing the entirety of the mouse brain’s vascular structure down to the capillary level. Todorov et al.[47]obtained the raw vessel scans using tissue-clearing methods and fluorescent microscopy and then segmented the brain vasculature using CNNs. The dataset has an image, segmentation, and graph representation. We create overlapping patches with a spatial size ofvoxels and remove artifactual patches (e.g., patches containing only noise). We extract 43,500 image patches from an unlabeled whole-brain mouse scan obtained with the vDISCO pipeline[16]for training our self-supervised model.
+
+SECTION: 9Evaluation metrics
+
+We choose to evaluate our models’ performance using three different evaluation metric types: 1) topological metrics, 2) graph distance metrics, and 3) object detection metrics.
+
+The TOPO-score[6]samples multiple sub-graphs starting from different seed locations from the ground truth and measures its similarity to the inferred graph from the predicted graph with the same seed location. The similarity is measured by matching a fixed amount of points between the two graphs. Two points from two graphs are matched if the distance between their spatial coordinates is below a threshold. The result of this matching across all sampled subgraphs is used for calculating precision and recall. This method accurately quantifies a prediction’s geometrical (i.e., the roads’ geographical position) and topological (i.e., the roads’ interconnections) quality. We use the implementation and parameters from Biagioni et al.[6]. These metrics are not implemented in 3D.
+
+The street mover distance (SMD) approximates the Wasserstein distance between a fixed number of uniformly sampled points along the ground truth graph and the predicted graph. Intuitively, it represents the minimal distance by which the predicted graph must be moved to match the ground truth[4].
+
+Further, we resort to widely-used object detection metrics: mean average precision (mAP) and mean average recall (mAR)[36]. To calculate each detection’s intersection over union (IoU), we create a hypothetical bounding box of fixed size around each node. Similarly, we create bounding boxes around the edges with a minimum spatial sizein all dimensions. This minimum holds for edges that connect two nodesandwhere the difference between the coordinates in one dimension is lower than(e.g. if). We calculate the mean AP and AR between the values of different IoU thresholds (i.e., 0.5 and 0.95).
+
+SECTION: 10Additional quantitative results
+
+In Table14, we present our main results from Table1in addition to the results’ standard deviation across five mutually exclusive folds of the test set.
+
+SECTION: 11Additional qualitative results
+
+We are providing additional qualitative results in the form of multiple figures; please see Figure7-11.

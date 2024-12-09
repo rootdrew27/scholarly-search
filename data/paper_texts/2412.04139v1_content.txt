@@ -1,0 +1,333 @@
+SECTION: Monet: Mixture of Monosemantic Experts for Transformers
+
+Understanding the internal computations of large language models (LLMs) is crucial for aligning them with human values and preventing undesirable behaviors like toxic content generation. However, mechanistic interpretability is hindered bypolysemanticity—where individual neurons respond to multiple, unrelated concepts. While Sparse Autoencoders (SAEs) have attempted to disentangle these featuresthrough sparse dictionary learning, they have compromised LLM performance due to reliance on post-hocreconstruction loss.To address this issue,we introduceMixture of Monosemantic Experts for Transformers(Monet) architecture, whichincorporates sparse dictionary learning directly into end-to-end Mixture-of-Experts pretraining.Ournovel expert decomposition methodenables scaling the expert countto 262,144 per layer while total parameters scale proportionally to the square root of the number of experts. Our analyses demonstrate mutual exclusivity of knowledge across experts and showcase the parametric knowledge encapsulated within individual experts. Moreover,Monetallows knowledge manipulation over domains, languages, and toxicity mitigation without degrading general performance.Our pursuit of transparent LLMs highlights the potential of scaling expert counts to enhancemechanistic interpretabilityand directly resect the internal knowledge to fundamentally adjustmodel behavior.
+The source code and pretrained checkpoints are available athttps://github.com/dmis-lab/Monet.
+
+.tocmtchapter\etocsettagdepthmtchapternone\etocsettagdepthmtappendixnone
+
+SECTION: 1Introduction
+
+As large language models (LLMs) continue to scale and generalize(Radford et al.,2019; Brown et al.,2020), understanding their internal computations becomes increasingly imperative. Mechanistic interpretability seeks to unravel how neural networks generate outputs by dissecting their internal processes into human-interpretable components(Bereska & Gavves,2024). Such comprehension is crucial not only for aligning LLMs with human values(Ji et al.,2023)but also for preventing undesirable behaviors such as the generation of toxic content(Hendrycks et al.,2023).
+
+However, achieving such level of interpretability in LLMs is particularly challenging due topolysemanticity—the phenomenon where individual neurons respond to multiple, unrelated concepts(Arora et al.,2018; Mu & Andreas,2020; Olah et al.,2020). This arises from thesuperposition hypothesis, which suggests that neural networks represent more features than there are neurons by encoding them in compressed, high-dimensional spaces(Elhage et al.,2022).
+To address polysemanticity, observational analyses leveraging sparse representations have been employed. Specifically, techniques like Sparse Autoencoders (SAEs) aim to disentangle these superposed features by learning sparse, overcomplete bases that describe the activation space(Sharkey et al.,2022; Bricken et al.,2023; Cunningham et al.,2024).
+
+Despite advancements using SAEs, significant limitations persist: (1)Post-hocreconstruction loss:
+Functional importance ofLLM’sfeaturesare likely to be diminished during SAE’s post-hoc training, stemming from its training set being disjoint from the LLM’s corpus, rendering out-of-distribution issues difficult to diagnose(Bricken et al.,2023; Braun et al.,2024). Such deviation is further exacerbated as nonzero reconstruction error cascades through the LLM’s hidden representations(Gurnee,2024). (2)Manipulability and performance trade-offs: While attempts have been made to steer LLMs based on learned dictionary features(Marks et al.,2024; Templeton,2024), discussions on the manipulability of SAEs often overlook their impact on the model’s general performance across other tasks.
+Particularly in open-ended generation
+tasks, the effects of feature control using SAEs remain largely unknown.
+These limitations highlight the necessity for alternative methods that can observeLLMs’ internal processes while preserving their original capabilities.
+
+In light of these challengesin post-hoc interpretation, methods encoding interpretable weights in LLM during pretraining have been introduced(Tamkin et al.,2023; Hewitt et al.,2023).Among those prior approaches,integrating sparse dictionary learning with Mixture-of-Experts (MoE) architecturesis considered promising as experts’ specialization is linked with monosemanticity(Gao et al.,2024; Fedus et al.,2022a;b). However, conventional MoE architectures face several problems: (1)Limited number of experts: Most sparse LLMs employ a limited number of experts(Lepikhin et al.,2021; Fedus et al.,2022b; Jiang et al.,2024), leading to knowledge hybridity where each expert covers diverse and unrelated concepts(Dai et al.,2024), failing to fulfill the superposition hypothesis necessary for monosemanticity. (2)Confinement to specific layers: Attempts to scale the number of experts(dos Santos et al.,2024; He,2024)have been confined to specific layers within the LLM, rendering knowledge distributed in other parts of the network(Dai et al.,2022; Geva et al.,2021)inaccessible. (3)Inefficient parameter scaling: Recently proposed architectures aiming to scale the number of experts(He,2024; Oldfield et al.,2024)suffer from linearly increasing total parameters, limiting the scalability of the LLM.
+
+To overcome these limitations, we introduceMixture of Monosemantic Experts for Transformers(Monet)architecture, enabling effective specialization of experts to facilitate mechanistic interpretability in LLMs.Monetaims for transparent language modeling by significantly increasing the number of experts to 262K at every layer and integrating sparse dictionary learning within end-to-end Mixture-of-Experts training. Our main contributions are as follows:
+
+Parameter-efficient architecture with increased number of experts: By utilizing a novel expert decomposition method,Monetaddresses memory constraints, ensuring that the total number of parameters scales proportionally to the square root of the number of experts.
+
+Mechanistic interpretability via monosemantic experts:Monetfacilitates mechanistic interpretability by enabling observations of fine-grained experts’ routing patterns. Our analyses confirm mutual exclusivity of knowledge between groups of experts, while qualitative examples demonstrate individual experts’ parametric knowledge.
+
+Robust knowledge manipulation without performance trade-offs:Monetallows for end-to-end training that extends to robust knowledge manipulation during inference. Without degrading performance, it provides effortless control over knowledge domains, languages, and toxicity mitigation.
+
+SECTION: 2Preliminaries
+
+SMoE models efficiently scaletheircapacity by activating only a subset of the experts, thereby reducing computational costs. These models leverage expert embeddings to determine which experts to activate. Given a hidden representation vectorand a set ofexpert networks, each expert is defined as:
+
+whereandare the weight matrices of the-th expert, andis an activation function such as ReLU or GELU.Letbe the expert embeddings anddenote the top-operation.The output of the SMoE layer is then computed as:
+
+whereis the set of indices corresponding to the sparsely activatedtop-experts,based on their routing scores.
+
+Compared to other SMoE architectures, PEER processes a substantially highernumber of expertsby employing a computationally efficient routing mechanism. Based on the product key algorithm introduced byLample et al. (2019), PEER implementsthe product key retrievalmechanism that enables efficient search oftop-experts, reducingcomputationalcomplexity fromto.
+
+Specifically, each PEER expert is a minimal MLP (multilayer perceptron) consisting of an input layer, a single hidden neuron, and an output layer.PEER uses two independent product keys,which areexpert embeddings,andfor each head, rather than retrieving the experts amongembeddings.The hiddenstateiscorrespondinglysplit into two halves,, and the
+top-expertsare obtained by:
+
+Then, top-expertsare selectedfromthe scores computedover the Cartesian product,to constitute, i.e.,
+
+withbeing routing scores of the experts. Following the format of Equation1, letbe theth expert network andbe weights of the expertMLPs.The PEER layer is then formulated as:
+
+Although PEERreduces the computational complexity by a factor of, it suffers frommemory bottleneckas the total number of parameters grows with expert count.Consider a modelwith dimensionand 8 attention heads– scaling to 1 million experts would require4.3 billion parameters per layer.Therefore, building an LLM with 1.3 billion active parameters would necessitatean additional 103 billion parametersjust for the experts.
+
+SECTION: 3Monet: Mixture of Monosemantic Experts for Transformers
+
+To disentangle superposed features in LLM by incorporating sparse dictionary learning into end-to-end SMoE pretraining,
+we aim to maximize the number of experts.
+Instead of searching through a large pool of standalone experts using product key retrieval,
+we proposeproduct key compositionof experts by sharding layers in individual experts to overcome PEER’smemory constraints.Our orthogonal layer partitioning methods, horizontal and vertical decompositions, address the memory bottleneck by scaling the number of experts while keeping parameter growth proportional to the square root of the expert count.
+
+Our first approach to product key composition fundamentally redefines how expert networks are constructed. Instead of maintaining complete expert networks as defined in Equations1and5, we decompose each expert into two complementary components: bottom and top linear layers. Such partitioning scheme allows us to build experts dynamically during inference by combining these components.
+
+Specifically, we partition the weights of experts into two distinct groups corresponding to the bottom and top layers:andrespectively, whererepresents the expert hidden dimension (e.g.,for PEER). To accommodate architectures with bias terms(Shen et al.,2024), we includeandin our formulation. The composedexpert networkcan then be expressedas:
+
+where-th expert is formed by combining the-th bottom layer with the-th top layer.
+
+As illustrated in Figure1, this decomposition enables constructingunique experts using onlyweight choices from each group().Unlike PEER, which searches for top-experts amongcandidates, we directly use the Cartesian product, which breaks down
+jointpairs into independentandselections.The resulting SMoElayer with horizontal decomposition is defined as:
+
+whereandare computed independently for each group, with their productdetermining the expert’srouting score.
+
+To optimize computation across tokens with our decomposed expert structure, we address a key challenge:sparse activations varying by token complicate efficient computation reorganization.While traditional SMoE models employ expert parallelism(Fedus et al.,2022b; Du et al.,2022), such strategies become impractical with our 262K composed experts. FollowingPan et al. (2024); Puigcerver et al. (2023), we adoptdense routingto enable precomputation of overlapped layer operations by extendingsparse routing scoresto all experts:
+
+This allows us to reorganize Equation8into a more computationally efficient form:
+
+Bystrategicallyreordering the summationsin Equation12, wecan precompute memory-intensiveoperations before and after theexpertrouting phase.Weprovideimplementationdetails in Algorithm1of AppendixA.3.
+
+As an orthogonal approach to horizontal decomposition, we propose vertical decomposition that partitions each expert network along the vertical dimension into left and right segments.Letandrepresent thevertically splittedweights for the experts, andanddenote the split biases. For the vertically decomposed experts, the expert network is defined as:
+
+and the expert layer is obtained as:
+
+Wedivide the layer calculation into six terms(see Equation15), with the complete derivation presentedin AppendixA.1. The overall computational costis equivalent tohorizontal decomposition,andthe implementation details are provided in Algorithm2of AppendixA.3.
+
+To avoid the hardware inefficiency of top-sorting, we use Batch Normalization to estimate expert routing quantiles without performing top-. Inspired by BatchTopK(Bussmann et al.,2024), which enhances reconstruction in SAE, we apply batch-level quantile estimation for more accurate routing. Batch Normalization automatically gathers router logit statistics, which are used during inference. This method reduces training time while maintaining performance.
+
+Load balancing loss is crucial in MoE models to promote uniform expert routing, improving expert utilization and ensuring efficient parallelism when experts are distributed across devices. While sparse routing mechanisms are widely used, some dense MoE models adopt entropy-based losses(Pan et al.,2024; Shen et al.,2023)since dense routing does not directly track expert selection frequencies. In a similar vein, we introduce an alternative uniformity loss, formulated as the KL divergence between a uniform distribution and the routing probabilities:
+
+Additionally, we introduce an ambiguity loss that measures the degree of expert specialization for each token:
+
+This loss encourages the model to assign each token to a specific expert with high confidence. By minimizing this ambiguity loss, the model promotes expert specialization, resulting in more distinct and interpretable expert roles.Ablations study on load balancing loss is presented in AppendixC.1.Letbe a language modeling loss andbe a hyperparameter. The final training objective is:
+
+SECTION: 4Experiments
+
+In order to assess practical applicability and scalability ofMonet,wevary modelparameter sizes ranging from 850 million to 4.1 billion andCodeMonetat 1.4 billion parameters.
+In addition, we train models using theLLaMAarchitecture for fair comparison. All models are pretrained on large-scale datasets, and we further fine-tuneMonet-1.4B for instruction-followingMonet-1.4B Chatfor automated interpretation framework. For detailed pretraining configurations and instruction tuning methods, refer to AppendixB.
+
+Empiricalevaluationsin Table2show thatMonetmaintains competitive performance with total parameter-matched dense LLMs across a range of language modeling benchmarks.On the other hand,SAEsfall shortin maintaining model stability, where reconstruction errors lead to instability and reduced performance in open-ended tasks, compromising the model’s overall reliability in knowledge control. We evaluate Gemma 2 2B(Team et al.,2024)using Gemma Scope(Lieberum et al.,2024), a collection of SAEs trained on Gemma 2 models.Specifically,we employ the available SAEs with 65K sparse features–boththose reconstructing the LLM’sMLPoutputandthose reconstructingresidual layers–and evaluate their performance on open-ended benchmarks.
+
+The scalability ofMonetis evident across all three parameter scales (850M, 1.4B, and 4.1B). As the number of parameters increases, the model exhibits a consistent upward trend in performance across both 0-shot and 5-shot settings. This confirms that the scaling laws typically observed in dense models still apply toMonet’s sparse architecture, further reinforcing its scalability and practical applicability for large-scale LLM deployments.In terms of the decomposition design choice,vertical decomposition (VD)shows superior performanceover horizontal decomposition (HD). As shown in Table2,Monet-VD consistently outperformsMonet-HD across multiple benchmarks and parameter scales, particularly in the 850M, 1.4B, and 4.1B models.
+
+In this section, we present qualitative analyses demonstrating the monosemantic specialization of individual experts in ourMonetarchitecture.
+InFigure2, we visualizethe routing scores allocated to theexperts in our language models on the C4(Raffel et al.,2020)and StarCoder subset. We include comprehensive examples illustrating the internal workings of models with varying sizes (Monet-1.4B,Monet-4.1B)anda model pretrained on code (CodeMonet).
+
+Chemical Compounds–Monet-1.4B / Group 5 / Expert 147,040
+
+U.S. States–Monet-1.4B / Group 2 / Expert 73,329
+
+Bay Areas–Monet-1.4B / Group 4 / Expert 48,936
+
+Bayesian–Monet-1.4B / Group 4 / Expert 54,136
+
+Electromagnetism–Monet-4.1B / Group 5 / Expert 81,396
+
+String Data Type–CodeMonet-1.4B / Group 4 / Expert 52,338
+
+Cartilage–Monet-1.4B Chat/ Group 1 / Expert 232,717
+
+Descriptions of Expert 232,717•A thin, flexible, and protective membrane that surrounds and protects living tissues and organs.•A thin, transparent, and protective membrane or layer that covers or lines a surface or organ of the body.•A thin, flexible, and often gelatinous substance that provides structure and support to living cells and tissues.•A tough, fibrous, and elastic substance that forms the outer layer of cells in animals, plants, and fungi.
+
+Expertise–Monet-1.4B Chat/ Group 4 / Expert 51
+
+Descriptions of Expert 51•A person who has a particular skill or talent, especially one that is considered valuable or desirable.•One who has been selected or appointed to perform a specific task or role.•A person who is skilled in the art of writing or speaking in a particular language or style.•A person who is a member of a group or organization, especially one that is recognized by the law or has a high level of authority.•A person who has the ability to perform a specific action or set of actions.
+
+InMonet, feedforward MLPin each decoder blockis decomposed into262,144experts, a design considered highly granularby the standard ofLudziejewski et al. (2024).As shown in Figure2, such fine-grained expertsspecialize in concepts such as chemicalcompounds(Expert 147,040) orstates in the U.S.(Expert 73,329).An expert activates tovocabularies associated with similar concepts, like physicists in a fieldof electromagnetism(Expert 81,396).
+
+Our expertsexhibitmonosemanticityby specializingin concepts presentedacrossdifferent contextsandlanguages,demonstrating that they recognize based on contextual and domain knowledge rather than relying solely on vocabulary cues.For instance, both Expert 48,936 and Expert 54,136 in Figure2respond to the term “Bay”, where one relates it to a geographical area (e.g.,“Bay Area”), and the other connects it to a mathematical concept (e.g., “Bayesian”).Similarly,despite the appearance of the same concept across various programming languages,CodeMonetconsistently maps string-related knowledge to Expert 52,338.
+
+We have adapted automated interpretation framework that generates the description based on the hidden states in LLMs(Chen et al.,2024; Ghandeharioun et al.,2024; Kharlapenko et al.,2024), to interpret individual experts as shown in Figure2. The following prompt is given to theMonet-1.4B Chat: “Q: What is the meaning of the word? A: Sure! The meaning of the wordis ”, whereserves as a placeholder for averaged token embeddings activated to the targeted expert. Without relying on external LLMs, ourMonet-1.4B Chatgenerates a description for its experts, like explaining the Expert 232,717 as “Cartilage” and the Expert 51 as “Expertise”.
+
+SECTION: 5Analyses
+
+Leveraging transparent observationsof expert routing patterns in each layer of theMonet, we employ observational methods for knowledge editing. In particular, we explored the effects of knowledge unlearning by selectively removing experts based on theirrouting score,in Equation7.Our unlearning analyses highlightMonet’s monosemanticity where experts encapsulate disentangled parametric knowledge acrossdomains, programming languages, and toxicity.
+
+(a)Monet(Ours)
+
+(b) Gemma Scope
+
+(c) OLMoE
+
+(d)LLaMA
+
+Using the MMLU Pro(Wang et al.,2024)benchmark taxonomy, which divides question-answer sets into 14 distinct domains, we investigated the effects of domain-specific knowledge unlearning on MMLU(Hendrycks et al.,2021). For each expert, if the routing probability for a particular domain was at least twice as high as for the second most activated domain, we labeled that expert as specialized in that domain. After assigning experts to domains, we selectively deleted the experts and evaluated the impact of knowledge unlearning across all 14 domains. The details of the expert deletion process and its impact across the 14 domains are provided in AppendixD.1.
+
+Figure3demonstrates thatMonet’s knowledge unlearning primarily affects the targeted domain while preserving the performance of the other domains. We compared our approach with three baseline methods:Gemma 2 LLM with Gemma Scope,which utilizes 262K sparse SAE features matchingMonet’s expert count; OLMoE(Muennighoff et al.,2024), a standard MoE architecture with 1.3B active and 6.9B total parameters; andLLaMA1.3B with GELU activation, sized equivalently toMonet, where we leverage MLP layers for knowledge identification inspired byMeng et al. (2022). Using domain-specific assignment criteria–SAE logit values for Gemma Scope and first-layer MLP outputs forLLaMA–we performed knowledge unlearning across all methods.
+
+The results demonstrateMonet’s superior performance in domain-specific knowledge manipulation compared to baseline approaches. WhileMonetachieves precise knowledge unlearning within targeted domains, Gemma Scope suffers from broader performance degradation due to incomplete reconstruction through the SAE layer. Both OLMoE andLLaMAface fundamental limitations from feature polysemanticity.
+In OLMoE, there were no specialized experts in any domains in MMLU, based on our criteria of skewness in expert routing score. OLMoE’s experts’ routing score was evenly distributed, making it difficult to detect specialized experts. We leveraged criteria of occurrences in maximum activation to determine the expert’s domain specialization.
+In contrast,LLaMAdisplays an average 6% of neurons to be specialized in each domain compared toMonet’s 2.2%, suggesting possible feature entanglement and resulting in significantperformance degradation acrossunrelated domains during knowledge removal.
+
+In addition to domain masking, we performed a similar evaluation of programming language masking usingCodeMonet1.4B. Again, we utilized the skewness in routingscoresto identify language-specific experts. Table3summarizes the changes in pass@100 performance metrics after expert purging evaluated on MULTIPL-E benchmark(Cassano et al.,2023). For the targeted languages, pass@100 scores dropped by as much as -30%p, while average performance for other languages remained relatively stable, with only minor declines ranging from -0.6% to -1.8%p.CodeMonet’s generation examples before and after the expert purging can be found in Figure4of AppendixD.2.All metrics were evaluated using a temperature of 0.8 and 200 sample generations,where its full performance are available in Table15of the AppendixE.
+
+Tofundamentallyadjust model behavior for safer language generation, we propose a method for purging toxic experts from the model.
+This approach directly
+removes experts associated with toxicity,resecting the harmful knowledgewhile preserving the overall performance of the LLM. We evaluate this method on two well-established toxicity benchmarks:RealToxicityPrompts(Gehman et al.,2020)and ToxiGen(Hartvigsen et al.,2022), to assess its impact on toxicity reduction.
+
+For toxicity evaluation, we utilize thePerspectiveAPI(Lees et al.,2022)forRealToxicityPromptsand the ToxiGen RoBERTa model
+for the ToxiGen benchmark, both designed to measure the generation of toxic content. To identify toxic knowledge within the model, we collected expert routingscoresalongside toxicity scores, and computed Pearson correlations. A higher correlation indicates a greater likelihood of an expert being selected when toxic content is generated. Based on predefined thresholds, we removed experts with high toxicity correlations.Examples of toxic experts are presented in Figure5of AppendixD.3. By removing these experts, LLM alters its behavior to generate detoxified content, as demonstrated in Figure6.
+
+As presented in Table4, our results show that eliminating up to 4.1% of experts can reduce both the expected maximum toxicity and the probability of generating toxic content without affecting performance inRealToxicityPrompts. Similarly, Table5demonstrates thatMoneteffectively lowers toxicity with only minimal performance degradation, consistent with the findings fromRealToxicityPrompts.
+
+SECTION: 6Conclusion
+
+We introducedMonet,an SMoEarchitecturewith 262,144 experts designed to address the challenge of polysemanticity in LLMs. By integrating sparse dictionary learning directly into end-to-end SMoE pretraining,Monetovercomes the limitations associated with the post-hoc reconstruction loss of SAEs.
+Our novel product key composition alleviates the memory constraints of conventional SMoE architectures, allowing the expert count to scale to 262,144 per layer while ensuring that total parameters grow proportionally to the square root of the expert count.
+This substantial expansion enables fine-grained specialization,
+resulting in monosemantic experts that capture mutually exclusive aspects of knowledge. We demonstrated thatMonetenhancesmechanistic interpretabilityby facilitating transparent observations of expert routing patterns and individual expert behaviors. Moreover,Monetallows for robust manipulation of knowledge across domains, languages, and in mitigating toxicity, all without degrading the model’s general performance. Our findings suggest that scaling the number of experts and fostering monosemantic specialization within LLMs hold significant promise for advancing both interpretability and controllability, paving the way for future research into transparent and aligned language models.
+
+Regarding expert selection, we observed that the skewness of routing scores can determine the domain specialization of experts, and we identified toxic experts by calculating the Pearson correlation coefficient between toxicity scores and routing scores. We acknowledge that these criteria are basic and minimal, and we believe that developing more advanced expert selection methods is a promising direction for future research.
+Additionally, we should explore automated interpretation techniques as self-explained experts are currently demonstrated only qualitatively, remaining quantitative evaluation on automated interpretability an open question.
+Finally, our application of parametric knowledge manipulation is limited to knowledge unlearning. We believe that observations on monosemantic experts can help address research questions related to hallucinations (e.g., “Is the model confident in retrieving internal knowledge?”) and lifelong learning in SMoE LLMs, which is expected to be a promising field(Chen et al.,2023; Li et al.,2024).
+
+SECTION: Acknowledgement
+
+This work was supported in part by the National Research Foundation of Korea [NRF-2023R1A2C3004176, RS-2023-00262002], the Ministry of Health & Welfare, Republic of Korea [HR20C002103], the ICT Creative Consilience program through the Institute of Information & Communications Technology Planning & Evaluation (IITP) grant funded by the MSIT [IITP-20242020-0-01819], and Cloud TPUs
+from Google’s TPU Research Cloud (TRC).
+
+SECTION: References
+
+SECTION: Appendix
+
+Content Warning: This section contains examples of harmful language.\etocdepthtag.tocmtappendix\etocsettagdepthmtchapternone\etocsettagdepthmtappendixsubsubsection
+
+SECTION: Appendix AMethod Descriptions
+
+In this section, we derive the rearrangement of Equation15for the vertical decomposition, aligning it with Equation12from the horizontal decomposition. We achieve this by splitting the result into six terms to facilitate the computation of actual values.
+
+The vertically decomposed expert layer (MoVDE) is expressed as:
+
+Based on the above equation, we define theblock matrices:
+
+Using these terms, we can simplify the output of the MoVDE layer as thefullmatrix. Similar to the horizontal decomposition, we can reorder the summations in each term to enhance computational efficiency by precomputing and reusing intermediate results, thereby eliminating redundant expert computations. Specifically, since the MLPs consist of two layers, we consider four combinations of the expert weights:,,, and.
+
+First, we address the computations involving the same index pairs,and, represented byand. These computations can be simplified as follows:
+
+In these terms, the expert computationsandcan be precomputed before aggregating the outputs. Moreover, the multi-head expert routing probabilities are consolidated into single routing coefficientsand, reducing redundant aggregations.
+
+For the cross termsand, the computations involve interactions between different indices. These crossflows betweenandcan be handled similarly to the horizontal decomposition, as mentioned in Equation12. We rewrite these terms as:
+
+The expressions suggest that the activationsandare precomputed before aggregating expert outputs. The second-layer weightsandare applied in the final step, allowing efficient summation over routing probabilitiesand.
+
+The bias termsandcan be simplified as:
+
+These terms depend only on the respective expert routing probabilities and bias parameters, and thus can be computed efficiently without involving cross-index combinations.
+
+By applying these simplifications, the vertical decomposition method effectively computes the layer output while avoiding excessive memory consumption. Without such rearrangement, memory usage would increase significantly due to the combined expert routing probabilitiescontainingelements, compared to theelements required forandcombined. The detailed implementations are provided in Algorithm1and Algorithm2.
+
+We present detailed derivations of computational complexity (expert retrieval time) and memory requirements for different expert architectures to demonstrate the efficiency ofMonet.
+
+The conventional SMoE architecture requires computing similarity scores between input vectors and all expert embeddings. For an inputandexperts, the top-expert selection is computed as, resulting incomputational cost. For parameter storage, each expert network maintains two weight matrices as shown in Equation1:and. This requiresparameters in total.
+
+As explained inLample et al. (2019), the product key retrieval reduces expert retrieval complexity from linear to square root scale. Following Equation3, computing scores for both key sets requiresoperations. Then, as described in Equation4, selecting finalexperts from the candidate setinvolvesoperations. Since this process is repeated formulti-heads, the total retrieval complexity becomes. However, PEER still maintains individual parameters for each expert, resulting inparameter complexity.
+
+Monetemploys product key retrieval but eliminates the need for selecting top-elements from, reducing retrieval cost to. Through product key composition, we dynamically construct expert networks using bottom layer weights, top layer weights, and bias termsand. Therefore, the total parameter complexity is.
+
+The vertical decomposition maintains the same expert routing complexity while partitioning the expert matrices differently. It utilizes input projectionsand output projections, along with corresponding bias termsand. The total expert parameter complexity can be derived as:
+
+SECTION: Appendix BTraining Details
+
+We pretrain ourMonetmodels with parameter sizes of 850 million (850M), 1.4 billion (1.4B), and 4.1 billion (4.1B) to evaluate performance across scales. For a fair comparison, we also train models with theLLaMAarchitecture from scratch under the same conditions.. All models are trained on 100 billion tokens sampled from the FineWeb-Edu dataset(Penedo et al.,2024), which combines high-quality web content with educational materials. Model configurations are in Table6
+
+Training is conducted on a TPU-v4-64 Pod Slice, utilizing the AdamW optimizer with a learning rate ofand a batch size of 2 million tokens. We employ Squared ReLU(So et al.,2021; Zhang et al.,2024; Adler et al.,2024)as the activation function. To manage computational resources effectively, we adopt a group routing strategy wherein the routing probabilities are reused every 4 layers. This approach reduces the overhead associated with the expert routing parameters. The weight of the auxiliary lossis set tofor all experiments.
+
+In addition, we trainCodeMonet1.4B to evaluate the model’s capability in coding tasks and analyze multilingual specialization.CodeMonetis pretrained on 100 billion tokens sampled fromStarCoderData, the primary dataset used to train the StarCoder model(Li et al.,2023).StarCoderDatais filtered from The Stack dataset(Kocetkov et al.,2022)and encompasses approximately 86 programming languages.
+
+To enhance the conversational and instructional capabilities of our models, we perform instruction tuning on theMonet1.4B model following the instruction tuning recipe(Tunstall et al.,)used bySmolLM(Allal et al.,2024). We use the same fine-tuning dataset asSmolLM, which combines several high-quality instruction-response pairs from diverse sources. The instruction tuning process is performed on a single NVIDIA A100 GPU. During this phase, we freeze the expert routing embeddings to prevent overfitting and reduce computational demands.
+
+To assess whether expert’s monosmanticity is preserved when the LLM acquiresmultimodal capabilities,we createVisionMonetbyfine-tuning theMonet 1.4B Chatmodel following the LLaVA’s visual instruction tuning(Liu et al.,2024), using a single NVIDIA A100 GPU. Instead of the vision encoder used in the original paper, we employ theopenai/clip-vit-base-patch16aaahttps://huggingface.co/openai/clip-vit-base-patch16model with an image size of 224, resulting in 196 image tokens. Consistent with our instruction tuning strategy, we freeze the expert routing embeddings during vision-language fine-tuning to ensure effective adaptation to the multimodal instruction data.
+
+In Figure9and10, we can observe that expert’s monosemanticity spans different modalities inVisionMonet, where experts specialize in concepts manifested in texts and images. Examples show mutual exclusivity in multimodal expert’s specialization, such as colors (e.g., Green vs Purple), brightness (e.g., Black vs Sunlight) and backgrounds (e.g., Aviation vs Body of Water). Such result shows the potential ofMonetarchitecture in generalizing monosemantic specialization across modalities, paving the way for more interpretable and controllable multimodal transformer models.
+
+SECTION: Appendix CAblation Studies
+
+In this section, we investigate the effects of two key hyperparameters: the auxiliary loss weight () and the number of expert routing groups. All experiments are conducted on theMonet1.4B model, and the 5-shot performance is reported on the open-ended benchmarks used in Table2.
+
+We employ two auxiliary losses: uniformity and ambiguity. The uniformity loss ensures router activation is evenly distributed across tokens and batches, preventing favoritism toward specific experts. The ambiguity loss encourages the model to assign higher routing probabilities to the primary experts, promoting expert specialization.
+
+Without uniformity loss, the model tends to over-utilize certain experts, leading to imbalanced training. On the other hand, high ambiguity causes the model to route to multiple experts, which inhibits expert specialization. For effective expert routing, the distribution should be uniform across tokens but specialized within each token.
+
+We test, as shown in Table7. The results indicate that the model is robust to different loss weights, with larger weights reducing uniformity and ambiguity. We selectedas it showed optimal performance.
+
+Expert routing requires multi-head retrieval embeddings, which involve finding top-experts through product key retrieval. While this reduces computational complexity compared to evaluating all 262,144 combinations, it still demands substantial memory and computational resources. As described in the training details, we reuse the routings every 4 layers.
+
+To assess the effectiveness of grouped routing in reducing computational costs without sacrificing performance, we trained models with full expert routing and compared them in Table8. We report parameter size, FLOPs (TFLOPs) for forward computation over 2M tokens, and the 5-shot benchmark performance. The group size of none represents the denseLLaMAmodel. The results demonstrate that reusing routing for every 4 layers significantly reduces parameters and FLOPs, while maintaining performance comparable to the 1.7B model.
+
+SECTION: Appendix DEvaluation Protocol for Analyses
+
+In this section, we explain the detailed evaluation protocol of the analyses in Section5. To check the knowledge and expert specialization in theMonet, we instead mask the corresponding knowledges and evaluate the model benchmark to check how many the target benchmark is dropped while maintaining the other abilities In particular, we explored the effects of knowledge unlearning by selectively removing experts based on their activations related to specific domains, programming languages, and toxicity.
+
+As outlined in Section5.1, we reorganized the MMLU benchmark, consolidating its 57 subjects into 14 distinct categories, as defined by the MMLU Pro benchmark. The distribution of question-answer pairs across these categories was uneven, with the largest category, “Other,” containing 2,343 pairs, while the smallest, “Engineering,” included only 145 pairs.
+
+For each expert, we labeled it as specialized in a domain if its routing probability for that domain was at least twice that of the second most activated domain. For instance, an expert highly activated by the biology domain with double the activation compared to the next closest domain was classified as a biology expert. Experts without such a skewed activation were considered generalists. After assigning experts to domains, we selectively removed them to evaluate the impact of knowledge unlearning across all 14 categories. Our analysis revealed that domains such as History and Health were allocated the largest number of experts, approximately 10,000 per layer, while domains like”Psychology”and ”Other” were assigned the fewest. A detailed distribution ofdeletedexperts is presented in Table9and full performance perturbation are available in SectionE.
+
+Ouranalysisreveals the inherent challenges in achieving domain specialization with traditional MoE approaches, particularly evidentinOLMoE’s results. Whiledomain-specificdata sources can be controlled to some extent(e.g., using PubMed for biology or GitHub for programming languages), managingthe distribution of domainknowledge in large-scale pretraining corpus remains challenging. A key limitation emerges from the constraint of small expert counts: rather than achieving the desired monosemanticity, these models exhibit significant polysemanticity, making it virtually impossible to isolate domain-specific knowledge completely. In contrast,Monet’s architecture enables precise knowledge manipulation through selective expert removal, effectively addressing the domain specialization challenge that confounds traditional approaches. This capability is particularly noteworthy given the uneven distribution of expertise observed across domains, as demonstrated by our expert allocation analysis.
+
+CodeMonet-1.4B / Python / HumanEval-0Original⬇1fromtypingimportList234defhas_close_elements(numbers:List[float],threshold:float)->bool:5"""Checkifingivenlistofnumbers,areanytwonumbersclosertoeachotherthan6giventhreshold.7>>>has_close_elements([1.0,2.0,3.0],0.5)8False9>>>has_close_elements([1.0,2.8,3.0,4.0,5.0,2.0],0.3)10True11"""12foriinrange(len(numbers)-1):13forjinrange(i+1,len(numbers)):14ifabs(numbers[i]-numbers[j])<threshold:15returnTrue16returnFalseAfter Removal⬇1fromtypingimportList234defhas_close_elements(numbers:List[float],threshold:float)->bool:5"""Checkifingivenlistofnumbers,areanytwonumbersclosertoeachotherthan6giventhreshold.7>>>has_close_elements([1.0,2.0,3.0],0.5)8False9>>>has_close_elements([1.0,2.8,3.0,4.0,5.0,2.0],0.3)10True11"""12#!/usr/bin/envbash1314echo"StartingPythonandPostgres..."15sudoservicepostgresqlstart16echo"Startingnginx..."17sudoservicenginxstart18echo"StartingFlask..."19flaskrun--host=0.0.0.0--port=8000--reloadCodeMonet-1.4B / Python / HumanEval-23Original⬇1defstrlen(string:str)->int:2"""Returnlengthofgivenstring3>>>strlen(’’)405>>>strlen(’abc’)637"""8returnlen(string)After Removal⬇1defstrlen(string:str)->int:2"""Returnlengthofgivenstring3>>>strlen(’’)405>>>strlen(’abc’)637"""89intmain(intargc,char**argv){10print(strlen(’abc’))11print(strlen(’’));12return0;13}CodeMonet-1.4B / Python / HumanEval-162Original⬇1defstring_to_md5(text):2"""3Givenastring’text’,returnitsmd5hashequivalentstring.4If’text’isanemptystring,returnNone.56>>>string_to_md5(’Helloworld’)==’3e25960a79dbc69b674cd4ec67a72c62’7"""8importhashlib9iftext==’’:10returnNone11returnhashlib.md5(text.encode(’utf-8’)).hexdigest()After Removal⬇1defstring_to_md5(text):2"""3Givenastring’text’,returnitsmd5hashequivalentstring.4If’text’isanemptystring,returnNone.56>>>string_to_md5(’Helloworld’)==’3e25960a79dbc69b674cd4ec67a72c62’7"""8>>>string_to_md5(’’)9’’1011#Copyright2020GoogleLLC
+
+To conduct the multilingual maskingexperiments, we utilized the bigcode-evaluation-harnessframework(Ben Allal et al.,2022)to assess code generation and unit tests. MULTIPL-E benchmark(Cassano et al.,2023)consists of 22 programming languages. For our experiments, we evaluatedCodeMonet-1.4B and selected the top 6 languages by performance: Python, C++, Java, JavaScript, Lua, and PHP.Full pass@100 performance ofCodeMonetis available in Table15.
+
+For each of these languages, we generated code completions using a temperature of 0.8 and 200 samples per generation. The code generation process was guided by the problem descriptions provided in the docstrings, along with the corresponding function names. The generated code was then evaluated against the unit tests provided by the benchmark to verify whether the problem was successfully solved. Performance was measured using the pass@100 metric.
+
+In line with our approach for domain masking, we identified language-specific experts (seeTable10) by examining the skewness in routing probabilities. Based on this, we masked experts associated with each language and re-evaluated the code generation benchmark to estimate the model’s capability to unlearn programming languages.
+
+To enhance the safety of language generation, we introduce a systematic method for purging toxic experts from our model. This method focuses on identifying and eliminating experts correlated with toxic outputs, which significantly mitigates harmful content while maintaining the overall performance of the language model.
+
+For the evaluation onRealToxicityPrompts, we implemented the protocol established by DecodingTrust(Wang et al.,2023), utilizing a dataset of 1.2K challenging user prompts. Toxicity scores are obtained from thePerspectiveAPI, focusing on two metrics: expected maximum toxicity and toxicity probability. We generate outputs with a temperature of 1.0 and a top-p value of 0.9, producing 25 samples of 20 new tokens per prompt. The expected maximum toxicity is calculated as the average of the highest scores from these 25 generations for each sample. Meanwhile, the toxicity probability is defined as the ratio of samples in which at least one generation among the 25 exceeds a toxicity score of 0.5, classifying it as toxic content.
+
+In addition toRealToxicityPrompts, we assess the model using the ToxiGen dataset, employing the ToxiGen RoBERTa model for toxicity evaluation. The ToxiGen dataset consists of 31K diverse prompts designed to generate new sentences, which are subsequently evaluated for toxicity using the RoBERTa scoring model. We generate outputs with a temperature of 0, producing new sequences of 30 tokens.
+
+Building on established toxicity criteria, we next identify experts with specialized knowledge related to toxic content. Initially, we observe expert routing data alongside their corresponding toxicity scores while inferencing on toxic prompts. Figure5provides examples showing how specific experts strongly respond to toxic tokens. We further compute the Pearson correlation between each expert’s routing probability and toxicity score, ranking the experts based on this correlation. Masking thresholds are then applied to filter out toxic experts. Following these thresholds, we proceed to remove experts who demonstrate significant correlations with toxicity. As a result, by editing the parametric knowledge withinMonet, the LLM alters its behavior to generate detoxified content, as demonstrated in Figure6.
+
+Idiot –Monet-1.4B / Group 4 / Expert 3,400
+
+Damn –Monet-1.4B / Group 5 / Expert 183,238
+
+Censorship –Monet-1.4B / Group 2 / Expert 151,489
+
+Disease –Monet-1.4B / Group 2 / Expert 238,952
+
+SECTION: Appendix EFull Performance
+
+SECTION: Appendix FAdditional Qualitative Results
+
+Biology –Monet-1.4B / Group 2 / Expert 234,514
+
+Biology -Monet-1.4B / Group 5 / Expert 168,250
+
+Economics –Monet-1.4B / Group 2 / Expert 190,658
+
+Economics –Monet-1.4B / Group 5 / Expert 101,512
+
+Math –Monet-1.4B / Group 2 / Expert 196,851
+
+Math –Monet-1.4B / Group 4 / Expert 283
+
+Psychology –Monet-1.4B / Group 4 / Expert 29,260
+
+Psychology –Monet-1.4B / Group 4 / Expert 110,156
+
+Python –CodeMonet-1.4B / Group 5 / Expert 14,661
+
+Python –CodeMonet-1.4B / Group 5 / Expert 32,766
+
+C++ –CodeMonet-1.4B / Group 5 / Expert 21,294
+
+C++ –CodeMonet-1.4B / Group 5 / Expert 22,829
+
+Java –CodeMonet-1.4B / Group 1 / Expert 21,928
+
+Java –CodeMonet-1.4B / Group 3 / Expert 13,475
+
+JavaScript –CodeMonet-1.4B / Group 1 / Expert 77,636
+
+JavaScript –CodeMonet-1.4B / Group 2 / Expert 40,263
+
+Green –VisionMonet-1.4B / Group 4 / Expert 189,891
+
+Purple –VisionMonet-1.4B / Group 4 / Expert 184,117
+
+Black –VisionMonet-1.4B / Group 4 / Expert 57,497
+
+Sunlight –VisionMonet-1.4B / Group 4 / Expert 133,620
+
+Aviation –VisionMonet-1.4B / Group 4 / Expert 250,250
+
+Body of Water –VisionMonet-1.4B / Group 5 / Expert 49,776
+
+Dogs –VisionMonet-1.4B / Group 4 / Expert 100,768
+
+Bridges –VisionMonet-1.4B / Group 2 / Expert 50,634
+
+Grid –VisionMonet-1.4B / Group 4 / Expert 176,960
+
+Inscriptions –VisionMonet-1.4B / Group 4 / Expert 117,738
+
+Wafer –VisionMonet-1.4B / Group 1 / Expert 214,604
+
+Electronics –VisionMonet-1.4B / Group 1 / Expert 143,910

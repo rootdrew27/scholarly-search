@@ -1,0 +1,433 @@
+SECTION: DragText: Rethinking Text Embedding in Point-based Image Editing
+
+Point-based image editing enables accurate and flexible control through content dragging.
+However, the role of text embedding during the editing process has not been thoroughly investigated.
+A significant aspect that remains unexplored is the interaction between text and image embeddings.
+During the progressive editing in a diffusion model, the text embedding remains constant.
+As the image embedding increasingly diverges from its initial state, the discrepancy between the image and text embeddings presents a significant challenge.
+In this study, we found that the text prompt significantly influences the dragging process, particularly in maintaining content integrity and achieving the desired manipulation.
+Upon these insights, we proposeDragText, which optimizes text embedding in conjunction with the dragging process to pair with the modified image embedding.
+Simultaneously, we regularize the text optimization process to preserve the integrity of the original text prompt.
+Our approach can be seamlessly integrated with existing diffusion-based drag methods, enhancing performance with only a few lines of code.
+
+SECTION: 1Introduction
+
+Text-to-image (T2I) models have made significant advancements in image editing alongside the development of diffusion models[26,28,25,30,27,1].
+These models are effective in broad modifications, such as inpainting[38,36], style transfer[3,41], and content replacement[29,5,10].
+For instance, when a user inputs the text prompt “a dog looking up” into a T2I model, the resulting image shows the dog lifting its head.
+However, if one wishes to provide clearer explicit instructions for more detailed structural edits (e.g., movement angle or distance), designing appropriate text prompts to inject such a level of intention becomes far from trivial.
+To deal with this, several studies have shifted towards non-text controls (e.g., points, edges, poses, sketches) to avoid ambiguity and achieve controllability[22,39,37,19].
+Among these,point-based image editing(Fig.1) is particularly noteworthy in that it employs pairs of instruction points, allowing fine-grained control.
+
+Point-based image editing has recently advanced with diffusion models, effectively manipulating both synthetic and real images across diverse domains[22,31,13,14,42].
+To generalize image editing in various fields, large-scale pre-trained latent diffusion models have been utilized.
+These models are trained with cross-attention between text and image embeddings in denoising U-Net.
+Therefore, they also require text prompts as input.
+When point-based image editing drags content in the image embedding space, the text prompt provides conditions to the latent vector.
+However, to the best of our knowledge, no prior research has investigated the impact of text.
+Unlike T2I methods which actively analyze text and utilize text in innovative ways[3,16,5,4,23], the role of text and its potential in point-based image editing remains unknown.
+
+In this study, we explore how the text prompt affects the dragging process and discover whether the content successfully dragged to the desired position is influenced by the text prompt.
+As the image is optimized through drag editing, it naturally deviates from the original image in the image embedding space[20].
+However, the text embedding remains stationary and thus fails to describe the edited image accurately.
+This static text embedding is used during the drag editing process and the denoising process in point-based image editing[31,13,14,42], leading to what we termdrag halting, where the drag editing process fails to reach the intended drag points, or it reaches them but with a loss of semantic integrity.
+For example, as shown inFig.2, during the editing process of moving a woman’s hair aside, the edited image is no longer strongly coupled with the original text “A woman with a leaf tattoo on her neck.”.
+Despite the change in the woman’s hair, the original text prompt does not reflect this change.
+As a result, the handle point falls short of fully reaching the target points as seen in the middle image.
+
+We proposeDragText, a method designed to rectify the static text embedding in point-based image editing.DragTextoptimizes the original text embedding in a similar way to image optimization.
+“Dragging” text embedding in parallel with the image ensures that the edited text embedding remains coupled with the edited image embedding.
+It alleviates drag halting by optimizing the image embedding, which helps handle points reach their targets.
+Moreover, we designed a text embedding regularization technique to ensure the edited text embedding does not diverge too significantly from the original text embedding.
+It preserves key styles of the image while allowing for natural changes within the image during drag editing.
+
+Contributions.Our contributions are as follows:
+1) We are the first to analyze the impact of text prompts on the dragging process, a previously neglected yet crucial component of point-based image editing;
+2) We proposeDragTextwhich optimizes text embedding that aids drag operations without forgetting content;
+3)DragTextcan be easily applied in a plug-and-play manner to various diffusion-based point-based image editing methods, consistently improving performance.
+
+SECTION: 2Related Work
+
+SECTION: 2.1Point-based Image Editing
+
+Task Definition.Point-based image editing enables precise modifications to images via point instruction[2,22,17,18].
+As shown inFig.1, a user inputs the image to edit, draws a mask representing an editable region, and specifies handle points along with their corresponding target locations.
+During the editing process, handle points are moved toward their respective target points through an image optimization strategy.
+The positions of these points are continuously tracked and updated after each optimization step.
+
+Existing Methods.DragGAN[22]is a representative method in point-based image editing that proposes latent code optimization and point tracking.
+However, it struggles with generalization, particularly with real images.
+DragDiffusion[31]employs a text-conditional diffusion model[28]to expand applicability and improve spatial control, following the strategy of DragGAN.
+Several point-based editing diffusion methods have been developed upon these advancements.
+For instance, FreeDrag[13]uses original image features as a reference template and reduces the complexity of point tracking with a line search.
+DragNoise[14]reduces computational load by optimizing the U-Net bottleneck feature instead of the latent vector.
+GoodDrag[42]alternates between dragging and denoising processes to prevent error accumulation and enhance image fidelity.
+Previous works have primarily focused on image optimization to directly improve manipulation.
+Unlike these, our approach emphasizes the underestimated role of the text prompt, providing a new perspective of enhancing not only manipulation quality but also the dragging mechanism.
+
+SECTION: 2.2Text Optimization
+
+Recent advancements in Vision-Language Models (VLMs) have significantly enhanced the ability to flexibly connect text and images[24,9].
+Various methods of text optimization are being explored to improve these connections.
+One approach is context optimization[44,43], which refines text prompts to help VLMs better understand hand-crafted captions.
+Another method, developed by Galet al.[3], optimizes a single word to effectively convey content information, thereby personalizing text-based image editing.
+Mokadyet al.[16]introduces the strategy to optimize null-text “”, which addresses the issue of images deviating from their original trajectory due to accumulated errors from classifier-free guidance[7].
+Our work is inspired by these prior studies which closely examine the strong coupling between text and image.
+However, our approach differs from these in that we perform text optimization simultaneously with image optimization in point-based image editing to avoid increasing the optimization steps and time.
+
+SECTION: 3Motivations
+
+Editing an image causes the original image embedding to move in the image embedding space.
+Therefore, the edited image embedding must follow the denoising trajectory that differs from that of the original image embedding[20,16].
+We hypothesize that text embedding also plays a crucial role in determining this distinct trajectory as text and image interact through cross-attention.
+
+SECTION: 3.1Text Prompt in Diffusion Model
+
+Role in Inversion and Denoising Processes.The inversion process pairs the image embedding with text embedding, regardless of whether the text embedding semantically matches the image.
+Maintaining this pairing in the denoising process is important for the fidelity of image sampling.
+
+InFig.3(a), we examine differences in image sampling outcomes based on whether the text embedding is also paired in the denoising process.
+Our analysis reveals that using the paired text embedding in the denoising process (red boxes) enables the accurate sampling of the original image.
+However, if unpaired text embedding is employed, the image’s style alters, and the model fails to sample the image accurately.
+This observation highlights the necessity of text-image embedding pairing to maintain the integrity of the image’s attributes.
+Moreover, it raises concerns about the appropriateness of using the original text embedding in the denoising process of point-based image editing, as the image is modified during dragging, it can no longer be accurately paired with the original text embedding.
+
+Remark.To achieve the appropriate image sampling result, the text embedding used after the inversion process remains consistently paired with the image embedding.
+
+SECTION: 3.2Text Embedding in Point-based Image Editing
+
+Challenges in Original Text.During dragging, the image embedding incrementally adapts to reflect the manipulation.
+However, the text embedding remains static, limiting the extent of image manipulation.
+
+As shown in the top-left image ofFig.3(b), the original text embedding fails to reach the target point during the dragging process.
+Since the original text embedding is paired with the input image, the edited image embedding does not maintain a strong coupling with the text embedding.
+To avoid this weakly-coupling issue, one might hypothesize that unconditional text embedding (i.e.null text) could resolve the problem.
+However, the top-right image ofFig.3(b) shows that the model fails to maintain the semantic information of the object without text conditions.
+Therefore, we search for an alternative text embedding that mitigates drag halting while preserving semantics.
+
+Remark.While text embedding plays a crucial role in maintaining semantics it can also impede the handle points from reaching the target points.
+
+Enhancing Text Prompt via Prompt Engineering.One straightforward approach to incorporate manipulations into the original text prompt is prompt engineering, allowing direct editing of text prompt to fit the user’s intention.
+
+To validate the effectiveness of prompt engineering[15], we craft anintention textprompt that describes the user’s intention to edit the image, such as “a photo of a short neck jug and a glass”, and apply it during the denoising process, as illustrated inFig.3.
+However, this approach encounters the same issue as the original prompt due to the weak coupling between image and text embeddings.
+Thus, we linearly interpolate the intention text embedding with the original text embedding during drag editing.
+Nevertheless, actively reflecting the gradual changes in the image embedding remains limited.
+Consequently, we aimed to develop a more sophisticated text embedding modification method in parallel with the gradual image manipulations.
+A detailed description of the methods and results of this analysis can be found inAppendixB.
+
+Remark.Prompt engineering alone may not be sufficient to overcome the limitations of the original text prompt.
+
+Necessity for Text Embedding Optimization.Based on this series of findings, we advocate for the necessity of alternative text embedding that can: 1) successfully reach the target point while maintaining semantics; 2) by gradually reflect changes introduced during image editing; 3) thus maintain pairing with the edited image embedding to ensure proper denoising.
+Furthermore, rather than relying on heuristic and inconsistent methods such as prompt engineering, we propose an optimization approach that is intrinsically parallel to image editing and can be strongly coupled with the edited image.
+
+SECTION: 4Method
+
+In this study, we proposeDragText, a novel framework to optimize text embedding along with point-based image editing.
+We briefly explain the diffusion process first (Sec.4.1), and then describe the drag process in detail, including text embedding optimization (Sec.4.2).
+Representative diffusion model-based dragging methods[31,14,13,42]share the same approach for motion supervision and point tracking based on DragGAN[22]and DragDiffusion[31].
+Therefore, we explainDragTextprimarily with reference to DragDiffusion[31], with minor modifications for others detailed inAppendixC.
+
+SECTION: 4.1Preliminaries on Diffusion Models
+
+Diffusion models generate images through a forward process and a reverse process.
+By using a denoising U-Net, these models predict noise at a specific time-stepand progressively denoise it to create an image.
+Unlike DDPM[6], DDIM[34]allows for deterministic image generation, making real image editing possible.
+
+Recent developments in Latent Diffusion Models (LDM)[28]have advanced the diffusion processes to occur efficiently within the latent space.
+The input imageis encoded via VAE encoder[11]to form a latent vector, which then undergoes a forward process to transition into a noisy latent vector.
+This transformation facilitates image editing through the manipulation of this latent vector.
+Furthermore, cross-attention mechanisms provide conditioning capabilities with diverse prompts, making text-based conditioning feasible with text embedding.
+Theis subsequently denoised by using the predicted noisefrom a denoising U-Net, and finally, VAE decoder reconstructs the denoised latent vector into an image.
+In our work, we use the pre-trained LDM Stable Diffusion[28], which is employed in previous studies[31,14,13,42].
+
+SECTION: 4.2Drag Editing
+
+As shown inFig.4, we optimize the latent vectorand the text embeddingaccording tonumber of instruction pointsvia three stages: motion supervision, text optimization, and point tracking.
+These stages are sequentially repeated until all handle points have reached corresponding target points or the maximum number of iteration stepsis achieved.
+
+Motion supervision drags image content around handle pointstoward target pointson the image feature space by optimizing the latent vector, whereimplies the number of drag editing iterations.
+The feature mapis obtained from the third decoder block of the denoising U-Net, and its corresponding feature vector at the specific pixel locationis denoted as.
+
+The motion supervision loss at the-th iteration is defined as:
+
+whereis the stop-gradient operator to prevent the gradient from being backpropagated.describes the square region centered atwith radius.is the normalized vector fromtowhich enablesto be computed by the bilinear interpolation.
+The first term allowsto be moved to, but not the reverse with.is the binary mask drawn by the user defining an editable region.
+The second term adjusts the extent to which regions outside the mask remain unchanged withduring the optimization.
+
+For each iteration,undergoes a gradient descent step to minimize:
+
+whereis the learning rate for the latent optimization.
+
+The input text is encoded to the text embeddingthrough the CLIP text encoder[24].represents the total number of text tokens, obtained when text is processed by the tokenizer, with onlytokens carrying semantic meaning.
+We use the same loss function as in the motion supervision to optimize the text embeddingfor ensuring consistency and generalizability.
+It allowsto follow the latent optimization towards the dragging direction.
+In addition, to preserve important content in the original text embedding, we use the maskand regularize the text optimization process.
+
+The text embedding optimization loss at the-th iteration is defined as:
+
+For each iteration,undergoes a gradient descent step to minimize:
+
+whereis the learning rate for the text optimization.
+
+After the latent vectorand text embeddingare optimized at-th iteration step, the positions of the handle pointshould change according to the content dragging.
+Thus, it is necessary to track the new handle pointin the updated feature map.
+To find the new handle pointscorresponding to the previous handle points, we find the region in the feature mapthat is most similar to the region around the initial handle pointsin the feature map:
+
+wheredenotes a point within the region.
+It ensures that handle points are consistently updated via nearest neighbor search for subsequent optimization iterations.
+
+SECTION: 5Experiments
+
+To evaluate the effectiveness ofDragText, we conducted a series of experiments on DragDiffusion[31], FreeDrag[13], DragNoise[14], and GoodDrag[42].
+The proposed method is applicable to these without hyperparameter tuning, ensuring robustness.
+Moreover, text optimization hyperparameters are uniformly applied across all methods.
+
+Specifically, we setto match the image regularization factor, and the text optimization learning rate.
+Detailed information about implementation is inAppendixD.
+Our method requires no additional GPU resources beyond those used by baseline methods and is executed using a single NVIDIA RTX A6000.
+Qualitative results are based on DragDiffusion, and further examples using other methods are inAppendixE.
+
+SECTION: 5.1Qualitative Evaluation
+
+InFig.5, we compared qualitative results of methods with and withoutDragTexton the DragBench dataset[31].
+Existing methods struggled to reach target points or suffer from the degradation of important image semantics, due to the use of image and text embeddings that are not strongly coupled.
+In contrast, by applyingDragText, images can be accurately dragged to the specified target points (e.g., (b) mountain peak and (d) sculpture) while preserving essential semantics that should not disappear (e.g., (c) the mouth of a crocodile).
+Furthermore,DragTexteffectively manages content removal and creation caused by dragging, producing high-quality results (e.g.(a) the tongue of a dog and (e) the horns of a goat).
+
+SECTION: 5.2Quantitative Evaluation
+
+InTable1, we present the quantitative comparison of methods with and withoutDragTexton the DragBench dataset[31].
+The evaluation metrics are LPIPS[40]and mean distance (MD)[22].
+LPIPS measures the perceptual similarity between the edited image to the original image.
+MD measures the distance between the final position of the handle pointand the target pointin the feature map of the DIFT[35].
+While baseline methods andDragTextapplied methods show little differences in LPIPS, there are significant improvements in MD.
+As shown inFig.7, differences are more dramatic, when considering LPIPS and MD simultaneously.
+ApplyingDragTextresults in substantial performance improvements across all methods, indicating that text embedding optimization allows for effective dragging while preserving image fidelity.
+
+SECTION: 5.3Ablation Study
+
+Effect of Text Regularization.InFig.6, we investigated the impact ofdesigned to preserve the semantics of the image and text.
+We edited images by varyingfromto, which controls the degree of regularization for the text embedding.
+Asapproaches, the force of dragging becomes more dominant than the preservation of semantics.
+For example, inFig.6(d), the icecap has disappeared, indicating extensive dragging.
+Conversely, applying an excessively highduring text embedding optimization maintains the original content of the image and inhibits editing.
+InFig.6(a), minimal dragging is observed, showing that the original image remains largely unchanged.
+Our experiments showed that settingtoachieves the optimal balance between dragging and content preservation.
+This value can be adjusted based on users’ editing preferences.
+
+Effect of the Block Number of U-Net Decoder.InFig.8, we performDragTextusing feature maps from four different U-Net decoder blocks to assess the impact of each block on text embedding.
+The image embedding used the feature map from the 3rd block, as in DragDiffusion[31].
+Images optimized using the feature map from the 3rd block exhibited optimal semantic preservation and effective dragging.
+Feature maps from lower blocks (e.g.Block 1) are hard to maintain semantics, whereas feature maps from higher blocks (e.g.Block 4) preserve semantics well but result in poor dragging performance.
+This phenomenon is likely due to the lower blocks of the U-Net containing low-frequency information of the image[32].
+Quantitative results inAppendixHsupport our qualitative evaluation.
+
+SECTION: 6Manipulating Embeddings
+
+DragTextenables the model to comprehend the degree and direction of changes in the image while preserving the important semantic content.
+InFig.9, we applied the same linear interpolation to both the image and text embeddings before and after editing to generate intermediate images.
+The image and text embeddings of intermediate images are defined as follows:When, the result corresponds to the original image, and asapproaches, it gets closer to the dragged image.
+Remarkably, this phenomenon is maintained even for, allowing the degree of dragging to be adjusted even beyond the editing process.
+WithDragText, simple manipulations preserved semantic content while allowing control over the degree and direction of the drag, asDragTextoptimizes the text and image embedding together.
+In contrast, the baseline model failed to maintain semantics as the text embedding necessary for semantic preservation is not jointly optimized.
+
+SECTION: 7Limitation
+
+Diffusion-based editing methods have the common problem of often losing the dragged feature in the latent space, leading to the vanishing of content in surrounding objects that are not the primary editing target.
+Specifically, inFig.10(a), grape grains within the red circle disappeared when images are dragged, regardless of whetherDragTextis applied.
+Nevertheless, this situation changes dramatically when the user provides a more detailed text prompt.
+For instance, inFig.10(b), when the user provides the exact word “grapes” related to the editing target,DragTextdragged the grape feature since it optimizes the text embedding along with the image embedding, preserving the original content.
+The optimized text embedding plays a complementary role for the features lost in the image embedding space.
+On the other hand, the baseline model still could not drag the grape feature.
+
+SECTION: 8Conclusion
+
+In this study, we introducedDragText, a method emphasizing the critical role of text prompts in point-based image editing with diffusion models.
+Our findings revealed that static text embeddings hinder the editing process by causing drag halting and a loss of semantic integrity.
+By optimizing text embeddings in parallel with image embeddings,DragTextensures that text and image embeddings remain strongly coupled, ensuring better drag accuracy and content preservation.
+Moreover, it integrates seamlessly with existing diffusion-based drag methods, leveraging their strengths while consistently enhancing performance and fidelity in image editing.
+Our work underlines the importance of considering text-image interaction in point-based editing, providing a novel insight for future developments.
+
+SECTION: References
+
+SECTION: Appendix AAdditional Material: Code & Project Page
+
+The code has been submitted as a zip file along with the Supplement.
+Our results are presented in an easily accessible format on our project page.
+The link to the project page is as follows:https://micv-yonsei.github.io/dragtext2025/
+
+SECTION: Appendix BMore Details on Prompt Engineering
+
+In this section, we provide a detailed explanation of the analysis from Section 3.2., examining the effectiveness of prompt engineering in point-based image editing.
+First, we explain how the analysis was conducted.
+Next, we present more examples of the intention text we used and the corresponding results.
+
+SECTION: B.1Implementation Details
+
+Drag Editing with Intention Text.We estimated the editing intentions for each image using the handle points, the target points, and the image masks provided by the DragBench dataset[31].
+Additionally, we referenced the edited results from four methods[31,13,14,42].
+The intention text prompts were crafted by injecting these editing intentions into the original text prompts.
+To ensure that secondary changes in the text prompts did not affect the editing results, we minimized alterations to the vocabulary and sentence structures of the original text prompts.
+
+For example, consider an image with the original prompt"a photo of a jug and a glass"where the jug’s neck needs to be shortened.
+We can craft an intention text prompt via[21]such as:
+
+"Create an image of a jug with a shorter neck. Shorten the neck by the distance between a red dot and a blue dot. The jug should have a smooth, glossy finish. Place the jug against a simple, neutral background."
+
+However, this significantly altered the content of the original text prompt.
+This alteration makes it challenging to discern whether the changes in the edited result were due to these secondary modifications or the incorporation of the editing intention in the text.
+Consequently, we incorporated concise terms representing the editing intention while preserving the original vocabulary and sentence structure as much as possible, for example:"a photo of ashort-neckjug and a glass."
+
+Linear Interpolation.To reflect gradual changes in the image embeddings to the text embeddings, we linearly interpolate between the original text embeddings and the intention text embeddings during the dragging process.
+The weights of the original text embeddings and the intention text embeddings are determined based on the distance between the handle pointand the target point:
+
+whereis the original text embedding andis the intention text embedding.
+At the beginning of the point-based editing,so.
+Conversely, as the dragging progresses and handle points approach target points, the weight valueincreases, resulting in a higher proportion of.
+In this way, as the image is progressively edited, the proportion of the intention text embedding is gradually increased.
+
+SECTION: B.2More Qualitative Results for Prompt Engineering
+
+InFig.11, we present additional results for prompt engineering.
+Corresponding results forDragTextare also presented to validate the effectiveness of our approach in comparison to prompt engineering.
+Prompt engineering was found to have little impact on alleviating drag halting.
+In contrast,DragTextdragged handle points closer to target points, compared to the original text prompt, the intention text prompt, and their interpolation.
+
+SECTION: Appendix CMore Details onDragText
+
+In this section, we provide a comprehensive overview of our method to ensure clarity and ease of understanding.
+We describe the pipeline ofDragTextusing pseudo-code to aid in understanding our approach.
+Additionally, we detail the modifications necessary to applyDragTextto other point-based image editing methods.
+
+SECTION: C.1Pseudo Code ofDragText
+
+Input:Input image, text prompt, image mask, handle points, target points,
+denoising U-Net, diffusion time step, maximum number of iterations stepsOutput:Output image
+
+In DragText, another important element is the mask.
+This mask is used to regularize text embedding optimization but is not an input.
+Instead, it is automatically calculated by the CLIP tokenizer[24].
+After the text prompt passes through the tokenizer, the tokens excluding[EOS]and[PAD]tokens contain significant semantic information.
+The length of these important tokens is.
+
+SECTION: C.2Modifications for Integrate with Other Methods
+
+In the main paper, we explainedDragTextbased on DragDiffusion[31].
+We chose this method because representative diffusion model-based dragging methods[13,14,42]all utilize approaches from DragGAN[22]and DragDiffusion.
+Therefore, they are constructed upon the foundation of DragDiffusion.
+However, they also developed techniques to overcome the limitations of DragDiffusion.
+Taking these improvements into account, we made minor modifications toDragTextto adapt our approach for each method.
+
+Point-based image editing has faced challenges, such as the disappearance of handle points during the dragging process.
+Additionally, point tracking often fails to reach the target point because it moves to the location with the smallest difference in the feature map.
+To address these issues, FreeDrag introducesTemplate Featureand restricts the path of point tracking to a straight line.
+
+FreeDrag generates the corresponding template featuresfor each of thehandle points.
+During the optimization step, the feature map is optimized to match the template features:
+
+This involves up to five iterations of motion supervision until the predefined conditions are met.
+Depending on the outcome, feature adaptation is categorized into (a) well-learned features, (b) features in the process of learning, and (c) poorly learned features.
+Point tracking is then performed based on these categories.
+This process is repeated until the handle points reach the target points, after which the image is denoised to produce the edited image.
+
+In FreeDrag, if the template feature is poorly learned (category (c)), the point not only reverts to its previous position but also reuses the template feature map without updating its values.
+Inspired by this approach, our DragText computes the text loss only during the (a) and (b) processes to align with the image. In cases categorized as (c), the text embedding is excluded from the optimization process.
+Therefore, we defineas 1 for cases (1) and (2), and 0 for case (3).
+The text loss is then defined as follows:
+
+In DragText, during image optimization,does not undergo gradient descent, and during text optimization, the latent vectordoes not undergo gradient descent.
+
+The bottleneck featureseffectively capture richer noise semantics and efficiently capture most semantics at an early timestep.
+Thus, DragNoise optimizes the bottleneck featureof the U-Net instead of the latent vectorthereby shortening the back-propagation chain.
+Accordingly,DragTextoptimizesinstead ofduring the image optimization processes.
+For each iteration,undergoes a gradient descent step to minimize:
+
+InDragText, neither the latent vectornor the bottleneck featureundergoes gradient descent during the text optimization.
+So the text optimization procedure is not modified in DragNoise.
+
+GoodDrag alternates between dragging and denoising, introducing periodic corrections to mitigate accumulated errors.
+This approach is different from traditional diffusion-based dragging methods.
+They generally execute all drag operations at once before denoising the optimized noisy latent vector.
+During the denoising process, which involves sampling imagesfrom a noisy latent vector, perturbations from dragging are corrected.
+However, if the denoising process is performed only after all drag operations are completed, the errors accumulate too significantly to be corrected with high fidelity.
+To address this, GoodDrag applies one denoising operation afterimage optimization and point tracking steps.
+
+For example, the latent vectorhas been denoisedtimes, the drag optimization is performed at the timestep.
+To ensure this process is consistent, the total number of drag stepsshould be divisible by.
+SinceDragTextperforms one text optimization step after one image optimization step, we sequentially repeat the image optimization, text optimization, and point tracking stepstimes, and then apply one denoising operation.
+
+Moreover, when drag editing moves the handle points, the features around handle points tend to deviate from their original appearance.
+This deviation can lead to artifacts in the edited images and difficulties in accurately moving the handle points.
+To prevent this, GoodDrag keeps the handle pointconsistent with the original point, throughout the entire editing process:
+
+where, anddescribes the square region centered at the original handle point. And, drag operations per denoising step.
+Similarly,DragTextensures the handle pointremains consistent with the original pointduring text optimization:
+
+Additionally, GoodDrag faced increased optimization difficulty from this design, due to the larger feature distance compared to the original motion supervision loss.
+To mitigate this, a smaller step size and more motion supervision steps are used for optimization.
+This strategy is also applied inDragText.
+
+SECTION: Appendix DImplementation Details
+
+InTable2, we listed the hyperparameters used for each point-based image editing method[31,13,14,42].
+These values were consistently used in both theBaselineandw/DragTextexperiments.
+For a fair comparison, we applied the same hyperparameter values from the respective paper to our experiments.
+Additionally, we maintained the same text optimization loss across all methods to demonstrate the robustness of our approach.
+
+In FreeDrag, values related to point tracking are omitted since it replaces point tracking with line search.
+
+SECTION: Appendix EMore Qualitative Results
+
+InFig.12, we additionally present the results of applyingDragTextto each method[31,13,14,42].
+In our experiments, we appliedDragTextto various point-based image editing methods and evaluated their performance.
+The results show thatDragTextcan effectively drag the handle points to their corresponding target points while maintaining the semantic integrity of the original image.
+Moreover, the consistent success ofDragTextacross multiple methods underscores its robustness and adaptability.
+
+SECTION: Appendix FEvaluation Metrics
+
+SECTION: F.1LPIPS
+
+LPIPS[40]uses ImageNet classification models such as VGG[33], SqueezeNet[8], and AlexNet[12].
+We measured LPIPS using AlexNet.
+LPIPS measures the similarity between two images by calculating the Euclidean distance of the activation maps obtained from several layers of a pre-trained network, scaling them by weights, and then averaging the values channel-wise to compute the final LPIPS score.
+
+LPIPS is an appropriate metric for measuring the similarity between two images, emphasizing that image editing should maintain similarity to the original image.
+However, due to the nature of the drag editing task, the image will inevitably change. Consequently, even when dragging is performed successfully, the LPIPS score might worsen.
+For instance, if an image does not change at all, it would yield an LPIPS score of 0, the best possible score.
+As shown inFig.13, even though we achieved a more desirable image editing outcome, the LPIPS score was lower.
+Therefore, we propose that LPIPS should not be overly emphasized if the score falls below a certain threshold. To address this issue, we suggest using the product of LPIPS and MD, which are complementary metrics, as a more robust evaluation metric.
+
+SECTION: F.2Mean Distance
+
+Mean distance (MD) is computed via DIFT[35].
+First, DIFT identifies corresponding points in the edited image that correspond to the handle points in the original image.
+These identified points are regarded as the final handle points after editing is complete.
+Then, the mean Euclidean distance between the corresponding point and the target point is calculated.
+MD is the average value of all handle-target point pairs.
+
+We propose that evaluating drag editing using Mean Distance (MD) on certain images in the DragBench dataset is challenging.
+Some images in DragBench require specific objects to disappear through drag editing as the points move.
+However, if a specific object disappears, there would be no corresponding objects in the edited image, resulting in a significantly high MD value.
+For instance, inFig.14, the handle point and target point indicate that the toothpick should be perfectly inserted into the hamburger.
+Despite successfully achieving this, DIFT fails to recognize the toothpick, resulting in a higher MD value being calculated.
+Conversely, there are cases where the MD value is low because the points remain in the same semantic position, but the actual image editing was unsuccessful due to distorted shapes and loss of semantics.
+While MD is an excellent metric for tasks involving moving feature points of objects, it has certain limitations and challenges when applied to all images in point-based editing tasks.
+
+SECTION: Appendix GVisual Ablation on the Hyperparameters of Regularization
+
+InFig.15, we provide extra visual ablation results to demonstrate how the hyperparameterimpacts the regularization process in text optimization.
+We modified images by adjustingwithin a range from 0 to 10, which allowed us to control the level of regularization applied during the text optimization phase.
+Whenis close to 0, it results in some of the important semantic information being lost.
+On the other hand, applying an excessively high, prevents the optimization of the text embedding from effectively altering the image.
+
+SECTION: Appendix HAblation on the U-Net Feature Maps
+
+We utilize various U-Net decoder blocks forDragTextwith the image embedding fixed from the 3rd block.
+InFig.16andTable3, The 3rd block maintains semantics and achieves effective dragging.
+Lower blocks (e.g., Block 1) have difficulty with semantics, and higher blocks (e.g., Block 4) exhibit poor dragging.
+
+SECTION: Appendix IMore Qualitative Results for Manipulating Embeddings
+
+InFig.17andFig.18, we apply linear interpolation and extrapolation to the image and text embeddings to generate not only the intermediate stages of the image editing process but also the parts beyond the editing process.
+This is possible becauseDragTextoptimizes both the text and image embeddings simultaneously.

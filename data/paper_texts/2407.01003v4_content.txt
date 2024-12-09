@@ -1,0 +1,238 @@
+SECTION: Embedded Prompt Tuning: Towards Enhanced Calibration of Pretrained Models for Medical Images
+
+Parameter-efficient fine-tuning (PEFT)methods aim to adapt large scale pre-trained models to new domains by updating a small portion of parameters to reduce computational overhead. However, the effectiveness of these PEFT methods, especially in cross-domain few-shot scenarios, e.g., medical images, has not been fully explored. This paper facilitate the study of the performance of PEFT when fine-tuning pre-trained models on medical images. Furthermore, to alleviate the limitations of prompt introducing ways and approximation capabilities on Transformer architectures of mainstream prompt tuning methods, we propose theEmbedded Prompt Tuning (EPT)method by embedding prompt tokens into the expanded channels. We also find that there are anomalies in the feature space distribution of pre-trained models during pre-training process, asnd prompt tuning can help mitigate this negative impact. To explain this phenomenon, we also introduce a novel perspective to understand prompt tuning:Prompt tuning is a distribution calibrator.And we support it by analyzing patch-wise scaling and feature separation operations contained in EPT. Our experiments show that EPT outperformsseveral state-of-the-art fine-tuningmethods by a significant margin onfew-shot medical image classification, and completes the fine-tuning process within highly competitive time, indicating EPT is an effective PEFT method. The source code is available atgithub.com/zuwenqiang/EPT.
+
+SECTION: 1Introduction
+
+Benifiting from massive training data, large scale pre-trained models[1]have been widely witnessed to achieve impressive performance in various natural imaging downstream tasks, e.g., classification[2,3], segmentation[4,5,6,7], and detection[8,9,10].
+
+Recent studies have attempted to explore the potential of pre-trained models in medical image analysis[11,12,13,14,15]. Although pre-trained models have robust representation and generalization capabilities on natural images, their adaptabilities are still challenged when facing downstream tasks with a significant domain gap[16]. Therefore, pre-trained models need to be re-trained on medical datasets to incorporate domain-specific knowledge.
+
+However, due to the huge number of parameters in pre-trained models, training from scratch would result in significant computational and memory cost. To address this issue, parameter-efficient fine-tuning (PEFT)[17]methods have been proposed. The main idea of PEFT is to freeze most of parameters in pre-trained models, and only fine-tune a small number of existing or additionally introduced parameters. In medical image analysis, the data avalilability is limited due to several factors, e.g., significant imaging noise[18], high annotation cost[19], privacy policies[20], and rare diseases[21]etc. These factors exacerbate the data-hungry nature of the pre-trained models[22]. Therefore, there is a more urgent need for research on fine-tuning methods in the field of medical image analysis. To our best knowledge, the effectiveness of PEFT in such cross-domain few-shot scenarios has not yet been fully evaluated. Therefore, we launch the first comprehensive benchmark test of PEFT for few-shot medical image classification tasks on MedFMC[23].
+
+Prompt tuning is a common paradigm of PEFT by introducing extra prompt tokens into embedding tokens of the input image. VPT[24]prepends prompts before images parallelly, while VP[25]adds prompts into images. Intuitively, previous prompt tuning methods have flaws in the way of introducing prompts. VPT cannot adjust each original token individually and fine-grainedly, whereas VP significantly disrupts the information contained in original tokens. Moreover, Wang et al.[26]points that prompt tuning has limited approximation capabilities on Transformer architectures, performing less effectively compared to LoRA[27]. Therefore, we ask:Can we design a new prompt tuning method that effectively enhances the information of original tokens\deletedbut also breaks through the limitations of approximation capabilities?In this paper, we propose theEmbedded Prompt Tuning (EPT)method to answer this question. By embedding prompt tokens into expanded channels, EPT can introduce useful context to optimize input tokens fine-grainedly when maintaining the original information.
+
+Additionally, we observe that pre-trained models pre-trained on natural images, when directly applied to downstream medical image classification tasks, would result in an apparent distance between samples from the same class in the feature space. Furthermore, prompt tuning helps mitigate this negative impact[28,29], and we wonder:Is prompt tuning fundamentally a type of distribution calibrators?To figure it out, we further analyze two micro-operations of EPT: patch-wise scaling and feature separation, and provide preliminary theoretical analysis. In our findings, patch-wise scaling shorten the intra-class distribution distance by drawing closer the representation of common features among samples from the same class, and feature separation enhances the representation[30]and decoupling capabilites of features by expanding the input dimension.
+
+In summary, our work proposes a novel PEFT method for cross-domain few-shot learning and medical image analysis. We hope our methods and findings can inspire and facilitate more valuable works in the future. Our contributions can be summarized as follows:
+
+We propose a novel parameter-efficient prompt tuning method, namely EPT, which not only addresses shortcomings in prompt introducing ways of previous prompt tuning methods, but also exhibits stronger approximation capabilites on Transformer architectures.
+
+We develop a new perspective to understand prompt tuning: Prompt is a distribution calibrator. We also support it by analyzing patch-wise scaling and feature separation operations in EPT intuitively and theoretically.
+
+We launch the first comprehensive benchmark evaluation of PEFT for medical image classification tasks on MedFMC, offering further inspirations for future research.
+
+Extensive experiments demonstrate that EPT achieves superior performance in cross-domain few-shot scenarios, e.g., medical image analysis, outperforming several state-of-the-art fine-tuning methods on few-shot medical image classification tasks by a large margin, and completes the fine-tuning process within highly competitive time.
+
+SECTION: 2Related Work
+
+SECTION: 2.1Parameter-Efficient Fine-Tuning
+
+The goal of PEFT is to achieve higher performance by fine-tuning as few parameters as possible during the adaptation of foundation models for downstream tasks. PEFT generally fine-tunes Transformer at three positions: input, backbone, and linear head. Since the linear head is essential for downstream tasks, it typically needs to be fine-tuned. Therefore, PEFT pays more attention on the input and backbone, and has correspondingly raised two representative methods: prompt tuning and adapter tuning.
+
+Prompt tuning introduces extra tokens into the input image and fine-tunes them. VPT[24]prepends prompt tokens before embedding tokens parallelly. DVPT[31]employs cross-attention mechanism between prompts and features to capture distribution-specific knowledge. VP[25]adds values of prompt tokens and embedding tokens across all channels. EVP[32]primarily focuses on high-frequency components of features. CoOp[33]utilizes learnable text to addressing the issue of semantic consistency across different sentences. CoCoOp[34]introduces a Meta-net to generate prompts and enhance the generalizability. KgCoOp[35]constructed a regularization term to minize the gap between generated and crafted prompts.
+
+Adapter tuning introduces carefully designed structures into the backbone and fine-tunes them. Adaptformer[36]is the first to introduce adapters to vision transformers by replacing MLP in transformer layers with AdaptMLP. Tip-Adapter[37]leverages knowledge from the few-shot dataset as keys and values and supports feature querying to update the output from CLIP encoders without training. TaskRes[38]decomposes pre-trained and task-specific knowledge on the textual classifier. CLIP-Adapter[39]conducts residual-style feature blending between adapters and pre-trained backbones. LoRA[27]decomposes model weights through low-rank matrices. SCT[40]leverages task-specific knowledge from salient channels of the feature map.
+
+Our proposed EPT belongs to the category of prompt tuning, we think that prompt tuning, compared to adapter tuning, can more directly influence the input by introducing extra context, thus having a stronger effect on distribution calibration. It is also worth noting that the prompt tuning methods, unlike commonly used hard prompts in context learning, introduces parameter-learnable soft prompts. Different from VPT and VP, EPT pays more attention on expanded embedding channels. Unlike PEFT for multimodal foundation models, e.g., CoOp, CLIP-Adapter, Tip-Adapter, and TaskRes etc., EPT is designed for image-only foundation models. In cross-domain few-shot scenarios, e.g., medical image analysis, there are inadequate high-quality image-text pairs, the textual information of labels is insufficient to provide rich features, while the potential of images has not yet been fully exploited.
+
+SECTION: 2.2PEFT for Medical Image Analysis
+
+PEFT begins to be adopted when transferring foundational models to medical image analysis scenarios recently[22]. DVPT[31], as a variant of VPT, explores the potential of prompt tuning in medical image analysis scenarios. Zhang et al. adapts SAM[4]to medical domains by LoRA. Wu et al.[41]proposes medical sam adapter (Med-SA) to incorporate medical knowledge into SAM and designs Hyper-Prompting Adapter (HyP-Adpt) to adapt to different prompt conditioning strategies. However, the effectiveness of PEFT has yet to be fully evaluated in cross-domain few-shot scenarios, e.g., medical image analysis. VPPT[42]conducts experiments of prompt tuning in natural imaging few-shot scenarios, but adapter tuning has not been tested and the domain gap is not significant. Dutt et al.[22]tests the performance of adapter tuning in medical image analysis scenarios, but prompt tuning methods do not receive sufficient attention. Wang et al.[23]proposed MedFMC benchmark in order to promote the research of PEFT during the adaptation of foundation models to medical domains. In this paper, we conduct the first comprehensive effectiveness evaluation of PEFT in cross-domain few-shot scenarios, e.g., medical image analysis.
+
+SECTION: 3Method
+
+SECTION: 3.1Preliminaries
+
+Letbe the softmax operators. A bold lower case character,e.g., denotes a vector. A bold upper case character,e.g., denotes a matrix while,andis the-th element,-th row,-th column, respectively. We useto denote the ReLU activation function wherefunction is applied entry wise to a vector.
+
+For descriptive purposes, we use single head attention to illustrate.Moreover, we useto describe the input shape in the subsequent explanations, instead ofdepicted in Fig1.Weuse, andto denote the multiplication of, and,whererepresents the embedding dimensions, andrepresents the number of patches. Therefore, we have:
+
+Then, a self-attention operation of input token sequencecan be represented as
+
+The normalizing factor ofis subsumed in the weight matricesfor notational simplicity. And we omitted the expression of multihead.
+
+With (1) and (2), a standard Transformer layercan be represented as
+
+Visual prompts are learnable parameters prepended to other tokens before a Transformer encoder layer. These visual promptshave the same dimension as other tokens, whereis the prompt length. Then the Transformer layers are represented as
+
+whererepresents the prompts computed by the-th Transformer layer, andrepresents the CLS token.
+
+SECTION: 3.2Embedded Prompt Tuning
+
+VPT prepends prompt tokens before all original input tokens parallely, while VP adds the values of prompt tokens with original input tokens across all channels. These prompt introducing ways either do not fine-tune the original input tokens fine-grainedly or significantly disrupt the information of original input tokens. Therefore, we propose Embedded Prompt Tuning (EPT), embedding prompt tokens into expanded channels. In this way, EPT can not only preserve original information well, but also introduce extra useful context to optimize embedding tokens.
+
+As shown inFig1, the concept of our proposed EPT method and its differences compared to VPT are illustrated. We use the EPT promptsto differentiate.have a completely different shape from the promptsin VPT,whererepresents the prompt length. It should be noted thatthe promptsare not directly inserted into the patch tokens but only appear during the softmax operation onin the attention calculation, and they disappear after the computation is completed. The purpose of this approach is to scalewithout altering its shape, enabling subsequent computations.
+
+Next, we will provide the formal formulation of EPT. Embedded prompts are learnable parameters embedded in thematrix and jointly participate in subsequent softmax calculations. And these embedded promptsno longer participate in subsequent calculations after completing the softmax computation, whereis the prompt length. Therefore, the attention mechanism is defined as
+
+whererepresents selecting values from the matrixrow-wise, starting from the-th row up to the-th row, after undergoing the prompt and softmax operations, thus maintaining its shape in subsequent calculations.
+
+Then a single Transformer layer is represented as
+
+Two variations are available within the EPT method: EPT-SHALLOW and EPT-DEEP, distinguished by how extensively Transformer layers are utilized.
+
+Only the first layer of the Transformer is embedded with prompts, therefore all the Transformer layers of EPT-SHALLOW are represented as
+
+All Transformer layers are embedded with prompts, and the Transformer layers of EPT-DEEP are represented as
+
+For a matrix, we select the vector from the-th column to illustrate. Let, which corresponds to the multiplication of the query of the-th patch and the keys of all patches. Then, the softmax value ofcan be represented as
+
+For the prompted matrix, letbe the-th column of the prompted matrix, whereandrepresent the prompt and the original vector respectively. After the softmax operation, the value of the-th column vector of the original matrix becomes
+
+From equations (9) and (10), we can observe that the softmax operation applied to the prompt enables the adjustment of each patch-level feature, corresponding to patch-wise scaling. It is worth noting that the dimensions of the input and output remain unchanged during the softmax operation. The advantages of patch-wise scaling will be further analyzed and compared inSec3.3.2.
+
+SECTION: 3.3Analysis of EPT
+
+In the context of few-shot learning, researchers face the challenge of overfitting due to an insufficient number of training samples, which is characterized by accurate classification on the training set but poor performance on the test set. To tacklethis challenge, we attempt to approachit from the following perspective: calibrating the distribution of the few-shot samples by reducing the intra-class distance of samples from the same class, thereby increasing the degree of separation between features of different classes during training, ultimately achieving higher accuracy[30].
+
+Based on our observations, EPT can help mitigate the negative impact caused by foundation models when learning pretraining data distribution. Additionally, we notice that the patch-wise scaling operation, by implementing varying scaling ratios for different samples, facilitates the aggregation of features from the same class towards the intra-class center. Consequently, it increases the potential for greater separation of features between samples from different classes. Moreover, by introducing prompts, the dimensions of features are increased, thereby enhancing the high-dimensional expression and decoupling capability of features. Through analyzing these two operations intuitively and theoretically, we propose a new perspective to understand prompt tuning: Prompt is a distribution calibrator.
+
+First, we define theintra-classdistance for a better understanding of the problem. For a datasetwith K classes, whereis the-th sample in the-th class, and the number of samplesin each class is balanced with.We borrowed the definition from Yaras et al.[43], and we useto represent the center of the samples in class k, where the intra-class distance matrix is defined as
+
+According to the definition, a smaller value ofindicates a higher degree of feature clustering,which may lead to better separability.
+
+For dataset that satisfies, If we apply different scaling operations to samples of the same class, we can derive the conclusion stated in Lemma1.
+
+Letbe the scaling operations on the samplesandof class k, respectively, and satisfy, and. Then, the new intra-class distance matrix and the original intra-class distance matrix of class k satisfy, whereis the scaling factor of the-th class center.
+
+Proof of Lemma1is presented in Appendix. Lemma1demonstrates that a scaling operationthat induces intra-class clustering more effectively relative to applying the same scaling factor to all samples within a class. The actual effect is that the farther the sampleis from the origin, the smaller the scaling factor it has, and vice versa. The advantage is that it can bring the samples closer to the intra-class center.
+
+Furthermore, we can observe thatby embedding prompts in the softmax function in EPT, we can achieve the scaling functionality defined in Lemma1, thereby increasing the intra-class concentration. Therefore, we conducted an analysis of the mechanism behind EPT. Considering the complex structure of the Transformer and the dataset, to simplify the problem,we assume the number of patches (including the CLS token) is 2and proceed with the analysis based on this assumption.
+
+Letandbe the first column vectors of thematrix for two different samplesandwithin the same class k, which denote the CLS token, andn=2. Letandcorrespond to the vectors after the prompt. Then, we can draw the following conclusion.
+
+Consider an original matrixand a prompted matrix. We can always find a promptsuch that, for the CLS tokens ofand, when, then.
+
+Proof of Proposition1is presented in Appendix. According to Lemma1and Proposition1,we can conclude that EPT can achieve more compact scaling operations by embedding prompts in the softmax, thereby reducing intra-class distances and making samples of the same class more concentrated.
+
+SECTION: 4Experiment
+
+SECTION: 4.1Experiment Setup
+
+This article aims to investigate the performance of mainstream PEFT methods in few-shot medical classification tasks,\deletedpreliminarily explore the potential of our proposed LAP methodand emphatically validate the effectiveness of our designed EPT method, particularly by comparing the characteristics of VPT and similar PEFT methods to explore their commonalities and capabilities\deletedto strike a balance between fitting and generalization. First, we will introduce datasets, tasks, and experimental settings of our study.
+
+We evaluate on the MedFMC2023 grand challenge public classification dataset[23]which covers three different modalities:
+(1)Thoracic Disease Screening (Chest). 2,140 for training, 2,708 for validation, and 3,869 for testing.
+(2)Pathological Tumor Tissue (Colon). 5,654 for training, 4,355 for validation and 7,651 for testing.
+(3)Endoscopy Images for Lesion (Endo). 1,810 for training, 2,055 for validation and 2,936 for testing.
+
+Each task is formulated as N-Way K-shot classification tasks. Due to the backbone network is pre-trained on ImageNet-21k, which owns a domain gap with medical images, the classification tasks are cross-domain few-shot classification tasks. The few-shot medical classification task, especially the multi-label classification task, particularly highlights the generalization performance of these PEFT methods. We mainly focus on few-shot scenerios rather than fully supervised training, and K is set to 1,5,10. 1-shot refers to every N images that sample from each class, rather than one image. Among the three datasets, ChestDR and Endo are multi-label classification tasks with 19 and 4 categories respectively, while Colon is a single-label classification task with 2 categories.
+
+Accuracy and mean average precision are used to evaluate both single-label classification tasks and multi-label classification tasks. We compare widely used PEFT methods with our baseline method VPT. To reduce the error caused by random sampling, we follow the setup of MedFMC and performed 5 random samplings. We calculate the average accuracy score for four runs for each sampling.
+
+We follow MedFMC and compare EPT with other widely applied PEFT methods. We compare the results of\deletedtwoVision Transformer architecture\deleted, Vision Transformer[44](ViT)\deletedand Swin Transformer(Swin), on image classification in Sec4.2. Due to the fact that the EPT method is also a prompt-based fine-tuning approach, it shares many similarities with VPT and VP. Additionally, given the superior performances of VPT and VP, we primarily compare our results with VPT and VP. Unlike selecting the Full method as the primary reference in[24], our experiments chose the Partial-1[45]fine-tuning method as the primary reference. The reason is that for few-shot fine-tuning, fine-tuning all parameters incurs computational costs that do not match the data volume, and our experiments have found that the Full method often yields the worst results. Therefore, we chose Partial-1 as the primary reference method.\deletedFor Adapter[36]and Lora[27], we set the dimensionfor downsampling to 4.The default prompted layers for EPT and VPT are both set to 12, meaning the prompt is used through all the layers. The prompt length for prompt-based fine-tuning methods is set to achieve the best performance individually. If not otherwise specified, we adopt ViT-Base/16 pretrained on ImageNet-21k as our default backbone model, which is also the default model for ViT in the MedFMC Challenge.
+
+For the two relative embedding orders of prompts in the EPT method: EPT and EPT-C, we select different relative embedding orders for each task and choose the best result as the final result of our approach. We do this because we found that EPT-C often exhibits better generalization performance, while EPT tends to have better fitting ability. This leads to each method being more suitable for relatively simple datasets (Colon) and relatively complex datasets (Chest) respectively, and this difference brings about significant performance superiority for our method. Furthermore, we conducted a more in-depth analysis of this phenomenon in Sec4.3. In terms of fairness, our standalone EPT-C or EPT can surpass most other PEFT methods, especially the VPT that we specifically compared against. More results and details are provided in Sec4.2and Appendix.
+
+SECTION: 4.2Main Results
+
+We present average results of various PEFT methods for 1-shot, 5-shot and 10-shot classification on three datasets: Chest, Colon and Endo, as shown in Tab1. Several main findings can be observed.
+
+First, EPT outperforms other PEFT methods by a substantial margin on three datasets in most cases. Specifically, it surpasses the second-best method Adapter by 2.05% and the third-best method VPT by 2.74%, respectively. EPT still achieves second place in the Colon 5-shot task, with a performance gap of only 0.24 from Bias. This demonstrates that the superior performance of EPT when adapting pre-trained foundation models to cross-domain few-shot scenarios, e.g., medicial image analysis. Second, in the category of prompt tuning, EPT surpasses VPT and VP by 2.74% and 5.09%, respectively. In addition, EPT outperforms LoRA by 5.04%. This not only indicates that EPT has addressed previous shortcomings in the way of introducing prompts, embedding prompts in the channel direction is a more promising approach. Moreover, EPT has better approximation capabilities on Transformer architectures, thereby breaking through limitations of prompt tuning. Third, EPT, VPT and VP surpasses Linear by 6.24%, 3.50%, and 1.15%, respectively, and prompt tuning achieves very competitive ranks among all PEFT methods. This shows that prompt tuning helps to alleviate the negative impact of foundation models in learning pre-training data distributions, and calibrates their performance in new domains. Fourth, Full is 9.34% lower than Linear, potentially due to overfitting. When adapting foundation models to few-shot scenarios, fine-tuning more parameters is not always better, and PEFT methods are very meaningful.
+
+As shown in Fig2, we present visualization results of feature distribution after fine-tuning on the Colon dataset.
+
+In Fig2(a), it displays the feature distribution of samples from the same class on the first principal component obtained by principal component analysis (PCA). We select 2,628 samples labeled as existing tumours, and four methods were compared: Full, Linear(Pretrained backbones), VPT, and EPT. The x-axis represents feature values, and the y-axis represents the number of samples. Results show that: (1) EPT exhibits a narrower range of sample distribution, with more pronounced feature values, demonstrating a more concentrated intra-class feature distribution. (2) Foundation models only pre-trained on natural images displays a clear different behavior, and lack continuity, suggesting that samples may cluster into two distinct groups that are significantly far from each other. (3) Full displays that samples are overly dispersed and exhibit lower feature values, which could be due to overfitting and the failure of capturing common features.
+
+In Fig2(b), it visualizes the two-dimensional feature distribution of samples from the same class by t-SNE. Our selcted samples and methods are same as Fig2(a). The x-axis and y-axis represent feature values of two different dimensions, respectively. Results show that: (1) Pretrain shows that the density contour lines on the left and right sides do not connect and close, indicating the discontinuity and a huge distance within the distribution. (2) Full shows that the density contour lines are irregular, indicating that samples are dispersed throughout the space, and not sufficiently concentrated. (3) VPT shows a clear outlier distribution on the top, far from the center. (4) EPT shows that the area enclosed by the density contour lines is the smallest, indicating that samples are more concentrated. Fig2(a) and Fig2(b) both illustrate that EPT has a more continuous and concentrated intra-class feature distribution. This may be due to the patch-wise scaling operation, which reduces the distribution scopes and extracts more universal and effective features.
+
+In Fig2(c), it displays the two-dimensional feature distribution of all classes by t-SNE. We randomly select 5,256 samples from two categories, maintaining a 1:1 ratio. Results show that: (1) Pretrain not only exhibits a larger intra-class distribution but also shows inter-class linear inseparability. (2) Prompt tuning demonstrates a continuouts and concentrated intra-class distribution, and the separability between classes are also distinct. This may be due to the introduction of prompt tokens, which expand the dimensionality of the input space, thereby increasing the separability of features.
+
+These visualization results provide strong evidence for the view that prompt tuning acts as a distribution calibrator.
+
+For the purpose of observing the performances of various tuning methods at larger backbone scales, we conducted experiments on ViT-Large/16. The experimental results, as shown in Tab2, indicate that our EPT method still demonstrates the most significant advantages on all three datasets and outperforms other methods. Additionally, we can observe that fine-tuning with ViT-Large/16 as the backbone generally yields better classification performance compared to ViT-Base/16. Even linear methods show improved classification results. However, both MLP-3 and Adapter methods exhibit a decrease in performance, which differs from the results in Tab1. Furthermore, the average classification results of EPT demonstrate an increasing trend compared to Tab1. This proves the effectiveness of our EPT method on larger-scale pre-trained models.
+
+We vary the training data from 1, 5, 10-shot to 20% of the entire training set. The average accuracy of different fine-tuning methods on various data scales is presented in Fig3. First, we observe that our method consistently outperforms others across all data scales, displaying superior data scalability. Moreover, as the data scale increases, all fine-tuning methods exhibit a significant increase in accuracy, but their performance growth rate tend to slow down. Further observation reveals that the performance on Colon converges faster than on Chest and Endo. This might be because that multi-label tasks require more data to learn sufficient discriminative information.
+
+SECTION: 4.3Abalation Study
+
+In this section, EPT is consistently evaluated using the default experimental settings: ViT-Base/16 as the backbone\added.\deleted, and an image size of 384. Except for the ablation study on prompt length,\replacedthe prompt length for prompt-based fine-tuning methods is set to achieve the best performance individually.the default prompt length was set to 1.
+
+The average accuracy of different prompt tuning methods on various prompt length is presented in Fig4. We vary prompt length from 1, 5, 10, 20, 50, 100 to 150. Since EPT has a different way of introducing prompts from VPT, the number of prompt parameters from VPT is four times that of EPT when introducing a prompt with length of 1 in a single Transformer layer. Therefore, to maintain relatively consistent number of parameters, we use relative prompt length on the x-axis. This means when the relative prompt length is 1, the actual prompt length of VPT is 1, and the actual prompt length of EPT is 4.
+
+As the prompt length increases, the performance of VPT generally declines across three datasets. In contrast, EPT shows a clear upward trend on Colon and Endo, and remains relatively stable on Chest. This suggests that EPT can better address overfitting issues. Moreover, when the prompt length is only 1, the overall performance of EPT and VPT is nearly identical. As the prompt length and the number of prompt parameters increase, yet remain within the scope of PEFT, EPT gradully begins to outperform VPT by a large margin. This indicates that EPT has better parameter scalability, with a much higher upper limit on approximation capabilities compared to VPT. We can also observe that both EPT and VPT can achieve better performance at shorter prompt length compared to longer ones in some cases. This suggests that longer prompt length is not always necessarily better, we can explore locally optimal solutions to balance performance and efficiency.
+
+The average accuracy of different EPT variants on various prompt embedding ways is presented in Fig5. We present four prompt embedding ways: add, multiply, concat purely, multiply and concat. "add" means the sum ofand. "multiply" means the product ofand. "concat purely" means the concatenation ofand. "multiply and concat" is a novel EPT variant based on the insight of patch-wise scaling. We first obtain a scaling vectorby calculating difference between the maximum and minimum values in each patch of. Then, we multiplywith, and concat the product with.
+
+The outcome shows thatachieves the best performance across three datasets. After applying the scaling vector, the values of prompts become larger, and original values become smaller according to eq10. Large original values are reduced more significantly, while small original values are reduced less. Therefore, the absolute distance between values decrease, enhancing characteristics of patch-wise scaling and further reducing the distance of intra-class feature distribution. Moreover,has better performance compared toand, validating our analysis of prompt introducing ways again. The way of concatenation not only can helps to preserve the information of original tokens, but also introduces additional useful context in a more fine-grained manner.
+
+The average accuracy of EPT on various prompt depth and embedding orders is presented in Fig6. Prompt depth is varying from 1 to 12, and embedding orders are varying from top to bottom (orange line) and bottom to top (blue line). Two valuable questions are mentioned below:
+
+Shallow or deep?Overall, as the number of prompted layers increase, the performance of EPT improves. As the depth increases, prompts can acquire a more complex and abstract representation capability and adjust features from both shallow and deep layers.
+
+Top or bottom?We can observe that the performance of EPT improves when embedding prompts from top to bottom, which is contrary to the conclusion of VPT. This may be related to prompt introducing ways. The foreground and background across different medical images are similar, which means there are fewer low-level and coarse-grained semantic features that are discriminative. Instead, high-level and fine-grained semantic features are more crucial. Since EPT directly embeds prompts in the channel direction, it can correlate with tokens more fine-grainedly and increase the dimension of representation. This results in greater enhancement of the high-level semantic features from deeper layers.
+
+SECTION: 4.4Futher Analysis
+
+In this section, we conduct a more in-depth analysis ofVPT andEPT.First, we performed an experiment by setting the prompt grad in VPT to false, which means completing the training with the prompt being frozen and only the linear head being trainable. Additionally, we also conducted a convergence experiment. As for the convergence experiment,\deletedWe perform fitting experiments and convergence experiments. For both experiments,we select a specific sampled dataset for training (provided in[23]).\deletedFor the fitting experiments, we use the same dataset for training and testing to evaluate the accuracy of various methods on the training set.For the convergence experiment, we test methods on the default testing set and record the distribution of results, which reflects the convergence performance of the different methods
+
+The impact of grads of prompt parameters is shown in Tab3. The outcome demonstrates that the performance of foundation models still improves in downstream tasks compared to models that are only pre-trained on natural images, even though we freeze the prompt parameters of VPT. This suggests that prompt tuning enhances the feature separability and strengthen the distribution calibration characteristics by introducing additional prompt tokens and increasing the input dimensions.
+
+The visualization results of convergence distribution are showned in Fig7. Results indicate that EPT has the highest average values and the smallest variance in the convergence interval across various tasks, making it a superior and reliable PEFT method. Moreover, both VPT and EPT achive better convergence than Full, proving the superiority of PEFT in cross-domain few-shot scenarios.
+
+For further exploration of the performance of fine-tuning methods in few-shot medical image analysis, we also conducted experiments on the ISIC 2018 dataset[46](see Appendix for details). From Tab4, it can be observed that some fine-tuning methods failed, such as MLP-3 and VP, both exhibiting worse performance compared to the Linear method. However, methods targeting backbone fine-tuning, such as LoRA, Bias, and Adapter, still showed more significant improvements compared to Linear. VPT and EPT demonstrated even more notable enhancements, with EPT outperforming other fine-tuning methods by nearly 10% points relative to Linear, thus confirming the effectiveness of the EPT method.
+
+SECTION: 5Conclusion
+
+In this paper, we propose an effective PEFT method in cross-domain few-shot scenarios, e.g., medical image analysis, namely Embedded Prompt Tuning (EPT). EPT embeds prompt tokens into the expanded channels. In this way, EPT can introduce more useful context, while preserving the original information. Through analyzing patch-wise scaling and feature separation operations from EPT, we also find that prompt is a distribution calibrator, mitigating the negative impact caused by foundation models when learning feature distributions on pre-training data. Experiments show that our EPT can not only achieve superior performance, but also complete the fine-tuning process within competitive time. Considering limitations, there is still significant improvement space for EPT in fine-grained perception tasks, e.g., segmentation. In the future, we will continue to unleash the power of EPT on fine-grained perception tasks, and conduct a further theoretical exploration of the essence of EPT in distribution calibration.
+
+SECTION: References
+
+SECTION: Appendix AMore Results and Details
+
+SECTION: A.1Details of Implementation
+
+Our experimental setups are consistent with MedFMC Challenge[47]and MedFMC dataset[23]. Although Wang et al.[23]conducted extensive experiments, they did not provide results on mainstream architectures such as ViT. We run the fine-tuning experiments using ViT(ViT-Base/16). The ViT model is optimized with an initial learning rate of 6e-4. These classification models are trained on a single NVIDIA A100 for 20 epochs with a batch size of 4, employing the MMClassification framework[48].
+
+We utilize the validation set of each dataset to determine the optimal prompt length. The prompt length represents the exclusive hyperparameter of the EPT approach that we adjust. For Transformer-based models, we consider the range of values for prompt length as [5, 10, 20, 50, 100, 200, 400, 600]. For the ViT architecture, we set the prompted layers to ’DEEP’, which means prompts are used in all layers.
+
+Note: For ViT-base/16, the number of embedding patches is 196. Embedding dimensions for each patch are 768. Consequently, to facilitate comparison with VPT, we multiply the relative prompt length by 196/768. Each prompt is randomly initialized using a normal initialization scheme. We adhere to the original design choices of the backbone architecture.
+
+For the settings in VPT, we follow Jia et al.[24]. We use the validation set of each dataset to find the best prompt length. The prompt length range for Transformer backbones spans [1, 5, 10, 50, 100, 150]. For the ViT architecture, we set the prompted layers to ’DEEP’, which means prompts are used in all layers.
+
+For the settings in VP[49], we use the validation set of each dataset to find the best prompt length. Since the VP method is not our primary comparative approach, we only conducted experiments on the ViT (Vision Transformer) architecture. The range of prompt length is [1, 5, 10, 50, 100, 150]. We set the prompted layers to ’DEEP’, which means prompts are used in all layers.
+
+Adapters[36]insert extra lightweight modules inside each Transformer layer. One adapter module generally consists of a linear down-projection (with a reduction rate r), followed by a nonlinear activation function, and a linear up-projection, together with a residual connection. Chen et al.[36]explored the insertion method of adapters. Therefore we also use this setup in our own implementation. We choose the reduction rate r in [1, 4, 8, 32, 64].
+
+According to the findings of LoRA[27], we applied the LoRA structure to the matricesand, and we chose the reduction ratefrom the options [1, 4, 8, 32, 64] to select the best for each task.
+
+We selected the Colon-10shot task to demonstrate the time and number of epochs needed for fine-tuning, as it is the most computationally demanding task among all. For few-shot fine-tuning tasks, as evident from Tab5, Moreover, the entire process can generally be completed within 2-5 minutes. The full fine-tuning method takes the longest computation time, followed by VPT and MLP-3. Our EPT method partially mitigates the computational time drawback associated with prompt-based methods and achieves a computational time close to that of the Adapter method in few-shot scenarios.
+
+The ISIC 2018 dataset[46]contained 10,015 training and 1512 test images for a total of 11,527 images. ISIC 2018 provided the ground-truth data, consisting of seven classes, melanoma,melanocytic nevus, basal cell carcinoma, intraepithelial carcinoma,benign keratosis,dermatofibroma and vascular lesion. We strive to maintain consistency with the MedFMC classification tasks. The task is also formulated as N-Way K-shot classification task, and K is set to 1,5,10. 1-shot refers to every N images that sample from each class, rather than one image.
+
+We select kvasir-SEG[50]for polyp segmentation task. We follow the settings in Medico automatic polyp segmentation· task at mediaeval 2020[51]with a train-valid ratio of 880:120.
+
+For a more meaningful comparison, we have employed SETR as our segmentation framework to ensure consistency with VPT. We have utilized the same hyperparameters as in MMSegmentation[52]. However, we have opted to use ViT-Base/16 pretrained on ImageNet-21k as our backbone.
+
+We explored the effectiveness of fine-tuning algorithms on the medical segmentation dataset, kvasir-SEG[50]. We employed the same segmentation algorithm, SETR-PUP[53], as used in VPT. For the ViT backbone, we utilized the ViT-Base/16 model pre-trained on ImageNet-21k. However, we did not use a pre-trained segmentation head. The standard practice (Full) involves fully fine-tuning the pre-trained backbone alongside the ConvNet head. For comparison, three additional protocols are included: Head, VPT, and adapter. Additionally, we used full fine-tuning FCN-UN as a comparative benchmark. The results are shown in Tab6. A major difference is that our EPT method lags behind in the segmentation task, with a lower mIoU compared to the Head method, but outperforms VPT. The Adapter method achieves the best results in the segmentation task, surpassing the results of full fine-tuning. The reasons behind these results are still unclear, and further exploration is needed for our EPT in segmentation experiments.
+
+SECTION: A.2Proofs
+
+Proof for Lemma1
+
+Proof. For any, we have. Thereforeand for,, we useto represent the angle between two vectorsand.
+Thus, we have.
+
+Consider two cases:(1);(2).
+
+For, we have. According to (12) and (13), we have.
+
+And for, we have. According to (12) and (13), we have.
+
+So we can conclude that.
+
+Proof for Proposition1
+
+Proof. According to the assumptions of Proposition1, assumeand. Letandrepresentandrespectively. Also, letandrepresentandrespectively.
+
+Thenand. Without loss of generality, assume. It can be inferred that.
+
+Letand.
+Then we have.
+
+Forand, letand.
+
+Therefore, forand, we can know thatand.
+
+To prove:, it is equivalent to proving:, given that. Therefore, we can conclude thatsatisfies the condition. Thus,.

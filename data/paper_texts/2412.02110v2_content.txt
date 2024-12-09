@@ -1,0 +1,946 @@
+SECTION: Retrofitting XoM for Stripped Binaries withoutEmbedded Data Relocation
+
+System programs are frequently coded in memory-unsafe languages such as C/C++, rendering them susceptible to a variety of memory corruption attacks.
+Among these, just-in-time return-oriented programming (JIT-ROP) stands out as an advanced form of code-reuse attack designed to circumvent code randomization defenses.
+JIT-ROP leverages memory disclosure vulnerabilities to dynamically harvest reusable code gadgets and construct attack payloads in real-time.
+To counteract JIT-ROP threats, researchers have developed multiple execute-only memory (XoM) prototypes to prevent dynamic reading and disassembly of memory pages.
+XoM, akin to the widely deployed WX protection, holds promise in enhancing security.
+However, existing XoM solutions may not be compatible with legacy and commercial off-the-shelf (COTS) programs, or they may require patching the protected binary to separate code and data areas, leading to poor reliability.
+In addition, some XoM methods have to modify the underlying architectural mechanism, compromising compatibility and performance.
+
+In this paper, we presentPXoM, a practical technique to seamlessly retrofit XoM into stripped binaries
+on the x86-64 platform. As handling the mixture of code and data is a well-known challenge for XoM,
+most existing methods require the strict separation of code and data areas via either compile-time transformation or binary patching,
+so that the unreadable permission can be safely enforced at the granularity of memory pages.
+In contrast to previous approaches, we provide a fine-grained memory permission control mechanism to restrict the read permission of code
+while allowing legitimate data reads within code pages.
+This novelty enables PXoM to harden stripped binaries but without resorting to error-prone embedded data relocation.
+We leverage Intel’s hardware feature, Memory Protection Keys, to offer an efficient fine-grained permission control.
+We measure PXoM’s performance with both micro- and macro-benchmarks, and it only introduces negligible runtime overhead. Our security evaluation shows that PXoM leaves adversaries with little wiggle room to harvest all of the required gadgets, suggesting PXoM is practical for real-world deployment.
+
+SECTION: IIntroduction
+
+The perpetual competition between cyber adversaries and defenders on memory corruption vulnerabilities has intensified,
+resulting in an ongoing struggle[1,2,3,4,5,6].
+The prevalence of WX protection (i.e., memory cannot be writable and executable at the same time) in modern operating systems
+has led attackers to reuse code snippets from the vulnerable program to construct attacks. Adversaries identify these code snippets, also known as “gadgets,” by examining the disassembled binary code[7]. Subsequently, they connect these gadgets in a precise sequence to create harmful payloads and redirect the control flow to the gadgets to launch the attack.
+To mitigate this threat, researchers have proposed various code randomization techniques[8,9,10,11,12,13,14,15,16,17,18,19]to impede the construction of gadgets by reorganizing the code layout in memory. However, code randomization is susceptible to memory disclosure, which makes the randomized code layout evident to attackers and undermines the fundamental memory secrecy assumption of code randomization[20].
+The technique of JIT-ROP[21]leverages repeated exploitation of memory disclosure vulnerabilities to collect code gadgets on-the-fly.
+This is accomplished by utilizing the leaked code pointers present on memory pages.
+Consequently, JIT-ROP can circumvent code randomization protection, even rendering fine-grained randomization strategies ineffective[22].
+The premise of JIT-ROP relies on the disclosure of memory pages, where attackers must first traverse disassembled code to gather the required gadgets for the payload construction.
+Therefore, a common JIT-ROP defense is to enforce a fine-grained memory permission policy to restrict arbitrary read access to code pages.
+
+Execute-only memory (XoM)[23,24,25,26,27,28,29]has emerged as a prominent defense against memory disclosure.
+By revoking the read privilege of executable memory, XoM deprives attackers of the ability to inspect the code after code randomization has been applied.
+XoM implementations have utilized software emulation[23,24,26,29]or hardware features[25,27,28]to achieve this objective.
+Unfortunately, existing XoM prototypes have failed to gain popularity, and one of the major obstacle comes from the false alarms caused by legal data-in-code reads.
+Ideally, if code and data areas are strictly separated, XoM can safely remove the read privilege only from code sections.
+However, for optimization purposes, code-data mixture cases are not rare. For example, compilers may emit data near their accessing code to exploit spatial locality[30].
+
+XnR[23]is the first approach to leverage XoM to defend against JIT-ROP attacks, based on the assumption that no data is embedded in the code segment.
+Subsequent XoM papers have attempted to address code-data separation in two ways.
+The first class of work explicitly separates code and data areas through custom compilers and linkers[24,25,26]. Obviously, they cannot protect a large number of
+legacy and COTS binaries. The second class of XoM work attempts to harden binary code[27,28,29]. Nonetheless, they either rely on debug symbols or error-prone binary patching to
+differentiate embedded data from code, making these approaches impractical.
+In particular, HideM[27]modifies the architectural mechanism by segregating all data and code into separate caches.
+This cache mode change has a negative impact on performance and compatibility, as modern CPUs no longer have separate code and data caches.
+These limitations necessitate further research in restricting adversaries’ ability to exploit memory disclosure.
+On the other hand, Destructive Code Reads (DCR)[31,32]can tolerate code disclosure by destroying the disclosed code immediately after it is read, thus preventing its execution.
+DCR addresses the challenge of handling legitimate data reads within code pages,
+thereby offering enhanced compatibility for protecting binaries.
+However, the security guarantees of DCR have been compromised by code inference attacks[33].
+
+This paper contributes to the ongoing research in XoM policy enforcement by presenting a novel technique calledPXoM.
+Our approach safeguards stripped binaries from JIT-ROP attacks on the x86-64 platform without the need for embedded data relocation.
+The core of PXoM lies in an efficient and fine-grained memory access control policy, which assigns the RX permission to different blocks within a memory page.
+This approach is in contrast to the previous method that required patching of the protected binary[28], which involved relocating embedded data out of code pages and updating code-to-data references.
+We note that binary rewriting for relocating embedded data remains a nascent technique, as highlighted in the latest study[34].
+Our technique enables legitimate data-in-code reads by enforcing the execute-only permission on code areas only, rather than at the granularity of the whole memory page.
+We take advantage of a Intel hardware feature, Memory Protection Keys (MPK)[35,36], to regulate read requests to code areas and embedded data areas at the kernel level, thus minimizing the performance overhead of our approach.
+
+Specifically, to bypass the barrier of precise binary disassembly[37,38], we propose aUnidirectional Disassemblystrategy,
+which is able to identify all data embedded in code areas without false negatives.
+We customize the binary loader in Linux kernel to load the PXoM-protected binaries, and implement a runtime monitor in
+kernel to dynamically scrutinize all read requests to code pages.
+To further enhance PXoM’s performance on frequently accessed embedded data,
+we have developed a cache-like optimization policy.
+Our secure evaluation measures the adversaries’ ability to launch a ROP attack. Our results have revealed
+a minimal presence of gadgets in the PXoM-protected binaries, and these leftover gadgets are far from being sufficient to construct a harmful payload.
+We conduct a multifaceted performance evaluation with microbenchmarks, marcobenchmarks, and real-world applications,
+including lmbench[39], SPEC CPU 2006 & 2017[40,41], three web servers, and four database software.
+The results show that PXoM only incurs negligible runtime overhead, ranging from 0.22% to 0.82% on average.
+
+In a nutshell, we make the following key contributions:
+
+We propose a new hardware-assisted XoM technique, PXoM, which hardens stripped binaries to impede memory disclosure attempts and eventually
+prevent JIT-ROP attacks. Our work is an advancement in the utilization of hardware features for systems security.
+
+Our novel fine-grained memory access control policy enable us to overcome the critical limitations of existing work. Our technique allows for
+legitimate data reads in executable memory without necessitating error-prone embedded data relocation.
+
+To the best of our knowledge, PXoM reveals minimal runtime overhead when compared to existing XoM tools. Our extensive evaluation
+demonstrates that PXoM is a viable solution for real-world adoption.
+
+Open SourcePXoM’s source code and datasets are available atZenodoto facilitate reproduction, replication, and reuse.
+
+SECTION: IIBackground, Motivation, and Related Work
+
+In this section, we provide background information on JIT-ROP attacks and the importance of addressing memory disclosure vulnerabilities.
+We also review existing approaches for enforcing the XoM policy on userland programs and identify their limitations, which have prompted our research.
+Finally, we introduce the hardware feature that we leverage to implement our fine-grained permission control mechanism and kernel-level XoM protection.
+
+SECTION: II-AOverview of Just-In-Time ROP
+
+With the advancement of fine-grained code randomization[8,9,13,16,19],
+traditional code-reuse attacks[42]have evolved into more sophisticated styles like JIT-ROP attacks[21], which generate ROP payloads at runtime.
+As illustrated in Figure1, a typical JIT-ROP attack consists of two stages.
+First, attackers recursively scan code pages using memory disclosure vulnerabilities to search for gadgets (1in Figure1),
+which typically are code sequences ending with a return instruction.
+In the second stage, the collected gadgets are linked together to create a payload that exploits a memory corruption vulnerability (e.g., buffer overflow or use after free)
+to hijack the program’s control flow (2in Figure1).
+To complete the search of the whole gadget chain within a small time window (e.g., a few seconds),
+JIT-ROP attackers require “unfettered access to a large number of the code pages”[21]to find usable gadgets quickly.
+Therefore, preventing disclosure of memory pages is crucial to mitigating these attacks.
+
+Programs susceptible to JIT-ROP attacks primarily fall into the following two categories:
+
+Server-side programs,
+such as web servers and databases, which allow multiple user interactions, are particularly vulnerable to JIT-ROP attacks. An attacker can interact with the compromised program remotely, incrementally disclosing parts of its code. The search for gadgets and the construction of the malicious payload take place on the attacker’s device, while the final payload is executed on the victim’s machine.
+
+Client-side programs,
+such as Matlab, Autodesk Maya, and JIT engines (e.g., JavaScript), are also vulnerable to JIT-ROP attacks. Attackers exploit these vulnerabilities by utilizing scripting languages. When the victim executes a malicious script, it dynamically searches for code on the victim’s machine and constructs the attack payload in real-time. Among these programs, JIT engines are especially prone to exploitation. Attackers can automate exploitation by directing victims to websites hosting malicious scripts, prompting the browser to execute the exploit without user awareness.
+
+SECTION: II-BExecute-only Memory Defense
+
+The concept of Execute-only Memory (XoM) was once introduced by Multics as early as 1967[43]. However, it was not adopted by modern operating systems and hardware until JIT-ROP emerged as an urgent threat.
+Next, we introduce XoM approaches designed to protect userspace software from JIT-ROP attacks.
+
+First XoM Defense against JIT-ROPThe first approach to reintroduce XoM into Linux on the x86 architecture as a defense against JIT-ROP attacks was XnR[23].
+Since there was no hardware feature on x86 supporting XoM, XnR configures the PTE_PRESENT bit in PTE (Page Table Entry) of code pages as the “no present” state, causing all read operations to be intercepted by XnR’s page fault handler.
+However, due to the substantial overhead incurred by XnR’s software implementation, it makes a trade-off to allow several code pages to exist in the present state.
+This trade-off causes XnR to miss read operations to these co-existing code pages, leaving memory disclosure opportunities.
+More importantly, XnR neglected to handle legitimate read operations that point to code pages. As acknowledged by XnR’s authors, XnR will be hindered by such data-in-code reads.
+It is clear that the two main factors limiting the deployment of XnR are hardware support and backward compatibility. These challenges have also hindered the broader adoption of XoM since its reintroduction by XnR over a decade ago.
+
+Hardware SupportWhen XoM was first reintroduced by XnR, XoM permissions were not supported by hardware and could only be implemented through software emulation, which resulted in significant overhead.
+Later, on the x86 architecture, Intel’s Extended Page Tables (EPT)[35]hardware virtualization mechanism was utilized to implement execute-only permissions, improving performance to some extent.
+However, EPT requires programs to run within a virtual machine, and virtualization itself introduces additional performance overhead.
+Android previously supported XoM on the ARM architecture. However, due to implementation flaws that could lead to the failure of Privileged Access Never (PAN)[44], the flawed XoM implementation was removed beginning with Android 11[45].
+Fortunately, Intel’s introduction of Memory Protection Keys (MPK) restored the ability to efficiently separate read and execute permissions, making it the preferred method for implementing execute-only permissions. The Linux kernel has begun supporting execute-only permissions at the kernel level using MPK[46,47,48]. In this paper, we also leverage MPK to efficiently enforce execute-only memory permissions. MPK allows us to overcome performance challenges of XoM, enabling us to focus on addressing the other major obstacle to the widespread adoption of XoM: backward compatibility.
+
+Backward CompatibilityA major factor limiting the widespread adoption of XoM is the challenge of protecting the vast number of precompiled programs. The XnR method[23]is built on the strong assumption that code pages do not contain any data. However, this assumption is not always valid in practice.
+Despite modern compilers favoring the separation of code and data, non-code bytes such as jump table data and static read-only data often appear in code sections[49,31].
+This is confirmed by Pang et al.’s SoK study on mainstream binary disassembly tools[37], which found that the mixture of code and data is very common in programs.
+For instance, the authors discovered 295 hard-coded bytes from the code pages of three test cases andjump tables embedded in the code pages of 57 programs.
+Inline assembly code[50]in C libraries also frequently embeds data in code sections, such as in the case of OpenSSL, BoringSSL, and FFmpeg, which use handwritten assembly to
+speed up their calculations. VirtualBox also employs handwritten assembly to achieve function lazy loading and its virtual extensible firmware interface.
+Furthermore, if a binary file links library functions that mix code and data, its code section will also contain embedded data.
+
+The utilization of code and data in conjunction is also required by some security solutions. One such example is KCFI[51], which places the hash value of a function’s prototype
+in the code section via a custom LLVM pass. KCFI reads the embedded hash value to verify the control-flow integrity at runtime.
+As admitted by KCFI’s developer, it is incompatible with execute-only memory like XnR.
+
+Compile-time TransformationIn an effort to separate data and code areas for enforcing XoM, one category of follow-up work employs compile-time transformation[24,25,26].
+LR2[24]is an example of this approach, which compiles source code using a custom compiler and designates code and data to different memory spaces.
+This effectively prevents all read operations to code pages, thereby enabling XoM. However, LR2uses a pure software approach, which involves adding a series of stub code in front of each memory load instruction to verify the legality of read operations, leading to significant overhead. Another solution, Readactor[25], also employs a custom compiler and linker to separate code and data.
+It utilizes Intel EPT, a hardware-assisted virtualization technique, to manage the read permission of all code pages when mapping the virtual machine’s physical address to the host’s physical address.
+Finally, uXoM[26]provides XoM protection onARMv7-Marchitecture for embedded devices by manipulating the Memory Protection Unit (MPU).
+It does this by implementing a custom LLVM pass
+to convert memory load instructions to unprivileged instructions.
+
+However, all of these solutions require recompiling source code to create code-data-separated binaries, leaving pre-built legacy programs and COTS binaries unprotected.
+Furthermore, these approaches cannot cover handwritten assembly functions, which are often used by libraries for enhanced optimization purposes.
+For instance, our analysis of OpenSSL 1.1.1q’s code section revealed that up tobytes of data are embedded in the code section.
+
+In this column, EPT, TLB, AP/XN, and MPK represents Extended Page Table, Translation Lookup Table, Access Permission, eXecute Never, and Memory Protection Keys, respectively. “N/A” means XoM is achieved using page table manipulation[23]or a form of software-fault isolation[24,26,29].
+
+The split TLB technique is not supported anymore by modern x86 processors since the Nehalem microarchitecture (released in 2008).
+
+Binary HardeningAnother category of research aims to enforce the XoM policy with only binary files.
+HideM[27]and SECRET[29]rely on debug information (e.g., function symbols and DWARF) to identify data in code sections prior to runtime.
+During runtime, HideM’s XoM is achieved by desynchronizing ITLB (Instruction Translation Lookaside Table)
+and DTLB (Data Translation Lookaside Table). This causes code and data with the same virtual address to be mapped to distinct physical addresses,
+effectively segregating code and data pages. HideM then redirects read operations for code pages to the separate data page. However, this revision disrupts the TLB flush mechanism, leading to performance penalties.
+In addition, the split-TLB feature is no longer supported—modern processors released after 2008 have replaced the split-TLB with unified second-level TLBs.
+NORAX[28]disassembles AArch64 stripped binaries and relocates executable data111NORAX refers to data residing in executable code regions as “executable data,” while we refer to executable data as “embedded data” in the following sections.to a non-code segment via binary patching. During relocation, NORAX must correctly update all references to the relocated data. Failing to do so may trigger an access violation and cause protected programs to crash. Unfortunately, updating static data references, such as those from code and the symbol table, is not a simple task[52]. Even more challenging is updating references generated dynamically, such as those from the global offset table (.got) and read-only global data (.data.rel.ro)[6].
+Furthermore, our findings reveal that NORAX’s embedded data identification strategy may fail to properly handle cases where code is misidentified as data.
+In the event of such an occurrence, NORAX’s functionality will cease to operate properly. For instance, if a small function is mistakenly classified as embedded data, the references to the function (e.g., through a function pointer) are also updated to a non-executable area, which may cause the protected program to crash when the function pointer is dereferenced at runtime.
+
+Destructive Code ReadsTo address the issue of XoM methods not supporting legitimate data reads within code pages,
+Heisenbyte[31]proposed a variant of XoM mechanism, called Destructive Code Reads (DCR).
+Heisenbyte allows memory disclosure but prevents executing the previously disclosed code by destroying the disclosed code right after it is read.
+Heisenbyte marks each executable memory page as execute-only and maintains a duplicate copy for each execute-only page.
+When a read operation occurs on the execute-only page,
+Heisenbyte overwrites the read data with random bytes and returns the corresponding data values from the duplicate page.
+Thus, legitimate read operations for data-in-code work correctly, but attackers cannot run disclosed executable memory.
+NEAR[32]is another DCR approach building upon Heisenbyte, providing a more reliable and efficient memory destruction mechanism.
+Although DCR successfully supports legitimate data reads within code pages,
+the code inference attacks proposed by Snow et al.[33]have completely undermined DCR’s security guarantees.
+The core idea of code inference attacks is to disclose a piece of code but not to execute it.
+Instead, another piece of code that is strongly related to it will be executed, such as an exact same copy of the disclosed code in a different memory area,
+or the relevant code that can be predicted based on the disclosed ones.
+Despite the possible evasion to DCR, it still provides valuable insights for advancing XoM. It underscores the critical
+challenge of preventing code exposure while simultaneously permitting legitimate reads to embedded data.
+This inherent dilemma serves as a compelling motivation for our current research.
+
+Comparison of XoM TechniquesTable1presents a comparison of various XoM approaches that aim to provide userland software protection.
+XnR does not require source code or binary rewriting. However, it doesn’t support legitimate reading of embedded data because it assumes no presence of data residing in executable code areas.
+Furthermore, the N-page window of XnR leaves an attack surface for adversaries.
+Compile-time transformations require the presence of source code, which fails to protect pre-compiled legacy applications.
+Binary hardening methods, on the other hand, can work with binaries, but only HideM supports the reading of embedded data.
+However, HideM relies on an obsolete hardware feature and changes the normal cache model, making it less compatible.
+NORAX’s binary patching may fail to update data references, which changes the original functionality of the protected program.
+DCR methods can work on binaries and support the reading of embedded data, offering the best compatibility among all previous methods.
+Unfortunately, their protections can be bypassed by code inference attacks[33]. Additionally, XoM implementations via software emulation, such as LR2, uXoM, and SECRET, incur relatively high overhead.
+In conclusion, these limitations highlight the need for further research in developing a practical XoM technique.
+
+In contrast, as demonstrated inVIandVII, PXoM effectively thwarts the disclosure of executable memory while incurring minimal performance and memory overhead.
+Besides, PXoM does not require source code or debug information.
+At last, PXoM does not interfere with the original operating system or architectural mechanisms, and unprotected programs remain unaffected by PXoM’s kernel components.
+
+SECTION: II-CMemory Protection Keys
+
+Intel Memory Protection Keys (MPK) is a hardware feature that enables stricter permission control on code pages without the need for page table modifications.
+The MPK mechanism uses a Protection Key Rights Register (PKRU) to maintain access rights of individual keys associated with specific pages.
+It supports three different page permissions: read & write, read-only, and no access.
+Notably, MPK controls read and write permission on memory pages, while traditional permission management mechanisms continue to manage execution permission.
+The MPK mechanism can be utilized to configure a memory page’s permission as execute-only by disabling the page’s read and write permissions.
+One of the significant advantages of MPK is its high performance.
+The processors only need to execute a non-privileged instruction (i.e., WRPKRU) to update PKRU,
+which takes less than 20 cycles and does not require any TLB flush or context switching[53].
+However, as MPK keys are localized to each thread, it may lead to inconsistencies between MPK keys of different threads within the same process.
+To ensure the synchronization of execute-only MPK keys between different threads within a process,
+we have utilized the synchronization primitive provided by libmpk[36].
+
+SECTION: II-DKernel-level XoM Protection
+
+PXoM and related works[23,24,25,26,27,28,29]consider the kernel to be part of
+the Trusted Computing Base and thus do not protect against kernel memory disclosure. Another parallel direction
+is kernel-level XoM protection, as the kernel itself may be exploited under certain circumstances. For example,
+ret2usr attacks[54,55,56,57]can redirect control and data flow to user space, compromising the entire system.
+KHide[58]and kR^X[59]counteract kernel-level JIT-ROP attacks by enabling XoM protection for kernel memory.
+They both rearrange the memory layout of the kernel space, placing executable code in execute-only areas and readable data in read-only areas.
+KHide[58]employs the hardware feature Hardware Assisted Paging (HAP) to enforce the XoM policy by mediating access on HAP violation,
+while kR^X[59]utilizes Intel Memory Protection Extension (MPX) to enforce XoM permission in a more efficient manner.
+However, Intel has discontinued MPX support since the 10th generation of Intel Core processors in 2019[60].
+IskiOS[61]simply uses MPK to revoke the read permission of kernel’s code pages.
+However, their solution is not applicable to stripped binaries as it does not address the issue of legitimate embedded data reads.
+
+SECTION: II-EControl-Flow Integrity
+
+A precise implementation of Control-Flow Integrity (CFI) offers significant potential to safeguard applications against ROP attacks by preventing control-flow hijacking.
+Currently, hardware mechanisms such as ARM’s Pointer Authentication Code (PAC)[62]and Intel’s Control-flow Enforcement Technology (CET)[63]provide support for CFI enforcement.
+Although CFI can still potentially be bypassed under specific circumstances[64,65,66,67,68,69]and may introduce performance overhead[70], it can be deployed alongside other defense mechanisms, thus providing an additional layer of security protection.
+From a defense-in-depth[71]standpoint, it is imperative that a critical system incorporates multiple complementary security defenses in practice.
+
+SECTION: IIIThreat Model
+
+PXoM aims to defend against JIT-ROP by preventing attackers from dynamically disclosing memory, based on a well-defined adversary model.
+The model includes the following assumptions:
+
+WX: The target system ensures that the executable and writable permissions cannot coexist on the same memory page. This assumption forms the basis of ROP defenses.
+Otherwise, attackers could simply execute the injected shellcode directly, without the need for ROP techniques.
+
+Randomization: The target program uses a fine-grained code randomization technique, which frustrates adversaries to
+determine the protected program’s memory layout in advance.
+
+Control-Flow Hijacking: The target program is vulnerable to memory corruption attacks that allow the adversary to hijack the control flow.
+
+Transparent Configuration: The adversary has knowledge of the target system’s configuration, as well as access to the source code of the target program.
+
+This adversary model is consistent with previous offensive and defensive papers[21,23,25,27], and specifically aligns with the robust model introduced in JIT-ROP attacks[21].
+We exclude side channels and self-modifying binaries protection from our threat model, because they are outside the scope of this paper and are also excluded by other peer works.
+
+Crane et al.[25]pointed out that there still exists anindirect memory disclosure attackthat can infer the code layout without directly reading the code pages by harvesting code pointers in stack and heap.
+They proposed a method to prevent indirect memory disclosure by redirecting the code pointers to an unreadable trampoline, and thus solved the indirect memory disclosure problem.
+As this defense still requires XoM protection to ensure its effectiveness, we focus on addressing the remaining issues in XoM protection.
+PXoM aligns with the constraint acknowledged by NORAX[28], which also works on COTS binaries.
+
+SECTION: IVOverview
+
+Our study continues the line of research on retrofitting XoM into stripped binaries.
+One of our design goals is to avoid relocatingembedded datavia binary patching.
+To this end, we develop a new fine-grained memory permission control mechanism,
+enabling the accommodation of legitimate data-in-code reads.
+Figure2shows PXoM’s architecture that bridges
+all layers of the software stack.
+
+User-space ComponentsTo determine the areas that are authorized to read, we first identify all embedded data in the binary prior to runtime.
+To circumvent the inherent complexity of precisely identifying embedded data, we employ a Unidirectional Disassembly strategy (1in Figure2).
+This disassembly strategy ensures no embedded data will be identified as code.
+Subsequently, we append the list of embedded data to the end of the protected binary file and revoke the code segment’s read permission (2).
+In scenarios where data-in-code reads occur frequently, we also customize an optimization policy to speed up the read-legality check.
+We create an independentoptimization listto store the embedded data that are frequently accessed (the right side of2).
+Please note that in this step, we do not rewrite the binary code. Instead,
+we simply add the addresses of embedded data to the end of the binary while marking the code segments as execute-only.
+
+Kernel ComponentsAt the kernel level, we modify the binary loader in Linux kernel to load the protected binary.
+In addition to loading the protected binary, the modified binary loader also loads two embedded data lists into kernel-space memory (3in Figure2)
+and initializes the exception handler (4).
+When mapping the code segment, the custom loader loads it as execute-only using the MPK mechanism.
+The exception handler is responsible for ensuring the legality of data-in-code reads based on two embedded data lists.
+It also dynamically adjusts the optimization list on-the-fly (5).
+If the address of a read request lies in either the regular list or optimization list, the exception handler will allow this read request.
+Otherwise, the read request will be rejected, and PXoM will terminate the process and save the context information for further forensics investigation.
+The exception handler utilizes the MPK mechanism to efficiently check the legality of read requests (6), resulting in very low runtime overhead.
+
+SECTION: VDesign
+
+In this section, we follow the workflow of hardening an application to describe each component of PXoM.
+
+SECTION: V-AFine-Grained Memory Permission Control
+
+The management of permissions in modern OSs is limited to memory pages, which we call coarse-grained control over memory permissions.
+As a result, previous XoM methods have to relocate embedded data within code pages and update all references to ensure that the program can access them.
+However, the precise identification of code and data within binary remains an undecidable problem[52].
+Previous disassembly efforts[72,73,74,75,76,77]aimed to minimize both code-to-data and data-to-code misidentifications, which we can refer to asPrecise Disassembly.
+For example, the left side of Figure3shows a code page containing an embedded data block,
+while the middle section displays the Precise Disassembly result of this code page.
+In previous XoM methods, erroneous identification of code as data (2in Figure3) leads to the inadvertent relocation of code outside code pages, thereby altering program semantics.
+On the other hand, when embedded data are misinterpreted as code, the legitimate read of this data will be prohibited (1in Figure3).
+Both of these errors pose significant crash risks.
+Moreover, updating references to relocated embedded code presents a substantial challenge.
+Failure to update references to embedded data following relocation may result in program crashes when attempting to read these segments.
+
+We have implemented a fine-grained memory permission control mechanism to assign different permissions to various memory regions within the same memory page.
+This mechanism enables the removal of read permissions for code segments while retaining read permissions specifically for embedded data within the same memory page.
+This approach serves the dual purpose of safeguarding code against disclosure while facilitating legitimate reads of embedded data.
+We capture all read requests in executable areas and scrutinize their legitimacy in the kernel’s page fault exception handler, which we will detail inV-E.
+However, as previously noted, employing Precise Disassembly may result in both code-to-data and data-to-code misidentifications.
+In the event of code-to-data misidentification, although it may potentially expose small code segments to the risk of memory disclosure, the program can still function correctly because PXoM does not relocate embedded data.
+Conversely, misinterpreting any data as code may lead to the program crash caused by legitimate read attempts.
+Therefore, we require a disassembly strategy to circumvent the inherent complexity of precisely identifying embedded data, thereby preventing potential crashes.
+
+SECTION: V-BUnidirectional Disassembly Strategy
+
+We employ a disassembly strategy designed to avoid misidentifying data as code, while tolerating some code being misidentified as data, in order to meet the requirements of our fine-grained memory permission control mechanism.
+Rather than attempting to precisely identify all embedded data, our strategy identifies a superset of embedded data that includes both all actual embedded data and a very small amount of code. We refer to this approach as Unidirectional Disassembly.
+We use Figure4(A), a code section containing embedded data, as an example to demonstrate step-by-step process of the Unidirectional Disassembly.
+
+Initially, the entire code section is marked as embedded data superset (as shwon in Figure4(B)).
+Then, we apply the recursive traversal algorithm[78], following the control flow from the program entry point to identify the code located on the main paths.
+Recursive traversal disassembly partially meets the requirements of our fine-grained memory permission control mechanism by avoiding any data-to-code misinterpretation. This method performs disassembly exclusively on instructions, tracking the program’s control flow and thereby preventing the misidentification of data as code.
+We then exclude the identified code from the superset, resulting in a smaller superset (Figure4(C)).
+However, recursive traversal disassembly struggles with handling indirect calls and unreachable functions[78], potentially missing up to49.35%of the code on average[37]. This can lead to a large embedded data superset, thereby exposing too many readable areas to adversaries.
+To further reduce the superset, we conduct multiple additional analyses to uncover missed code entry points, subsequently applying recursive traversal disassembly to these identified entry points. During disassembly from each entry point, the identified code is excluded from the superset, thereby minimizing the embedded data superset (Figure4(D)).
+Specifically, our analyses include examining jump tables, frame unwind information, address-taken functions[6], and employing function entry identification heuristics[79]to identify additional code entry points that were not reached by recursive traversal disassembly.
+We provide a detailed algorithm in Appendix-B.
+
+After obtaining the embedded data superset, we make the entire superset readable and prohibit read permissions for all remaining executable areas using our fine-grained memory permission control mechanism. This ensures that all legitimate embedded data reads are confined to this superset, while any code disclosure attempts outside of this superset are prohibited.
+For example, as shown in the right section of Figure3,
+no embedded data are misinterpreted as code, but two instructions are misidentified as embedded data (3in Figure3).
+As a result, in addition to real embedded data, a small amount of code also retains the read permission.
+For the sake of convenience, we will refer to the embedded data superset simply as embedded data in the following context, as the entire superset will be made readable, and the misidentification of code as data does not affect the executability of the code.
+InVI, we will measure the coverage of disassembly results and evaluate whether embedded data are exploitable.
+The results demonstrate that our approach provides sufficient protection against memory disclosure without compromising practicality.
+
+SECTION: V-CNew ELF Format
+
+We define a new ELF format to interact with PXoM’s kernel components.
+Our minor changes to the original ELF format include utilizing the reserved field and optional section of the ELF file format to store PXoM flags and the embedded data list.
+Figure5shows a visual representation of the new ELF file format we have devised.
+First, we use a reserved byte in the ELF header as the PXoM specific flag byte,XOM_ENABLE,
+to indicate whether the program is protected by PXoM.
+This byte is the second byte in the EI_PAD array, which is a field of e_ident in the ELF header.
+By checking this byte, our custom loader can decide whether to enable PXoM protection.
+Afterward, the embedded data list is included in an optional section called.xom.
+The OPT_LIST and REGR_LIST represent the optimization list and regular list, respectively.
+
+Please note that the new ELF format remains backward compatible with non-customized loaders because they will disregard the XOM_ENABLE flag and the .xom section.
+The unaltered kernel can execute PXoM-protected binaries without any issues as conventional programs.
+
+SECTION: V-DCustom Loader
+
+The custom loader is a kernel component of PXoM that loads protected binaries and initializes related structures in the kernel.
+We provide details about how we organize the kernel structures in Appendix-A.
+To determine if PXoM’s protection is enabled, the loader checks the XOM_ENABLE flag in the ELF header.
+If yes, the loader loads the embedded data list stored in the .xom section (3in Figure2)
+and initializes an exception handler to ensure data-in-code reads are legitimate (4in Figure2).
+The exception handler is also a kernel component to check the legitimacy of data-in-code reads, and we will introduce it later.
+If the PXoM flag is not enabled, the standard binary file-loading process takes over.
+To prevent attackers from disclosing or tampering with PXoM information, all PXoM-related metadata is stored in kernel memory.
+The PXoM flag, optimization list pointer, and regular list pointer are stored in thetask_struct.
+Each process has its own task_struct object, which stores the context of the process.
+Once the lists have been loaded, the custom loader begins mapping the code segment into memory.
+During this mapping process, the loader assigns an execute-only PKey, and sets the code section as execute-only with this PKey.
+The PKey is a part of the MPK mechanism to set the permission for a group of pages.
+This allows our exception handler component to detect any read operation to code pages and determine
+if it is a legitimate data-in-code read or a malicious memory disclosure attempt.
+
+SECTION: V-EException Handler
+
+We implement an exception handler based on the original page fault handler for the MPK mechanism to prevent memory disclosure.
+With the read permission of all code pages removed via the MPK mechanism, any read request to a code page will trigger a page fault and be caught by our exception handler.
+The exception handler then determines if the target address is located in the embedded data areas.
+If not, we promptly determine that the running program is under a memory disclosure attack and terminate the compromised process, while saving the context information for further forensics investigation.
+Please note that legitimate read operations for data embedded in the code will not trigger PXoM’s attack response.
+Instead, we take the following actions to allow such a data-in-code read:
+1) we restore the read privilege of the target page to allow it to be read temporarily.
+2) We set the single-step trap flag to execute only the read instruction and halt at the next instruction.
+3) Once the legal read operation is complete, we revoke the code page’s read permission again and clear the single-step trap flag to resume the program’s normal execution.
+To keep track of whether a read operation is legal, we maintain a flag, calledXOM_ALLOW_READ, in thetask_structand set it to false by default.
+Once a read operation occurs and is determined to be legal, we set the XOM_ALLOW_READ to true.
+The single-step trap handler uses this flag to determine whether to allow the read operation.
+If true, the data read operation is permitted.
+Subsequently, upon completion of the read operation and restoration of the page permission, the XOM_ALLOW_READ flag is reset to false.
+
+Next, we define the legitimacy of data-in-code reads.
+A legitimate data-in-code read should not access memory out of the embedded data list.
+If a data-in-code read only includes the whole or a subsection of a data area that is in the embedded data list, we take it as a legitimate read.
+On the other hand, if a data-in-code read covers a part of memory that is absent from the embedded data list, it is deemed an illegitimate read.
+Figure6illustrates all legitimate and illegitimate reads.
+Therepresent embedded data areas recorded by the embedded data list, while the shadowed areas represent code areas.
+The data-in-code readsandin the first line are legitimate data reads,
+while,, andin the second line are illegitimate data reads.
+On the x86-64 architecture, it is possible for a data-in-code read to access multiple bytes using a single instruction.
+For instance, theMOVinstruction enables the retrieval of up to 8 bytes of data, while Streaming SIMD Extensions allow simultaneous access to a maximum of 16 bytes of data.covers the entire data block of, whilecovers a portion of.
+These areas fall within the boundaries ofand, thereby qualifying as legitimate reads.
+Conversely, the regions of,, andintersect portions of code segments,
+and therefore, they are regarded as memory disclosure attempts.
+
+In the scrutiny of a read request, PXoM faces potential performance bottlenecks when iteratively navigating an extensive list of embedded data, a concern exacerbated in programs featuring a large number of code-data interleaving cases.
+We built an optimization strategy to address these potential performance bottlenecks, as detailed in the Appendix-G.
+
+SECTION: VISecurity Evaluation
+
+In this section, we first examine the outcomes of Unidirectional Disassembly to gauge the completeness of PXoM’s protection.
+Following this assessment, we delve into an exploration of PXoM’s attack surface to ascertain its effectiveness.
+Through a series of experiments, our findings consistently demonstrate that PXoM offers
+a comprehensive defense mechanism against JIT-ROP attacks. Please be aware that the “embedded data” in this section is actually the superset of embedded data, as described in §V-B.
+
+SECTION: VI-AUnidirectional Disassembly Result Analysis
+
+Our proposed Unidirectional Disassembly strategy ensures the comprehensive coverage of data within code areas, which endeavors to maximize the identification of code areas while ensuringzeromisinterpretation of embedded data. We present several metrics in this section to gauge the correctness and extent of coverage achieved by this methodology.
+
+The first metric is the Code Coverage, which represents the ratio of disassembled results to the total code bytes.
+Code coverage is calculated by Equation1(CC is short for “Code Coverage.”):
+
+This metric illuminates PXoM’s efficacy in safeguarding the actual code present in binary files. The core of this capability is rooted in PXoM’s ability to restrict read access solely to the code sections identified through the disassembly process, while relaxing read access for the remaining regions.
+While the real code is more likely to be used as gadgets by attackers, the embedded data could also be used as gadgets under certain conditions.
+Hence, we introduce the second metric, the Overall Coverage, which denotes the proportion of disassembled code relative to all executable bytes, comprising real code and embedded data. The Overall Coverage is computed by Equation2(OC is short for “Overall Coverage.”):
+
+The third metric is the Number of Embedded Data Blocks, representing how many embedded data blocks in the binaries. The last metric is the Average Embedded Data Block Size.
+These two metrics indicate the distribution density of embedded data blocks within the program.
+
+To gauge the correctness and extent of coverage achieved by our Unidirectional Disassembly, we use extensive of datasets, including open source applications and COTS closed-source applications, to evaluate the above four metrics. For open source applications, we can extract their ground truth, allowing us to accurately measure these metrics. For the COTS closed-source applications, although we are unable to measure their code coverage (due to the unavailability of their ground truth), we still evaluated their overall coverage, number of embedded data blocks, and average embedded data block size. This is still meaningful in providing supplementary evidence of PXoM’s protection capabilities.
+
+Analysis of Results on Open Source ApplicationsWe evaluate a wide variety of stripped binaries compiled with different optimization options,
+encompassing SPEC CPU 2017 benchmarks, web servers such as Nginx, Apache, and Lighttpd, along with databases including MySQL, MongoDB, Redis, and SQLite.
+We also evaluate a substantial binary dataset obtained from the recent binary disassembly study by Pang et al.[38].This dataset consists of approximatelybinary files with a total size of around 20GB, serving as a reliable source of ground truth for disassembly assessments.
+Additionally, they released a compilation toolchain capable of extracting ground truth from compiled binaries. We utilized this toolchain to compile the open source applications and extract ground truth.
+
+The evaluation results of above four metrics for open source applications is shown in Table2.
+The lowest code coverage, obtained in OpenSSL at 95.61%, can be attributed to the extensive use of handwritten assembly.
+The average code coverage stands at 97.07%, implying that PXoM can protect a significant portion of the code present within the binary.
+For the overall coverage, OpenSSL still reveals the lowest OC metric at 86.43%.
+However, the average overall coverage of 95.29% suggests that PXoM can safeguard the majority of executable memory from potential attackers.
+The fourth and fifth columns of Table2provide insights into the number of embedded data blocks and their average size in bytes.
+The latter indicates the amount of consecutive bytes that attackers can potentially disclose if they manage to identify readable embedded data blocks.
+The average size of an embedded data block is a merebytes, which implies that attackers can consecutively disclose only 31 bytes on average when they locate a readable block in the executable area.
+
+Analysis of Results on COTS Closed-Source ApplicationsWe collected 15 different COTS closed-source applications and analyzed them using Unidirectional Disassembly. Due to the lack of ground truth information for these closed-source binaries, we are unable to definitively identify the actual code and embedded data, preventing us from reporting a precise Code Coverage metric. However, we assessed other relevant metrics, including Overall Coverage, the number of embedded data blocks, and the average size of these blocks. The results are shown in Table3. The first column of Table3lists the application names and their respective versions used in our evaluation.
+The second column presents the Overall Coverage. The lowest Overall Coverage was observed in OracleDB, at 86.44%. On average, the Overall Coverage is 96.94%, demonstrating that PXoM can protect approximately 96.94% of the code in these COTS applications from being exposed to attackers.
+The third column displays the number of embedded data blocks, with an average of 1,217 across the analyzed applications. The last column shows the average size of the embedded data blocks, which is 55 bytes. This means that if attackers gain access to an embedded data block with read permissions, they would only be able to read an average of 55 bytes.
+
+Case StudiesSince we cannot obtain the ground truth for COTS closed-source applications, we manually verified some of embedded data and used them as case studies to illustrate how these COTS applications utilize embedded data. For detailed case studies, please refer to Appendix-H.
+
+Our experimental results are encouraging, as they validate our claim for embedded data identification.
+These results provide further assurance that PXoM can effectively impose execute-only permission on code areas.
+Next, we will present additional evidence to support that the residual embedded data are insufficient to construct a payload.
+
+SECTION: VI-BAttack Surface Analysis
+
+To tolerate legitimate data-in-code reads, we allow embedded data to remain readable.
+Nonetheless, the disassembly process of PXoM may still experience some false positives,
+whereby code is misidentified as data. Consequently, the embedded data list provided by PXoM includes both the true embedded data and some misidentified code, as shown in the second and third columns of Table2.
+Given the embedded data list delivered by PXoM, it is imperative to evaluate adversaries’ capabilities to harvest reusable gadgets and subsequently construct an attack payload.
+We conduct a gadget search experiment on the embedded data sections for each binary in the dataset utilized in SectionVI-A.
+The objective of this experiment is to quantify the number of gadgets that can be identified within embedded data regions.
+
+ROP Gadget SearchAfter applying the ROP gadget search tool ROPGadget[80], we found that available gadgets are a rare commodity, even for binaries that contain a significant amount of embedded data.
+On average, onlysevengadgets can be extracted from embedded data, which are comprised ofsmall blocks.
+That means these gadgets are distributed amongdifferent locations throughout the entire code section.
+These seven gadgets represent the upper limit of potential adversary exploitation. With fine-grained randomization enabled, adversaries lack prior knowledge of where the data blocks are distributed, making it extremely difficult to disclose all the gadgets at once.
+
+As embedded data consist of small data blocks distributed in the code section,
+we present the average embedded data block size in the last column of Table2.
+For the overall dataset, the average embedded data block size is onlybytes, and the total of embedded data accounts for 4.71% (i.e., 1-95.29%) of the whole code section.
+This indicates that if an adversary were to choose an address randomly in the code segment and attempt to disclose code, the probability of this address landing in the readable area is only 4.71%.
+If attackers are fortunate enough to find an embedded data block that can be read through this 4.71% probability, then the average amount of data they can disclose is onlybytes.
+This is insufficient to build a ROP chain, as previous ROP gadget search papers have supported[81,82].
+The “microgadgets” technique[82]attempts to use the gadgets restricted to 2 or 3 bytes in length to construct the ROP chain; however, it needs to scan at least 3MB of code to find enough microgadgets.
+Schwartz et al.[81]developed an offline verification technique to facilitate ROP attacks necessitating Turing-completeness,
+but it still requires at least 20KB of code to construct a complete payload chain.
+
+Case StudiesTo show the effectiveness of PXoM protection on real-world threats,
+we leverage the JIT-ROP attack framework, jitrop-native[83], to exploit a Nginx arbitrary memory disclosure vulnerability.
+We also conducted an experiment to show that the WRPKRU instruction does not pose a threat to PXoM protection.
+Please refer to Appendix-Ffor details.
+
+Our comprehensive experimental results demonstrate that PXoM can effectively safeguard programs against the threat posed by JIT-ROP attacks.
+
+SECTION: VIIPerformance Evaluation
+
+Our performance experiments evaluate PXoM from five aspects:
+1) performance on microbenchmarks;
+2) performance on macrobenchmarks;
+3) investigation into overhead causation;
+4) performance on programs exhibiting high-frequency embedded data reads and the impact of our optimization;
+5) performance comparison with existing work.
+
+Our evaluations were conducted on a desktop machine featuring Intel Core i9-13900KF and 64GB of memory, running Ubuntu 23.10 with Linux kernel 6.5.0.
+Our evaluation results indicate that PXoM’s protection results in negligible additional overhead, ranging from 0.24% to 0.82% on average.
+Even in OpenSSL, which contains a substantial amount of data-in-code reads, the overhead caused by PXoM is only 0.82%.
+The memory overhead incurred by PXoM is also minimal, with an average of only 0.13%.
+The following subsections focus on the measurement of runtime slowdown, whereby we ran both the standard version and the PXoM-protected version for each binary, respectively.
+
+SECTION: VII-AMicrobenchmarks
+
+Compared to the standard Linux kernel, we made modifications to the kernel’s binary loader, page fault exception handler, and process context structure.
+Therefore, we run lmbench[39]on both the standard Linux kernel and the modified Linux kernel to assess the performance overhead induced by our kernel modifications.
+
+Table4shows the running time for kernel operations related to process creation and page fault handling.
+TheFork ProcandExec Procare process creation operations usingforkandexec.
+They resulted in an overhead of 0.92% and 0.60%, respectively, due to the additional steps required for loading XoM metadata.
+ThePage Faultshows the overall page fault handling overhead, with a 0.52% overhead.
+The last twoProt Faultshow the protection fault handling overhead without and with triggering the data-in-code read-legality check.
+The first Prot Fault is the overhead on regular prot fault process, without triggering the read-legality check.
+However, the handler still needs to check if the PXoM is enbaled, resulting a 0.62% overhead.
+In the secondProt Fault*, we deliberately trigger the data-in-code read legality checks to evaluate the performance overhead on legality checking process.
+Unlike the first four configurations that incur negligible overhead, this configuration incurs a notable overhead with a 3.20 times slowdown.
+However, this seemingly unacceptable overhead does not have a significant impact on the overall performance of programs.
+This is attributed to the interleaving of data-in-code reads with numerous other instructions,
+rendering the overall overhead negligible. A more in-depth analysis of this performance impact will be presented inVII-C.
+
+We need to store some metadata, such as MPK’s PKey and embedded data list, in the process’s context structure,
+which may cause overhead during context switches in the kernel.
+Table5shows the context switch time for both standard kernel and modified kernel.
+In the first row, the upper half displays the number of processes involved in the context switches, while the lower half shows the memory usage of each process.
+For instance, “2p/16k” represents a context switch between two processes, each of which uses 16 KB of memory.
+All entries exhibit overhead values that are clustered around zero, indicating that PXoM does not have a significant impact on the performance of kernel context switches.
+We present other lmbench results with low correlation to PXoM in Appendix-D.
+
+SECTION: VII-BMacrobenchmarks
+
+We evaluate the performance impact of PXoM on compute-intensive programs using SPEC CPU 2017, the latest generation of SPEC CPU benchmarks with larger and more complex workloads than its predecessors.
+We compiled both the standard version of SPEC CPU 2017 and the version that was protected by PXoM,
+and ran them using therefworkload on our test machine.
+We take the running time of standard versions as the baseline to measure the additional overhead incurred by PXoM’s protection.
+Besides, to compare with the performance data of previous XoM approaches, we also conducted a performance evaluation on SPEC CPU 2006 (see Appendix-E).
+
+Figure7shows the runtime slowdown caused by PXoM on SPEC CPU 2017,
+with the green and blue striped bars on the rightmost side showing the average and geometric mean value of overhead, respectively.
+From Figure7, we can see that eleven overhead values are very close to zero, while
+five benchmarks (ID numbers: 523, 623, 511, 500, and 600) reveal relatively high overhead. The peak overhead value happens in523.xalancbmk.
+The twoxalancbmkbenchmarks (523 & 623) transform XML documents into HTML, text, or other XML document types.
+The511.povrayis a ray-tracing program, and the twoperlbenchbenchmarks (500 & 600) are lightweight Perl interpreters.
+As all these five benchmarks contain a lot of switch-loop structures,
+we conjecture that frequently reading the jump table to call small handler functions contributes to the larger overhead than the remaining benchmarks.
+Nonetheless, the average and geometric mean overhead of tested SPEC benchmarks are 0.36% and 0.25%, respectively, indicating that PXoM introduces a negligible performance impact on CPU-intensive programs.
+In addition to SPEC CPU 2017, we also demonstrate that
+PXoM introduces minimal runtime overhead to mainstreams web servers and databases (see Appendix-C).
+
+However, we encountered a major challenge in the current inability to reproduce or replicate previous XoM results, which is an issue that unfortunately plagues the security field.
+None of the preceding XoM studies, to the best of our knowledge, have made their tools publicly available.
+In Appendix-E, we conduct a separate experiment on SPEC CPU 2006 in order to compare the performance data of PXoM with
+that reported by other prominent peer tools in their respective papers[23,24,25,27,29,31,32].
+In summary, PXoM still exhibits the lowest overhead (0.30%) among all compared XoM prototypes.
+
+SECTION: VII-COverhead Causation Analysis
+
+The performance overhead of PXoM is predominantly influenced by two key factors:
+1) size of the embedded data list; and 2) frequency of data-in-code reads.
+We introduce the term “read intensity” to denote the ratio of data-in-code read instructions to the total number of executed instructions.
+Next, we conduct a quantitative examination of these two factors and elucidate the rationale behind the observed negligible overhead incurred by PXoM.
+
+Read LatencyFigure8illustrates the time taken for performing different numbers of data-in-code reads under different embedded data list sizes (N).
+The horizontal axis denotes the number of data-in-code reads, while the vertical axis represents the time taken to complete the specified number of read requests.
+In the “Normal” case, which corresponds to disabling PXoM protection, the completion time for read requests remains relatively consistent despite an increase in the amount of reads.
+However, in cases where PXoM is activated, an increased volume of read requests correlates with a more pronounced overhead.
+Moreover, a larger size of the embedded data list contributes to a heightened level of overhead.
+This observation highlights that when a significant portion of a program’s instructions is dedicated to data-in-code reads,
+the overhead becomes prominent, especially with larger values of N.
+However, in real-world programs, data-in-code read instructions are typically interspersed among a multitude of other instructions.
+Furthermore, as shown in Tables2and Table3, the average size of N (embedded data list size) for both open-source and COTS programs is relatively small, with average values ofand, respectively.
+The consequence is that PXoM incurs minimal runtime overhead in real-world programs, as evidenced by the performance data of macrobenchmarks.
+Next, we will quantitatively evaluate the performance impact caused by read intensity.
+
+Read IntensityAs shown in Figure8, there is a direct relationship between a program’s intensity of data-in-code reads and the resulting overhead. To capture this, we define the term “Read Intensity,” as given by Equation3.
+
+We have gathered statistics on data-in-code reads and the total number of executed instructions during performance evaluations for SPEC CPU 2017, webservers, databases, and OpenSSL. We have calculated their respective Read Intensity values, as depicted in Figure9.
+The program with the lowest Read Intensity is databases, at 4.8E-12, indicating that it performs one data-in-code read for every hundred billion instructions on average.
+OpenSSL embeds a significant amount of data within the code region to enhance the performance of cryptography algorithms.
+It exhibits the highest Read Intensity at 1.4E-7.
+Nevertheless, even in OpenSSL, on average, it takes a million instructions to perform one data-in-code read.
+The average Read Intensity for all programs is 3.51E-8, signifying one data-in-code read is performed after executing ten million instructions on average. This illustrates that while data-in-code reads are not rare in practice, their occurrence rate is extremely low, resulting in PXoM’s practical overhead being negligible.
+
+SECTION: VIIIDiscussion & Conclusion
+
+Kernel Component SecurityAdding code to the trusted computing base is risky, so we need to pay extra attention to ensuring the security of any additions made to the kernel.
+The first potential threat is the user-controllable “.xom” section. When the kernel loads a binary, it parses the contents of the “.xom” section into the kernel’s structures. Improper checks during this process could allow an attacker to exploit the kernel. Therefore, we must conduct careful and strict checks when parsing this list to prevent buffer overflow attacks.
+In addition, we added some pointers in the kernel to store data related to XoM. When using these pointers, strict checks must also be enforced to prevent vulnerabilities such as use-after-free and double-free.
+Another potential threat is the race condition between different threads. When embedded data reading is allowed, the target code page will be in a readable state for a very short time. If control is taken over by another thread at this time, that thread may disclose the readable memory page. Therefore, it should be ensured that the permission for the reading operation is atomic, and control cannot be taken away during this operation.
+
+Protection on Dynamically Loaded CodeFor now, PXoM is not designed to protect dynamically loaded (dlopen) code and dynamically generated code, such as in a program running JavaScript code in a JIT engine.
+Achieving protection for them will be our future work.
+For the dynamically loaded code, the only difference is the loading process.
+We will hook the GNU C Library to protect dynamically loaded code.
+For the dynamically generated code, when the JIT engine generates JIT compiled code, we can know the location of all embedded data, so we can mark these locations as readable in the JIT engine and apply PXoM protection to the generated code.
+
+MPK SecurityWhile Memory Protection Keys (MPK) provides an efficient mechanism for managing memory permissions, it also raises concerns regarding its own security pitfalls[84].
+Fortunately, new defensive strategies have emerged to further strengthen the security of MPK[85,86].
+Ongoing improvements and refinements in this evolving domain continue to enhance the security of MPK.
+Many existing works have utilized MPK for sensitive data isolation. For instance, ERIM[87]and Hodor[88]utilize MPK to
+isolate sensitive data and only allow trusted code to access it by controlling read permissions to these sensitive data areas.
+Similarly, Burow et al.[89]investigate using MPK to provide stronger guarantees for shadow stacks, which are used to make sensitive data on the stack tamper-resistant[90].
+Additionally, Jin et al.[91]employ the MPK mechanism to safeguard sensitive key-related data in cryptographic algorithm implementations.
+
+ConclusionExecute-only memory (XoM) is a promising solution to prevent memory disclosure and counter JIT-ROP attacks. This paper presents PXoM, a technique that retrofits XoM into stripped binaries without embedded data relocation. Unlike existing approaches, PXoMenables fine-grained memory permission control within a memory page without requiring compile-time transformations or binary patching. Performance evaluations on large programs show negligible runtime overhead, and security assessments suggest PXoMis viable for real-world adoption, potentially shifting the memory defense landscape in favor of defenders.
+
+SECTION: Acknowledgment
+
+We thank our shepherd and all the anonymous reviewers for their valuable comments to improve this paper.
+This work is supported by the National Nature Science Foundation of China under Grant No. 62272351, 61972297, and 62172308.
+Jiang Ming was supported by NSF grants 2312185 & 2417055 and Google Research Scholar Award.
+
+SECTION: References
+
+SECTION: -AKernel Structure Modifications
+
+In the Linux kernel, we have defined structures to store essential information about PXoM.
+FigureA1displays these structures, which include fields that correspond to the newly defined ELF format and others that store runtime information for PXoM protection.
+One such structure isedata, which stores the virtual address range of an executable data block in memory.
+Another structure,pxom_info_t, holds basic information about a process protected by PXoM, such as the enable flag, the read permission flag, the PKey assigned to enforce execute-only memory, and the executable data list.
+We store the pxom_info_t structure in thetask_structstructure to save PXoM information in the current process context.
+FigureA2depicts the task_struct structure, where we have added the pxom_info_t member at the end of the randomized struct fields to ensure compatibility with randomization protection.
+
+SECTION: -BAlgorithm of Unidirectional Disassembly
+
+Algorithm1outlines the Unidirectional Disassembly strategy.
+As shown in Algorithm1, the input consists of the stripped binary codeand the program entry point.
+The algorithm’s final output is a superset of embedded data, which includes all embedded data and some code.
+Initially, the entire code section is marked as embedded data superset (Line 1 in Algorithm1).
+Then, we apply the recursive traversal algorithm[78], following the control flow from the program entry point to identify the code located on the main paths (Line 2).
+We then exclude the identified code from the superset (Line 3), resulting in a smaller superset.
+To further reduce the superset, we conduct multiple additional analyses to uncover missed code entry points, subsequently applying recursive traversal disassembly to these identified entry points (Lines 5-7). During disassembly from each entry point, the identified code is excluded from the superset (Line 9), thereby minimizing the embedded data superset.
+Our analyses include examining jump tables, frame unwind information, address-taken functions[6], and employing function entry identification heuristics[79]to identify additional code entry points that were not reached by recursive traversal disassembly (Lines 11-21).
+
+SECTION: -CPerformance on Real-World Applications
+
+Web ServersWe tested three mainstream web servers: Nginx-1.20.1, Apache-2.4.49, and Lighttpd-1.4.59.
+We compile and run the standard and protected web server versions, respectively.
+We use ApacheBench[92]to simulate 500 clients to send HTTP requeststimes asynchronously,
+and we record their running time to complete theserequests.
+To demonstrate the performance impact of PXoM when requesting different page sizes,
+we tested five different page sizes: 50KB, 100KB, 200KB, 500KB, and 1MB.
+As shown in TableA1, the maximum overhead value is only 0.63%, and the average overhead is 0.35%,
+and most overhead values are very close to zero.
+This indicates that the performance impact of PXoM protection on I/O bound web servers is also negligible.
+
+DatabasesWe tested popular databases: MySQL-8.0.26, MongoDB-4.2.17, Redis-6.2.5, and SQLite-3.36.0.
+Unlike ApacheBench, there is no such unified performance benchmark for databases. We have to
+run each database with a customized testing suite.
+For MySQL, MongoDB and Redis, we use their official benchmarks (sysbench[93], mongo-perf[94], and redis-benchmark[95])
+to evaluate the insertion and selection overhead.
+For SQLite, we design a custom benchmark to simulate other three database benchmarks’ workloads.
+We configure each testing suite as follows:
+
+MySQL: We configure sysbench with thecomplexworkload to perform insertion and selection forrows.
+
+MongoDB: We execute thesimple insertandsimple queryworkload and
+record how many requests can be completed per second to evaluate the insertion and selection overhead.
+
+Redis: We execute theSETandGEToperationtimes and record how many requests can be processed per second.
+
+SQLite: We insertrows of random data and select the inserted data by their primary key.
+We record the execution time and calculate how many requests that SQLite can process per second.
+
+TableA2shows the result of performance evaluation of PXoM protection on four widely-used databases.
+For each database, the first row shows the insertion performance, and the second row shows the selection performance.
+The last column shows the additional overhead incurred by PXoM,
+and the last row shows the average overhead for insertion and selection.
+As shown in TableA2, the majority of the additional overhead values for databases are almost zero,
+and the average overhead is only 0.24% for insertion and 0.22% for selection.
+These findings prove that the PXoM has minimal impact on the runtime overhead of the protected databases.
+
+SECTION: -DOther Microbenchmark Results
+
+TableA3, TableA4, and TableA5show the lmbench results for PXoM-low-correlation kernel operations.
+
+SECTION: -EPerformance Comparison
+
+We conducted a separate experiment to compare PXoM with other prominent peer tools, including
+XnR[23], LR2[24], Readactor[25], HideM[27], SECRET[29], Heisenbyte[31], and Near[32].
+Like PXoM, they also protect userland programs on x86 platforms.
+However, we encountered a major challenge in the current inability to reproduce or replicate previous XoM results, which is an issue that unfortunately plagues the security field.
+This problem is particularly evident in the area of XoM, as none of the XoM papers listed in Table1or kernel-level XoM papers[58,59]have released their tools publicly.
+In light of this, we evaluated the additional overhead caused by PXoM on SPEC 2006, and compared the results with reported performance data in their papers.
+
+FigureA3shows the additional overhead of PXoM’s protection for SPEC CPU 2006.
+Similar to SPEC CPU 2017’s performance data,453.povrayand483.xalancbmkexhibit relatively high overhead.
+Overall, PXoM incurs smaller runtime overhead on SPEC CPU 2006 than SPEC CPU 2017;
+the average and geometric mean overhead of SPEC CPU 2006 benchmarks are 0.30% and 0.18%, respectively
+We attribute this difference to the larger and more complex workloads executed by SPEC CPU 2017.
+SPEC CPU 2006 is no longer sufficient to meet the load demands of modern CPUs.
+
+FigureA4shows the performance comparison result.
+Heisenbyte has a significantly higher overhead (18.3%) compared to other approaches,
+which we attribute to its intricate legitimate data-in-code read process.
+NEAR reduces the overhead to 5.7% by simplifying this process.
+Readactor achieved XoM through hardware virtualization, which incurs a 5.8% performance penalty.
+LR2causes a medium overhead (6.6%) due to its software-fault isolation.
+XnR and HideM reveal 2.2% and 1.4% extra slowdown, respectively.
+In contrast, PXoM exhibits the lowest overhead (0.30%) among all XoM prototypes in FigureA4.
+
+SECTION: -FCase Studies for Security Evaluation
+
+Exploit Memory Disclosure VulnerabilityWe use the CVE-2013-2028[96], a Nginx arbitrary memory disclosure vulnerability, to showcase PXoM’s effectiveness.
+This vulnerability is a potent stack overflow that enables an attacker to carry out arbitrary memory reads.
+We apply PXoM to a vulnerable binary version of Nginx and run it as a web server.
+After that, we modify the JIT-ROP attack framework, jitrop-native[83], to specifically adapt it to the CVE-2013-2028, and use it to trigger this vulnerability and dynamically search for gadgets.
+The attack is detected and prevented when the exploit tries to reveal the first code byte,
+indicating that PXoM is capable of safeguarding Nginx from memory disclosure.
+
+Construct WRPKRU GadgetsThe value of PKRU can be changed using theWRPKRUinstruction at the user level.
+Intuitively, if this instruction is located by attackers in executable data blocks, they can use it to regain read permission for the code pages.
+In order to successfully change the permission of a page group using the WRPKRU instruction, four operations must be performed:
+1) storing the permission value to EAX; 2) writing zero to ECX; 3) writing zero to EDX; and 4) executing WRPKRU.
+Please note that when executing the WRPKRU instruction, EAX stores the permission value for all page groups that will later be written into PKRU,
+and the values of ECX and EDX must be zero to avoid a general-protection exception (#GP).
+Completing these operations may require more than four gadgets.
+For instance, in OpenSSL, onlyXCHGinstructions can changeEAX’s value, such asXCHG EDI, EAX.
+Thus, an additional gadget is necessary to write the permission value toEDI, which can then be swapped with EAX usingXCHG.
+To find gadgets capable of completing these operations, we conduct a gadget search on all binaries’ executable data in the Pang et al.’s data set[38].
+The dataset revealed that only 23 binaries’ executable data contain gadgets that can complete one or two operations, but no binary gadgets that can complete all four operations.
+Interestingly, even treating each byte as an opcode, we only found 26 WRPKRU instructions in thedataset, and none of them was in the executable data areas.
+This rarity of the byte sequence of WRPKRU (0F 01 EF) in the compiled binary could explain the difficulty of finding gadgets capable of performing all four operations.
+
+Attacker-Controllable SyscallsDespite the fact that attackers may attempt to leverage system calls (e.g.,mprotectandexecve) to conduct their second-stage attack,
+thereby circumventing the necessity for Turing-complete gadgets and minimizing gadget requirements,
+they still necessitate multiple gadgets to manipulate the parameters of these system calls.
+Johannesmeyer et al.[97]enumerated twelve system calls that could potentially be exploited to implement such attacks.
+We conducted an additional experiment to search for gadgets capable of manipulating the parameters of these twelve system calls
+within the embedded data regions of the dataset presented in Table2, and no such gadgets were discovered.
+
+SECTION: -GHigh-Frequency Data Read Optimization
+
+In the scrutiny of a read request, PXoM faces potential performance bottlenecks when iteratively navigating an extensive list of embedded data,
+a concern exacerbated in programs featuring a large number of code-data interleaving cases.
+Our empirical observations of real-world programs reveal that, in scenarios where data-in-code reads occur frequently, the read targets tend to cluster around a confined subset of embedded data.
+For example, during the execution of AES-256-CBC encryption in OpenSSL, the program exclusively accesses a mereout ofembedded data blocks.
+This motivates us to implement a cache-like optimization policy that accelerates the legitimacy determination of frequently-read embedded data.
+We segregate the high-frequency read embedded data into a separateoptimization list, while preserving other embedded data in aregular list.
+We ensure that the optimization list remains concise, prioritizing its iteration when validating the legitimacy of data-in-code reads.
+Our strategy for creating the optimization list encompasses both static and dynamic policies. Under the static policy, we consider the frequency of references to embedded data,
+relegating embedded data with over 10 references to the optimization list. Meanwhile, the dynamic policy involves real-time monitoring within the exception handler, recording the frequency of reads for embedded data.
+Data surpassing 100 reads dynamically qualifies for inclusion in the optimization list.
+We have empirically determined the threshold of 10 references and 100 reads to achieve the optimal performance.
+PXoM turns on this optimization policy by default.
+
+From Figure8, it is evident that as the size of the embedded data list expands, the time required for data-in-code reads also increases.
+Our analysis indicates that programs that engage in frequent data-in-code reads usually target a small subset of embedded data blocks.
+To alleviate this overhead, our cache-like optimization policy comes into play, effectively reducing the size of the embedded data list when programs perform frequent data-in-code reads.
+We use OpenSSL to evaluate the effectiveness of the optimization policy in reducing overhead for high-frequency data-in-code reads.
+Without our optimization policy, each read-legality check will take extra time to traverse the long embedded data list.
+With our optimization policy, the performance can be significantly improved.
+The comparative experiment results on OpenSSL, with and without our optimization policy, are shown in FigureA5.
+The average overhead, without our optimization policy, was 1.35%, while the geometric mean was 1.31%. In contrast, with our optimization enabled,
+the average overhead was reduced to 0.82%, and the geometric mean was lowered to 0.81%.
+We also conducted an optimization policy evaluation on BoringSSL and FFmpeg, and the conclusions were consistent with those from OpenSSL.
+
+SECTION: -HCase Studies of Embedded Data in COTS Binaries
+
+Through empirical study, we categorized the embedded data into the following four types:
+
+Embedded Constants: Independent constants dispersed throughout the program, each referenced separately. These constants can include integers, floating-point numbers, or other data structures.
+
+Embedded Arrays: Groups of constants organized into arrays, where each element is accessed using an “array pointer + index.”
+
+Embedded Strings: Strings embedded directly within the code section.
+
+Jump Tables: Tables that store target addresses for switch-case structures.
+
+Using Skype version 8.129.0.202 as an example, FigureA6illustrates the embedded constants within the binary fileskypeforlinux. In lines 1 and 3, two 128-bit integers are embedded, with thepadddinstruction being used in lines 10 and 12 to add them to the value in thexmm0register. Similarly, in lines 5 and 7, two 256-bit integers are embedded, which are then used in lines 14 and 17.
+
+Unlike embedded constants, where each constant has its own reference, embedded arrays group constants together, with each element accessed via an array pointer. For example, in the main binaryresolveof DaVinci Resolve (version 19.0.1), there is an embedded array, as shown in FigureA7. In line 9, an array of 4,160 bytes is embedded, and in line 1, its reference is loaded into therbpregister. Lines 3, 5, and 6 show how values from the array are accessed using the array pointer stored in therbpregister, with thersiregister serving as the index. The retrieved values are then loaded into ther8andr9registers.
+
+Embedded strings are a specific type of embedded constant, characterized by their variable size and termination with a 0x00 byte. FigureA8provides an example of embedded strings found in theteamviewerddaemon of TeamViewer (version 15.58.4). In lines 6, 7, and 8, three strings are embedded, with a reference to the string embedded in line 6 made in line 1.
+
+A jump table is a specialized type of embedded array and one of the most common data structures embedded in code. It stores the target addresses for switch-case structures. In Position Independent Code (PIC), the jump table holds the offset between the target code and the jump instruction, while in non-PIC code, it stores the absolute address of the target code.
+Although compilers like GCC and LLVM typically place jump tables in the data segment, some compilers, such as Intel’s C++ compiler, prefer to embed jump tables closer to the code that uses them. This approach reduces the likelihood of cache misses, thereby improving program performance. In contrast, placing the jump table in a distant data segment can increase the frequency of cache misses.
+
+FigureA9provides an example of a jump table in thedpcppbinary of Intel DPC++ (version 2.1.79). At line 10, a switch structure with 64 cases is defined. Since this binary is a position-independent executable (PIE), the jump table starting at line 10 stores offsets of the target addresses relative to line 7. In line 1, the address of the jump table is loaded into thersiregister, and after performing a series of calculations based on the index value, the target address is determined. Finally, in line 7, the program jumps to the calculated target address.
+
+SECTION: -IDescription & Requirements
+
+In our paper, we present PXoM, a hardware-assisted approach to retrofitting XoM (Execute-only Memory) for stripped binaries, without the need for relocating embedded data.
+PXoM is a comprehensive system that includes a full-stack toolchain, from user-level applications to a custom kernel, designed to provide XoM protection for programs while ensuring compatibility with legitimate embedded data reads within code sections, all without the need for relocating embedded data.
+
+In this artifact, we provide the following:
+
+Virtual Machine (PXoM_Artifact.ova): An out-of-the-box (OOB) virtual machine with a customized system kernel and user-space toolchain pre-deployed for easy access to PXoM. This VM offers a convenient way to quickly start testing PXoM on various programs and reproducing the evaluations presented in this paper.
+
+Source Code (PXoM_Artifact-0.1.tar.gz): The source code for the PXoM kernel, user-space toolchain, and all the experiments described in this artifact.
+
+Documentation (PXoM_Artifact.pdf): Detailed instructions on how to use the PXoM virtual machine and the workflow for conducting the experiments.
+
+In this artifact appendix, we will outline the hardware and software requirements for PXoM, the steps to install the virtual machine, the major claims from our paper, and the experimental workflows.
+
+How to access
+
+PXoM Virtual Machine:10.5281/zenodo.13892220
+
+Source Code:10.5281/zenodo.14251050
+
+PXoM Artifact Documentation:10.5281/zenodo.14251155
+
+Hardware dependencies
+
+The only required hardware feature is MPK, which is supported by the following CPUs:
+
+Intel® Desktop CPUs, Comet Lake (10th Gen Core™) and later;
+
+Intel® Server CPUs, Xeon® Skylake and later;
+
+AMD Desktop CPUs, Ryzen™ 5000 and later;
+
+AMD Server CPUs, EPYC™ Milan (7003 Series) and later.
+
+Software dependencies
+
+There are two options for deploying the PXoM VM:
+
+On a host running Ubuntu 22.04 or later, you can import the PXoM virtual machine using VMWare Workstation Pro 17.6.0 or higher. Please note that MPK is not supported on Windows hosts, so VMWare Workstation Pro must be installed on a Linux-based host.
+
+Directly import the PXoM virtual machine on a machine running ESXi 8.0 Update 3 or later.
+
+Benchmarks
+
+Most of the benchmarks are included with the PXoM VM image. However, we have excluded Pang et al.’s dataset from the image due to its large size (56GB after decompression), which would make the image excessively bloated. You can obtain Pang et al.’s dataset from theirGithub repository.
+Please refer to the instructions in the artifact documentation (PXoM_Artifact.pdf) before obtaining the dataset.
+
+SECTION: -JArtifact Installation & Configuration
+
+The only installation step is to import the PXoM virtual machine (PXoM_Artifact.ova) into VMWare Workstation Pro or VMWare ESXi. All the experiments from our paper can be conducted within this virtual machine.
+
+For instructions on how to import the OVA file into VMWare Workstation Pro and VMWare ESXi, please refer to theVMware Workstation documentationandVMware ESXi documentation.
+After importing the PXoM virtual machine, you can adjust its memory size and the number of CPUs. We recommend allocating more than 32GB of memory and assigning more than 10 cores.
+
+Optional:To compile the PXoM kernel on a bare-metal machine, please follow the same process as you would for the standard Linux kernel. For example, begin with the instructions starting at Step 3 in this guide:https://phoenixnap.com/kb/build-linux-kernel.
+
+SECTION: -KMajor Claims
+
+Our paper makes two major claims:
+
+(C1):PXoMcan protect stripped binaries from JIT-ROP attacks while allowing legitimate embedded data reads, without requiring relocating embedded data. This is demonstrated through experiments (E1) and (E2).
+
+(C2):PXoMintroduces negligible performance overhead. This is validated by experiments conducted on lmbench (E3), SPEC CPU 2017 (E4), Webservers (E5), and Databases (E6).
+
+SECTION: -LEvaluation
+
+The experiments are divided into six parts:
+(E1): JIT-ROP Defense Demonstration; (E2): Disassembly Result Evaluation; (E3): lmbench; (E4): SPEC CPU 2017; (E5): Web Servers; and (E6): Databases.
+E1 and E2 support C1, while E3E6 support C2. We provide instructions to reproduce the experiments described in our paper; however, we do not claim the “reproduced” badge for two reasons:
+
+The dataset for E2 is too large, requiring 5 to 6 days to fully evaluate the entire dataset.
+
+The virtual machine provides the most reliable environment to ensure PXoM functions correctly by masking hardware differences, which ensures proper operation across various devices. However, virtualization may lead to inaccurate performance evaluation results. Moreover, Intel’s hybrid architecture of E-Cores and P-Cores can further amplify experimental inaccuracies.
+
+The/PXoM_Artifact/experimentsfolder within the virtual machine contains all the experiments. Please conduct each experiment in its corresponding folder.
+
+[JIT-ROP Defense Demonstration] [20 human-minutes + 5 compute-minutes]: Demonstrating how PXoM protects programs from JIT-ROP attacks while allowing legitimate embedded data reads.
+
+[Workflow]
+
+1. Run the vulnerable demo server:
+
+2. Exploit the vulnerable server:
+
+3. Protect the vulnerable server using the PXoM toolchain:
+
+4. Run the protected server and attempt the exploit again:
+
+5. The exploitation will fail, and you can check the kernel log for details:
+
+[Disassembly Result Evaluation] [15 human-minutes + 10 compute-minutes (56 days for the entire dataset)]: Evaluating the effectiveness of our disassembly strategy.
+
+[Workflow]
+
+1. Protect the program and print the embedded data list:
+
+2. Extract the ground truth using Pang et al.’s toolchain:
+
+3. Compare the disassembly results with the ground truth:
+
+[Results] Code Coverage and Overall Coverage for binaries.
+
+[lmbench] [10 human-minutes + 20 compute-minutes]: Evaluating the performance overhead of PXoM’s kernel modifications.
+
+[Workflow]
+
+1. Run lmbench:
+
+2. Compare the results with the baseline results.
+
+[Results] Performance overhead of kernel modification.
+
+[SPEC CPU 2017] [20 human-minutes + 6 compute-hours]: Evaluating the performance overhead of PXoM’s protection on compute-intensive programs.
+
+[Workflow]
+
+1. Run the standard SPEC CPU 2017:
+
+2. Run the PXoM-protected version of SPEC CPU 2017:
+
+3. Compare the results:
+
+[Results] Performance overhead of PXoM on protecting SPEC CPU 2017
+
+[Web Servers] [15 human-minutes + 10 compute-minutes]: Evaluating the performance overhead of PXoM on protecting web servers.
+
+[Workflow]
+
+For each web server, the workflow is the same:
+
+1. Start the standard version of the web server:
+
+2. Obtain the baseline runtime:
+
+3. Stop the standard version of the web server:
+
+4. Start the PXoM-protected web server:
+
+5. Run the PXoM-protected tests:
+
+6. Stop the PXoM-protected web server:
+
+7. Compare the results:
+
+[Results] Performance overhead of PXoM on protecting each web server.
+
+[Databases] [20 human-minutes + 60 compute-minutes]: Evaluating the performance overhead of PXoM on protecting databases.
+
+[Workflow]
+
+For MySQL, MongoDB, and Redis:
+
+1. Start the standard version of the database:
+
+2. Obtain the baseline performance data:
+
+3. Start the PXoM-protected database:
+
+4. Run the PXoM-protected tests:
+
+5. Compare the results:
+
+For SQLite:
+
+1. Obtain the baseline performance data:
+
+2. Run the PXoM-protected tests:
+
+3. Compare the results:
+
+[Results] Performance overhead of PXoM on protecting each database.

@@ -1,0 +1,744 @@
+SECTION: Evaluating Single Event Upsets in Deep Neural Networks for Semantic Segmentation: an embedded system perspective
+
+As the deployment of artifical intelligence (AI) algorithms at edge devices becomes increasingly prevalent, enhancing the robustness and reliability of autonomous AI-based perception and decision systems is becoming as relevant as precision and performance, especially in applications areas considered safety-critical such as autonomous driving and aerospace.
+This paper delves into the robustness assessment in embedded Deep Neural Networks (DNNs), particularly focusing on the impact of parameter perturbations produced by single event upsets (SEUs) on convolutional neural networks (CNN) for image semantic segmentation.
+By scrutinizing the layer-by-layer and bit-by-bit sensitivity of various encoder-decoder models to soft errors, this study thoroughly investigates the vulnerability of segmentation DNNs to SEUs and evaluates the consequences of techniques like model pruning and parameter quantization on the robustness of compressed models aimed at embedded implementations.
+The findings offer valuable insights into the mechanisms underlying SEU-induced failures that allow for evaluating the robustness of DNNs once trained in advance.
+Moreover, based on the collected data, we propose a set of practical lightweight error mitigation techniques with no memory or computational cost suitable for resource-constrained deployments.
+The code used to perform the fault injection (FI) campaign is available athttps://github.com/jonGuti13/TensorFI2, while the code to implement proposed techniques is available athttps://github.com/jonGuti13/parameterProtection.
+
+SECTION: 1Introduction
+
+There is an increasing interest in developing domain-specific processors for the deployment of artificial intelligence (AI) algorithms at the edge and at the endpoints.
+This trend is driven by the necessity of freeing endpoint AI-based systems from having to send acquired data to external, more powerful computing machines to be processed and wait for a response before any action can be executed.
+The goal is to make embedded AI systems completely autonomous, avoid security and reliability issues associated with data transmission, and reduce response latency.
+Achieving embedded AI processing autonomy makes it possible to extend the applicability of complex AI algorithms, such as the increasingly widespread deep neural networks (DNN), to domains in which there may be severe communication bandwidth constraints, hard reliability and security specifications and/or real-time response requirements.
+Examples of such application areas are intelligent vision, autonomous navigation, advanced driving assistance systems (ADAS), autonomous driving systems (ADS), and aerospace applications such as remote sensing and airborne flight control[1].
+
+If AI has to be pervasively integrated in systems that autonomously operate in real-world environments, AI processors must meet not only demanding performance specifications, but also strict safety and reliability standards.
+This is nowadays a mayor concern in the development of AI-based systems that must be integrated in safety-critical applications such as in the aerospace[2]and automotive[3]domains.
+For instance, the main agent that jeopardizes the performance in the aerospace applications is the exposure of aircraft and spacecraft electronics to radiation[4].
+When a radiation particle interacts with electronic components, the logical value stored in a cell may be altered, resulting in a single event upset (SEU) or, more specifically, a single bit upset (SBU) when it only affects a single bit or a multiple bit upset (MBU) if multiple bits are affected.
+Field programmable gate arrays (FPGA) are particularly sensitive to SBUs, which can affect both the sequential elements of the implemented circuit (flip-flops or Block RAMs) and the configuration memory (LUTs).
+In the simplest case, a SBU will cause a bit of one of the implemented artificial neural network (ANN) model parameters to flip.
+Depending on the specific position of the SBU, the network output may change and differ from the expected one (critical errors), putting the safety of the system at risk.
+In the context of ADS, soft errors at terrestrial altitudes occur due to the following factors: the interaction of high-energy cosmic neutrons with silicon, the interaction of low-energy cosmic neutrons with high concentrations of 10B in the device and the emission of alpha particles from trace radioactive impurities in the device materials[5].
+According to[6], when exposed to terrestrial neutrons, a bit in SRAM has a probability ofto flip in.
+As explained in[7], for a typical neural network of more than 10 million parameters, the probability of at least one bit-flip occurring in a month is 10%.
+This problem is aggravated as a consequence of increasing miniaturization and the use of lower voltage levels in modern integrated circuits.
+
+In addition to background radiation, embedded devices are also vulnerable to
+other factors such as disturbance errors in storage devices (SRAM and DRAM) and also to deliberate malicious bit-flip attacks (BFA).
+Moreover, alternative technologies to traditional meta-oxide-semiconductor devices
+for the more efficient in-memory computation, e.g. memristive devices, are particularly prone to bit instabilities[8,9].
+Disturbance errors are a general class of reliability problem that
+affects memory and storage technologies such as SRAM,
+DRAM, flash and hard-disk[10].
+Write failure and read
+disturb are two major causes of SRAM technology failures tightly related to miniaturisation and low-voltage operation[11].
+In the case of DRAM, the so-called RowHammer vulnerability is a well-known
+issue that produces data corruption and the
+appearance of multiple bit-flips[10].
+This has attracted the attention
+of attackers, who can maliciously flip memory bits in DRAM
+without the need of any data access privileges[12,13].
+If extended to safety-
+critical domains such as ADS and aerospace,
+the consequences of data-oriented attacks can be catastrophic, especially when the BFAs
+are targeted[14].
+
+The outstanding performance of state-of-the-art DNNs in many applications is very often at the expense of increasing their size and complexity dramatically[15].
+Although it strongly depends on the design of the digital circuit that implements their functionalities (the "application layer",[16]), large models are generally more robust due to their overparameterized nature[17,18].
+However, deploying complex AI models into resource-constrained embedded processing systems usually implies, firstly, applying one or various compression techniques to transform large models into the so-called lightweight deep learning models.
+These procedures aim to reduce the computational complexity and the memory footprint of original DNNs maintaining comparable performance.
+The most used approaches include network pruning, parameter quantization, knowledge distillation, and architecture search[19].
+Secondly, it is usually needed to design custom processing units that help accelerate algorithm execution to meet speed and power consumption specifications.
+This is achieved by tailoring specific pipelines for data parallelism and applying arithmetic optimization techniques to make the most of both available memory and computational resources.
+Depending on the selected target technology (the "physical layer",[16]), e.g., embedded GPUs, FPGAs, or application-specific integrated circuits (ASIC), there exist different design constraints to consider and specific optimization techniques to apply.
+In any case, our concern is focused on the effects of SBUs on the parameterization of the DNNs, i.e., how the values of trainable parameters are altered and the potential consequences of these changes on the performance of the DNN models.
+
+In this paper, we analyse the reliability of encoder-decoder DNN models designed for image segmentation tasks against SBU disturbances.
+This analysis has been performed with two main objectives in mind.
+Firstly, the focus is on the consequences that compression techniques such as model pruning and parameter quantization may have on the robustness of these models.
+Secondly, a more comprehensive study has been conducted to precisely determine how such disturbances modify the model performance in the inference process.
+The aim was to use this knowledge to propose design techniques that help improving model robustness, and thus system reliability, with no cost in terms of computational complexity and memory footprint.
+This work was originally motivated by the necessity to improve the reliability of some image segmentation DNN models designed to be applied in ADAS/ADS when implemented on the target processing devices, both embedded GPUs and FPGAs.
+To date, there are few published studies that analyse in detail and in a statistically significant way the impact of SBUs on the robustness of image segmentation DNN models, particularly when subjected to compression for deployments at the edge.
+This paper aims to fill this gap by performing a detailed layer-by-layer and bit-level analysis based on SBU emulation to better understand the mechanisms that produce failures in the behaviour of the models.
+The analysis has been performed both for 32-bit floating-point and 8-bit quantized representations to cover final implementations on different devices.
+Although the study has been necessarily carried out for a specific model architecture and a particular dataset, the purpose of the work is to provide guidelines and analysis tools applicable to other models, particularly those of the encoder-decoder type.
+Moreover, it also has served to program a set of memory-, computation- and training-free procedures for the protection, to a certain extent, of the performance of such models against SBUs.
+The code has been made public at[20].
+
+The main contributions of this paper are:
+
+We analyse in a statistically significant way how SBUs alter the performance of encoder-decoder DNN models in image segmentation tasks, determining the sensitivity of the output to single bit-flips in the model parameters according to the layer depth, the parameter type, and their binary representation.
+
+We analyse how and why model pruning affects the robustness of the models against SBU perturbations.
+
+We study the consequences of applying parameter quantization in terms of model robustness.
+
+We provide in[21]a modification of the original TensorFI2[22]code to allow applying fault injection (FI) campaigns on quantized TensorFlow Lite models and on big unquantized TensorFlow2 models too.
+
+We describe some simple rules to improve model robustness by protecting model parameters against the consequences of SBUs with no cost on computational complexity neither on the memory footprint.
+
+We provide in[20]the code to perform fault mitigation based on the above mentioned technique.
+
+The paper is organised as follows: Section2includes the related work done in the field of DNN robustness evaluation and hardening techniques against SBUs.
+Then, in Section3, we describe the architecture of the encoder-decoder model as well as the compression techniques whose effect on model robustness will be studied.
+All the experimental results in relation with the fault injection campaign are collected in Section4.
+Section5describes the proposed fault mitigation technique.
+Finally, we provide the conclusions in Section6.
+
+SECTION: 2Related work
+
+SECTION: 2.1Robustness of ANNs against bit-flips
+
+Most published papers on ANN robustness against bit-flips focus on classification tasks, while very few analyse semantic segmentation models[23].
+The majority of the authors have carried out experimental fault injection campaigns combined with statistical analysis, while only a few have developed a theoretical analysis based on the development of a vulnerability model.
+
+Among the experimental works, papers such as[24]and[25]test the robustness of several image classification convolutional neural network (CNN) architectures against single bit-flips in their weights, but with relatively superficial analyses.
+In[26], the authors compare the robustness of multilayer perceptrons and CNNs of different sizes, concluding that larger networks with more layers are more robust than smaller, shallower networks.
+Some authors, such as[27], investigate the impact of individual bit-flips while comparing floating-point and fixed-point representations, concluding that the latter are more robust.
+
+Works like[28]and[29]evaluate the effects of both quantization and pruning on the robustness of models.
+The former shows that compressed models are more fault-resilient compared to uncompressed models in terms of bit error rate zero accuracy degradation, but statistical significance due to a short number of experiments leads to a high variance in the prediction results.
+The latter finds that integer-only quantization acts as a fault mitigation technique by reducing the overall range of the data.
+It also concludes that pruning enhances the resilience of deep models as a consequence of the reduction in the occupied area and execution times.
+
+Some works focus on methods to ensure the statistical significance of fault injection campaigns.
+In[30], the authors present a methodology to evaluate the impact of permanent faults affecting CNNs in automotive applications.
+Similarly,[31]describes how to correctly specify statistical fault injections and proposes a data analysis on the parameters of a CNN for image classification tasks to reduce the number of fault injections required to achieve statistically significant results.[32]presents one of the most exhaustive and complete analysis of the vulnerability of 32-bit floating-point CNNs for image classification tasks.
+The author considers various factors such as bit position, bit-flip direction, parameter sign, layer width, activation function, normalization, and model architecture.
+The key findings are: the vulnerability is caused by drastic spikes in a parameter value, the spikes in positive parameters are more threatening, an activation function that allows negative outputs renders the negative parameters vulnerable as well, and the dropout and batch normalization (BN) layers are ineffective in preventing the massive spikes that bit-flips cause.
+In[33], the author presents two exhaustive tools for fault injection in models created with both TensorFlow1 and TensorFlow2[22], and performs a thorough analysis of the consequences of fault injections in different classification models.
+Additionally, the article also explores techniques to identify the source of the error by the analysis of changes in the model’s predictions.
+In[34,35], floating-point and fixed-point data type model implementations are analysed showing that fixed-point data provide the best trade-off between memory footprint reduction and CNN resilience.
+Similarly,[36]performs a comprehensive layer-wise fault analysis of homogeneously and heterogeneously quantized DNNs, suggesting that quantizing the DNN model heterogeneously to fewer bits helps increase the model’s resiliency.
+
+As a consequence of the growing concern about the threat of deliberate BFAs, some authors are studying the effects of simultaneous bit disturbances across
+multiple model parameters.
+In the extensive work presented in[14],
+BFAs are analysed according to their untargeted or targeted nature, and an effective mitigation methodology against targeted BFAs is proposed.
+In[37], the
+authors apply a progressive bit search algorithm to investigate the effects of bit-flip-based weight attacks and obtain some relevant observations regarding quantized DNN sensitivity: the most sensitive parameters are the ones close to zero (large parameter shift), the weights in the front-end layers are the most sensitive, and BFAs force almost all inputs to be classified into one particular output class.
+Similarly, in[38], the authors evaluate the accuracy
+degradation of an 8-bit integer quantized DNN as a consequence of untargeted random BFAs, one-shot BFAs and
+progressive BFAs for image classification tasks.
+The authors show that with the most exhaustive BFA, i.e. progressive BFA, the accuracy drops to 1% after just 5 iterations.
+This result aligns with the one described in[39], where the author of the progressive BFA algorithm shows that an 8-bit integer
+quantized ResNet-18 can malfunction after just flipping 13 weight bits out of 93 million.
+
+One of the first works that attempted to formalize a theoretical method
+to evaluate the robustness of DNN models was presented in[40].
+It describes a layer-wise relevance propagation model based on the analysis of the contribution of individual neurons to the final loss.
+With a similar approach, gradient-based methods such as that explained in[41],
+analyse the sensitivity of each network layer according to the
+importance (relevance) of the weights during inference.
+In[7], the authors present a
+theoretical analysis of error propagation on some commonly
+used processing layers in image classification models when the
+sign bit is flipped.
+In[42], a vulnerability model based on some key features such as gradient and absolute value of the parameters is constructed to reduce the necessary amount of fault injections to perform robustness analysis.[43]proposes BinFI, a fault injector for finding safety-critical bits in machine learning applications that significantly outperforms random fault injection methods in terms of computational costs.
+Finally, in[44], the authors
+formulate a bit-flip-based weight fault propagation model
+for 32-bit floating-point CNNs to analyse the robustness of ReLU-based models and propose a hardening method based on function upper bounding.
+Nevertheless, the applicability of these methods to segmentation networks is not straightforward because they are primarily designed for classification networks, where the layers under study are typically simple convolutions and fully-connected layers.
+Additionally, gradient-based analyses can be inaccurate due to noisy gradients and challenges such as vanishing or dying gradients associated with common activation functions like Sigmoid and ReLU.
+
+All the above-mentioned works are focused on detection and classification DNN models.
+Regarding the few papers that deal with segmentation networks,[45]claims to have performed the first fault injection study of DNNs performing semantic segmentation, proposing a critical/tolerable fault categorisation for a 32-bit floating-point DeeplabV3+ network.[46]evaluates the reliability of neural networks for various tasks, including semantic segmentation, implemented in 32-bit floating-point representation on a GPU trained with Supervised Compression for Split computing.
+In[47], the author stresses the importance of statistical significance in the analyses, and proposes a fast reliability methodology exploiting statistical fault injections in a U-Net model for image segmentation.
+The author performs a comparison of the results obtained with this method to those obtained by random FI and improperly-defined statistical FI campaigns and shows the inability of the latter campaigns to reveal sensitive parameters of U-Net.
+
+SECTION: 2.2Hardening and protection of neural networks against fault occurrence
+
+Most of the papers that propose methods to protect ANNs against faults are also concerned with image classification models.
+According to the proposed protection technique, these can be grouped as those that use redundancy, modifications of the activation functions, modifications of the parameters, and modifications of the training/inference process.
+
+One of the most basic methods for error detection and protection is the use of a checksum together with a replication of the model, which, while highly effective, is also prohibitively costly in terms of memory consumption and computing overhead.[48]and[49]are two examples where full duplication has been shown to be effective.
+As proposed in[50,51,52], using a proper model sensitivity analysis makes it possible to optimize redundancy to protect only the most critical layers.
+In the same direction,[17]presents a software methodology based on a triple modular redundancy technique to selectively protect a reduced set of critical neurons, under a single fault assumption, by a majority voter correction technique.
+In[53], the authors characterize fault propagation not only by exposing the FPGA/GPU to neutron beams but also by performing a thorough fault injection campaign.
+Based on the observations, the authors propose a strategy to improve system reliability by adapting algorithm-based fault-tolerant solutions to CNNs, i.e., adding invariants to the code for quick error detection or correction.
+In[54], the authors propose protecting the matrix multiplication operation of the CNNs in GPUs based on a three-stage methodology to selectively protect CNN layers to achieve the required diagnostic coverage and performance trade-off: sensitivity analysis to misclassification per CNN layers using a statistical fault injection campaign, layer-by-layer performance impact and diagnostic coverage analysis, and selective layer protection.
+Finally,[55]proposes a reduced-precision duplication with comparison technique to improve the reliability of computing devices to reduce overhead.
+It is suitable for mixed-precision architectures, such as NVIDIA GPUs.
+
+The bounding of activation functions is an alternative technique to redundancy to reduce implementation overhead.
+In[56], the authors perform a comprehensive error resilience analysis of DNNs for image classification tasks subjected to hardware faults in the weight memory.
+Then, ClipAct is applied, an error mitigation technique based on squashing the high-intensity faulty activation values to alleviate the impact of faulty weights on predictions.
+In[57], Ranger is proposed, a low-cost fault corrector which selectively restricts the ranges of values in specific DNN layers to dampen the large deviations typically caused by transient faults leading to silent data corruptions.
+In[58], FitAct is proposed, a low-cost approach to enhance the error resilience of DNNs for image classification tasks by deploying fine-grained post-trainable activation functions.
+The main idea is to accurately bound the activation value of each individual neuron via neuron-wise bounded activation functions to prevent fault propagation in the network.
+In[18], the author presents a comprehensive methodology for exploring and enabling a holistic assessment of the trilateral impact of quantization on model accuracy, activation fault reliability, and hardware efficiency.
+The framework allows for the application of different quantization-aware techniques, fault injection, and hardware implementation and directly measure the hardware parameters.
+A novel lightweight protection technique integrated within the framework that ensures the dependable deployment, evaluating the maximum values of the layers’ activations and replacing the out-ranged values with either lower or upper-bound to avoid fault propagation, is also proposed.
+Finally,[44]presents a boundary-aware ReLU to improve the reliability of DNNs by determining an upper bound of the activation function which is theoretically calculated so that the deviation between the boundary and the original output cannot affect the final result.
+
+Some other works explore methods to enhance network robustness by directly modifying the network parameters.
+Based on the findings of[40]about the connection between neuron resilience and its contribution to the final prediction score, the authors of[59]propose a methodology based on architectural and feature optimization to avoid critical bottlenecks and balance the feature criticality inside each layer.
+In[60], the authors propose MATE, which is a low-cost CNN weight error correction technique based on the observation that, as all mantissa bits of the weights are not closely related to accuracy, some of them can be replaced with error correction codes.
+Therefore, MATE can provide high data protection with no memory overhead.
+In[61], the authors perform a comparison of the robustness among 32-bit floating-point, 16-bit floating-point, and 8-bit integer formats for image classification tasks and propose an opportunistic parity method to detect and mask errors with zero storage overhead.
+
+There are also proposals to harden network performance by the modification of the training or inference process.
+The authors of[62]propose a bipolar vector classifier which can be easily integrated with any CNN structure for image classification tasks that end in a fully connected layer.
+The underlying idea is that as the weights of the classifier are binarized to1, the resulting final feature vector will only contain positive/negative values that will also be binarized to1, and thus, a pattern will be created.
+Each class has a specific reference pattern so, to assign the final feature vector to a certain class, it will be compared with all the reference patterns, and the winning class will be the one with the smallest Hamming distance.
+In[63], the authors compare the accuracy of quantized DNNs (QNNs) for image classification tasks during accelerated radiation testing when trained with different methodologies and implemented with a dataflow architecture in an FPGA.
+The authors find that QNNs trained with fault-aware training, a kind of data augmentation methodology to allow the network to also experience errors during training, make QNNs more resilient to SEUs in FPGAs.
+In[64], an efficient error detection solution for object detection-oriented CNNs is proposed based on the observation that, in the absence of errors, the differences between the input frames and the inference provided by the CNN should be strictly correlated.
+
+Finally, regarding the specific works that focus on the hardening of DNNs against BFAs,[37]proposes binarization-aware training and piecewise clustering as methods to enhance the resistance of quantized DNNs.
+The authors conclude that applying binary quantization, increasing network capacity, and using dropout or Batch-Norm regularization are effective techniques to build resistance, while applying adversarial weight training or pruning is shown to be ineffective.
+In[38], a three-step algorithm based on mean calculation, quantization and clipping is proposed to reconstruct the perturbed quantized weight matrix to tolerate the faults caused by BFAs.
+The overhead introduced by the process is small and the protected DNN can better cope with progressive BFA than non-protect DNN (accuracy of 60% and 1% respectively after 5 iterations).
+A completely different approach is presented in[14], where the authors propose a dynamic multi-exit architecture that trains extra internal classifiers for hidden layers that can tolerate the existing attacks which flip bits in one specific layer.
+The experiments are conducted using well-known DNN structures and image classification datasets.
+Apart from the above-described methods, which aim to mitigate the effect of such attacks, there are also some other methods that focus on verifying the integrity of the models.
+In[65], the authors propose to extract a unique signature from the original DNN prior to deployment and then verify the inference output on-the-fly while trying to add the minimum performance and resource overhead.
+Indeed, due to the strict temporal and memory footprint constraints that edge devices must adhere to, the protection systems of interest to us are those that introduce minimal memory/computation overhead.
+
+SECTION: 3Model development and optimization
+
+SECTION: 3.1Architectural design and training
+
+The segmentation model used as reference for this study is a U-Net, an encoder-decoder fully convolutional network (FCN) for image segmentation, but adapted to use hyperspectral images (HSI) as inputs.
+
+The most recent version of the model[66]was trained using the HSI-Drive v2.0 dataset[66], intended for developing ADAS/ADS systems using HSI (Figure1).
+The results on the test set can be found in Table1.
+
+The model, depicted in Figure2, features a 5-level encoder-decoder architecture comprising two sequences of 3x3 2D convolutional layers (initially with 32 filters) followed by batch normalization and ReLU activation at each level.
+Additionally, it includes one 2x2 2D max-pooling layer per encoder level and one 2x2 transposed 2D Convolutional layer per decoder level.
+The resulting model comprises 31.14 million parameters and requires 34.60 GFLOPS per inference to execute (Table2).
+Detailed information regarding the training and testing procedures can be found in[66].
+
+SECTION: 3.2Model Compression
+
+The most prevalent model compression techniques among deep learning developers for later implementation on edge devices involve applying pruning and/or quantization after training the 32-bit floating-point model.
+To evaluate how these compression techniques affect the model’s robustness against SBUs, several factors must be considered.
+First, the size of the model and the architecture designed for its implementation as a digital processor, which directly influences the ratio of unused to used resources and the probability for a SBU to happen.
+However, device occupation is not the only parameter influencing the Device Vulnerability Factor (DVF), representing the probability of a configuration bit being critical for the design[67].
+Overparameterized models can absorb more SBUs without producing critical errors since there are more irrelevant weights and biases whose perturbations do not alter the output.
+Thus, it is one of the objectives of this paper to analyse whether large reductions in DNN model sizes can be achieved using these compression techniques without degrading model accuracy or robustness to SBUs.
+For this, we are assuming streaming-like architectures with independent resources allocated for all layers so the impact of a SEUs is isolated[68].
+
+SECTION: 3.3Pruning
+
+Pruning facilitates the reduction of both the number of parameters to be stored and the number of computations to be performed.
+The concept involves eliminating the least significant parameters of the model.
+Depending on which parameters and how they are pruned, pruning can be categorized as fine-grained/sparse/unstructured, where the least important weights are rounded to 0, or coarse-grained/dense/structured, where entire filters are removed from the computational graph.
+While the former method generally allows for pruning more weights without harming performance, it is only justified if the processing system is able to optimize multiply and accumulate (MAC) operations with sparse matrices.
+
+In this work, we have applied a conventional structured pruning approach that has been customized to perform model optimization in an iterative manner.
+The algorithm basically analyses the computational complexity of each layer while evaluating the impact of the pruning process on the model’s accuracy to guarantee negligible impact on overall performance.
+As shown in Table2, applying this method a 99% reduction in the number of parameters and a 75% reduction in the number of operations was achieved.
+
+SECTION: 3.4Quantization
+
+Quantization aims to reduce the number of bits needed to store the model parameters, thereby reducing memory footprint (see Table2).
+Additionally, it can speed up both data transfer and model inference for custom processor implementations.
+Depending on the target device, quantization can be more or less fine-grained in terms of homogeneity, uniformity, scale factor, symmetry, and mixed-precision.
+
+In this article, we have chosen a general and standardized heterogeneous quantization scheme, known as post-training integer quantization (PTQ), as implemented by TensorFlow Lite[69].
+This procedure converts 32-bit floating-point numbers (weights and activation outputs) to the nearest 8-bit fixed-point numbers, while biases, due to the greater sensitivity of the models to perturbation on these parameters, are converted to 32-bit fixed-point numbers.
+This heterogeneous quantization scheme allows for model size reduction while preserving accuracy[69,70].
+As shown in Table3, comparable segmentation metrics are obtained for the quantized model to those with the unquantized model, as quantization schemes applied to already trained models, are simple to apply and produce negligible accuracy degradation for most widely used ANN models[71,72].
+
+SECTION: 3.5Quantization of Pruning
+
+To fully compress the model, both techniques can be applied consecutively: first pruning and then quantization.
+As shown in Table3, after the quantization of the pruned model segmentation accuracy on the test set remains mainly unaltered.
+Table2sums up model complexity figures for each version of the reference model: original (00), pruned (10), 8-bit quantized (01), and pruned and quantized (11). As can be seen, the original memory footprint is reduced from 118.77 MB to just 317.44 KB.
+
+SECTION: 4Assessment of the fault injection campaign
+
+To test the models’ robustness against SBUs, an extensive fault injection campaign was conducted on the aforementioned models using a modified version of the TensorFI2 framework[22].
+This modification enables a more memory-efficient implementation by directly accessing the parameters of the model without creating additional copies or intermediate tensors, ensuring that FI on complex, large models does not result in an excessive memory overhead.
+The original code has also been extended to support quantized TensorFlow Lite models and is available at[21].
+To evaluate the perturbation produced by injected faults, the corrupted FCNs have been assessed using ten test images that represent the diversity of driving conditions in the dataset described in Section3.
+
+Performed FI campaign involved injecting single bit-flips into the parameters of the FCN model under analysis.
+Parameter sets include the weights/kernels of the 2D convolution layers (), bias of the 2D convolution layers (), weights/kernels of the 2D transposed convolution layers (), bias of the 2D transposed convolution layers (), gamma of the batch normalization layers (), and beta of the batch normalization layers ().
+Thus, in what follows,set of the network refers to the weights of the firstlayer, whileset represents the biases of that layer.
+In like manner, when it’s mentioned that an error has been injected into parameter, it means it has been injected into one of theelements that comprise parameterset.
+
+As a general rule, for a given parameter, the higher the bit position in which the fault is injected, the greater its impact on the output, disregarding the sign bit.
+However, not every layer and every parameter contributes equally to the output.
+Previous studies[30,34,54]focused on tasks such as image classification and object detection, have shown that faults injected in the exponent bits (interval) are more likely to alter the output.
+To verify whether this is also generally the case for this encoder-decoder model aimed to image segmentation and in order to set reasonable bounds for the range of bits to be modified, a first round of 150 faults per-layer spanning the entire rangewere injected.
+We could verify that in some cases, bit-flips in the rangeand in the sign bit () also modified significantly the inference result.
+Based on these preliminary results, a comprehensive fault injection campaign was conducted on bit positions.
+
+The quantity of fault injections was set tosingle bit-flip faults per layer, totalinginjections to assure statistically representative experiments according to Equation1as proposed in[73].
+
+whererepresents the number of possible faults per-layer (number of parameters * parameter bit-width),denotes the error margin, which was set to(),is the cut-off point corresponding with the confidence level, set to(), andis the estimated probability of faults resulting in a failure, set tosince, as it is a priori unknown, a conservative approach is to use the value that maximizes the sample size[73].
+This is also done in other studies such as[30,34].
+Finally,represents the minimum number of injections for the study to be statistically significant, capped atfor the chosen parameters.
+
+To assess the impact of the fault injection campaign, it is necessary to first define what constitutes an error.
+Contrary to the definition given in classification tasks, where the output is a single class and a prediction is deemed erroneous if the top-ranked class predicted by the original model changes, defining errors in segmentation tasks is more challenging.
+Changes in the predicted class of some isolated pixels may not significantly alter the overall interpretation of the image, so in order to have an unequivocally defined metric, in this analysis the error rates are defined related to changes in the predicted classes at any pixels in the test images.
+
+SECTION: 4.1Fault injections in unquantized models
+
+As a consequence of the 32-bit floating-point data representation, the effect of a bit-flip varies with its position (Figure3).
+To maintain clarity in terminology, the most significant bit (MSB), the sign bit, is assigned position 31, while the least significant bit (LSB) is assigned position 0.
+
+Figures4and5depict the bit-flip error rate according to the bit position and the parameter position for both the unpruned and pruned models.
+As expected, the unpruned model exhibits greater robustness and can better withstand the injected faults.
+Once the general statistical results have been observed, let us now analyse in detail the insights of the sensitivity of the model performance to perturbations in the parameters.
+
+(-sets in Figure2) consists offilters ofdimensions andbiases, whereis the number of classes to be predicted (in this model) and C is the number of output channels from the previous layer,(in this model).
+
+A signal calibration analysis (see Figure6) reveals that the activations of the last convolutional layer lie within the range,, while the absolute values of the bias parameters turn out to be smaller than(,,,,,).
+Consequently, a change in the sign (bit 31) of one of the biases is unlikely to alter the winning class.
+However, a bit-flip in bitwill significantly increase the bias’ magnitude, because in 32-bit floating-point representation all six biases contain a ’0’ in their 30th bit.
+The impact of a bit-flip on bit 30 depends on two factors: the sign of the bias and the probability of the model predicting each class.
+In the scenario where the bit-flip occurs in a negative bias (biases 0, 2, and 4), the bias becomes so negative that the associated class will never be predicted by the model.
+Consequently, if the original model predicted many pixels of that class in an image, produced error rate will be very high; conversely, if the presence of that class was low, produced error will be small.
+If the bit-flip happens in a positive bias (biases 1, 3, and 5), the bias becomes large enough so that the associated class is always predicted by the model.
+Again, depending on the frequency of that class in an image, the resulting error rate can be high or negligible.
+Both the sign of the bias associated to each class and the probability of the model predicting each class can be known beforehand.
+Therefore, the error rate can be predicted using Equation2.
+
+whereis the class index,is the probability of a bit-flip occurring in class/bias(assumed to be) andis the probability of the faultless model predictingas the output class.
+Applying this equation yields:
+
+The slight discrepancy between this valueand the one obtained from the experimental data (34% in Figure4) is due to the statistical error of the fault injection since it may not result in the exact same number of flips for each of the 6 classes (assuming a constant probability ofis thus only an approximation).
+Additionally, the highly unbalanced terms in the equation make the effect of the non-constant probability more noticeable.
+
+Regarding the weights,, they are multiplied by the output activation of layer, which, due to the use of ReLU activation functions, is always.
+Hence, if the bit-flip occurs in a weight that is multiplied by a 0-valued activation from, the model will be immune to it (unless the bit-flip produces a non-desirable special value such asin the weight itself).
+The impact of a flip in the sign bit is considered negligible and the effect of a flip in bit 30, similar to biases, will only be relevant if the weight is negative and belongs to a filter of the class predicted by the model or if it is positive but does not belong to a filter of the class predicted by the model.
+
+The gamma () parameter of the BN layers is the most sensitive one in the model (located in the third, fourth, seventh and eighth positions in each of the 8-parameter blocks of Figure2).
+This high sensitivity is due to the very nature of the BN operation, as specified in Equation3for a single pixel of a single channel of an activation map (the final result is a scalar value):
+
+wherexrepresents an input 3D array,wis the weight 3D array of a filter of thelayer,is the bias of a filter of thelayer,is the positive gamma parameter of the BN,is the bias parameter of the BN, andandare the variance and the mean of the training data.
+
+It so happens that in this model,values are positive, smaller than 2 but higher than 0.1.
+Thus, in this case, three different scenarios can be considered: values higher than 1, equal to 1, and smaller than 1.
+In the first case, except for bit 30, the remaining 7 bits of the exponent are ’1’s and the mantissa is non-zero, so a bit-flip in bit 30 converts the original value to a(Figure3).
+The propagation of thethrough the network is unavoidable, resulting in a completely wrong output map.
+In the second case, where the mantissa is zero, the same bit-flip converts the value 1 into.
+This situation is akin to the previous one, as the network cannot digest this error except in situations where the value of the weight of the nextis negative so as the ReLU transforms theinto a 0.
+In the last case, considering 0.1 as an example, the bit-flip in position 30 will increase the value to something around, which is near the maximum representable value ().
+Moreover, as Equation3shows, that result is divided by the square root of the variance of the data, which is usually much smaller than 1.
+Consequently, the resulting value would exceed the maximum value and would saturate to.
+In fact, as observed in the calibration analysis (e.g. Figures7, and8), BN layers always increase the range of the processed data.
+
+As shown in Figure4, faults injected in weight parameters oflayers located in the encoder branch (sets below 40 in Figure2) have more impact on the output than when injected in the decoder branch (sets above 48).
+This discrepancy is due to the presence of skip-connections between encoder and decoder branches since faults injected in the first layers will directly propagate to the outputs through skip connections.
+Moreover, longer data paths will be also involved in the propagation of the errors through encoder/decoder branches, including BN layers which, as mentioned above, increase the range of the signals with the risk of overflows.
+
+In the worst case, if a bit-flip occurs in bit 30th of a positive weight, when multiplied by a positive input, it produces a value close to the maximum representable number (otherwise it would be absorbed by the ReLU and 0 would be propagated, which is less problematic).
+Thus, most likely, the value would saturate to infinity when passing through a BN layer.
+This observation aligns with the fact that the weights of the first 5 convolutions (Figures7and8) are significantly larger than those of the rest of convolutions in the encoder.
+Hence, it is more likely for a bit-flip in bit 30 to cause an output mismatch when it is produced in these initial layers, as can be verified in Figure4.
+
+According to obtained statistics (Figure4), biases oflayers in the decoder branch appear to be more sensitive than biases in the encoder branch.
+The explanation of this is that, for a bit-flip in position 30 of a bias in alayer to significantly alter the output, it must be a positive valued bias.
+Errors in negative biases are absorbed by ReLU layers, since BN layers betweenand the ReLU do not change the sign of that value, given that the multiplicative constants are always positive.bias values share the same characteristics, i.e. positive and smaller than unity, as case 3 of theparameters described in Section4.1.1.
+Therefore, when passing through BN layers, its value will increase to infinity, causing errors in the outputs.
+
+We can analyse the influence of bias parameters in more detail by inspecting the presence of positive biases in the primarylayers (deeper layers closer to the base of the model are analysed in a separate paragraph later on).
+As shown in Table4, the percentage of positive biases in the decoder branch is much higher than in the encoder branch, which is consistent with our analysis and the obtained statistical observations.
+In fact, if the correlation between the presence of positive bias and produces error rates is examined, parallel trends are observed (green lines in Figure9).
+
+Similarly to the analysis performed for biases inlayers, comparable error sensitivity for positiveparameter values is observed.
+As shown in Figure9(blue lines), there is also a high degree of correlation between the error rate and the percentage of positivein each BN layer (Table5).
+
+Finally, in Table8, the percentage of biases that are positive for the primarylayers is grouped to see if the biases of thealso follow the above dynamics.
+Plotted in orange in Figure9, it is observed how, as in previous cases, both lines follow the same trend.
+
+At this point, it is important to note that only bit-flips in the bit 30 of parameters have been considered so far.
+Indeed, bit-flip on the rest of the bits produce many fewer errors, as seen in Figure4.
+However, there are particular bits in specific parameters, such as bit 26 in the bias of the firstlayer, associated with a significant error rate.
+Explanation on this issue will be provided later on this paper.
+Finally, it has to be remarked that the correlation between lines depicted in Figure9is not perfect.
+The reason is that faulty bits in negative biases can also result in a prediction error since they may turn positive activations into 0 values, and there are also corrupted positive biases that can be absorbed by a ReLU layer if they are multiplied by a null or negative weight (the error should be smaller then).
+
+From the calibration and the FI analyses, it can be concluded that the deepest layers of the network (-sets in Figure2) practically do not contribute to the inference process.
+Nevertheless, training of shallower models (encoder depths 2, 3, and 4) with fewer convolution filters (8, 16, 32 in the first convolution) produced considerably worse results.
+In fact, compressing trained large sparse models has been shown to be more effective than training smaller dense models[74].
+
+Convolution weights in deep layers are so small that only the biases (Figures10and11) contribute to the activations.
+Theoretically, even a bit-flip in the most significant bit of the biases is quickly absorbed by the network and should not influence the outputs.
+However, it can be seen in Figure4that error statistics for FIs in deep layers (-sets) are not negligible.
+This is because the previous reasoning does not take into account events where a parameter value becomes.
+That is what precisely occurs when the bit 30 of one of theparameters whose value is very close to 1 flips up.
+
+In the pruned model, the structure ofis very similar to that of the unpruned model, as it also consists of 6 filters of sizeand 6 biases.
+As shown in Figure12, there is a slight difference in the range of the activations, which is now.
+However, since the values of the bias parameters are essentially identical to those of the unpruned model (,,,,,), the conclusions that can be drawn are quite the same.
+
+Applying Equation2to this case, the following value is obtained:
+
+The theoretical value (37.24%) is not far from that obtained experimentally and depicted in Figure5(32%), being the difference a consequence of the statistical nature of the FI campaign.
+
+Let us now focus on lower position bits.
+In Figure5it can also be seen that faults in bits 29, 28, 27, and 26 do not generate errors in the output, but changes in bit 25 do.
+If we analyse the binary exponent of the 6 biases under consideration (see Figure13), it is observed that all of them contain a ’1’ in bits.
+A bit-flip in those positions will produce a reduction of the represented magnitude, and hence, the result of the bias addition will decrease too.
+However, since the biases are small compared to the range of activations (see Figure12), it is reasonable to think that this reduction will not produce a meaningful change in the output map.
+Same circumstance will happen if a bit-flip from 1 to 0 occurs in bit 25.
+But, focusing on the last bias of Figure13, a bit-flip from 0 to 1 in bit 25 causes the partial exponent to fill with 1s.
+Thus, the value increases from +0.1 to +1.7, which is a mayor perturbation that will probably produce a prediction error.
+
+In the pruned model, it is also found that theof the BN layers is the most sensitive parameter, and the same explanation holds.
+However, in the seventh BN layer (set in Figure2), there is a clear decrease in the number of errors associated with bit-flips in bit 30 and an increase in the number of errors associated with bit-flips in bits.
+The reason is that some of thevalues in this layer, unlike in the rest of the BN layers, are greater than 2 but smaller than 3.
+This means that the exponents in the binary representations change drastically from 01111111 to 1000000.
+Then, a change in bit 30 of thoses will no longer cause a value to be a; instead, it will be a very small number that is less likely to produce a critical error.
+In turn, a bit-flip in bitswill now result in a considerable increase in magnitude, so the error rates for those bit positions grow compared to the layers withvalues smaller than 2.
+
+As observed in the unpruned model, flips in bit 30 of the biases oflayers located in the encoder branch do not produce as many errors as in the decoder part.
+Table6contains the total number of positive biases compared to the total number of biases in those layers.
+Again, as shown in Figure14(green lines), there is a high correlation between the sign of the biases and the error rate.
+
+As previously mentioned, Figure5exhibits a peak for the bias parameter of the firstlayer in bit 26.
+Furthering the discussion from the paragraph on the last, here 31 out of the 32 biases have an absolute value greater than(all 0s in the exponent except bits 29, 28 and 27).
+Hence, altering bit 26 produces the most significant increase in absolute value.
+While this increment may seem insignificant, considering the first layer’s activations (refer to Figure15) which are the lowest across the network (), even small perturbations can induce notable changes.
+
+There is also a noticeable peak in the error rates offor changes in bit 27 (set in Figure2).
+Among the 26 biases, 4 of them have 6 of the 7 LSBs of the exponent set to 1 (all except bit 27), placing their absolute value inrange.
+There are other 2 biases that are slightly outside this range.
+Simultaneously, the activations of this layer are not very large (refer to Figure16).
+In consequence, a bit-flip in bit 27 notably increases the value of those 4 biases to values larger than 1 but smaller than 2 (with the other 2 biases reaching a value close to 1).
+
+According to this, we could expect small error rate peaks in certain bit positions for every layer in Figure5, given that all bias parameter sets contain some values with binary representations that are one bit away from completing the 7 least significant bits of the exponent (partial exponent).
+However, this is not the case for every layer.
+The reason is that layers with higher activation ranges are more robust against such errors.
+
+An illustrative example is provided by the biases in(set in Figure2), where 10 out of 26 biases show an absolute value in the range.
+There are other 2 biases that are close to this range.
+In those cases, flipping bit 27 will cause a noticeable increase in the values, making them greater than one.
+However, those bit-flips do not induce more errors than inbecause of the broader range of activations (forandfor).
+
+The errors resulting from injecting a flipped bit 30 on theparameter in the batch normalization layers increase for the pruned model.
+The percentage ofparameters that are positive relative to the total is noted in Table7.
+As shown in Figure14(blue line), the correlation between parameter soundness and the error rate is almost perfect.
+
+This parameter is one of the most pruned as Table8shows the difference in the number of parameters before and after applying pruning.
+Visualizing the two lines plotted in orange in Figure14, it is observed that this is the case for which the two curves are farther apart.
+However, it should be noted that this is the oddest case, since all the biases are positive.
+This would imply an error rate of 100%, but we have previously discussed that very large positive biases can still be absorbed, reducing their adverse impact on the output.
+
+Finally,(set in Figure2) is analysed in detail as it has a peak in bits 24 and 25 (Figure5).
+Based on Figure17, problems arise when the bit-flip increases the magnitude of a value.
+Since all the biases of the parameter have bits in the rangeset to ’1’, a bit-flip in those bits will not increase their value, so an error is unlikely to happen.
+However, in many cases, a bit-flip in bit 24, and especially in bit 25, causes bias values to increase to even above unity (when the least significant 7 bits of the exponent are set to ’1’).
+
+The base of the pruned U-Net is also quite insensitive to single bit-flips (Figure5) due to small parameter values.
+However, it is observed that in the graph region located between the first two transposedlayers (-sets in Figure2) there is an increase in the error rate.
+This is not a surprise if we look at how the ranges of the weights in layer(set in Figure2) have increased after the pruning and the subsequent fine-tuning process (there is a noticeable drift to the left when comparing Figure11and18).
+
+The most intensely prunedlayers of the encoder branch are,,and(-,-,-and-sets in Figures2respectively), which are precisely the layers with the largest increase in the measured error rate.
+The pruning process did not result in a modification of the range of the weight values because, as expected, pruned filters contained very small weights.
+As can be observed comparing parameter ranges depicted in Figures8and19, the original model contains many irrelevant weights that are not present in the pruned model.
+In consequence, any SBU will be potentially more critical in the pruned model although, on the other hand, in most of implementations the probability of a SBU in smaller models is also lower.
+
+Since theparameters of the BN layers have shown to be the most sensitive ones of the network upon SBUs, fusing the BN operation with the previous, technique known as BN folding, may produce an improvement in the robustness of the model.
+Following the notation of Equation3, both operations can be fused into just oneoperation as follows:
+
+whereand.
+
+Although the original aim of this technique was to reduce the number of parameters to be stored and improve training performance, here we analyse if, indeed, it can help reduce prediction error rates produced by bit-flips.
+Figure20shows the statistics of errors for the unpruned model after having folded all BN layers.
+As can be seen, the layers associated with the highest error rates have been eliminated and, as a consequence of that, the base of the U-Net now does not produce any errors (there are neithers nor).
+The error rates associated with the kernel of thelayers have decreased while the error rates in the kernel and bias parameters of thelayers remains unaltered.
+However, the error rates to injected faults in the biases oflayers have increased.
+To explain this increment, attention must be paid to the changes produced in the ranges of these values.
+
+Table9collects some bias range statistics forlayers, both for the unfolded and the folded models.
+As expected, the folding operation has significantly increased the absolute value of the bias parameters.
+Biases with absolute values between 1 and 2 in the folded model are a bit-flip away in bit 30 from producing avalue.
+Similarly, bit-flips in any of the remaining bits of the exponent of biases in the range above 2 will increase their value, augmenting the probability of producing output errors.
+This analysis aligns with Figure20, showing that layers with the most values in the ’risky’ range also have the highest error rates, and vice versa.
+
+The same significant differences observed in the unpruned folded model are also evident in the pruned folded model (compare statistics in Figure5and Figure21).
+Firstly, the layers associated with the highest error rates have been removed.
+Secondly, the base of the U-Net does not produce any errors either.
+Thirdly, the error rates associated with thekernel decreases and the error rates inkernel and bias parameters remains stable.
+Lastly, the error rates associated with the bias oflayers have increased.
+Once again, some bit positionswhich previously caused few or no errors, are now generating a significant number of them.
+Looking to Table10, we see the same range increase of bias values as in the unpruned model after BN folding, which leads to higher error rates in the corresponding layers.
+
+In conclusion, although BN folding has positive effects on the general robustness of the model by eliminating layers with the highest error rates and the most dangerous situations from areas with low information, and reducing the number of parameters to protect, hence decreasing vulnerability, it also increases the probability of errors in some layers due to the increment of the absolute value of thebiases.
+
+SECTION: 4.28-bit integer quantized models (QNNs)
+
+The applied quantization scheme (Section3.2) involves converting weights to 8-bit integers and biases to 32-bit integers.
+Additionally, BN layers have been folded into previous convolution layers to reduce the number of parameters and speed up computations.
+According to[69], the quantized versionof a real numberis approximated by Equation5, whereis a real positive scale factor,is an 8/32-bit integer value, andis the zero-point integer value (0 for symmetric quantization).
+
+Thus, the valueresulting fromis:
+
+Due to the per-tensor and mainly symmetric quantization, the number ofvalues that need to be stored is considerably greater than that ofandvalues.
+Additionally, due to the quantization process itself, the S values have to meet certain restrictions[69]and are not of interest for the comparison being made.
+Consequently, bit-flips were only injected onand, which are represented in two’s complement arithmetic, the typical computer representation for fixed-point (signed integers are just one example) binary values (Figure22).
+
+In this representation, a notable drawback arises from the double functionality of the sign bit: a bit-flip in the sign bit converts a very small negative number into a very large positive number (and vice versa) and a very small positive number into a very large negative number (and vice versa).
+By contrast, two’s complement does not define a specific representation foror infinity, seemingly alleviating the issues associated with these values.
+
+We repeated the statistical fault injection campaign on the QNN and obtained results are graphed in Figures23and24respectively.
+Based on these results, the unpruned model shows, in principle, a superior robustness.
+
+The injection of a fault in the convolution weights shows minimal impact on the output (see Figure23).
+Due to skip-connections in the model, the only critical scenario is the appearance of bit-flips in the first layer.
+The significance of the perturbations in weights is negligible compared to the biases, which is a noteworthy observation.
+This means that for an error protection technique based on redundancy, it could practically be limited to storing and checking the biases.
+
+Contrary to what was observed for the unquantized models, encoder biases induce more errors than decoder biases.
+Since bit-flips cannot result ins orin two’s complement representation, the analysis differs.
+For QNNs the layer position is more determinant, mainly due to the presence of skip connections and longer error propagation paths.
+Indeed, the initial layers of the model are clearly the most sensitive ones.
+
+However, analyzing the sign of the biases remains relevant to explain the bit-flip errors in the initial layers of the encoder.
+For int-8 representation, perturbed parameters produce output errors that depend on the position of the flipped bits, being positionsthe most sensitive.
+Once a bit-flip in one position produces an increase in the bias value high enough to produce an error at the output, changes in higher positions become inconsequential.
+In order to get a general estimation of a single statistical error rate value generated by upset events in any of the considered bit positions, a linear weighting approximation based on bit significance has been applied.
+Figure25reveals a practically identical trend between the calculated bit-flip error and the ratio of positive biases.
+
+Finally, we analyse why bit-flips above bit 16, on average, result in significant errors, those below bit 13 cause very few errors, and below bit 9 induce none.
+By referencing Table11and Figures26,27,28and29, it can be seen that the maximum bias values hovers around.
+Thus, bit-flips in higher positions lead to a magnified bias, resulting in a significant increase in the error rates.
+Moreover, certain layers exhibit a requirement for 30/31 bits to represent all values.
+To expound on this observation, we must differentiate between highly significant parameters (those in the first layers of the encoder and the last layers of the decoder) and those of low significance (found in the base zone).
+
+If a parameter is placed in a highly relevant area of the model (e.g.,,,,,,,,), the necessity for a high number of bits primarily stems from representing negative values (Table11).
+However, there are relatively few instances of very negative values in these areas (as observed in Figures26,27and28).
+Notably, channels with very negative biases typically have negligible relevance to the output, as the ReLU activation function effectively nullifies their contributions.
+
+Conversely, in comparatively irrelevant areas of the model (e.g.,,,,,,,), the necessity for a high number of bits arises from the need to represent both very positive and very negative values (Table11).
+In these regions, there are numerous instances of very positive or very negative values (as observed in Figures27and29).
+However, many of the channels either contain very negative biases (which are absorbed by ReLU activation) or very positive values that are subsequently multiplied by nearly zero weights (thus, contributing insignificantly).
+
+In summary, although certain layers exhibit biases quantized to 30/31 bits, the high-order bits (typically 15/16 bits) are essentially redundant as they solely extend the sign.
+These bits could potentially serve as a means of detecting and/or correcting sensitive bit positions.
+
+Quantizing the model does not alter the significance of the base of the U-Net.
+Even when a bit-flip occurs at the most sensitive bit (bit 31), the deepest layers (-sets in Figure23) remain unchanged.
+This is because the convolution weights are very small, and only biases (as depicted in Figures27and29) contribute to the activations.
+
+The biases of the last convolution layer are,,,,,(as illustrated in Figure28), consisting of 3 positive and 3 negative biases.
+In the event of a bit-flip occurring in any of the bits within therange, the positive biases become more positive, while the negative biases become more negative.
+Applying equation from Section4.1.1, the expected error rate for a bit-flip in these positions is:
+
+This value is similar to that obtained experimentally by linearly weighting the error rates in therange (37.64% in Figure23).
+
+Considering that a bit-flip in the sign bit significantly modifies the magnitude, interpreting the results requires an inverse explanation: if the bit-flip occurs in bias 0, the value becomes very positive and will invariably be the winning class, even though it should never win (error of 100%); if it occurs in bias 1, the bias becomes very negative, and class 1 will never win (error of 45.09%).
+The same reasoning applies to the remaining biases.
+Hence, the error rate associated with bit-flips in bit 31 should be approximately the complement of the error associated with bit-flips in bit, i.e., 62.94%.
+This value is notably smaller than the one obtained experimentally, which is 88%.
+The discrepancy can be attributed to the uneven distribution of errors injected into each of the six biases in the statistical analysis for bit-flip 31 together with the presence of highly unbalanced terms in the error rate equation for bit-flip 31 (complement values are 100, 45.09, 95.72, 27.58, 93.09 and 16.14).
+
+Despite the decrease in robustness of the pruned model (as illustrated in Figure24), the relative negligible importance of weights compared to biases persists.
+
+The pruning process removes numerous irrelevant channels containing high negative biases along the whole model (Table12).
+This can be seen by comparing the same figures for the unpruned and pruned case (e.g. Figures26and30).
+The only region where this cleanup may not be too pronounced is the central area (as seen in the comparison of Figure29with Figure32).
+However, even in this region, the activations show a less homogeneous distribution, which indicates that associated weights are more meaningful.
+
+If we compare again the ratio of positive biases of thelayers with bit-flip error rate in therange (Figure31) the existing correlation between those two quantities for the first sixlayers can be observed.
+
+Finally, it is worth noting that, similar to the unpruned case, bit-flips occurring below position 9 do not significantly affect the output.
+Similarly, errors become increasingly detrimental to the model from position 16 onwards.
+
+The QNN exhibits the same characteristics at the base of the U-Net as the quantized unpruned model.
+Specifically, the values in-sets do not generate any errors in the output, regardless of the position of bit-flips.
+This is a consequence of the small values of convolution weights, and only biases (as depicted in Figures32and33) contribute significantly to the activations.
+
+The explanation given for the unpruned model remains applicable.
+Despite having slightly smaller magnitude bias values (,,,,,), as depicted in Figure34, these biases retain their sign bit.
+The error rates experimentally obtained for bit-flips in positionsextracted from the linear weighting of the data is, consistent with the theoretical error value.
+
+The error associated with a bit-flip in bit 31 is 93%, exceeding the expected value due to the uneven distribution of bit-flips among the biases.
+
+To estimate error rates under regular operating conditions, we have performed a statistical analysis of MBUs on both quantized unpruned and quantized pruned models.
+Since FIT (Failures in Time) values reported by manufacturers such as AMD-Xilinx[67]for the most up-to-date FPGA technologies are in the range of tens of FIT/Mb, and given that targeted BFAs in embedded systems would be very improbable, this study has been performed based on a randomized fault injection campaign.
+
+We randomly injected [1, 10, 50, 100, 250, 400, 650, 800, 950, 1250, 1550, 1750, 2000] bit-flips into the parameters of the entire model and repeated each injection 150 times to obtain average and standard deviation values.
+Figures35and36show the mean multiple bit-flip error rate on the quantized unpruned and pruned DNNs, respectively.
+As expected, the unpruned model is quite robust since the subset of highly sensitive parameters is small compared to the whole parameter set, so the probability of failure is low compared to that of the pruned model.
+Nevertheless, it is worth noting that assuming a failure rate of 20 FiT/Mb (based on data from[67]), the unpruned model, with 100 times more parameters (see Table2), experiences 5 SEUs/hour, whereas the pruned model experiences 0.05 SEUs/hour.
+Specifically, for models quantized to INT8, the unpruned model would accumulate 1000 upsets in just 8.3 days of operation, whereas the pruned model would require approximately 2.3 years.
+
+The results align with those reported by other authors in the context of image classification.
+For instance, the accuracy loss in[38]for the DNN when exposed to random BFAs is quite similar to that of the unpruned model (Figure35).
+Similarly, the accuracy loss when faults are injected into sensitive parameters is comparable to that of the pruned model (Figure36).
+In this regard, injecting random faults into an optimized and compressed model is analogous to injecting targeted faults into an uncompressed and not optimized model.
+In[39], it is also noted that for any given network, a very high number of random faults must be injected to significantly degrade inference quality.
+Finally,[37]identifies several techniques as either beneficial or detrimental to network robustness, among which pruning is detrimental, whereas increasing network capacity is beneficial.
+
+SECTION: 5Robustness enhancement techniques
+
+As discussed in Subsection2.2, neural network hardening methods against single bit-flips can be categorized into four groups: redundancy-based methods, activation function modifications, parameter modifications, and training/inference process modifications.
+Key comparison features include recovered accuracy, storage overhead, time overhead, and retraining requirements.
+
+Redundancy-based methods, such as triple-modular redundancy[17], introduce significant storage and time overhead.
+This is due to the need to compare the original model parameters against two additional copies.
+However, these methods do not require retraining.
+
+Methods that modify activation functions also introduce storage and time overhead, which can be either fixed[56,57]or model-dependent and variable[18,44].
+Some methods, such as[58], require the modified activation function to be included during training, necessitating dataset availability and introducing a possible training overhead (the authors report around 6% training overhead).
+
+Methods based on parameter modifications generally do not introduce storage overhead.
+For instance,[59]does not add storage or time overhead but requires retraining to create a more homogeneous architecture with fewer critical bottlenecks.
+The MATE method proposed in[60]avoids retraining and memory overhead by replacing non-critical mantissa bits with error correction codes, although it does introduce a time overhead.
+Similarly,[61]adjusts the parity of weights by flipping the least significant bits as needed, avoiding storage overhead but increasing inference time as faults are masked with zero values.
+
+The requirements for methods that modify the training or inference process vary.
+The method proposed in[63]relies on adversarial training, requiring dataset availability.
+In contrast, the method in[64]uses the inference results of previous frames, adding both storage and time overhead.
+The method described in[62]has zero overhead, but is only applicable if the CNN ends in a fully connected layer.
+
+Regarding methods that aim to mitigate or mask BFAs, the approach described in[14]requires dataset availability because it involves training additional internal classifiers, which increases storage overhead.
+However, due to the nature of this method, which promotes early exits, inference time is reported to be reduced to 46.1% - 59.4% of the original model’s inference time.
+In a different approach, the authors of[65]extract a unique signature from the DNN offline and verify the integrity of the model on the fly.
+This method introduces additional time and storage overheads.
+While these approaches enhance resilience against faults, they often involve large memory and computation overheads, challenging their suitability for safety-critical DNN inference on edge devices.
+Therefore, in this work, we aim to enhance robustness without increasing memory or computational costs.
+
+The in detail analysis of error propagation described in the previous sections allows for identifying some key factors that shape the sensitivity of segmentation FCNs to SBUs.
+As explained, this sensitivity depends mainly on the combination of two factors: the location of the affected parameters in the architecture of the models, and the parameter values (range, sign and their numeric representation).
+Based on this knowledge, it is possible to establish some design rules to protect the model from being too sensitive to SBUs by avoiding "risky" states while preserving performance.
+One of such states in single-precision floating-point (IEEE 754 format) is having too many parameters which are one bit-flip away from having the exponent filled, because this representation stands for two especially destructive values:and.
+Consequently, when a SBU causes the exponent to be filled, undesirable results are produced during inference.
+Similarly, partial exponent filling (leaving aside the MSB) as illustrated in Figures13and17, also leads to a notable number of errors.
+This occurs because a number with an absolute value smaller than 1 transforms into a number with an absolute value greater than 1 (but still smaller than 2).
+Given that weight and bias values typically fall within the range of 0 to 1 (except for thevalues of the BN layers), such situations are common and require attention.
+
+SECTION: 5.1Modifying model’s parameterization
+
+The proposed protection method involves identifying parameters with exponents containing either seven bits set to ’1’ or partial exponents with six bits set to ’1’.
+This is graphically illustrated on some example values in Figure37, where coloured in green are the values with an exponent identified as "risky" by the tool.
+Exponents containing seven ’1’s (with the MSB set to ’1’) have not been included, as parameters with such high values are not likely in neural networks.
+
+The proposed method involves incrementing or decrementing the exponent by one, with the aim of making the number of ’0’s to be greater than one.
+This prevents the partial exponent from being filled if a bit-flip event occurs.
+However, not all the exponents with one ’0’ are candidates for this method.
+For example, modifying exponentby 1 would not be useful (Figure37), as it would either decrement the number of ’0’s or leave it unchanged.
+Similarly, incrementingwould not be useful either, as the number of ’0’s would remain unchanged.
+Furthermore,has been omitted because bit-flips in the partial exponent would significantly increase the value of the parameter above 2.
+
+After performing the increment/decrement of the exponent, the resultant value of the parameter is doubled/halved.
+Thus, it has to be compensated by modifying the mantissa.
+If the exponent is increased, the mantissa value needs to be reduced to the minimum value (1.0), while if the exponent is decreased, the mantissa value needs to be incremented to the maximum value (1.999).
+Depending on the original value of the mantissa, the protected value will differ more or less from the original.
+This modification of the parameter values would produce a perturbation in the model’s performance, thus the tool allows for setting upper and lower thresholds for the mantissas to be identified as "full" or "empty" and, thus, candidates for protection.
+These thresholds define the "protection target" (PT) parameter of the tool.
+According to this setting, the tool can first evaluate in what extent the performance of the model is modified.
+
+To illustrate how this technique performs on the models under study, four different PTs have been explored: PT1 (1.999, 1.001), PT2 (1.99, 1.01), PT3 (1.95, 1.05), and PT4 (1.9, 1.1).
+PT0 stands for unprotected models.
+Table13shows the number of candidate parameters selected for protection by the tool according to the protection target.
+
+Tables14to17compare the IoU metric on the test set between the original unprotected model and the modified protected ones with different PT settings.
+Depending on the analysed model, the degradation of the IoU metric shows different sensitivity to the PT value although, as expected, the higher the PT, the higher the model perturbation.
+
+For the unpruned unfolded model, PT2 is the highest feasible PT (Table14).
+For the unpruned folded model, it has to be assessed whether PT3 is too aggressive or not (Table16).
+Regarding pruned models, PT3 is adequate so it remains to be determined whether PT4 is too demanding or not (Tables15and17).
+
+To evaluate the suitability of applying a certain PT setting, the following points have been taken into account.
+As applying this methodology does not either create new potentially dangerous situations or solve the unprotected dangerous ones, PTs are going to be evaluated by injecting a single bit-flip in the "risky" position (so that exponent or partial exponent would be filled) in the parameters selected with each PT.
+The assessment is based on the following three metrics: the global IoU (GIoU), the weighted IoU (WIoU) and the error rate.
+IoU-based metrics evaluate the model just in the labelled pixels while error rate is a comparison against the prediction of the faultless model so, even in absence of bit-flips, protected models could have a certain error rate.
+In this section, analysis will be focused only on the results with the maximum achievable PT values.
+
+Applying PT2 yields notable benefits (see Table18), as the error rate is significantly reduced while the IoU metrics, especially for bit 26, show improvement.
+There is a scenario where the three indicators do not align (bit 25): despite minor improvements in the IoU metrics, the error rate considerably increases for the protected model.
+This could be attributed to the fact that, unintentionally, in the absence of faults, the protected model outperforms the non-protected model (see Table14), indicating a considerable number of pixels that change their value even before bit-flip injection.
+
+Analyzing PT4 for the pruned unfolded model (Table19), we can see that a straightforward conclusion cannot be extracted as the benefits of the protection are not shared among all bits.
+As a consequence, it is necessary to assess how the protected model behaves beyond the labeled pixels, since erroneous pixels may be situated in regions that are not critical.
+Otherwise, protection target should be lowered down to 3, as it has been verified that the protected model outperforms the non-protected one.
+
+In the unpruned folded model, PT2 is the highest achievable one, albeit with unimpressive results, as there is neither loss nor significant improvement (see Table20).
+Nevertheless, despite the lack of remarkable changes, this PT still yields benefits, as it increases the mean WIoU and reduces the mean error rates.
+Thus, its application keeps being beneficial for the model.
+
+In the pruned folded model, the highest achievable PT is 3 (Table21).
+Even though the error rate slightly increases (but not more than 0.31%), positive differences in terms of GIoU and WIoU are found for all bit positions.
+After applying PT4, the improvements in WIoU disappear, while the error rate still increases.
+
+After assessing all the models, it can be concluded that the target from which to start the protection can be deduced just by inspecting the results of Tables14to17.
+For all the models, this target has been at least 2.
+Depending on the parameters of the model, a PT of 3, 4, or even higher may still be beneficial.
+As this method is completely memory and computation-free, it can be combined with memory-hungry methods, such as modular redundancy, which would focus on protecting just the critical parameters that have not been protected with this method.
+
+SECTION: 5.2Additional protection techniques: revisiting model’s parameterization
+
+Additional protection techniques to that proposed in Section5.1can be applied to enhance model protection with no memory and computational overhead.
+In contrast to the previous method, the following methods exclusively focus on the redefinition of the model parameters.
+This adjustments ensures that, in the absence of bit-flips, the model retains its original behaviour while preventing potentially critical value changes due to bit-flip events.
+
+Applying sparse pruning can be beneficial in terms of robustness regardless of whether the processor is designed to improve inference performance in the presence of sparse matrices.
+In case of identifying that the model has parameters in the rangethat are not relevant for inference, applying sparse pruning (setting irrelevant parameters to 0) prevents the appearance ofvalues in case of bit-flips.
+
+If folding of batch normalization layers, which can be viewed as depthwise convolutions (see Equation7), is not applied,,,andparameters can be reconditioned as long as the weight () and bias () values do not change.
+Parameter reconditioning can be applied with two aims: either directly reduce the amount of parameters at risk of having the exponent filled or just modify their mantissa values so that the protection method described in the previous section can be applied.
+
+This method, which is similar to CLE[75]for quantization, allows for the protection of convolutional kernels, which contain most of the parameters in the model.
+The method is based on the positive scaling equivariance property () which is held for models containing Parametric Rectified Linear Unit (PReLU) functions.
+The activation mapyof a certain layercan be calculated aswhereandare the weights and biases of the convolutional kernel applied to layerandxis the input cube.
+If we calculate the activation map of the next layerin terms of the previous layer, Equation8shows that model parameters can be reconditioned as long as the activation function of the-th layer fulfills the equivariance property (e.g. ReLU and Identity).
+
+whereSis a diagonal matrix containing the scale factor of the parameters for each of the filters of a convolutional layer.
+
+Bias absorption[75], which is applied during post training quantization procedures, can be implemented with a different purpose in this domain: reducing the number of critical parameters in the model.
+The only requirement in order to apply this method is thatmust be fulfilled.
+It is straightforward to see that this condition will not be met by any non-linear activation function, will always be met by identity and will be met by ReLU activations just in certain situations () that are closely related toxdata distribution andWandbparameters.
+The method is described in Equation9, whereand.
+
+SECTION: 6Conclusions
+
+This article analyses the robustness of encoder-decoder type FCNs against SBUs in semantic segmentation tasks and how compression techniques applied for deployments in embedded systems alter this robustness.
+The analysis is based on a statistical campaign of software-injected SBUs in different network parameters to conduct a layer-by-layer and bit-by-bit in-depth study of the sources of critical errors.
+The reference models used in this study were designed and optimized for hyperspectral image segmentation with application to autonomous driving systems, and were trained on the HSI-Drive v2.0 dataset.
+We identified the potentially most problematic bit-flips according to the location of the parameters in the model architecture, their binary representation, range and sign, and relevance to the inference process.
+From this analysis, a tool for estimating the model’s robustness and a simple memory and computation-free error mitigation method is proposed.
+
+This study reveals that in 32-bit floating-point FCN models with lower-bounded activation functions, such as the commonly used ReLU, critical errors are primarily associated with SBUs that result in an increment in the parameter values.
+This is because, as noted by other authors, commonly used machine learning computations are often monotonic.
+However, not all increments pose the same risk.
+The most sensitive bit is the MSB of the exponent, as its bit-flip significantly increases the model parameters’ values from below 2 toor, in the worst-case scenario, propagating the error throughout the model.
+Given the typical values of the parameters in BN layers, this layer is the most sensitive to such bit-flips.
+Furthermore, we have found that this layer extends the range of output values, thus contributing negatively to the propagation of errors that may have occurred in previous layers.
+In this regard, it is noted that layers with many positive biases are particularly vulnerable.
+Another particularly "risky" situation arises from parameters with almost filled partial exponents.
+When a partial exponent is filled by a bit-flip, the parameter undergoes a transition from a value significantly below unity to a new value above unity, leading to a noticeable amount of errors.
+Due to the specific characteristics of encoder-decoder type FCNs with skip connections, SBUs in the first layers of the encoder branch and in the last layers of the decoder branch, which are closer to the model’s output, produce comparatively higher error rates.
+On the other hand, it is observed that perturbations in the parameters at the base of the model have little influence on the output.
+
+Regarding compression techniques, pruned models show higher sensibility to SBUs than unpruned models.
+This is attributed to the overparameterized and parallel nature of original unpruned DNN models.
+However, the primary advantage of pruned models lies in their smaller size, as it is less likely for an SBU to occur in a model with fewer parameters.
+Hence, to accurately assess the influence of pruning on the vulnerability to SBUs, model implementation details such as circuit design and selected target device should be considered.
+
+With respect to data representation, integer-quantized models show higher robustness to bit-flips.
+This is due to the particularities of integer binary representation, since there is no option to extreme values such ass ors to occur.
+The employed quantization method, where weights are quantized to 8 bits while biases are quantized to 32 bits, makes the latter more sensitive to SBUs.
+Furthermore, it is generally observed that the upper word of the bias representation simply serves to extend the sign, so it could be used to implement error detection and/or correction methods with no memory overhead.
+Finally, since the model sensitivity is fundamentally linked to perturbations in the biases and these constitute a tiny subset of the whole parameter-set, memory-intensive error mitigation techniques such as duplication or triple modular redundancy applied only to biases would ensure high model protection with low memory burden.
+
+When combining prunning and quantization it was observed that the fully compressed model is more robust than the pruned unquantized model but less robust than the unpruned quantized model.
+It can be concluded that integer quantization always contributes to robustness enhancement, whereas the evaluation of the effects of pruning is tied to the applied compression degree and the final implementation of the model.
+
+Concerning the robustness analysis of quantized models, if instead of a targeted fault injection technique random multiple fault injection is performed, it is observed that the unpruned model exhibits a considerably greater robustness.
+This is because, in quantized models, the sensitive parameters are the biases, and not the weights, which constitute a small subset of the total parameters, reducing the likelihood of a random bit-flip occurring in them.
+Additionally, due to the network architecture, most parameters are concentrated in the base of the U-Net, where the least critical layers are located.
+As a result, after pruning, the robustness against bit-flips is significantly reduced since nearly any bit-flip can affect a sensitive parameter.
+Nonetheless, assuming a failure rate of 20 FiT/Mb, it is worth noting that the unpruned model experiences 5 SEUs/hour whereas the pruned model experiences 0.05 SEUs/hour.
+This implies that the unpruned quantized model would need just 8.3 days of operation to accumulate 1000 upsets, whereas the pruned model would require approximately 2.3 years.
+
+Finally, based on the performed analysis, a set of complementary protection methods is proposed to mitigate some delicate situations like partial exponent completion.
+In particular, we describe a new memory and computation overhead-free method for the protection of certain model parameters in floating-point representation.
+This technique enables the selection of various protection targets, where a higher target involves attempting to protect more parameters in the model.
+However, setting too ambitious protection targets may result in an excessive modification of the original parameterization, thus a model performance analysis must be accomplished beforehand.
+
+SECTION: References

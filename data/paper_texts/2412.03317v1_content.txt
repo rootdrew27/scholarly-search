@@ -1,0 +1,331 @@
+SECTION: FlashAttention on a Napkin: A Diagrammatic Approach to Deep Learning IO-Awareness
+
+Optimizing deep learning algorithms currently requires slow, manual derivation, potentially leaving much performance untapped.
+Methods like FlashAttention have achieved aperformance improvement over native PyTorch by avoiding unnecessary data transfers, but required three iterations over three years.
+Automated compiled methods have consistently lagged behind.
+GPUs are limited by both transfers to processors and available compute, with transfer bandwidth having improved at a far slower pace.
+Already, transfer bandwidth accounts for 46% of GPU energy costs.
+This indicates the future of energy and capital-efficient algorithms relies on improved consideration of transfer costs (IO-awareness) and a systematic method for deriving optimized algorithms.
+In this paper, we present a diagrammatic approach to deep learning models which, with simple relabelings, derive optimal implementations and performance models that consider low-level memory.
+Diagrams generalize down the GPU hierarchy, providing a universal performance model for comparing hardware and quantization choices.
+Diagrams generate pseudocode, which reveals the application of hardware-specific features such as coalesced memory access, tensor core operations, and overlapped computation.
+We present attention algorithms for Ampere, which fits 13 warps per SM (FlashAttention fits 8), and for Hopper, which has improved overlapping and may achieve 1.32 PFLOPs.
+
+SECTION: 1Introduction
+
+SECTION: 1.1Background
+
+To execute an operation, graphical processing units (GPUs) must move data from high-level DRAM to low-level compute cores. GPUs are as limited as much by GB/s of memory bandwidth as TFLOPs of available compute.
+However, AI models have passed thememory wall—algorithms are increasingly limited by bandwidth/transfer costs(Ootomo & Yokota,2023; Ivanov et al.,2021; Gholami et al.,2024), as compute capability has improved far more quicklyy than DRAM bandwidthy(Gholami et al.,2024).
+Furthermore, DRAM already accounts forof total system power(Ghose et al.,2018).
+As memory becomes increasingly inefficient relative to compute, the importance of considering transfer costs—IO-awareness(Dao et al.,2022; Aggarwal & Vitter,1988)—will become even more critical.
+
+FlashAttention(Dao et al.,2022; Dao,2023; Shah et al.,2024)is an IO-aware approach to attention that overcomes the memory wall. Attention(Vaswani et al.,2017)is central to generative models, including large language models (LLMs)(Jiang et al.,2024; Dubey et al.,2024)and image generation algorithms(Ho et al.,2020; Esser et al.,2024; Rombach et al.,2022; Podell et al.,2023). FlashAttentionfusesthe steps of attention. It computes all sequential steps on low-level memory, avoiding unnecessary intermediate data transfers. It achieves aincrease in throughput compared to standard PyTorch, arguably making large contemporary models possible.
+
+However, the conditions under which fusion is possible are not generally exploited. Simple cases like element-wise functions can be compiled into matrix multiplications(Li et al.,2020; Paszke et al.,2019; Sabne,2020), but the bespoke techniques of FlashAttention required manual derivation and three iterations over three years to take full advantage of Hopper hardware(NVIDIA,2022)features.Triton(Tillet et al.,2019)offers some compilation for hardware features but has lagged behind new FlashAttention algorithms(Dao,2023; Shah et al.,2024). The current best technique for generating IO-aware algorithms that exploit hardware features remains slow, manual derivation.
+
+Innovating new optimized algorithms is essential to efficient deployment of models.
+In addition to FlashAttention, methods like grouped query attention(Ainslie et al.,2023), KV-caching(Shazeer,2019), and quantization(Frantar et al.,2023; Gholami et al.,2021)all reduce transfer costs while having minimal impact on the function we implement or the quality of model outputs.
+Much like fusion, the success of these approaches relies on understanding the compositional structure of algorithms so that similar but less costly algorithms can be executed.
+A systematic approach to innovating optimized algorithms will require a mechanism for understanding the compositional structure of algorithms along with a performance model which compares varying means of executing the same operation.
+
+The hardware characteristics of GPUs have a significant impact on performance which varies depending on the target algorithm.
+When choosing between A100s, H100 SXM5s, or H100 PCIes(NVIDIA,2022, p.39), we must consider the varying compute, bandwidth, intermediate hierarchies, architecture features, and low-level memory, for which we pay in environmental and economic resources.
+The application of these features is often non-obvious, FlashAttention-2(Dao,2023)was released while the hardware for FlashAttention-3 already existed(Shah et al.,2024), which achievedimprovement in forward speed. Understanding the impact of GPU features is a necessary component of innovating optimized approaches and making full use of deployed resources.
+
+SECTION: 1.2Contributions
+
+This paper contributes a diagrammatic scheme for representing deep learning algorithms based offNeural Circuit Diagrams(Abbott,2023)(Section2) which can be used to quickly derive methods like FlashAttention along with a performance model for transfer costs which factors in lower-level cache size (Section3).
+We then show how the performance model scales to a multi-level hierarchy,
+providing expressions that considers GPU hierarchy configurations and the memory sensitivity of algorithms
+(Section4).
+Finally, we show how diagrams can be converted to pseudocode, which reveals the application of hardware-specific features like coalesced memory access, tensor-core operations, and overlapping operations (Section5). To show the advantages of this approach, we present Ampere and Hopper attention algorithms with reduced low-level memory usage compared to FlashAttention.
+
+SECTION: 2Diagramming Deep Learning Algorithms
+
+SECTION: 2.1Diagramming Functions and Data Types
+
+Diagrams have alternating columns of data types and functions. Data type columns are shown in Figure1. Arrays such asare represented by a wire for each axis labeled with the size. Data types may be tuples of arrays, such as, and are represented by placing a dashed line between constituent arrays.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.45]figure[\FBwidth]
+
+Functions between data types are represented by labeled boxes or pictograms with their input/output shapes to the left/right. Sequential execution (composition) of functions is shown by horizontal placement (Figure2, creating a diagram with alternating columns representing data types and functions. Parallel execution (concatenation) of functions stacks them with a dashed line in between (Figure3). A concatenated function takes concatenated inputs and provides concatenated outputs. The change in the input/output is reflected by the diagram.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.45]figure[\FBwidth]
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.45]figure[\FBwidth]
+
+We represent identity functions that leave inputs unchanged by extending the data type. This reflects that composition with identities leaves a function unchanged. Functions are stateless and are defined by how they map inputs to outputs. Therefore, we concatenate with identities to represent a function acting on some data but leaving the rest unchanged and available. With these tools, we can build compound diagrams such as Figure4.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.45]figure[\FBwidth]
+
+Functions can be mapped over an additional axis, represented by weaving the axis over the function’s outputs and a choice of the inputs (Figure5). This diagrammatic implementation naturally updates the input and output sizes for the mapped function. When an input segment is not weaved, its data is copied to evaluate each index along the outputs of the new axis. The axis can be weaved into any location of the target segments.
+
+Weaving a function allows for complex mappings to be represented and avoids the ambiguity of typical expressions. We can weave primitives defined on items, such as multiplication, addition, and copying. We use weaving to represent the splitting and joining of shared axes, which overcomes the typical difficulties of expressing how arrays are partitioned and concatenated. We show this in Figure6.
+
+SECTION: 2.2Representing Deep Learning Algorithms
+
+We have so far expressedfunctions— maps between inputs and outputs — diagrammatically. Deep learning models employalgorithms, which implement a function but have resource usages and inputs/outputs located at different levels. We embed algorithms in a hierarchy. A hierarchy consists of levels connected with pipes (as in Figure7), which allow for memory sharing with a family of cores located at the level below. The available algorithms are restricted to those provided at each level of the hierarchy.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.35]figure[\FBwidth]
+
+We use colors to represent levels, and color arrays to diagram where they are located. In this section, we use a two-level model where higher levelarrays are colored black and lower levelarrays are colored orange. This lets us diagram algorithms as in Figure8.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.62]figure[\FBwidth]
+
+We are interested in algorithms’ total transfer costand maximum memory usage per core(memory usage). These resource usages are defined per level and measured in number of values, and can be determined from diagrams as in Figure9. Total transfer costs are equal to the total size of data loaded to and saved from a level, equal to the sum of the size of arrays changing colors. Memory usage is lower bounded by the maximum size of data at a level for any column. We aim to minimize the total transfers while keeping memory usage below a hardware limit per level,.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.52]figure[\FBwidth]
+
+As diagrams show all data types, operations, and their arrangement, we can adapt our performance model to consider all aspects of an algorithm’s performance. Using diagrams, we can approximate compute by taking the compute required to execute an algorithm multiplied by the size of axes it is weaved over. A-size contraction requiresFLOPs; therefore,bymatrix multiplication requiresFLOPs. In AppendixA.5.3, this is used to find the clock cycles required per column to overlap computation.
+
+SECTION: 2.3Group Partitioning
+
+The first optimization strategy we introduce is group partitioning (tiling) a mapped algorithm (Figure10). If an algorithm is weaved over an axis, then the axis can be split, the mapped function applied, and the axis rejoined to yield the same result. Each sub-algorithm acts on a batch of the data in a separate core with reduced low-level memory usage.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.45]figure[\FBwidth]
+
+We can diagram this strategy by labeling the weaved axiswith the target group sizewhile at the lower level as in Figure11. The low-level memory usagefor the diagram is then calculated using this group size, not the full size of the axis. Each sub-algorithm needs to load and save its batch input and output data. The per-group transfer costis calculated using thegroup size for the partitioned axis which is multiplied bybatches to attain.
+
+Non-grouped inputs are sent to all active cores at the lower level, meaning their transfer costs are multiplied bywithout reduced per-group transfer costs. Smaller group sizesdecrease memory usage but increase, increasingif there is an unweaved input. To reduce total transfer costs, we must find the maximumvalue that does not exceed maximum memory usage.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.52]figure[\FBwidth]
+
+If multiple weaves are relabeled, the data is batched over each as in Figure12. The total number of sub-algorithms is the product of the number of batches for each axis,. The relabeled sub-algorithm represents the memory usage and per-group transfer costs of each sub-algorithm, using the group sizesandfor resource usage calculations. We then multiply the transfer costs by. We can use this to determine the optimal group sizes for an algorithm grouped over multiple axes, such as matrix multiplication (see Section3.1), and to determine whether it is worth grouping a small axis or transferring its full size.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.45]figure[\FBwidth]
+
+SECTION: 2.4Stream Partition
+
+Stream partitions (recomputation) exploit recursively decomposable polymorphic functions to feed data in batches while maintaining intermediate outputs on-chip, reducing low-level memory usage. Functions can be streamed if they are polymorphic for a specific axis (defined for that axis being of any size) and have an accumulator that can incorporate incoming data to recompute the maintained output, as shown in Figure13. This allows for a recursive expansion (see Figure14) that maintains minimum data on-chip at any point.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.43]figure[\FBwidth]
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.33]figure[\FBwidth]
+
+If an axis originates from a transfer and is fed to a recursively decomposable polymorphic function, then it can be relabeled with the streaming batch size (stream size). This creates a representation of the sub-algorithmwhich is repeatedly applied to process the data. We need to add the output sizein parentheses at the input to consider its contribution to memory usage. The memory usage of the algorithm is then determined using the stream sizeinstead of the full axis size. As we eventually stream the entire axis, we use the full axis sizeto evaluate transfer costs. Typically, we strictly benefit from limiting the stream size toas this reduces memory usage while imposing no increase in transfer costs.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.56]figure[\FBwidth]
+
+Per the fusion theorems of AppendixA.1, streamable axes are resistant to modifications. The streamable axis may be a single axis of an array, and composing or weaving a streamable algorithm while maintaining this axis yields a streamable algorithm. This allows the stream labeling to be maintained for resource usage evaluation as in Figure16. This allows the streamability of complex functions like attention to be derived from a streamable kernel. In Figure17, we apply group partitioning to a mapped streamable algorithm. We usefor per-group transfer evaluations, and bothandto evaluate memory usage.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.45]figure[\FBwidth]
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.45]figure[\FBwidth]
+
+SECTION: 3Examples
+
+SECTION: 3.1Matrix Multiplication
+
+As contraction (dot product) is streamable (see AppendixA.3.1), we can use it as a kernel for deriving the streamability of matrix multiplication, its weaved form. This provides a diagram that supplies a performance model. We then optimize for the batch sizes to minimize total transfers given some maximum lower-level memory usage. Unlike standard approaches(Gholami et al.,2024; Ootomo & Yokota,2023), this performance model indicates that the transfer cost ofmatrix multiplication is cubic for.
+
+SECTION: 3.2Attention
+
+We derive the streamability of attention from the fusion theorems. We begin with the fact that SoftMax-Contraction is streamable (AppendixA.4). Then, we can compose with a contraction over the queries as analgorithm from Figure16. This generates a streamable algorithm, which we weave with theandaxes. This generates Figure19.
+Correctness is ensured as the diagram gives the typical expression for attention,, with axes clearly indicated.
+We can then labelto distribute the queries across processors, yielding the FlashAttention algorithm.
+Figure19, then, can be seen as deriving and providing a performance model for FlashAttention.
+
+We can apply a similar technique to find the transfer cost of grouped query attention(Ainslie et al.,2023)(Figure20) and multi-head attention(Vaswani et al.,2017)(Figure21). These use additional weaves, but their evaluation remains straightforward. This shows how diagrams can be used to both derive optimizations and experiment with modifications to the algorithm, motivating further innovation.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.22]figure[\FBwidth]
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.25]figure[\FBwidth]
+
+SECTION: 4Analysis of Performance Models
+
+Once a two-level model optimization of an algorithm is found, we can extend it to consider a multi-level hierarchy.
+Each lower level has tiles which fit into the level above (Figure22), meaning the optimal strategy and performance model extend in a generalizable manner.
+We can create universal performance model for transfer costs which considers the impact of the GPU hierarchy and the transfer rate and memory caches at different levels.
+This allows us to make informed choices between different GPU architectures given their energy and capital costs, levels of quantization we employ, and the configuration of GPU hierarchies.
+
+SECTION: 4.1Optimal Transfers
+
+Applying the two-layer model to diagrams provides optimal transfer costsgiven some configuration of axis sizesand lower-level memory. So far, these expressions have a standard form given by the sum of power functions which solves for Equation4in AppendixA.2:
+
+The indexiterates over terms, the coefficientis dependent on the axis sizes, andis an exponent greater than zero as transfers necessarily decrease with increased memory size. The exponentsindicate the sensitivity of performance to memory size and indicate how data is distributed. For attention, thefactor indicates the data is broadcast to all groups, while for matrix multiplication thefactor indicates square tile distribution.
+
+SECTION: 4.2Multi-Level Performance Models
+
+An algorithm with multiple levels requirestransfers for each. Even though data cannot be directly transferred from the highest to lowest levels, lower levels can utilize the data loaded and saved by intermediate levels. The execution ofintermediate level transfers makes data available for the lower leveland accounts for saving it back. Each intermediate-level tile fits a larger number of low-level tiles, among which it distributes its data. This fitting process has a negligible error with large. We assign a weighted transfer costto each level. For the highest level, we assumeand, as data is already present. This means that the total weighted transfer cost of an algorithm can be expressed by:
+
+Therefore, the relative performance of GPUs is determined not just by the raw transfer rates but also by the memory size of available levels and the specific algorithm being implemented. For attention, the key factor per level is. In AppendixA.5.3, we see that Hopper, by effectively doubling low-level memory, doubles the amount that,streams are shared. This is equivalent to an Ampere architecture with double the bandwidth, highlighting the importance of low-level memory and architecture features.
+
+SECTION: 4.3Quantization
+
+Equation2and the two-level model consider transfers and storage limits in terms of number of values. However, GPUs are restricted by the number of bytes we can transfer and store. If we havebytes per value, then the maximum number of valuesand the transfer weight is. Substituting these expressions into the total transfer cost, we get:
+
+As, total transfers are superlinear to the degree of quantization. Halving the quantization fromtocan accelerate attention by up to, and improves large matrix multiplication by a factor of. This indicates that a generous use of quantization and specialized kernels is critical to high-throughput implementations of models.
+
+SECTION: 4.4Intermediate Caching
+
+We can choose to store output data at lower levels, and save it up in chunks. This changes the level immediately above the lower level to a caching level, which we indicate by adding asterisks to its output data as in Figure22. The size of this column is not memory restricted by the intermediate level which is only used to temporarily store data as it is sent up. However, the lower levels must remain active to store data, and this imposes the restriction thatwhich is a hardware limit. With an output restricted algorithm, this results intransfers being required for the intermediate level, using the total lower level memoryinstead of its own hardware maximum memory. This is elaborated in AppendixA.2.1.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.45]figure[\FBwidth]
+
+SECTION: 4.5Cross-Transfer Levels
+
+Our model can encompass levels that perform inter-core communication instead of providing shared memory by using modified weighted transfer weights. These cross-transfer levels encompass H100 thread block clusters(Luo et al.,2024), multi-GPU systems, and intra-warp communication.
+We set upas a higher level,as a cross-transfer level, andas a child level composed of linked processors. Instead of sendingdata directly to children, we senddata to any of the interconnected children and cross-transfer the remaining data as in Figure23. This results in a performance model with modified transfer weights and levels, adding a levelbetweenandwith transfer weightand memory, and replacing the transfer weight of levelwith. We outline this derivation in the AppendixA.2.2.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.43]figure[\FBwidth]
+
+SECTION: 5Pseudocode and Hardware Optimizations
+
+The abstract models we have provided so far hint at optimal algorithms and provide resource usage scaling laws at greater resolution than the theorems from FlashAttention(Dao et al.,2022). Shifting from an abstract model to applications requires considering specific batch-size configurations and expanding relabeled stream diagrams into looped diagrammatic pseudocode. We use abstract models as a guide to the ideal size of axes, and then impose that they should be integers divisible by certain sizes to take advantage of coalesced memory access and tensor cores. We can expand streamed diagrams into loops where all variables and the accumulatorare fully expressed, allowing for fine-tuned configuration of batch sizes and the exploitation of Hopper overlapped computation.
+
+SECTION: 5.1Coalesced Memory Transfer
+
+Between the device and SMEM memory, GPUs move data in chunks ofof consecutive memory. This is remarkably straightforward to represent with diagrams. Arrays represent how data is distributed across each stride, so the lowermost axis of an array represents consecutively stored memory. If we enforce that the lowermost axis is divisible bywhen assembled in the device and transferred between GMEM and SMEM, then we can assure coalesced memory access. This may require that each thread block stream loads data for multiple lower-level streams.
+If using SMEM as a cache, there is usually plentiful memory available for larger streams.
+
+A floating divisor in the superscript of an axis/batch size is used to indicate a value it is divisible by (see Figure24).
+This is done at the point where the restriction is imposed and along the immediately weaved axis. Multiple divisors impose the least common multiple.
+
+SECTION: 5.2Tensor Core Operations
+
+Tensor cores provide very fast matrix multiplication. Modern GPU tensor cores have far more FLOPs available than general-purpose register operations(NVIDIA,2020;2022). We can re-express matrix multiplications as tensor core operations. This requires saving to and loading from SMEM memory if data is initially at the register level. Tensor cores (wmma) can only manage data atcertain sizes and quantizations(NVIDIA,2024), which must be considered by diagrams. We can add a floating tag to indicate quantization. Matrix multiplications of larger sizes can be implemented by adding multiple smaller matrix multiplications, making divisibility by the available sizes the critical factor. We can enforce this restriction by placing superscripts for tensor core axes.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.45]figure[\FBwidth]
+
+SECTION: 5.3From Diagrams to Pseudocode
+
+We can expand streamed algorithms into looped pseudocode forms where all variables are explicitly shown as in Figure25. The columns of pseudocode diagrams provide the size of variables required in memory and the transfers/operations we need to apply. This allows us to pre-allocate memory to derive the exact memory usages, as well as per-group transfer and compute costs. Columns act like lines of code but more clearly express the details of axes and available optimization strategies than textual methods. As polymorphic streamed algorithms are defined for the stream axis being of any size, we can begin the algorithm with a headtaking an axis of size, initializing the maintained output to incorporate further information.
+
+We can use these diagrams to express the exact details of algorithms like Ampere attention in Figure26. Pseudocode expansions allow us to transfer to and from fragmented memory to execute both tensor-core and general operations. This requires us to use exactlytimes as many thread groups as tensor core groups.
+Furthermore, we can place dotted enclosed sub-loops.
+We add a circle to incoming or outgoing axes, which are iterated over the original size within the sub-loop.
+This constructs matrix-multiply add operations and lower-level substreams while accurately presenting the size of required variables, and imposes a divisor constraint.
+
+As maintaining a diagram’s shape ensures correctness, pseudocode expressions allow extensive tinkering.
+We present an Ampere Attention algorithm in Figure26.
+Unlike FlashAttention-2(Dao,2023), we use registers to store and scale the maintained variable instead of tensor cores.
+We use smaller sub-loop stream sizesandto reduce register memory usage.
+Extending this algorithm to grouped query attention and multi-head attention simply involves weaving in additional axes, as we did in Figures20and21. In AppendixA.5.2, we derive the memory usage for our algorithm and show that it can fit 13 warps per thread block instead of FlashAttention-2’s 4-8 warps.
+
+The Ampere diagram hints at the techniques of FlashAttention-3(Shah et al.,2024), which exploits hardware features of the H100 Hopper architecture. Hopper allows forwarpgroups, enabling 128 thread groups per tensor core and storing some of their memory on SMEM.
+Hopper enables explicit asynchrony, allowing different warpgroups to simultaneously execute different operations.
+We allocate some warp groups to load data (producer-consumer asynchrony).
+Distinct processors on the SM execute different operations, so we can stagger different warpgroups to simultaneously execute green and blue columns.
+We can divide compute cost per column by operations per clock cycle to determine ideal overlapping. In Figure27, we show our Hopper Attention.
+In AppendixA.5.3, we show the required memory and the staggering strategy indicated by the diagram. This algorithm can theoretically achieve close to the maximumPFLOPs of H100 SXM5 compute.
+
+SECTION: 6Conclusions
+
+In this work, we have used diagrams to derive, analyze, and fine-tune optimized deep learning algorithms. The complexities of generating optimized algorithms: tiling, streaming, and applying hardware features, are reduced to simple relabelings of diagrams. This vastly improves over existing manual derivations.
+
+This work also compels future research. The performance model and the hypothesized algorithm remain to be empirically validated. Mixture-of-expert models(Jiang et al.,2024)use immense resources and therefore optimizations are particularly impactful. Additional strategies can be formalized. Convolution and sliding window attention(Beltagy et al.,2020)reindex weavings(Abbott,2023), which changes the amount of data accessed per group. We can use accumulators to congregate data processed on different cores, which is required to parallelize streamable algorithms weaved over a small axis.
+
+Furthermore, diagrams conform to a category-theoretic description, which is not covered in this paper. However, a categorical perspective would allow back propagation(Fong et al.,2019; Cruttwell et al.,2021), compilation(Wilson,2023), and error propagation(Perrone,2022)to be understood. Formalizing the categorical aspects of this work would integrate it into existing research and provide a systematic framework for expressing, optimizing, back-propagating, and compiling deep learning models.
+
+The performance model we provide considers both the characteristics of algorithms and the hardware they run on. This performance model can incorporate increasing fidelity, all the way down to the clock cycles per operation. This invites a systematic analysis of hardware design that relates requirements (transistor count, energy usage, chip area, production reliability) to functionalities (compute, available memory, bandwidth), which can be systematically conducted using categorical co-design(Zardini,2023).
+This would allow us to use a shared mathematical framework for describing and optimizing deep learning algorithms and designing the hardware they run on.
+
+SECTION: References
+
+SECTION: Appendix AAppendix
+
+SECTION: A.1Fusion Theorem
+
+Composition and weaving of a streamable algorithm which does not remove the streamed axis yields a streamable algorithm.
+
+Streamable algorithms satisfies the form in Figure28, allowing the recursive expansion of Figure29. Streamability depends on polymorphism over theaxis, meaning the function/algorithm is defined for the axis being of any size, and the existence of an accumulator, which allows the streamed input data to be split.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.37]figure[\FBwidth]
+
+This allows for recursive decomposition, reducing the size of the remainderaxis toas in Figure29. Here, we add a head and a tail, which are not expanded but can be executed without an additional transfer and are hence fused. This requires their memory usage to be sufficiently small to not exceed hardware limitations. Composition onorsimply replaces those algorithms with the composed form, yielding a modified head/tail for the streamable algorithm.
+
+Composing byon the-axis with an algorithm weaved by the streamableaxis, we can exploit a partition copy (see Figure10) to show that the composedhas an accumulator.
+
+Finally, we are required to show that weaving preserves streamability. This exploits a characteristic of mapping composed functions. Mapping a composed function over an additional axis is equivalent to composing the individual functions mapped over that axis. Therefore, we can show that a weavedis an accumulator for a weavedas in Figure30.
+
+We can combine all the above expressions into the single form of Figure31, where we also apply group partitioning. This separates the mapped axis into groups of sizedistributed across processors. We can iteratively apply these rules; an algorithm can be composed with an algorithmweaved over the streamable axis. This generates a streamable algorithm, which can be weaved over one of the inputs introduced by. This is used to construct streamable (flash) attention from a SoftMax-Contraction kernel.
+
+SECTION: A.2Multi-Level Performance Models
+
+We define for a two-level model diagram the optimal transfers, whereare the axis sizes andis the maximum memory available at the lower level. We useto indicate some configuration of group sizes. We are interested in memory usage in the limit of largeand, in  which case the limiting factor is someweaved by all grouped axes, withtypically being the output. For smaller, we aim for a specific configuration as in Section5. Two-level diagrams derived optimal transfers solve for Equation4, whereiterates over the grouped axes:
+
+We extend this to multiple levels be assigning a memoryto each level and a weighted transfer cost, which represents bandwidth. As described in Section4, this conforms to;
+
+How additional levels are used, either as intermediate caches or cross-transfer levels, use the same general performance model of Equation5but with altered weighted transfer costsand per-level effective memory. Usingto indicate the maximum memory per level,to indicate the maximum number of child nodes per higher level node,for the immediately higher level andfor the immediately lower, andas the raw weighted transfer cost betweenand, we adapt our performance model to get;
+
+Therefore, using cross-transfer or caching levels conforms to our standard performance models. This lets # act as a universal performance model for multi-level GPUs, and ensures thatis the characteristic property for comparing various GPU architectures.
+
+An intermediate caching levelfor an output restricted algorithm with a number restrictionconforms to the standard performance model with, requiringtotal transfers.
+
+For an intermediate caching model which is output limited, we have the standard constraint for the lower level,, and the number restriction,. We aim to find the configuration ofandwhich minimizes the number of transferred values. Assuming the algorithm is output limited, the effective size of the caching column is. This lets us express the restrictions as:
+
+We can multiply the restriction of (6) by the restriction of (7) to get (8). Assuming that the inequalities are sufficiently close to equalities, we outline the new problem to solve:
+
+These restrictions correspond to Equation4, so we can substitute infor both levels, but usingfor the intermediate level instead of its own maximum memory,. We therefore have;
+
+A caching level therefore conforms to our standard multi-level performance model derived from a two-level diagram, but with the intermediate level using total lower level memory instead of its own.
+
+Introducing a cross-transfer levelbetween a higher leveland a lower levelallows us to replace the weighted transfer cost of an output-limited algorithm;
+
+With,
+
+Whereis the weighted transfer cost of sending data to children, andis the weighted transfer cost of sending data between children.
+
+The child levelrequires a total ofdata transfers from the higher level, typically incurring a weighted transfer cost per value of. With a cross-transfer levelbetweenand, we can send some datato any of the children and cross-transfer the remaining at a weighted transfer cost ofper value. We need to derive the optimal configuration ofto minimize. This configuration incurs a number restriction, as the child processors need to remain active. We therefore have,
+
+We perform a similar substitution to SectionA.2.1, yielding a new set of restrictions;
+
+These restrictions conform to the two-level model optimal, with required transfers beingand. When considering transfers for the total weighted transfer cost calculation, we can subtract the required transfers tofrom the transfers required to. This is because data is transferred from the higher level to the cross-transfer level by sending it to children, so much of the data is already available. This results in the substituting the total weighted transfer costs (10) with (11):
+
+We can rearrange (11) so that we have the standard format of each level havingtransfers by instead modifying the transfer cost:
+
+Therefore, a cross-transfer level conforms to the standard performance model. Instead of using the weighted transfer cost of sending data to the childrenfor the cross-transfer level, we setand we remap. This lets us express (12) as the expression below, which conforms to the standard multi-level performance model of (5):
+
+In the case of a multi-GPU hierarchy, the interconnected topology is a cross-transfer levelwhich distributes data among child GPUsat a weighted transfer cost of.
+If we assume data is already distributed across GPUs, then the number of GPU cross-transfers is.
+So far, we have considered the highest level to have unlimited memory and zero weighted transfer cost.
+We can model multi-GPU systems by the highest level (the multi-GPU level) as having a memory equal toand negative weighted transfer cost, which assumes data is already distributed among GPUs.
+This provides a rough model, which can be refined by aligning the group sizes used in diagrams.
+
+Often, we can configure the number of cross-transfer level children to alter the cross-transfer bandwidth. In(Luo et al.,2024), it was found that the bandwidth of H800 (Chinese market Hopper GPUs) SM-SM transfers varies fromwith a cluster sizetowith a cluster size of, compared toof GMEM-SMEM bandwidth. This imposes a trade-off; smaller cluster sizes improve effectivebut reduce the cross-transfer discount.(Luo et al.,2024)notes that balancing this trade-off is an important direction for exploration. We can use our model to find the difference in weighted transfer costs with (11) and without (10) a cross-transfer level, providing an equation to optimize for.
+
+SECTION: A.3Streamability
+
+The streamability of contraction (a dot product) requires that an accumulator exists of the form in Figure28. Contraction for vectorsis given by, which can be expressed as, where the underlined portion is the accumulator. We diagrammatically show this in Figure32, highlighting the accumulator in blue.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.52]figure[\FBwidth]
+
+SECTION: A.4Fusion of SoftMax-Contraction
+
+SoftMax-Contraction is streamable by maintaining a running maximum and sum on chip as auxiliary variables. We express this by streaming unscaled SoftMax-Contraction with the initialization of the auxiliary variables as the head and scaling by the sum as a tail as in Figure33.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.4]figure[\FBwidth]
+
+We can derive streamable SoftMax-Contraction by taking recursively expanded Auxiliary SoftMax (Figure34) and contracting its output. Recursively expanded Auxiliary SoftMax is not streamable as the memory usage increases with the input size. However, it terminates in a join, allowing it to be fused with a contraction.
+
+[\capbeside\thisfloatsetupcapbesideposition=left,top,capbesidewidth=0.4]figure[\FBwidth]
+
+Fusing SoftMax with a contraction limits the output size. The join tail allows it to be fused with a contraction. This limits the size of the output, yielding a streamable algorithm. To streamline the derivation, we do not explicitly draw the updated maintained variables as in Figure34. We can then apply rearrangements to recover a streamable form of the composed function.
+
+We can then replace SoftMax with unscaled SoftMax, which is done in FlashAttention-2. This lets us move the shared “” factor to the end of the expression, producing the numerically stable form we use. We forego drawing the auxiliary variables lines to streamline the derivation but add them later.
+
+This analysis derives the streamability of SoftMax and its fusion with contraction as a standard procedure using diagrams. Diagrams, by showing the structure of constituent algorithms, act as algebraic tools for deriving fusion.
+
+SECTION: A.5Configuration Tables
+
+For our algorithms, we opt for scaling on registers instead of using tensor core diagonal matrices as FlashAttention does. This makes algorithms extremely memory efficient, as noscale_o(Shah et al.,2024, p.21)variable needs to be stored. We can accumulate in groups along, leading to a small memory usage. However, these algorithms may suffer in performance. Even though we avoid the wasteful computations of a diagonal matrix, FP16 operations (312/989 TFLOPs at FP16 for A100/H100(NVIDIA,2022)) are much slower than tensor cores (78/134), and we require a multiply-add for each sub-loop. However, the compilermightdecide to overlap tensor core operations on some warps with FP16 operations on others. This overlapping would be revealed by implementing the algorithm and assessing whether tensor core and FP16 multiply-add operations are both fully utilized.
+
+To find an exact configuration for our version of Ampere Attention from Figure26, we first label all the required variables and their sizes in Figure35. Variables must be pre-allocated with a maximum size, and can encompass one array per column. This generates a configuration table (Table2), which allows us to choose batch sizes.
+We configure the batch sizes in Table2to derive an implementation of the algorithm which conforms to hardware constraints.
+The variableis typically configured to be, and it is reasonable to set the batch sizes to their smallest possible size. This results in,,,. Once we have found the total register and SMEM memory usage per warp, we can find the maximum number of warps per thread block (virtual SMEM).
+Each thread block can contain up to 256KB of register memory, 163KB/227KB of SMEM (A100/H100)(NVIDIA,2024, p. 492), and 32 warps. Each thread is limited to 255 registers, containing 4B each (1KB total). We can only share SMEM data between virtual cores, so the number of warps determines our “discount” on distributed key/value loads.
+
+After performing the substitution of batch sizes in Table2, we find the register and SMEM bytes per warp in Table3. Using our strategy, we can theoretically fit up towarps per thread block. We can see that SMEM is not an issue, nor is the limit ofper thread (32KB/warp). This is significantly larger than the 4-8 warps per thread block given in the FlashAttention-2 paper, implying improved performance. The reasons for this are difficult to tell, as diagrams give much more detail about variable sizes than traditional pseudocode. A significant factor is likely to be avoidingscale_oand instead relying on register level row-wise multiplication. We also benefit from a small stream size and sub-loops which reuse variables. How this alternative strategy plays out remains to be tested, and may fail because of factors such as the small sub-stream size introducing excessive error.
+
+For our Hopper Attention, we again employ register register FP16 scaling operations. We will calculate the amount of registers and SMEM required per warp group of 128 threads, and must account for the different quantizations of data present. We identify the variables in Figure36and use the configuration Table4to find the maximum number of warpgroups per thread block. Furthermore, we can assess the clock cycle of each column to derive a strategy for asynchronous execution.
+
+Referring to Table4, we can runconsumer warpgroups per thread block.
+Collectively, this representsproducer warps per threadblock, double the amount for Ampere algorithm. From our model, we can understand why. Storing tensor core operations on SM effectively doubles the lower-level memory available, doubling the amount of processors which share a stream of keys and values. If we had simply assumed that lower-level memoryis doubled without any further information, we would have estimatedwarps which iswarp groups for the Hopper algorithm.
+
+Note how in Figure36columns alternate between blue (tensor core) and green (register) operations. This indicates we can overlap computation.
+Each SM has cores dedicated to different operations(NVIDIA,2022, p.21). These can run simultaneously, and Hopper supports user-configured asynchronous execution between warpgroups. We aim to overlap tensor core, general purpose FP16 operations, and special functions (the exponential). Furthermore, we can dedicate the remainingwarpgroups per thread block to beproducers, asynchronously providing data from higher levels, which uses minimal registers.
+
+We calculate the clock cycles for each column per thread, given in Table5.
+We use the sub-loop sizes, as sub-loops can be exploited to overlap computation.
+Clock cycles are found by dividing TFLOPs by the number of SMs (132) and clock speed (1830MHz)(NVIDIA,2022, p.39), or from theCUDA programming guide(NVIDIA,2024).
