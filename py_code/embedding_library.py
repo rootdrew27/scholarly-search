@@ -150,12 +150,13 @@ class EmbeddingLibrary():
         ] 
         return response_chunks
 
-    def search_papers(self, prompt:str, response:str, n_results=5):
+    def search_papers(self, prompt:str, response:str, n_results=5, threshold=0.75):
         assert self.paper_embs is not None, print("self.paper_embs must be set to use this function!")
         r_secs = self.preprocess_llm_response(prompt, response)
         r_emb = self.model.encode(r_secs, normalize_embeddings=self.norm_embs).mean(axis=0)
         scores = self.model.similarity(r_emb, self.paper_embs)
-        top_n_idxs:list = np.argsort(scores).tolist()[0][-n_results:]
+        good_scores = scores > threshold
+        top_n_idxs:list = np.argsort(good_scores).tolist()[0][-n_results:]
         top_n_idxs.reverse()
         top_paper_ids = [self.paper_ids[idx] for idx in top_n_idxs]
         return top_paper_ids

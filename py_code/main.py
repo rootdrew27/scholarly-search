@@ -103,12 +103,19 @@ if __name__ == '__main__':
     print('Switching LLM to RAM and SemSim model to VRAM\n')
     LLM.to('cpu')
     SemSim.to('cuda')
-    
+   
+    N_RESULTS = 5 
     for i, response in enumerate(responses, start=0):
         print("question" + prompts[i])
         print(response)
         prompts[i] = f"Give a scholarly response to the question \"{prompts[i]}\". Make the response an IEEE paper. Make it so each section starts with \"SECTION: \" on each part of the paper. Do not include references. Only use academic papers. Inculde nothing additional.\n"
-        top_paper_ids = embLib.search_papers(prompts[i], response, n_results=5)
+        top_paper_ids = embLib.search_papers(prompts[i], response, n_results=N_RESULTS)
+
+        if len(top_paper_ids) == 0:
+            print(f'There are no good search results. Try another search')
+
+        elif len(top_paper_ids) < N_RESULTS:
+            print(f'There are only {len(top_paper_ids)} for your search. Perhaps try another search for more results.')
 
         paper_links = [paperLink(id)[0] for id in top_paper_ids]
    
