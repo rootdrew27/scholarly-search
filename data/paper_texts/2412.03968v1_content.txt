@@ -1,0 +1,286 @@
+SECTION: Exact: Exploring Space-Time Perceptive Clues for Weakly SupervisedSatellite Image Time Series Semantic Segmentation
+
+Automated crop mapping through Satellite Image Time Series (SITS) has emerged as a crucial avenue for agricultural monitoring and management.
+However, due to the low resolution and unclear parcel boundaries, annotating pixel-level masks is exceptionally complex and time-consuming in SITS.
+This paper embraces the weakly supervised paradigm (i.e., only image-level categories available) to liberate the crop mapping task from the exhaustive annotation burden.
+The unique characteristics of SITS give rise to several challenges in weakly supervised learning: (1) noise perturbation from spatially neighboring regions, and (2) erroneous semantic bias from anomalous temporal periods.
+To address the above difficulties, we propose a novel method, termedexploring space-time perceptive clues (Exact).
+First, we introduce a set of spatial clues to explicitly capture the representative patterns of different crops from the most class-relative regions.
+Besides, we leverage the temporal-to-class interaction of the model to emphasize the contributions of pivotal clips, thereby enhancing the model perception for crop regions.
+Build upon the space-time perceptive clues, we derive the clue-based CAMs to effectively supervise the SITS segmentation network.
+Our method demonstrates impressive performance on various SITS benchmarks.
+Remarkably, the segmentation network trained on Exact-generated masks achieves95%of its fully supervised performance, showing the bright promise of weakly supervised paradigm in crop mapping scenario.
+Our code will be publicly availablehere.††Preprint. Under review.
+
+SECTION: 1Introduction
+
+The launch of numerous public and commercial satellites provides broader opportunities to record, analyze, and predict the evolution of crop land[46,18,50,5].
+In this context, Satellite Image Time Series (SITS) withresolution offered by the high-frequency Sentinel-2 (S2) satellites serve as a valuable data source for automated crop mapping[58,34,6,23,15,27].
+The core of crop mapping lies in the semantic segmentation of crop parcels.
+Recently, many efforts are devoted to exploiting the versatile and powerful relation modeling capability of deep neural networks for this task[22,21,45,33].
+While such methods have shown a significant progress, they rely heavily on pixel-level manual annotation, which is notoriously complex and time-consuming[48]. The low resolution of satellite images and the indistinct boundaries between crop parcels complicate the annotation process. Even worse, the varying phenological cycles among crops require annotators to meticulously select appropriate acquisition times for annotation.
+
+To address this, one promising solution is weakly supervised semantic segmentation (WSSS), which relies solely on time-efficient annotation form,i.e., image-level categories.
+The image-level WSSS has commonly studied in natural image domain.
+Existing methods primarily extract Class Activation Map (CAM)[59]to generate pseudo labels for training semantic segmentation models.
+The intention of CAM is to identify the regions that highly contribute to the prediction of each class, revealing the shared patterns among the images within the same category. In context of natural images, CAM tends to highlight local discriminative parts of the target object. The reason is that the dispersed intra-class distribution enforces the model to learn a extremely sharp decision boundary, thereby the classifier weights tend to interact with feature representations within more discriminative object regions, as shown inFig.1aleft. Thus the primary focus of researchers falls into expanding the CAM to identify
+the entire object semantics for natural images.
+
+Different from WSSS for natural image, crop mapping for SITS mainly faces with two challenges: (1) from the spatial perspective, parcel objects within the same category share uniform appearance and color, exhibiting strong neighboring consistency. The intra-class compactness of local patterns looses the tolerance of the classifier to noise perturbation, resulting in pronounced over-activation phenomena in CAM, as shown inFig.1aright.
+The disparate characteristic lead to the advances in natural image domain cannot directly benefit the SITS crop segmentation.
+(2) From the temporal perspective, although different crops show distinct phenological cycles and varying characteristics,
+they may display similar appearance in some specific periods. This confusion imbues wrong semantic bias to the learning process of the model, thereby activating some undesired semantic regions in CAM.
+An intuitive illustration is shown inFig.1b, the temporal clips that deviate from the pivotal semantic affect the perceptual ability of CAM to correct crop regions.
+
+In this work, we presentexploring space-time perceptive clues (Exact), a tailored WSSS framework for crop mapping, to cope with the challenges arised from the spatial and temporal aspects respectively. Firstly, we introduce a set of spatial clues to explicitly capture the patterns of different crops. Leveraging the filtered CAM as an indicator, we update representative clues by conducting spatial clustering from the most class-relative regions.
+These clues are then used to regularize the feature space via optimizing the contrastive objective, thereby sharpening the decision boundary of the model and mitigating the perturbations from illusory patterns.
+Secondly, to cope with the erroneous semantic bias caused by anomalous temporal periods, we propose temporal-aware affinity propagation to emphasize the contributions of pivotal clips for crop perception.
+In detail, we extract the temporal-to-class attention from the model to reweight the temporal sequence embeddings. The modulated representations can be used to model temporal-aware pairwise affinity for propagation on the raw CAM, thus effectively suppressing the undesired semantic regions in a self-supervised manner.
+
+Unlike existing WSSS methods that rely on classifier weights to generate CAMs, we exploit the well-updated space-time perceptive clues to derive the clue-based CAMs (CB-CAMs) as pseudo labels for segmentation.
+Compared to the raw CAM, the CB-CAMs (1) remarkably suppress the perturbations from spatial and temporal aspects, and (2) delineate the crop regions more precisely, thereby providing more reliable supervision for the subsequent segmentation.
+
+Our main contributions can be summarized as follows:
+
+We introduce the WSSS paradigm to SITS crop mapping task to tackle the daunting annotation challenge.
+To the best of our knowledge, this is the first work that relies solely on image-level categories for crop segmentation.
+
+To overcome the drawbacks arised from the spatial and temporal aspects of SITS, we proposeExactthat explores space-time perceptive clues to reduce the noise perturbation and rectify the wrong semantic bias, ultimately providing reliable supervision for SITS segmentation.
+
+We experimentally show thatExactachieves impressive performance on common benchmarks. UsingExact-generated labels for training, SITS segmentation model attains up to95%of its fully supervised performance. Our results significantly advance the upper bound of image-level WSSS technique compared to the other domains.
+
+SECTION: 2Related Work
+
+Semantic segmentation on SITS.Automated crop monitoring through Satellite Image Time Series (SITS) has attracted great interest among researchers and demonstrated considerable social impact[24,35,42,32,23,15].
+One of the challenging tasks is the semantic segmentation of agricultural parcels. The goal of the network is to learn a mapping function that assigns each pixel in the SITS to the corresponding crop type or background.
+Some works process SITS inputs by first extracting spatial information and then compressing the temporal dimension.
+For example, U-ConvLSTM[31]relied on U-Net[36]architecture to encode the spatial dimension, followed by a ConvLSTM[41]for the temporal dimension. Similarly, the FPN-ConvLSTM[33]replaced the U-Net with a Feature Pyramid Network[28]as the spatial encoder. U-TAE[21]compressed the temporal dimension through the outstanding temporal attention mechanism[22].
+The other option to encode SITS is thetemporal-spatioscheme, which first processes the temporal dimension and then extracts the spatial information.
+Rußwurmet al.[39]employed bidirectional LSTM to extract temporal features and then used CNNs to integrate spatial information.
+Recently, TSViT proposed to borrow the powerful dependency modeling capability of the Vision Transformer (ViT)[17]to handle SITS, achieving state-of-the-art performance at lower computational cost. The TSViT also comprehensively illustrated the superiority of the temporal-spatio scheme.
+Taking a holistic view, we adopt this scheme to process SITS, aiming to achieve an optimal trade-off for automated crop mapping.
+
+Weakly supervised semantic segmentation.Weakly supervised semantic segmentation (WSSS) with image-level labels (i.e.ground-truth object categories) has shown significant success in natural images[14,57,13,52,56,53].
+Most advanced WSSS methods follow the three-steps pipeline of: 1) training a classification network with image-level labels, 2) obtaining class activation map (CAM)[59,40,9]from the well-optimized classification network as pixel-level coarse labels, 3) refining the coarse labels to train the final semantic segmentation network.
+Since the CAM generation is the foundation step of the entire pipeline, numerous works has been proposed to address the under- and over-activation issues of the initial CAM[49,55,19,11,43,38,10].
+To derive the final pseudo labels, CAM requires cumbersome post-processing, including random walks[1,2]and denseCRF[25]refinement.
+Thanks to the excellent works, the performance of image-level WSSS in natural images currently achieves 90% of pixel-level supervision.
+However, the WSSS networks designed for natural images require significant adaptation to be applied to SITS, and the results are still unsatisfactory due to the distinct data characteristics. In this work, we incorporate WSSS technique into the SITS and overcome the difficulties caused by inherent data properties.
+
+SECTION: 3Method
+
+In this section, we first look more closely at the temporal-spatio scheme and class activation map technique (3.1). Next, we introduce how to explore spatial perceptive clues (3.2) and conduct temporal-aware affinity propagation (3.3). Finally, we show the overall objective function and the clue-based CAM generation strategy ofExact(3.4).
+The training pipeline ofExactis shown inFig.2.
+
+SECTION: 3.1Preliminaries
+
+The temporal-spatio schemethat first processing the temporal dimension and then extracting the spatial information has shown significant superiority when dealing with SITS data. Following the TSViT[45], we use the variant ViT[17]as the backbone for both temporal and spatial encoders. We consider a SITS inputwiththe length of time series,the number of channels andthe spatial dimensions. The inputis mapped into a sequence of patch tokens and reshaped to, where,andis the spatial extent for each patch. We then add the temporal position embeddingsand concatenate the temporal multi-class tokensto obtain the input of temporal encoder:
+
+heredenotes the number of categories,andare repeatedtimes to match the spatial shape.
+With the output feature mapsfrom the temporal encoder, we extract the firsttokensand permute the first and second dimensions to serve as input patch tokensfor spatial encoder.
+These inputs are then combined with spatial multi-class tokensand spatial position embeddingsat allspatial representations:
+
+After the spatial encoder phase, we separate the output featuresto align with different downstream tasks. For classification task, we feed the global tokensinto the classifier to obtain classification logits. For segmentation task, to derive the dense prediction mask, the dense tokensare fed into the segmentation decoder.
+
+Class activation map(CAM)[59]is widely used in WSSS to provide weak annotations that rely on image-level labels. Given a natural image, its feature mapsare extracted by a classification backbone. To derive the classification score, the feature maps are average pooled and multiplied by the classifier weights. CAM is generated by weighting and summing each channel in the feature maps with the classifier weights, as follows:
+
+Most WSSS methods normalizeto the range [0,1] and apply a global threshold to filter out background pixels to obtain finally pseudo labels. In the temporal-spatio network, we feed the dense tokensandinto the classifier and compute the additional classification lossto generate the fused raw CAM for SITS.
+
+SECTION: 3.2Explore Spatial Perceptive Clues
+
+CAM filtering.Given an input SITSand its image-level label, we first compute its normalized fused CAMby the classifier weights and the output dense tokens of temporal and spatial encoder. We use two threshold scoresandto filter out the reliable foreground, background and uncertatin regions:
+
+Clues clustering.To capture the compact patterns of different crops, we establish a group of class-wise representative prototypes, which later serve as perceptive clues to generate high-quality pseudo labels.
+In crop segmentation task, temporal features often provide more information than spatial context[45], so we choose to perform spatial clustering on temporal dense embeddingsover the whole dataset.
+Specifically, we build the class-wise positive prototype setand negative prototype set, wheredenotes the number of prototypes.
+If-th class appears in a training batch, we update the prototypesvia solving the optimal transport problem[8,60]. Given a mapping matrixthat represents the assignment between each pixel and its prototype, it can be referred as an element of the transportation polytope[4]:
+
+wheredenotes the number of pixels belonging to class.represents the vectors of ones in appropriate dimensions,andare the marginal projections onto the rows and columns of.
+We can maximize the following objective function to optimize the mapping matrix:
+
+hereis the corresponding temporal dense embeddings belonging to class,controls the smoothness of entropy regularization term.
+The continuous approximate solution of Eq. (6) can be obtained through iteratively applying the Sinkhorn-Knopp algorithm[16]. Subsequently, we momentum update the-th prototype of classaccording to the assignment matrix and the embeddings:
+
+hereis the momentum coefficient.
+We leverage the fused CAMas the pseudo labels to update the class-wise positive prototype setandfor the negative set. Notably, each prototype is not involved in gradient backpropagation to avoid the noise from the classifier.
+
+Clue-based contrastive learning.Based on the spatial perceptive clues, we introduce the clue-based contrastive learning[12,7]to regularize the embedding space. More specifically, for each temporal dense embeddingand its most relative prototype, we adopt the cosine distance to measure their similarity:
+
+whereindicates the temperature parameter. Subsequently, we enforce the pixel embedding to closely match its prototype and be distinct from other prototypes:
+
+whereandis an indicator function, being 1 if classappears in image-level labels and 0 otherwise. Minimizing the above objective can pull pixel embedding closely to the semantic center and push it away from other illusory patterns, thereby sharpening the model decision boundary and mitigating the noise perturbation.
+
+SECTION: 3.3Temporal-Aware Affinity Propagation
+
+In this section, we propose the temporal-aware affinity propagation to cope with the wrong semantic bias arised from anomalous temporal clips.
+
+Temporal-aware affinity mining.In the temporal encoder, the input tokens are normalized and projected into query matrixand key matrixrespectively. Then the self-attentionwith respect tosequences is computed as below:
+
+Without additional computations nor supervision, we can explicitly extract the temporal-to-class attentionfrom the self-attention, which represents the contributions of high-level representations to crop recognition at different temporal clips. We then reweight the the temporal sequence embeddingsbased on the normalized attention:
+
+Intuitively, the modulated high-level representationenlarges the variation among different semantic crops, thereby modeling more precise pixel relations.
+
+Affinity propagation and guidance.After obtaining the temporal-aware representation, we conduct affinity propagation to suppress erroneous semantic regions on the raw CAM. Particularly, the temporal-aware pairwise affinity of the pixel at positioncan be estimated as follows:
+
+hereis the standard deviation ofandindicates the local receptive fields (e.g., 8-way local neighbors[26]). We denoise the raw CAM via iteratively propagating the pairwise affinity from the temporal-aware representation:
+
+After obtaining the improved activation map, we align the raw CAM with it to effectively guide the learning process:
+
+By minimizing, we can rectify erroneous activations in the raw CAM and incorporate temporal-aware priors into the embedding space, ultimately benefiting the perceptive clues.
+
+SECTION: 3.4Network Optimization and Clue-based CAM Generation Strategy
+
+As shown inFig.2, the whole objective function for training the classification network consists of four components:
+
+hereandare the conventional binary cross entropy loss anddenotes the weight to rescale the loss terms.
+
+After training, we perform per-pixel perception based on the well-updated space-time clues in temporal dense embedding space to generate clue-based CAMs (CB-CAMs). For each embeddingin temporal dense embeddings, we measure the maximum similarity with the positive prototypes and minus the misguide activations with the negative prototypes:
+
+If the classdoes not appear in a training image, we setto all zeros.Fig.3gives a visualization of this generation process.
+Finally, the CB-CAMsare filtered using a global background score to generate the pseudo labels, which are then used to train the SITS semantic segmentation network.
+
+SECTION: 4Experiments
+
+SECTION: 4.1Experimental Setup
+
+Datasets & evaluation metric.We conducted comprehensive experiments on two widely used Satellite-2 time series crop recognition datasets to validate the effectiveness of our approach quantitatively.
+ThePASTISdataset[21]containsmulti-spectral time series of size, each series includingbands andtotemporal observations. It consists ofcrop types and a background category. Following the settings of[45], we used the fold-1 among the five folds provided in PASTIS. We partitioned each sample into multiple patches and assigned category labels according to the mask annotations (see the supplement for details).
+TheGermanydataset[39]comprisesfield parcels of time series imagery withspectral bands. Each series containsobservations and is labeled withcrop types. We employed the mean Intersection over Union (mIoU) and pixel-wise overall accuracy (OA) as evaluation metrics, both widely used to measure segmentation performance.
+
+Implementation details.The classification network was trained on 8 NVIDIA RTX 3090 GPUs with batch size 8 for 15k iterations. During the training stage, we used the AdamW optimizer[29]with an initial learning rate of 1e-3 and cosine weight decay[30].
+As the raw CAM were unreliable in early iterations, the gradients ofwere backpropagated after the 4k iteration. For the raw CAM filtering, the threshold scorewas set to. Due to the compact intra-class patterns, we set the number of class-specific prototypesto, and the momentum used to update the prototypes was set to. Moreover, the other hyper-parameters,,andwere empirically set to,,and, respectively.
+We employed the original TSViT with a segmentation decoder as the semantic segmentation model for SITS. The training details of the segmentation model exactly followed the settings in[45]without any modifications. Please refer to supplementary materials for more details.
+
+SECTION: 4.2Experimental Results
+
+Base Architectures.In the evaluation stage, we fuse the raw CAMs generated by the spatial dense embeddingsand temporal dense embeddingsas our baseline.
+
+The key of the weakly supervised learning is to provide reliable training pseudo labels for segmentation network. Thus, we conducted comparative experiments on thetrainsplits to validate the quality of pseudo labels.
+
+Competing methods adaptation.We reimplemented six well-performed transformer-based WSSS methods designed for natural images as the competing methods. To accommodate the temporal dimension, we transformed the input dimensions of SITS into a 3D formatfor these methods.
+In addition, to enable a fairer comparison betweenExactand existing WSSS works, we carefully selected four off-the-shelf modules from other WSSS methods in the natural image domain and adapted them to the temporal-spatio framework. These modules were also reimplemented within the temporal dense embedding space to align with our approach. We attempted various adaptation strategies, more details and analysis available in supplementary materials.
+
+Quantitative results.Fig.4(a)presents the mIoU and OA of the pseudo labels generated by other WSSS methods and ourExact. As can be seen, the WSSS methods designed for natural images only achieve a maximum 53.2% mIoU (refer to PASTIS) with the limited encoding capability for SITS. Furthermore, due to the distinct data characteristics, the off-the-shelf modules struggle to perform well on SITS, and may even disturb the learning process. These phenomena indicate that the advancements in natural image cannot be directly translated to benefit the SITS domain. By contrast, ourExactovercome the intrinsic challenges from SITS, delivering the best performance compared to others.
+
+After obtaining the pseudo labels, we use them as replacement for ground truth to train the SITS semantic segmentation network. We employ TSViT followed by a segmentation head as our segmentation model, which is the top-performing approach in fully supervised oracles.
+
+Quantitative results.InFig.4(b), we show that the semantic segmentation model can achieve 95% to its fully supervised performance (refer to mIoU) using pseudo labels generated byExact. Our best results are 80.2% OA and 62.0% mIoU on PASTIStestset, which surpasses the baseline by 3.0% and 4.2%, respectively.
+The experiment results quantitatively imply that the labels quality outperforms other methods by a large margin. In contrast, WSSS networks in natural image have undergone a series of evolutions to barely achieve 90% of fully supervised performance. This suggests that SITS WSSS techniques offers greater potential in SITS scenario.
+
+SECTION: 4.3Ablation Studies
+
+In this section, our primary purpose is to demonstrate the collective effectiveness of all components within our approach. We also choose the fused raw CAM as the baseline, and the CAM comparison results reported on PASTIStrainset.
+
+All the components matter.OurExactconsists of several components, including spatial perceptive clues exploration, temporal-aware affinity propagation and clue-based CAM generation strategy. We validate the contribution of each module, the results are presented inTab.8.
+We can see that the clue-based contrastive learningand the temporal-aware affinity propagationimproves the performance by 1.8% OA and 3.9% mIoU, respectively. This suggests that these two modules complement each other, regularizing the entire embedding space and ultimately sharpening the decision boundary. We provide an intuitive comparison inFig.4, after introducing the both objectives, the intra-class features become more compact while the inter-class features are more separated. Besides, using the well-updated space-time clues to generate CAM (i.e., CB-CAM) within the temporal dense embedding space brings a further improvement of 2.3% recall, 1.1% OA and 2.2% mIoU.
+
+Baseline CAM from different embedding spaces.InTab.3, we investigate the performance of the raw CAMs derived from different dense embedding spaces. The raw CAM obtained from the spatial dense embeddingsfalls significantly behind that obtained from the temporal dense embeddingsin terms of precision, OA and mIoU. It demonstrates that the temporal correlations contain more critical information compared to the spatial context in this task. We combine the CAMs from both embedding spaces as our baseline (the last row inTab.3) and utilize the resulting pseudo labels to guide spatial clustering.
+
+Effect of the temporal-aware affinity.Mining low-level cues affinity (e.g., color and intensity) as additional guidance is prevalent in natural images. We also attempted to incorporate the low-level cues to model pairwise affinity in SITS, the results can be found inTab.4. Compared to our proposed temporal-aware affinity, modeling low-level cues offers only limited improvement. This is due to the presence of substantial noise interference within the low-level cues of SITS (e.g., cloud cover and shadow). In contrast, our approach highlights the contributions of pivotal temporal clips within a high-level embedding space, effectively mitigating the wrong semantic bias.
+
+Effect of the hyper-parameters.Fig.5shows the effects of the prototype numberand the temperature. Notably, utilizing only a minimal number of prototypes (i.e.,) yields optimal result, whereas increasing the number of prototypes beyond this point brings negative impact on the model. This indicates that the excessive number may enforce prototypes to focus on local discriminative patterns within the class, leading to under-activation issue (the major difficulty in natural image).
+More analysis of parameters is specifically discussed in supplementary materials.
+
+SECTION: 4.4Qualitative Results
+
+Fig.9presents the visual comparison between the baseline TSViT-CAMs and the proposed CB-CAMs generated byExacton PASTIS dataset. The first five columns show the visualization of the CAMs. As we can see, our method remarkably suppress the erroneous regions, whose shape is closer to ground truth masks than baseline. Our high-quality pseudo labels subsequently enhance the segmentation performance compared to the baseline, as shown in last three columns. However,Exactstill exhibits limitations in edge processing, which will be the focus in our future work.
+
+SECTION: 5Conclusion and Broader Impact
+
+In this paper, we propose a tailored WSSS approachExactto alleviate the daunting annotation challenge in SITS crop mapping task.Exactexplores space-time perceptive clues to capture the essential patterns of different crop types, thereby overcoming the issues of spatial noise perturbation and wrong temporal semantic bias.
+Extensive experiments show the superiority ofExact-generated masks both quantitatively and qualitatively.
+We believe that our method marks a pioneering step in effectively applying WSSS technologies to SITS.
+If follow-up work can find and resolve the limitations under our framework, there is great potential that only image-level labels are needed for crop mapping in the future.
+
+SECTION: References
+
+In this supplementary material, we provide the following contents: 1) more implementation details of dataset, ourExactand competing methods (A), 2) the difference with the previous prototype-based methods (B), 3) additional experimental results and analyses (C).
+
+SECTION: Appendix AAdditional Implementation Details
+
+SECTION: A.1Dataset and Model Design
+
+Data Setting.Since the multi-class labels are absent in original PASTIS[21]and Germany[39]datasets, we employ the following strategy to assign multi-class labels to each SITS: If the number of masks for classconstitutes at least 1% of the spatial size, the classis deemed to be present in SITS. To accommodate a large set of experiments, we only use fold-1 among the five folds provided in PASTIS.
+
+Model Setting.Following the settings in[45], we set the vector dimensionto 128. The temporal encoder and spatial encoder comprise 8 and 4 layers, respectively. The spatial size of each patch is set to.
+For the spatial clustering, we applynormalization to the pixel embedding before measuring the similarity with prototypes.
+For the temporal-aware affinity mining, we normalize the temporal-to-class attentionto the range of [0,1] usingfunction and subsequently reweight the temporal sequence embeddings by the normalized attention.
+Besides, we iteratively propagate the temporal-aware pairwise affinity among neighboring pixels, with the iterations are set to 3. To derive the final pseudo labels, we apply a global threshold (i.e.,) to separate the foreground and background in the CB-CAMs, as following[52,49].
+
+SECTION: A.2Competing Methods and Modules
+
+For WSSS methods originally designed for natural images, we attempt several adaptation strategies to enable their application to SITS inputs, as follows:
+
+Strategy 1.Given a SITS with dimensions, we partition it intosingle-temporal samples, each with dimensions. The additional channel represents the temporal position embedding, which is used to differentiate distinct temporal samples.
+We then check each temporal sample for cloud cover by evaluating the maximum signal intensity, and removing any samples identified ascloudy. Each remaining temporal sample is individually processed by the WSSS networks to generate CAM. Finally, we average the CAMs from temporal samples to obtain a single CAM for SITS. The pseudo-code is attached inAlgorithmA.
+
+Strategy 2.We reconstruct the SITS into the 3D formatby merging the first and second dimensions. Subsequently, we directly input the reconstructed data into the WSSS model to obtain the CAM for SITS.
+
+Input: SITS.Parameter: cloud threshold.Function: WSSS networkdesigned for natural images.Output:single CAMfor SITS.
+
+Most of modules designed in natural image WSSS cannot be applied in SITS scenario due to the distinct data processing pipeline. We carefully select and reimplement four modules that can be adapted to temporal-spatio network.
+
+PAMR[3]. For this method, we incorporate the nGWP and PAMR modules. We feed the score map output from temporal encoder and spatial encoder into the nGWP module to replace the convenient GAP layer. The PAMR module is widely utilized in natural image WSSS. Here, we follow the common practice that using low-level intensities as the input to PAMR to refine the fused raw CAM.
+
+TS-CAM[20]. Since this method performs semantic re-allocation and semantic aggregation from a spatial perspective, we follow the original settings in[20]that compute TS-CAM within the spatial encoder. Besides, we replace the multi-class tokens in spatial encoder with single-class token to maintain consistency with the original implementation.
+
+SIPE[11]. This model computes the inter-pixel semantic correlations in feature space, providing additional guidance for extending the CAM. We reproduce SIPE in the temporal embedding space to align with our proposed module.
+
+FPR[10]. We calculate the region-level contrast loss and pixel-level rectification loss proposed by FPR in the temporal embedding space. Note that both SIPE and FPR use prototypes, and we set the number of prototypes per class to 2 to better match the inherent characteristics of the SITS.
+
+SECTION: Appendix BRemarks on difference with previous works in natural images.
+
+Existing prototype-based WSSS works.The prototype-based methods have been explored in the WSSS for natural images. Existing prototype-based WSSS works on natural images primarily focus on the following aspects: 1) setting a large number of prototypes (approximately 30 per class) to capture diverse intra-class patterns and leveraging these prototypes to reduce intra-class variation[55,61,10]. 2) performing clustering on the batch-level and utilize the prototypes obtained from the current batch to expand the raw CAM[11,19,14].
+
+Difference with the previous works in natural images.Our approach is different from existing prototype-based WSSS methods in the following ways: 1) our objective is to explicitly capture compact intra-class patterns using a minimal number of prototypes () and leverage the semantics to enlarge the variations across different crops.
+2) we perform momentum updating at the dataset-level and conduct spatial clustering in the most class-relative regions. 3) we discard the classifier weights and directly utilize the well-updated prototypes to generate the final CAMs.
+
+Our method thoroughly considers the unique characteristics of SITS and introduces tailored strategies, thereby achieving impressive performance. By contrast, prototype-based methods designed for natural images yield only limited improvements. As shown in the last column of Tab.1ain the main paper, SIPE[11]and FPR[10](two prototype-based methods for natural images) bring only 0.6% and 1.5% improvements compared to baseline, while ourExactachieves a substantial 6.1% enhancement.
+
+SECTION: Appendix CAdditional Experiments and Analyses
+
+Due to constraints on page space, we are unable to present all experimental results within the main paper. In this section, we provide more experimental results and analyses both quantitatively and qualitatively to support the main paper.
+
+SECTION: C.1Different Adaptation Strategies.
+
+We evaluate the performance of the WSSS under different adaptation strategies on PASTIStrainset, the results are shown inTab.5.
+It can be observed that the WSSS models generally perform better underStrategy2. This is because merging the temporal dimensions during input allows the model to implicitly focus on pivotal temporal clips, thereby mitigating the adverse effects of anomalous temporal periods to some extent.
+To eliminate the influence of irrelevant factors, we choose theStrategy2 in the main paper to reimplement the WSSS method designed for natural images.
+
+SECTION: C.2More Comparisons
+
+Effect of our method on correcting false positives.We evaluate the false discovery rate (FDR) for each category of pseudo-labels to quantitatively analyze the effectiveness of our method in mitigating the over-activation regions. The FDR can be computed as follows:
+
+hereFPandTPdenote the number of false positive and true positive pixel pseudo labels for each class.
+We compare the FDR of pseudo labels generated by TSViT-CAMs (baseline) and oursExact, the results are shown inFig.7. It can be seen that due to the noise perturbations, the baseline exhibits more false positive pixels, leading to inferior perceive ability. Our method significantly suppresses erroneous activation regions and reduces the FDR across different crops, thereby delineating the crop regions more precisely.
+
+Segmentation results on Germany dataset.We further validate the performance of segmentation network trained by different pseudo labels on the Germany[39]dataset. As in the main paper, we employ the original TSViT[45]with a segmentation decoder as our SITS semantic segmentation network. As shown inTab.6, training the segmentation network withExact-generated labels achieves the best results, improving the baseline by 5.4% in OA and 6.3% in mIoU, respectively. This indicates that our method can show consistently superior performance across various SITS crop mapping benchmarks.
+
+Segmentation results for other SITS segmentation network.To further demonstrate the superiority of our method, we replace the TSViT with the U-TAE[21]as our semantic segmentation network and evaluate its performance under various pseudo labels generated by different methods. The results are shown inTab.7. Notably, using the pseudo labels generated byExact, U-TAE can achieve 99% and 96% of the fully supervised OA and mIoU respectively, showcasing the impressive performance of our method. These findings indicate that training lightweight network with the pseudo labels generated by our method has the potential to achieve performance comparable to its fully supervised paradigm.
+
+SECTION: C.3More Ablation Studies
+
+We provide more ablation experiments in this section, and all results are reported on the PASTIStrainset.
+
+Comprehensive ablation results on proposed modules.InTab.8, we present additional ablation results of our proposed modules. It can be observed that our proposed modules synergize effectively, as mentioned in the main paper.regularizes the embedding space, facilitating the global perception of the space-time clues to crop regions. Simultaneously,mitigates anomalous semantics while indirectly reinforcing the stability of spatial clustering process.
+
+Effect of filtering thresholdsand loss coefficients.In Sec.3.2of the main paper, we employ two thresholdsto filter out the most class-relative regions, both positively and negatively, as follows:
+
+Tab.9(a)shows the performance variations under different filtering thresholds. As we can see, an excessively stringent threshold may impede the ability to capture the patterns of crops, whereas a lenient threshold may introduce undesired noise to the prototypes.
+In addition, we report the impact of different loss coefficients on accuracy, the results are presented inTab.10(a).
+
+Effect of the warm up stage.The prototype learning relies on the raw CAM’s accurate perception of parcel objects.
+Since the network lacks the capability to perceive parcel objects at the early training stages, prematurely introducing prototype learning and feature space shaping may result in gradient explosion.Tab.11(a)shows the impact on the warm up stages for the model performance. We can see that starting the prototype learning and clue-based contrastive learning at 4000 iterations can achieve the best performance.
+While an excessively prolonged warm-up stage may cause the model to memorize noise perturbations, thereby hindering the shaping of the feature space.
+
+Effect of the negative set.In the main paper, we introduce a positive prototype set and a negative prototype set to capture class-relevant positive and negative patterns, respectively. We present additional quantitative results inTab.12(a)to demonstrate the effectiveness of the negative set. The results indicate that the negative class-relevant semantics can complement with positive patterns, thereby assisting the model in eliminating erroneous crop regions.
+
+Adverse impact of increasing the number of prototypes.As discussed in the main paper, an excessive number of prototypes may impair the model’s ability to perceive the global unified semantics of the crop parcel. InFig.10, we present both quantitative and qualitative experimental results to illustrate the impact of increasing the number of prototypes. As we can see, the prototypes’ ability to perceive crop parcels declines sharply asincreases to 10 (75.6% vs. 71.8% mIoU). This is mainly due to the largecompels the prototypes to capture local discriminative patterns, thereby resulting in a severe under-activation issue.
+
+SECTION: C.4Additional Qualitative Results
+
+Low-level mapping of the temporal-to-class attention.In order to intuitively demonstrate the effect of temporal-to-class attention on the perception of temporal sequences, we list the satellite images under different attention scores. As shown inFig.11, temporal clips with high attention scores contain pivotal information for crop recognition, whereas those low scores are associated with anomalous temporal periods (e.g., cloud cover, barren land). Therefore, explicitly emphasizing the contributions of different temporal clips to crop recognition can mitigate the confusion arising from anomalous semantics.
+
+Visual comparison of CAMs and segmentation results.We additionally provide visual comparison between the TSViT-CAMs (baseline) and the proposed CB-CAMs on Germany dataset, as shown inFig.9. The first four columns show the visualization of the CAMs. One can observe that the CB-CAMs generated byExactare capable of accurately delineating the crop regions. Therefore, the semantic segmentation model tends to show more powerful perceptual capability underExact-generated pseudo labels’ supervision.
+
+Visual comparison of pseudo labels.InFig.12, we show the pseudo labels derived by TSViT-CAMs and CB-CAMs on both PASTIS and Germanytrainset. Consistent with the main paper, we observe thatExactremarkably addresses both under- and over-activation issues in the baseline, thereby providing more reliable supervision for SITS semantic segmentation network.

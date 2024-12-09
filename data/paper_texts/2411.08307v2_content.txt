@@ -1,0 +1,265 @@
+SECTION: PerceiverS: A Multi-Scale Perceiver with EffectiveSegmentation for Long-Term Expressive Symbolic Music Generation
+
+AI-based music generation has progressed significantly in recent years. However, creating symbolic music that is both long-structured and expressive remains a considerable challenge. In this paper, we propose PerceiverS(Segmentation andScale), a novel architecture designed to address this issue by leveraging bothEffectiveSegmentationandMulti-Scaleattention mechanisms. Our approach enhances symbolic music generation by simultaneously learning long-term structural dependencies and short-term expressive details. By combining cross-attention and self-attention in aMulti-Scalesetting, PerceiverScaptures long-range musical structure while preserving musical diversity. The proposed model has been evaluated using the Maestro dataset and has demonstrated improvements in generating music of conventional length with expressive nuances. The project demos and the generated music samples can be accessed through the link:https://perceivers.github.io.
+
+SECTION: IIntroduction
+
+Recent advancements in AI-based music generation, especially in audio generation models such as AudioLDM[1], MusicGen[2], and Jen-1[3], have demonstrated significant progress capable of generating highly natural-sounding music. Compared to audio generation, symbolic music offers a further level of abstraction, making it easier for machine learning models to capture deeper musical characteristics and understanding. Symbolic music plays a crucial role in the field of music generation, particularly due to its editable nature. This allows for operations such as cutting and rearranging different sections or substituting instrument timbres, enabling human involvement in high-quality music production during the post-processing stage.
+
+However, symbolic music generation faces two key challenges.First, the most expressive datasets, recorded from live performances and recording studios, are seldom used compared to manually created MIDI-file datasets. The primary reason is that they lack detailed annotations, making it harder for models to learn their complex structures. Furthermore, due to computational limitations, previous models cannot fully capture the context of an entire piece of music. Techniques, such aschunkingandquantization, are often employed to reduce computational complexity, leading to the loss of crucial musical details and making it difficult for models to grasp the full structure of a composition.Second, other approaches that use abstract structural representations as conditions for music generation tasks have enabled the generation of structured music. However, such methods rely heavily on handcrafted feature engineering. Our objective is to design and develop a model that is capable of learning the long-range dependencies in music without relying on explicit structural annotations.
+
+The emergence of Transformer Attention technologies, such asPerceiver AR[4], has made it possible to access much longer contextual dependencies. It allows for the simultaneous learning of musical structure and the generation of expressive performances. Perceiver AR has demonstrated the ability to attend to a context length of up to32,768 tokensusing the Maestro dataset[5], where the query in cross-attention attends to significantly longer key/value pairs[4]. However, thecausal mask, when applied with the default input sequence segmentation, does not fully conceal tokens that should not be visible during auto-regressive training and generation, which ultimately degrades the quality of the generated music. Additionally, when using ultra-long context as a single condition, the model tends to generate identical or similar repetitive segments as the sequence length increases due to issues withhigh similarityin the context of neighboring tokens, leading to a high token autocorrelation[6]tendency.
+
+In this paper, we propose PerceiverS, a novel model that addresses the causal masking issue by incorporating Effective Segmentation. Additionally, PerceiverSemploys Multi-Scale attention to mitigate the high token autocorrelation problem that arises from relying solely on long-range dependencies. Specifically, by adjusting the input sequence segmentation to start from the head segment with an effective causal mask and aggressively increasing the segment length up to the maximum input sequence length, we resolve the learning limitations caused by the causal mask in Perceiver AR[4]. Additionally, by incorporating Multi-Scale masks across multiple layers of cross-attention, the model considers both ultra-long and short-range attention simultaneously. This approach addresses the limitation in Perceiver AR, which focuses solely on long-range attention[4]. Different from Perceiver AR, our approach enhances symbolic music generation by effectively capturing long-term structural dependencies while simultaneously focusing on short-term variations. Through improved segmentation and multi-scale attention mechanisms, PerceiverSgenerates coherent, diverse music without relying on extensive structural annotations. Extensive experiments have been conducted to evaluate the performance of the proposed PerceiverS. The experimental results demonstrate an average40%improvement in Overlap Area when measured against the original training dataset, highlighting a substantial advantage of our approach over Perceiver AR[4]in generating high-quality symbolic music.
+
+SECTION: IIRelated Works
+
+SECTION: II-ACapturing Music Expressiveness
+
+The most significant early work in this area came from Google’s team, which introducedMusic Transformer[7], a model capable of generating expressive piano music using the Piano-e-Competition dataset, later known as theMaestrodataset[5]. Since this model was trained using MIDI files recorded from live piano performances, it utilized the attention mechanism to focus on the context of all previously generated tokens when predicting the next one, allowing it to generate highly detailed and expressive music.
+
+However, due to thequadratic complexityof the Transformer attention mechanism, it could only generate music lasting for tens of seconds, but not for several minutes. Unlike Music Transformer[7], few other models utilize performance datasets, primarily due to the lack of annotations associated with these types of datasets and the computational limitations involved in processing them.
+
+A key factor in generating production-quality music lies in the selection of datasets. TheMaestro dataset[5], consisting of real human performances, offers dynamic and expressive recording music. Datasets recorded from live performances are rare, but there are quite a few Automatic Music Transcription (AMT) datasets, including GiantMIDI[8], ATEPP[9], PiJAMA[10], and others. Advanced models have been developed, from Hawthorne[11]to Kong[8], that convert audio into MIDI files. These advances have made it possible to use a vast amount of recorded audio music to train models, as the development of symbolic music models has long been constrained by the limited availability of datasets.
+
+Manually created MIDI datasets, like LAKH[12], provide valuable human-annotated information, e.g., beats, bars, and phrases, which allows for flexible segmentation and richer feature extraction but lack expressive nuances found in live performances, such as dynamics, tempo variations, and subtle timing shifts. Other attempts, such as ASAP[13]with human-assisted beat correction, and advancements in automatic beat tracking, such as Beat This![14], aim to bring annotation to live-recorded datasets, though accuracy limitations still present challenges.
+
+Although using MIDI datasets recorded from live performances and music studios allows for the generation of music with rich and expressive details, generating such music over long durations remains a challenge. This is mainly due to the substantial increase in computational resources required for processing long-range contextual dependencies. Almost all current models, e.g., Music Transformer, employ strategies such as chunking and quantization to reduce token sequence length and vocabulary size[7]. While these approaches help to reduce computational burdens, they also limit the model’s ability to capture ultra-long dependencies and compromise expressive performance details. As stated on the Music Transformer webpage,111https://magenta.tensorflow.org/music-transformer“Some ‘failure’ modes include too much repetition, sparse sections, and jarring jumps.” This trade-off prevents the effective generation of long-term coherent symbolic music.
+
+SECTION: II-BCapturing Long-term Coherence
+
+In the efforts to learn musical structures and generate symbolic music with long-distance coherence, the approaches can generally be categorized into two main types, i.e., those that utilizeexplicitstructural features and those that encourage the model to learnimplicitstructural features. Each approach is introduced in the following subsections.
+
+The explicit use of structural features often relies on handcrafted feature engineering and external analyzing tools. A common method in these models is a waterfall-like approach. Typically, the process begins by generating a lead sheet and then using the lead sheet as a condition for the subsequent generation tasks.
+
+MuseMorphose[15]explicitly controls rhythmic intensity and polyphony density on a bar basis by training on datasets with bar annotations, specifically the LPD-17-cleansed and Pop1K7 datasets. Compose & Embellish[16]leverages third-party tools such as the skyline algorithm, edit similarity, and A* search measures to extract melody and identify structural patterns, enabling the model to produce music with enhanced structural organization. However, it still relies on bar-annotated datasets for training. Rule-Guided Diffusion[17]uses note density and chord to condition generation, resulting in structured musical segments. Its training does not rely on an annotated dataset but rather uses the performance dataset, Maestro. Still, it only produces short musical pieces instead of full-length segments. Whole-Song Hierarchical Generation[18]is capable of generating fully structured, complete pieces of music. It employs a multi-stage approach, using annotations from the POP909 dataset[19], including chord information and separate tracks for melody, bridge, and accompaniment, to produce structured elements such as form, lead sheet, and accompaniment, ultimately generating a complete, full-length piece.
+
+Another important approach involves enabling the model to learn the structural information of music implicitly. The method has the advantage of being more generalizable, as it does not rely on handcrafted feature engineering. However, its downside lies in the increased difficulty for the model to capture complex structural features of music.
+
+MusicVAE[20]uses a bidirectional RNN and a Conductor RNN to generate per-bar latent vectors that are decoded into individual notes, focusing on bar-level structure through training on datasets containing bar annotations, which may not be applicable to freely performed music. Museformer[21]applies sparse Transformer attention by fully attending to all tokens in selected bars and the summarized vectors of all preceding bars, allowing it to capture long-range context with limited computational resources. However, it still leverages the Lakh MIDI dataset[12]’s bar annotations, which cannot be used with unannotated performance datasets.
+
+SECTION: II-CSOTA Solutions with Long-Term Dependency On Performance Datasets
+
+The Perceiver AR model[4]from DeepMind has been a significant source of inspiration. It combines cross-attention and self-attention mechanisms, enabling the model to attend to sequences with up to tens of thousands of tokens. Like Perceiver[22]and Perceiver IO[23], Perceiver AR[4]uses a shorter query in its cross-attention mechanism to attend to much longer sequences, thereby minimizing computational costs. As noted in the paper, this approach allows the model to attend to up to 32,768 tokens when trained on the Maestro dataset[5], offering a significantly longer context compared to models like Transformer-XL[24]. This ability to efficiently process long-range contextual data is crucial for learning the structure of entire musical pieces.
+
+However, Perceiver AR leverages the lasttokens as the Query with a limited causal mask, and training with teacher-forcing on long sequences led to lower quality generation. Furthermore, we observed that relying solely on long, especially ultra-long, context resulted in repetitive segments in the latter part of generated content.
+
+Despite significant progress, existing research has yet to fully address the challenge of generating music with both long-term dependencies and expressive performance details, as most approaches either rely heavily on manual processes or face performance limitations due to restricted context window lengths. While Perceiver AR represents the state-of-the-art method for generating music with long-term dependencies, there remain areas that require further improvement.
+
+SECTION: IIIPreliminaries
+
+In this section, we introduce the fundamental concepts and key challenges necessary to understand our proposed model. We review the operational mechanism of cross-attention in Perceiver AR, the role of its causal mask, and the key considerations when using ultra-long sequences as context for token generation.
+
+SECTION: III-AInput Sequence pre-processing
+
+Let the complete sequence be, whereis the total length of the entire music sequence, andis the maximum input length, representing the longest sequence that the model can attend to in one pass. The query length is denoted by, which represents the number of tokens the model uses to query the context, and typically,.
+
+In a typical Transformer approach, a segment of lengthis extracted from the sequence at random. Specifically, we select a starting index, and the segment used for training, denoted as, is defined in (1).
+
+This approach produces overlapping fixed-length windows for training, as defined in (2):
+
+These sequences will be handled using a causal mask.
+
+In a typical transformer with causal masking, the goal is to ensure that when generating token, the model does not attend to tokenswhere. The causal mask for this is typically represented by (3):
+
+This matrix is added to the attention scores(as defined in (6)) so that all positions(i.e., future tokens) are masked out by setting their attention scores to, ensuring they don’t influence the generation of the current token.
+
+For example, consider a case where the query has a length ofand the key/value has a length of. The expected causal mask (Vanilla Transformer) is as follows in (4):
+
+This mask ensures that the third query token only attends to the first three tokens.
+
+In Perceiver AR[4], the situation is different because the query token lengthis much smaller than the key and value lengths. Specifically, the causal mask only works on the final part of the context sequence, equivalent to the length of the query, but does not mask tokens that occur before that. This results in some tokens before the query length being visible during training, which is not an issue for generation except that the segment fromtois not properly learned by the model.
+
+Let’s denote the sequence of keys and values asand, respectively, and the query length as, while the context length (keys/values) is, where. The attention mask matrixin Perceiver AR can be represented as follows:
+
+Below shows an example of the causal mask used in Perceiver AR with(query length) and(context length) as illustrated in (5):
+
+Thus, the model can “peek” at tokens before the query length because they are not fully masked, allowing it to attend to tokens before the intended context during training. This partial masking leads to a mismatch between training and auto-regressive generation, degrading the quality of the generated music.
+
+Note that this issue primarily affects unconditional generation, where the model generates music without any specific prompt or primer, making it more sensitive to inconsistencies between training and generation contexts.
+In conditional generation, where the model starts with an initial prompt or primer sequence, using a primer with a length close to the unmasked portion during training can help preserve generation quality and prevent degradation.
+
+The attention mechanism with a causal mask is computed as follows[25]:
+
+SECTION: III-BUltra-Long Context in auto-regressive Generation
+
+Similar to the phenomenon of repeated segments often observed in natural language generation as described in[26], relying only on the ultra-long context in auto-regressive models can lead to generated sequences containing excessively long repetitive short segments, especially as the sequence length increases. Given that the probabilities of generating tokensand(whereis a small integer) are, respectively, as shown in (7) and (8):
+
+Asincreases, the contextsandbecome nearly identical due to the ultra-long context. Consequently, the conditional distributionsandare almost indistinguishable, resulting in a KL divergence close to zero:
+
+This similarity in conditional distributions means that the model is likely to generate similar tokens in nearby steps, as the probability distributions governingandbecome nearly identical. Thus, the probability ofincreases, leading to repetitive short segments.
+
+When such repetitive tokens are generated across multiple time steps, the sequence exhibits high token autocorrelation. Mathematically, the token autocorrelation at lagfor the sequencecan be expressed as[6]:
+
+whererepresents the mean of the sequenceX. When values at nearby steps exhibit high similarity, as suggested by nearly identical conditional distributions, the termin (9) becomes large, leading to high token autocorrelation at lag.
+
+During generation, identical values are not produced at nearby steps to avoid training penalties. In fact, the similar context of neighboring tokens causes the generation process to produce identical or similar tokens at nearby steps, leading to a higher probability of generating repetitive short segments as the sequence grows longer.
+
+SECTION: IVProposed Approach
+
+The proposed model, PerceiverS, is a dual approach of EffectiveSegmentation and Multi-Scale attention to address the limitations in symbolic music generation. Building on the strengths of Perceiver AR[4]and introducing mechanisms to handle both short and ultra-long dependencies, PerceiverS(Segmentation andScale) achieves greater coherence and expressiveness in generated music.
+
+Since Perceiver AR provides the possibility of accessing extremely long contexts, we attempt to use Perceiver AR as a baseline model to learn entire musical pieces and evaluate the quality of its generation. Our goal for symbolic music generation is to achieve long-term coherence while maintaining diversity within shorter segments. Furthermore, we expect the model to learn patterns similar to human composition, with repetition and development. The detailed steps of our approach and improvements are elaborated in the following subsections.
+
+SECTION: IV-AImproving the Model to Effectively Learn Ultra-Long Sequences
+
+This section outlines a data pre-processing strategy designed to enhance token generation quality in auto-regressive models. As discussed in the previous section, Perceiver AR’s causal mask has limitations in its coverage of the entire input sequence, making it necessary to implement pre-processing adjustments before feeding data into the model.
+
+We set the maximum context length to32,768 tokens. Based on the Perceiver AR’s original implementation222https://github.com/google-research/perceiver-ar, we randomly cropped the dataset. In this approach, a random starting point is selected between0and(the sequence length - the maximum input length + 1), from which a segment of length equal to themaximum input lengthis taken.
+
+The upper part of Figure1demonstrates the original input sequence pre-processing of the baseline model. Specifically, the baseline model segments the input sequence using the maximum input length as the window size, leaving the beginning of the sequence uncovered by the causal mask. This results in these initial tokens not being progressively used as validation tokens in teacher forcing, preventing the model from learning to generate tokens at the start of the sequence that fall outside the mask.
+
+In contrast, we propose an alternative method that does not rely on cropping the dataset based on the longest input sequence. Instead, we randomly select an endpoint for cropping between(the query length + 1)and(the sequence length + 1). A segment of up to themaximum input lengthis then taken, leading up to this endpoint (or shorter for tokens near the beginning). Padding is applied as in the baseline model.
+
+The lower part of Figure1illustrates the effective segmentation input sequence pre-processing of the proposed PerceiverS. It begins learning token generation from the initial part of the sequence with effective causal mask coverage. This approach ensures that tokens from 1 toin the sequence are effectively covered by the causal mask, enabling the model to learn token generation at the beginning of the sequence more effectively.
+
+The rationale for this improvement is that Perceiver AR[4]’s causal mask operates in afinal blockmechanism, where it provides context for the length of the input tokens but only partially masks within the query token length. Training with traditional segmentation causes a mismatch between the training phase, where teacher forcing is used, and the auto-regressive generation process. This approach allows the model to “peek” at unintended tokens during training, which degrades generation quality during inference when such tokens are unavailable for reference.
+
+The experimental results (in theExperiments and Resultssubsection) will show that this improvement in data preprocessing significantly impacts performance.
+
+SECTION: IV-BFurther Improving the Model for Generating Music with Both Coherence and Diversity
+
+After applying ultra-long contexts in the auto-regressive generation, we aim to combine the strengths of both consistency and diversity, allowing the proposed PerceiverSto generate music without a tendency toward repeated segments caused by attending solely to long-distance contexts.
+
+TheMulti-Scalecross-attention mechanism adopted in the proposed PerceiverS, while somewhat similar to the concept of Museformer[21], is fundamentally different. It introduces multiple layers of attention with varying scales of attending length, designed to balance focus on both long and short contexts, thereby enhancing diversity and reducing repetitive tendencies.
+
+Figure2illustrates the Multi-Scale Cross-Attention Mechanism of PerceiverS. Specifically, within the multi-layer cross-attention, tokens from earlier in the sequence are masked by different scales, and the resulting outputs are combined before being fed into the self-attention layer. This approach enables the model to incorporate cross-attention at multiple scales simultaneously.
+
+Two layers of cross-attention are implemented. One layer operates without a scale mask, while the second layer applies a scale mask that masks out all tokens before the last1,024 tokens.
+
+The output of cross-attention layers is combined using the cascade approach. The cascade method feeds the output from the first layer directly as input to the second layer, allowing each layer to refine and build upon the preceding layer’s output.
+
+SECTION: VTechnical Details
+
+In this section, we present the technical details, including the mathematical formulation and technical explanation of our proposed approach, PerceiverS, designed for symbolic music generation. Based on the improvements to Perceiver AR, our model introduces two key innovations, i.e.,Effective Segmentationfor input sequences andMulti-Scalecross-attention mechanism. The details are presented in the following sections.
+
+SECTION: V-AEffective Segmentation
+
+To address the mismatch between training and auto-regressive generation, we propose a novel segmenting method aligned with the causal mask mechanism, whether using random or sequential sampling, that emphasizes shorter context sequences, gradually building up to the maximum input length.
+
+Let the complete sequence be, wheredenotes the total length of the entire sequence,is the maximum input length the model can attend to in one pass, andrefers to the query length within that input. The input sequences used for training, denoted as, are generated as follows in Equation (10):
+
+Here,is a starting position chosen within the sequence, andis the end position such that the lengthdoes not exceed the maximum input length.
+
+When accessing data from the dataset, instead of using fixed-length sequences with the maximum input length, we progressively extract sequences by increasing the context length fromup to. This way, the training set includes progressively larger prefixes of the sequence, as shown in Equation (11):
+
+After reaching the full context length, we continue segmenting from various starting positions while preserving the maximum input length for each sequence, yielding segments such as in Equation (12):
+
+In practice, dataset segments arerandomlyselected from these defined segments. Forsequentialsegment retrieval, the method begins with progressively longer prefixes, as shown in Equation (13):
+
+Here,is an integer ranging from 1 to, whererepresents the maximum number of segments possible within the full sequence length. When, subsequent segments shift forward along the sequence in fixed-length windows of size, as shown in Equation (14):
+
+This approach ensures that the model learns the sequence structure progressively, closely resembling the auto-regressive generation process where tokens are predicted one at a time. As a result, the model is better aligned with the auto-regressive nature of music generation, reducing the peeking problem and improving generation quality. Thus, the model can smoothly learn the generation of sequenceswith an effective causal mask. The key advantages are summarized as follows.
+
+Progressive learning: The model learns long-range dependencies progressively by starting with shorter sequences and gradually increasing the context length.
+
+Consistency: This method ensures the training process mimics auto-regressive generation, reducing quality degradation during generation.
+
+Causal alignment: This approach aligns with the causal mask, preventing the model from “peeking” at future tokens during training.
+
+SECTION: V-BMulti-Scale Cross-Attention Mechanism
+
+The proposed Multi-Scale cross-attention mechanism enables PerceiverSto handle different levels of context simultaneously. This mechanism employs two cross-attention layers on top of the causal mask: one without any scale mask, allowing all tokens to remain unmasked, and the other layer that masks tokens from the 1st to theth token. The details with formulas for these two settings are elaborated as follows.
+
+First, we introduce theAttention mask without scale mask. In this case, all tokens are visible to the model. as defined in Equation (15):
+
+Second, in the case ofAttention mask with scale mask (masking the 1st to theth tokens), tokens from the 1st to theth positions are masked by the scale mask, preventing the model from attending to these tokens. The scale mask matrixis defined in Equation (16):
+
+This ensures that only tokens starting from theth position are visible, while the model cannot attend to tokens before this position. The combined causal maskand scale maskare added directly to the attention score calculation, modifying the softmax as follows (Equation (17)):
+
+whererefers to the causal mask that ensures the model does not attend to future tokens, anddenotes the scale mask applied to limit attention to certain parts of the sequence. Both masks work together to control which tokens the model can attend to during training.
+
+After calculating the attention of a given layer in the manner described above, the output from this attention layer is fed as input to the next layer, enabling each layer to refine and build upon the previous layer’s output. We refer to this method of combining attention layers as theCascademode.
+
+SECTION: VIExperiments and Results
+
+SECTION: VI-AExperimental Setup
+
+In this subsection, we introduce the experimental setup, including dataset selection, MIDI Pre-processing, hyper-parameter selection, and evaluation metrics.
+
+In our experiments, we used the Maestro dataset[5]as the primary dataset. It contains 1,251 sequences, with a validation set of 240 sequences. All models were trained and evaluated solely on this dataset to ensure consistency in assessing performance.
+
+For MIDI pre-processing, we set theNote OnandNote Offevents within the range of 0 to 127.Time Shiftevents were discretized into 100 time steps per second, where each step represents 10 milliseconds. Volume events were quantized into 32 bins, and pedal events were mapped to the duration of relevant notes, discarding the pedal events afterwards. Each song ends with atoken_endmarker. No data augmentation, such as key or tempo changes, was applied, though this is planned for future experiments.
+
+The hidden dimension was set to 1,024 with 24 self-attention layers. Each attention layer had 16 heads, and the head dimension was 64. Adam optimization was used, with an initial learning rate set to 0.03125. Each generated sequence length was set to 8,192 tokens, resulting in approximately 2-10 minutes of music. The music generation in this setup wasunconditional, meaning that no external conditions or prompts were used to guide the generation process. The resulting MIDI files were rendered into audio using theVintage Pianosound from Logic Pro.
+
+Inspired by the previous research work[27], for evaluation, we constructed a reference dataset by separating a set of pieces from the training dataset (Maestro[5]) before model training. Then, we generated an equal number of files using the model to form the generated dataset. We calculated the distances within each dataset and between the generated and reference datasets for the following metrics:
+
+Total Used Pitch (PC):Measures the overall pitch diversity by counting distinct pitch classes used throughout the entire piece.
+
+Total Used Note (NC):Counts the distinct notes (pitch and octave combinations) used across the entire piece, indicating the variety in pitch and register.
+
+Total Pitch Class Histogram (PCH):A histogram representing the frequency distribution of pitch classes across the entire piece, offering insights into pitch class preference.
+
+Pitch Class Transition Matrix (PCTM):A matrix representing the probabilities of transitioning from one pitch class to another. This metric captures melodic and harmonic movement patterns.
+
+Pitch Range (PR):Measures the difference between the highest and lowest pitches used in the piece, indicating the overall range of pitches.
+
+Average Pitch Interval (PI):The average interval between consecutive pitches, which reflects the tendency towards stepwise or leapwise motion in melodies.
+
+Average Inter-Onset Interval (IOI):Measures the average time interval between note onsets, capturing the rhythmic density across the entire piece.
+
+Note Length Histogram (NLH):A histogram representing the distribution of note lengths, giving insights into note duration diversity.
+
+Note Length Transition Matrix (NLTM):A matrix representing the transition probabilities between different note lengths, capturing rhythmic patterns and variations in note duration.
+
+We introduced four metrics based on time segments, as bar annotations are unavailable in performance datasets, making time-based segmentation essential for evaluating long-term coherence and local diversity.
+
+Segment Used Pitch (PC/seg):Similar to Total Used Pitch, but calculated within segments. This metric helps capture pitch diversity across shorter sections.
+
+Segment Used Note (NC/seg):Counts distinct notes within fixed-length segments, allowing us to analyze the variety of notes used across different parts of the piece.
+
+Segment Pitch Class Histogram (PCH/seg):Represents the pitch class distribution within each segment, providing insights into the consistency of pitch class usage across different sections.
+
+Segment Average Inter-Onset Interval (IOI/seg):Measures the average inter-onset interval within each segment, helping to analyze rhythmic density and tempo consistency within shorter sections.
+
+To calculate these additional segment-based metrics, each evaluation piece was divided into 64 segments of equal duration. All of these metrics are calculated based on theinter-setdistribution similarity between the generated dataset and the ground truth dataset, including two values: the KL Divergence (KLD) and Overlap Area (OA). When the OA value is larger and the KLD value is smaller, it indicates that the above metric distributions of the generated dataset and the ground truth dataset are closely aligned, suggesting that the model has generated music more closely resembling human-composed and performed pieces.
+
+SECTION: VI-BExperiments and Results
+
+Two experiments have been conducted to evaluate the models’ performance in various scenarios.
+
+The first experiment aims to demonstrate that EffectiveSegmentation is essential for the model to fully leverage ultra-long-distance context.
+
+We compared two types of input sequence segmentation, with a maximum sequence length set to 32,786 tokens:
+
+Baseline Model: A random starting position is selected within the range [0, sequence length - max input length + 1], and then a segment of max input length tokens is taken from this start.
+
+Improved Model: A random end position is selected within the range [query length + 1, sequence length + 1], and then a segment of tokens, up to the max input length, is taken backwards from this end.
+Segments shorter than the max input length are padded at the beginning.
+
+The segmentation methods produced very different results in auto-regressive training and generation, with the improved model showing much better quality compared with the baseline, as shown in the data within the red dashed box in TableI. The music generated using the improved input sequence processing approach is closer to the ground truth in terms of lower KLD metrics, including PC, PC/seg, NC/seg, PCH/seg, PCTM, PR, PI, IOI, and IOI/seg, as well as higher OA metrics, including PC, PC/seg, NC, NC/seg, PCTM, PR, PI, IOI, IOI/seg, and NLTM. This result indicates that the improvement effectively enables the model to utilize ultra-long-distance context for music generation.
+
+The Comparison column shows the percentage difference between the current OA and the baseline OA.
+
+The aim of the second experiment is to evaluate whether using multi-layer cross-attention with different context scales, especially by simply adding attention outputs for shorter-range dependencies, can improve generation quality.
+
+While an ultra-long context provides long-term consistency, it tends to generate repetitive segments in the latter part of the sequence (see Figure3). To address this issue, we added differentscale masksto the multi-layer cross-attention, allowing different layers to focus on distinct context lengths and merging these results. Here, we define two scale masks for the maximum sequence length of 32,786 tokens. Specifically, in theNo Scale Masksetting, all tokens remain unmasked. In theMasked Scale setting, only the last 1,024 tokens are visible, while all preceding tokens are masked.
+
+The cross-attention layer without a mask is fed into the cross-attention layer with a context mask as its input. We refer to this approach as cascade Multi-Scale cross attention.
+
+Results, as shown in the data within the solid blue box inTableI, indicate that this approach significantly improved the model’s generation quality. By examining the OA of the four parameters IOI, IOI/seg, NLH, and NLTM—which are related to rhythm characteristics—it is evident that the model’s generation aligns more closely with the reference set. Additionally, the OA values for PCH and PCH/seg indicate that the harmonic characteristics also better resemble those of the reference dataset. Furthermore, we analyzed the density of repetitive notes detected per unit time in segmented generated music before and after the improvement, as shown in Figure5, which indicates that the pre-improvement model exhibited a greater tendency to generate repetitive segments. In contrast, unusual repetitive segments in the generated music are now rare after the improvement, as shown in Figure4, with the generated music even exhibiting a rich diversity of phrases.
+
+We also note that the baseline model shows better results in PCH and NLH metrics because most classical music is multi-movement; as a result, multi-movement classical pieces and poorly generated, random-like music, when analyzed across entire pieces, tend to exhibit a wide distribution of pitch classes and note lengths. In contrast, the improved model generates music that maintains relatively more consistent harmony and rhythm throughout an entire piece, resembling a single movement of a classical piece, resulting in a narrower distribution than both ground truth and unstructured music. Therefore, when examining the segmented data for the same metrics on the same set of pieces, such as PCH/seg, the improved model performs better, as the segmented analysis of ground truth music, with most segments taken from the same movement, tends to have a narrower harmonic and rhythmic distribution compared to unstructured music. Although NLH segment data was not calculated, it should follow a similar reasoning.
+
+SECTION: VI-CDiscussion
+
+Our proposed EffectiveSegmentation technique, which optimizes the input sequence processing for Perceiver AR[4], has shown that, with appropriate data segmentation, Perceiver AR[4]can effectively learn long contexts and produce coherent, contextually rich content. The ultra-long context attention indeed provides the model with remarkable benefits in maintaining content consistency over extended generation.
+
+However, a potential drawback of solely relying on long-range dependencies emerged: as sequences get longer, the model increasingly tends to generate repetitive short segments. This occurs because, in the later stages of generation, the long context windows are nearly identical, differing by only a few tokens. Consequently, the probability of generating identical or similar segments increases, further amplified by the high token autocorrelation[6]tendency due to the high similarity of context as the sequence lengthens.
+
+To mitigate this issue, we introduce a Multi-Scale cross-attention mechanism that combines both long and short context windows. By integrating varying context lengths into multi-layer cross-attention, our approach successfully reduces the tendency for repetitive sequences while maintaining the model’s long-term consistency. This combination strategy enables the generation of high-quality symbolic music over extended sequences.
+
+Our enhanced model, PerceiverS(Segmentation andScale), leverages EffectiveSegmentation aligned with Perceiver AR[4]’s operation mode. By applying Multi-Scale masking strategies within multi-layer cross-attention, PerceiverSeffectively generates cohesive, consistent music over extended temporal contexts, preserving intricate musical variations and expressive details across long sequences. Additionally, through the use of performance music datasets, PerceiverSis capable of producing high-quality symbolic music that captures the nuances of human performance. Importantly, because the model does not rely on annotated datasets, PerceiverScan be trained on MIDI data derived from audio using any automatic music transcription (AMT) technique. This capability suggests a future in which symbolic music generation can leverage vast historical recordings, unbounded by the limitations of manually annotated data.
+
+In essence, Perceiver AR[4]and, by extension, PerceiverS, are general-purpose models adaptable to a wide range of AI tasks. The EffectiveSegmentation and Multi-Scale innovations introduced here open up avenues for future applications across domains such as text, image, and video. Future research could thus extend the potential of PerceiverS, exploring its capabilities across diverse modalities and expanding its utility within the broader landscape of AI tasks.
+
+SECTION: VIIConclusion and Future Work
+
+In this work, we introduced a novel model, PerceiverS, which builds on the Perceiver AR[4]architecture by incorporating EffectiveSegmentation and a Multi-Scale attention mechanism. The EffectiveSegmentation approach progressively expands the context segment during training, aligning more closely with auto-regressive generation and enabling smooth, coherent generation across ultra-long symbolic music sequences. The Multi-Scale attention mechanism further enhances the model’s ability to capture long-term structural dependencies while maintaining short-term diversity.
+
+By addressing limitations in existing models, particularly the issue of causal masking in auto-regressive generation and the high token autocorrelation problem in ultra-long sequences, PerceiverSenables the effective handling of ultra-long token sequences without compromising the quality of generated music. Through our proposed EffectiveSegmentation in dataset pre-processing and Multi-Scale attention modifications, we demonstrated significant improvements in generating coherent and diverse musical pieces.
+
+Our approach to symbolic music generation provides a new balance between structural coherence and expressive diversity, setting a foundation for future advancements in symbolic music generation models.
+
+SECTION: References

@@ -27,3 +27,9 @@ The process is as follows:
 - Unsupervised Learning
 - Random Forest
 - AI
+- LSTM
+- K means
+- RNN
+- time series
+- anomaly detection
+- SVM

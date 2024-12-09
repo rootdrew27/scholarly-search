@@ -1,0 +1,135 @@
+SECTION: GaussianBeV : 3D Gaussian Representation meets Perception Models for BeV Segmentation
+
+The Bird’s-eye View (BeV) representation is widely used for 3D perception from multi-view camera images. It allows to merge features from different cameras into a common space, providing a unified representation of the 3D scene. The key component is the view transformer, which transforms image views into the BeV. However, actual view transformer methods based on geometry or cross-attention do not provide a sufficiently detailed representation of the scene, as they use a sub-sampling of the 3D space that is non-optimal for modeling the fine structures of the environment. In this paper, we propose GaussianBeV, a novel method for transforming image features to BeV by finely representing the scene using a set of 3D gaussians located and oriented in 3D space. This representation is then splattered to produce the BeV feature map by adapting recent advances in 3D representation rendering based on gaussian splatting[12]. GaussianBeV is the first approach to use this 3D gaussian modeling and 3D scene rendering process in an optimization free manner, i.e. without optimizing it on a specific scene and directly integrated into a single stage model for BeV scene understanding. Experiments show that the proposed representation is highly effective and place GaussianBeV as the new state-of-the-art on the BeV semantic segmentation task on the nuScenes dataset[2].
+
+SECTION: 1Introduction
+
+Multi-camera 3D perception tasks, such as semantic segmentation, are crucial for autonomous navigation applications. A common strategy involves projecting and merging features from different cameras into a bird’s-eye view (BeV) representation, which is then analyzed by perception heads. The primary challenge in these approaches lies in addressing the loss of 3D information during the projection of the physical world into camera images, thus solving the inverse problem of transforming image views into the BeV.
+
+Recent literature identifies three main subsets of methods for image-to-BeV transformation. First, depth-based methods[20,8,10,13]achieve view transformation geometrically by filling a 3D grid with features extracted from images based on the prediction of discrete depth distribution. The key idea is to roughly localize the 3D position of each image feature and then accumulate them through a voxelization step. However, in these approaches, 3D feature localization depends on the depth discretization granularity and is sub-optimal, as features are placed at the level of the visible faces of objects. Second, projection-based methods[7,3]also use a geometric approach, project 3D grid points into the cameras and gathers corresponding features from them. While straightforward, these methods do not yield accurate 2D-to-3D back-projection, as all grid points along the same camera ray receive the same feature. Third, transformer-based methods[15,32,17]utilize cross-attention to merge multi-view features. Though effective for 3D object detection, their application to dense tasks like BeV semantic segmentation incurs a high computational cost due to dense spatial queries needed for BeV representation in the attention process. Some works[32,17]address this by reducing the BeV resolution, leading to inevitable information loss.
+
+In this article, we propose a novel view transformation method called GaussianBeV, which enables fine 3D modeling of scenes. Drawing on recent advances in explicit 3D representation for rendering novel views based on Gaussian Splatting (GS)[12], our method represents a scene using a set of 3D gaussians, each parameterized by a center, scale, rotation, opacity andsemantic features(instead of colors in GS). Furthermore, unlike the original GS method, which uses offline optimization for a specific scene to determine the 3D gaussian representation, we propose to train a neural network to directly generate anoptimization free3D gaussian representation of the scene from multi-view images. This representation is then rendered into a BeV feature map which is analyzed by semantic segmentation heads.
+
+The representation of a scene by a set of 3D gaussians allows to model its entire content. Indeed, the geometrical properties of the gaussians (position, size and rotation) enable to cover 3D space with varying level of detail depending on the structures encountered in the scene. Intuitively, a gaussian representing a lane marking will be rotated and elongated along its length. A gaussian representing a vehicle will be placed in the center of the vehicle and will follow its shape. Figure1(d)illustrates the intuition behind the representation proposed in this paper. Our contributions can be summarized as follows. (1) Introduction of GaussianBeV for BeV feature map generation from images through anoptimization freeimage-to-3D gaussian representation for any scene, allowing fine 3D content modeling. This representation is then splattered in BeV using a rasterizer module. To our knowledge, this is the first time that a gaussian splatting representation that is not scene-specific is proposed and integrated into a BeV perception model. (2) Experiments demonstrating the effectiveness of our method, establishing it as the new state-of-the-art in BeV semantic segmentation.
+
+SECTION: 2Related work
+
+A series of models were built on the explicit prediction of pixel-wise depth estimations along with image features. Combined with camera calibration parameters, this enables the back-projection of 2D features into 3D feature point cloud which is finally aggregated in the BeV grid. To accommodate for uncertainty in depth estimation, the features are actually propagated all along the ray that traverses their pixel and modulated by a discrete depth probability estimation[20,8,10]. To improves depth prediction, an explicit depth supervision scheme is proposed[13]using LiDAR data during model training.
+However, depth-based methods are sensitive to the ray sampling strategy, usually back-projecting features along the ray and on object surfaces (see Figure1(a)).
+
+Projection-based.Using a thorough comparative study,[7]proposes to discard depth estimation in favor of a simpler projection scheme: a predefined set of 3D points is used to describe the scene and camera features are probed by projecting the point on the camera feature maps using calibration data.
+This projection disregards actual objects and background placement but returns a denser representation of the scene without void beyond the depth of objects surfaces.
+The computational and memory overhead of the generating the BeV grid is reduced by opting for a sparse grid representation[3]. Projection-based view transformation methods are simple but result in a coarse BeV representation because all voxels along the optical ray receive the same features (see Figure1(b)).Attention-based.Capitalising on recent advances in Transformer models, depth estimation is replaced by an attention-based feature modulation scheme[15,17,32,16,25].
+Several optimization schemes are proposed to resolve computational complexity of a pairwise matching between image and BeV grid tokens: factorization of spatial and temporal attentions, deformable attention[15], injection of calibration and timestamp priors[17].
+For the segmentation task, attention-based view transformation is computationally and memory intensive, due to the need to define a dense query map[15]. This is why some methods[32,17]predict a low-resolution BeV (see Figure1(c)), which is then upsampled by successive deconvolutions.Gaussian splatting.Gaussian splatting (GS)[12]is a 3D scene rendering technique which uses 3D gaussians to describe a scene.
+Each gaussian is parameterized by its position, scale, rotation, opacity and a Spherical Harmonics color model.
+The entire rendering pipeline is differentiable allowing the optimization of the gaussian parameters to a particular scene based on a set of images. GS is both fast and parallel, allowing real-time operation on GPUs.
+
+In comparison to sparse voxel grids, gaussians offer more efficient representations of a scene since individual gaussians can describe large volumes while smaller ones can accurately encode finer details with arbitrary resolution.
+Several extensions have been proposed, allowing the management of dynamic objects[14,28]or the distillation of semantic features from foundation models in the representation[22,21,34,30].
+Although GS rasterization itself is fast, the optimization of gaussian parameters to match a scene usually requires many iterations.
+In order to address this issue for real-time SLAM,[18]leverages ground-truth 3D information from a depth sensor to initialize gaussian positions and[27]uses temporal consistency in order to minimize the optimization workload between successive frames.
+To perform scene reconstruction with stereo images[4]or object-centric single image[23], optimization-free methods are introduced allowing the model to directly learn to predict the gaussian parameters.
+
+In our work, we propose to overcome the drawbacks of view transformer methods by modelling scenes as set of gaussians which are subsequently rasterized into a feature map.
+Unlike previous gaussian splatting works which optimize the gaussian representations to each scene, we propose to learn a neural network capable of directly predicting a gaussian representation of any scene.
+Compared to[4,23]which targets scene reconstruction, our model is designed to perform real-time outdoor BeV semantic segmentation from multiple calibrated cameras.
+
+SECTION: 3GaussianBeV
+
+SECTION: 3.1Overview
+
+Figure2presents an overview of GaussianBeV. The model takes as input a set of multiview imageswiththe number of cameras,andthe dimensions of the images. These images are passed sequentially through four modules, leading to BeV segmentation.
+
+The first module extracts image features using an image backbone and a neck to obtain feature maps, withthe number of channels,andthe dimensions of the feature maps.
+
+The second module is the 3D gaussian generator (Sec3.2) that predicts for each pixel in the feature maps the parameters of the corresponding gaussian in the world reference frame.
+The output of this module is a set of 3D gaussianswiththe number of channels of the embedding associated to each gaussian.
+More specifically,contains the following parameters : positions, scales, rotations as unit quaternions, opacitiesand embeddings. First, the module predicts a set of 3D gaussian for each camera in its own camera reference frame. Next, camera extrinsic parameters are applied to transform 3D gaussians from the camera to the world reference frame to finally concatenate all the gaussians into the single set.
+
+The third module is the BeV rasterizer (Sec3.3) that performs a BeV rendering of the 3D gaussian setto produce the BeV feature map, withandthe dimensions of the BeV map.
+
+Finally, in the last module, a BeV backbone and segmentation heads are sequentially applied to the BeV features to provide the final prediction.
+
+SECTION: 3.23D Gaussian generator
+
+Given the input feature maps, the 3D gaussian generator predicts the 3D gaussian representation of the scene using several prediction heads. Figure3illustrates how it operates on the feature maps.
+
+Gaussian centers.The 3D positions of the gaussians in the scene are estimated by a depth head and a 3D offset head applied to. The first predicts an initial position of the 3D centers along the optical rays. The second refines this 3D position by adding a small 3D displacement to it, giving more flexibility in the positioning of gaussians by not freezing them along the optical rays.
+
+More precisely, for a pixelin the feature map of the camerawith coordinates, the depth head predicts the disparityas in previous works dealing with monocular depth map estimation[6,29]. To compensate the influence of focal length diversity from one camera to another on depth prediction, disparity is predicted up to a scaling factor, in a reference focal lengthas proposed in[31]. Knowing the true focal lengthassociated to the camera, the metric depthis then decoded as follows:
+
+The corresponding 3D pointin the camera reference frame is then deduced using the intrinsic matrixof the-th camera:
+
+The resulting 3D points are constrained to lie along the optical ray passing through the pixel under consideration. Because of this constraint, their positioning is not necessarily optimal. To overcome this problem, we propose to use the 3D offset prediction head. It aims to provide a small displacementto be applied to the 3D center of the gaussianto refine its position in all three directions. The refined 3D pointis simply obtained by:
+
+At this stage, the 3D gaussian centers calculated for each camera are expressed in the corresponding camera reference frame. To express these points in the world reference frame, the extrinsic parameter matricesare applied, allowing the camera-to-world transformation :
+
+The result is the gaussian center set.Gaussian rotations.The 3D rotations of the gaussians in the scene are estimated by a rotation head applied to. For a given pixel in the feature map of the camera, it outputs an allocentric rotation in the form of a unit quaternion. The allocentric rotation of a pixel corresponds to a rotation relative to the 3D optical ray passing through it. This modelization makes it easier for the rotation head to learn, as it has no knowledge of the optical ray corresponding to the pixel it is processing. To take an example, two objects placed at two different locations in the scene and with different absolute (egocentric) rotations in the camera reference frame may have the same appearance in the image. In this case, the allocentric rotation predicted by the rotation head will be the same. The intrinsic parameters of the camera are then used to retrieve the egocentric rotation information.
+
+For that purpose, the quaternionrepresenting the rotation between the optical ray passing through the pixelof the cameraand the axisis calculated. The quaternionrepresenting the egocentric rotation in the camera reference frame is then recovered by:
+
+Finally, as for gaussian centers, the quaternionrepresenting the rotation of the gaussian in the world reference frame is calculated using, the quaternion modeling the camera-to-world rotation of the camera:
+
+The quaternions thus calculated form the set of gaussian rotations.
+
+Gaussian scales, opacities and features.The last three gaussian parameters do not depend on optical properties and camera positioning, but rather encode semantic properties. Therefore, three heads are simply used to predict the sets,,andrequired to render the gaussian setby the BeV rasterizer module.
+
+SECTION: 3.3BeV rasterizer
+
+The BeV rasterizer module is used to obtain the BeV feature mapfrom the set of gaussianspredicted by the 3D gaussian generator. To this end, the differentiable rasterization process proposed in gaussian splatting[12]has been adapted to perform this rendering. The first adaptation, already proposed in other offline semantic reconstruction works[21], consists in rendering-dimensional features rather than colors. In our case, this produces a rendering containing semantic features essential for the perception task to solve. The second adaptation concerns the type of projection used. We have parameterized the rendering algorithm to generate orthographic rather than perspective renderings, more suited for BeV representation of the scene.
+
+SECTION: 3.4GaussianBeV training
+
+Our model is trained end-to-end using the loss functions used in[8,7,3].
+In these previous works, the semantic segmentation lossis defined as follows:
+
+Withthe binary cross-entropy loss.andcorrespond to the centerness and offset losses respectively, used as auxiliary losses to regularize training.are weights to balance the three losses.
+
+Although GaussianBeV can be trained efficiently with the aforementioned losses, the addition of regularization functions acting directly on the gaussian representation improves its representational qualities. In particular, two regularization losses are added during training.
+
+First, a depth loss aims to regularize the position of the gaussians using the depth information provided by the projection of the LiDAR in the images. This loss adds constraints on the depth head predictions to obtain an initial 3D position, which is then refined by the 3D offsets (see Sec3.2). Withthe ground truth depth andthe predicted depth, the depth lossis defined as follows:
+
+Second, an early supervision loss aims to optimize the gaussian representation before BeV backbone + heads are applied. The idea is to constrain the BeV features to directly provide all necessary information for the semantic segmentation task. In practice, segmentation heads are added and connected directly to the output of the BeV rasterizer module. The early supervision lossis defined similarly to(see equation7). The total loss function is therefore defined by:
+
+The influence of these learning strategies is analyzed in section4.2.
+
+SECTION: 4Experiments
+
+Dataset.We use the nuScenes dataset[2]consisting in a set of multiview sequences obtained with a system of=6 surrounding cameras. It is divided into 750 sequences (28,130 images) for training and 150 sequences (6,019 images) for validation. It provides 3D bounding box annotations (vehicles and pedestrians) and semantized HDmap annotations of the road surface (drivable area and lane boundaries).Architecture details.For image feature extraction, the EfficientNet-b4 backbone[24]and the Simple-BeV neck[7]are used. For the BeV backbone, unless specified, the model of LSS[20]and the segmentation heads of Simple-BEV[7]are connected to the output of the BeV rasterizer. We use a channel size of=128 for all experiments. For gaussian prediction heads, we use a light convolutional neural network composed by two blocks of Conv-Batchnorm-ReLU followed by the output layer. The sigmoid activation function is applied on both disparity and opacity outputs. L2 normalization and absolute value activation are applied on the rotation and scale outputs, respectively.Implementation details.Following previous work[3], GaussianBeV is trained on a maximum of 100 epochs using an AdamW optimizer with learning rate of 3e-4, a weight decay of 1e-7 and a one-cycle linear learning rate scheduler.
+As in[8,3], loss functions are balanced using uncertainty weighting as proposed in[11].
+We use random scaling, random crop and random flip for images augmentation and random translation and rotation for BeV augmentation.
+Two input image resolutionsare tested in the experiments, 224480 and 448800. The resulting image feature maps have a sizeof 2860 and 56100, respectively.
+GaussianBeV training on the lower resolution uses a batch size of 11 on an A100 GPU and for the higher resolution a batch size of 9, distributed over 3 A100 GPUs.
+The BeV rasterizer output a BeV feature map of size 200 x 200 representing a 100m×100m BeV representation with a 50cm resolution.
+The IoU metric is used on the validation set for evaluation.
+
+SECTION: 4.1State-of-the-art comparison
+
+Vehicle segmentation.We compare GaussianBeV with previous works on vehicle semantic segmentation using different input resolutions (224448 and 448800) and different visibility filtering : (1) considering all vehicles and (2) only keeping vehicles with visibility. Results are given in Table1. It shows that GaussianBeV clearly outperforms previous methods on all experimental settings. For instance, it supasses the previous state-of-the-art method PointBeV[3]by +3.5 IoU for the experiments using 224448 input resolution and visibility filtering.
+
+Pedestrian segmentation.We also compare GaussianBeV to other previous methods on the pedestrian segmentation task. For this evaluation, we use the 224448 input resolution and visibility filtering. Results are available in Table2. Once again, GaussianBeV outperforms previous state-of-the-art method PointBeV[3]by +2.7 IoU.
+
+Ground surface segmentation.We train GaussianBeV for joint segmentation of drivable area and lane boundaries using an input resolution of 448800. Results are given in Table3. Compared to previous state-of-the art method MatrixVT[33], GaussianBeV gives superior results for lane boundary segmentation (+2.6 IoU). However, our method is slightly less effective in segmenting the drivable area (-0.9 IoU) than MatrixVT. The ability of GaussianBeV to model the scene in details enables better segmentation of fine structures, but does not improve performance in larger areas that are easier to segment.
+
+Inference time.We compared for both input resolutions the inference time of GaussianBeV and the previous method, PointBeV[3], on an A100 GPU. GaussianBeV runs at 24 fps and 13 fps while PointBeV runs at 19 fps and 15 fps. Our method is therefore comparable in terms of computation time, but future research may enable to speed up the model by optimizing the gaussian representation.
+
+SECTION: 4.2Ablations
+
+Table4illustrates the influence of different design choices and training strategies. The Figure4shows qualitative results for vehicle and ground surface segmentation. It also gives a visualization of the output of the BeV rasterizer module. To visualize the BeV feature map, we applied Principal Component Analysis (PCA) to the 3D gaussian features before BeV rendering. This allows us to reduce the size of the features to render the BeV features in color.
+
+BeV backbone.We conducted experiments to evaluate the influence of the choice of the BeV backbone. In particular, GaussianBeV is trained (1) without using a BeV backbone, by connecting the BeV feature directly to the segmentation heads (row 2 in the Table4) and (2) with the Simple-BeV backbone[7]to compare performance with the standard LSS backbone[20](rows 9 and 10 in the Table4). Remarkably, GaussianBeV trained without BeV backbone is already yielding good results (45.9 IoU that is effectively superior to previous methods). This shows that GaussianBeV is able to provide a geometrically and semantically relevant gaussian representation that can be directly exploited for segmentation. With this observation, the BeV backbone is used to refine the representation using multi-scale information. We observe that the BeV backbone from SimpleBeV[7]achieves very good results (47.0 IoU), even if they are slightly inferior to those obtained with the BeV backbone from LSS[20](47.5 IoU).
+
+Depth and early supervision.We investigate the influence of auxiliary losses on the gaussian representation as detailed in Sec3.4. As shown in rows 1 and 2 of the Table4, the use of the depth loss increases performance when GaussianBeV is trained without a BeV backbone. This shows that this loss regularizes the model to help it outputs a more geometrically consistent gaussian representation. Note that early supervision is used by default if the BeV backbone is not used, as this becomes the main segmentation loss. With regard to rows 3, 4 and 5 of the table using the entire BeV backbone, depth supervision and early supervision do not bring any performance gains when used separately. However, the last line of the table shows that, used together, these two losses improve results. In Figure5, we provide a visualization of the impact of early supervision on the 3D gaussian representation. We observe that using early supervision results in a more coherent BeV feature map. Indeed, the gaussians better fit the shape of the vehicles.
+
+3D offsets and rotations.Table4(rows 6 to 8) shows the impact of learning 3D offsets and rotation. When GaussianBeV is trained without these two heads, it gives slightly poorer results than when it is learned with (last row).
+
+SECTION: 5Conclusion
+
+In this paper, we introduced GaussianBeV, a novel image-to-BeV transformation method that is the new state-of-the-art on BeV semantic segmentation.
+Based on anoptimization free3D gaussian generator, it transforms each pixel of an image feature map into semantized 3D gaussians.
+Gaussians are then splattered to obtain the BeV feature map. We have shown that the gaussian representation enables fine 3D modeling thanks to its ability to adapt to the different geometric structures present in the scene. Future work will aim to generate a more compact 3D Gaussian representation to improve computing time. We hope that this initial work will open the door to further research in 3D perception usingoptimization freegaussian splatting representation.
+
+Acknowledgements.This work was carried out as part of the CEA-Valeo joint laboratory and partially financed by BPI France as part of the AVFS project. This work benefited from the FactoryIA supercomputer financially supported by the Ile-de-France Regional Council.
+
+SECTION: References

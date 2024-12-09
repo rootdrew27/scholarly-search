@@ -1,0 +1,238 @@
+SECTION: Does RoBERTa Perform Better than BERT in Continual Learning: An Attention Sink Perspective
+
+Continual learning (CL) aims to train models that can sequentially learn new tasks without forgetting previous tasks’ knowledge. Although previous works observed that pre-training can benefit CL, it remains unclear whether a pre-trained model with higher downstream capacity also performs better in CL. In this paper, we observe that pre-trained models may allocate high attention scores to some ‘sink’ tokens, such as[SEP]tokens, which are ubiquitous across various tasks. Such attention sinks may lead to models’ over-smoothing in single-task learning and interference in sequential tasks’ learning, which may compromise the models’ CL performance despite their high pre-trained capabilities. To reduce these effects, we propose apre-scaling mechanismthat encourages attention diversity across all tokens. Specifically, it first scales the task’s attention to the non-sink tokens in a probing stage, and then fine-tunes the model with scaling. Experiments show that pre-scaling yields substantial improvements in CL without experience replay, or progressively storing parameters from previous tasks.
+
+SECTION: 1Introduction
+
+Machine learning applications in the real world often need to face continuous streams of data from different tasks or distributions(Lopez-Paz & Ranzato,2017; Hou et al.,2019). For such cases, it is important to develop continual learning (CL) models that can progressively learn new tasks without performance degradation in previous tasks (i.e., catastrophic forgetting).
+
+The pre-training and fine-tuning paradigm(Devlin et al.,2018), which effectively learns downstream tasks by fine-tuning a pre-trained language model (LM), is widely used for general NLP tasks. Previous works(Wu et al.,2022; Mehta et al.,2023)observed that pre-training can also benefit CL. However, it remains unclear whether a pre-trained model that has better single-task performance also performs better in CL settings. For example, BERT(Devlin et al.,2018)and RoBERTa(Liu et al.,2019b)are two pre-trained LMs with the same model structure. RoBERTa achieves generally better downstream performance than BERT, in part because it is pre-trained on more diverse data. In CL, however, RoBERTa does not always outperform BERT(Wu et al.,2022). This motivates our study on the factors that may cause models’ inferior performance in CL, besides their pre-trained capacity.
+
+In this paper, we show that theattention sinkphenomenon can influence models’ CL capacity. Attention sinks have been observed on autoregressive LLMs, where models tend to allocate high attention scores to specific tokens in the input (‘sink tokens’) regardless of their semantic significance(Xiao et al.,2024). In Fig.1, we show that attention sinks appear after the first layers in both BERT and RoBERTa models. And the sink tokens are usually common tokens (e.g., special tokens like[SEP]), which are not semantically significant but are present in most NLP tasks (Fig.3right).
+However, unlike the previous work byXiao et al. (2024)which focuses on the magnitude of attention scores on sink tokens, our work focuses on the attention deviations on sink tokens (‘sink attention deviations’) and their influence on CL.
+
+In particular, we connect the attention deviations on sink tokens to theover-smoothingphenomenon.
+Over-smoothing has been observed in pre-trained LMs, where models output nearly identical representations for all input tokens(Dong et al.,2021; Shi et al.,2022). We show that over-smoothing is related to small sink attention deviations in pre-trained models. It can cause distortions of pre-trained features(Kumar et al.,2022), which may make models less generalizable to out-of-distribution data (e.g., data from other tasks) and affect CL.
+
+Models’ small attention deviations oncommonsink tokens can also cause unnecessary interference across tasks in CL. Specifically, representations of common sink tokens may carry the information
+of one task, which then influences another task’s learning. This can be harmful if the new task is irrelevant to the previous one. We conduct a case study to show that such interference is hard to avoid when models have small sink attention deviations.
+
+To address the above problems, we propose a pre-scaling mechanism that encourages diverse attention scores on sink tokens. It introduces a scaling layer that is first learned to allocate diverse attention to tokens in a probing stage, and then tuned in a fine-tuning stage together with the pre-trained encoder. Experiments show that pre-scaling improves models’ CL performance with reduced over-smoothing. Moreover, RoBERTa models consistently outperform BERT models after pre-scaling, which suggests that pre-scaling helps to better utilize models’ pre-trained capacity in CL.
+
+In conclusion, we make the following contributions: (1) We characterize the attention sink phenomenon in pre-trained LMs and build a connection to over-smoothing. (2) We conduct a case study to show that the above attention sinks may propagate unexpected interference in CL. (3) We propose a pre-scaling mechanism that can significantly improve pre-trained LMs capacity in CL without experience replay or progressively storing parameters.
+
+SECTION: 2Related Work
+
+Continual Learning.Models for CL can be divided into three main categories: (1) regularization-based models which constrain the deviation of new parameters from the older ones(Kirkpatrick et al.,2017; Zenke et al.,2017; Aljundi et al.,2018; Lee et al.,2017); (2) replay-based models which reduce catastrophic forgetting by rehearsing on real or pseudo samples from previous tasks(Lopez-Paz & Ranzato,2017; Chaudhry et al.,2019a)or generative models(Shin et al.,2017; Kemker & Kanan,2017); (3) architecture-based models which learn evolving architectures for sequential tasks, with their capacities for each task carefully assigned(Rusu et al.,2016; Yoon et al.,2017).
+
+CL in NLP is an emerging area(Liu et al.,2019a; Biesialska et al.,2020). MBPA++(d’Autume et al.,2019)uses experience replay and local adaptation to mitigate forgetting; LAMOL(Sun et al.,2019)generates pseudo samples for replay; IDBR(Huang et al.,2021a)disentangles task-agnostic and task-specific information; CTR(Ke et al.,2021)uses a capsule network for knowledge transfer. All the above models are based on pre-trained LM(Devlin et al.,2018; Brown et al.,2020; Raffel et al.,2019). Recent works show that pre-training can alleviate catastrophic forgetting(Wu et al.,2022; Mehta et al.,2023; Lee et al.,2023).Mehta et al. (2023)claims that the benefit may come from having less sharp minima. In this paper, we tackle the CL problem from an attention sink perspective, which provides an explanation of why sometimes RoBERTa underperform BERT in CL tasks(Wu et al.,2022). To the best of our knowledge, we are the first to tackle CL problems from this angle.
+
+Over-Smoothing.In this paper, we connect attention sinks to an over-smoothing phenomenon, which is first proposed in graph neural networks(Oono & Suzuki,2020; Huang et al.,2020; Cai & Wang,2020; Rusch et al.,2023; Yang et al.,2020). Over-smoothing refers to the problem that the models’ performance deteriorates as representations of all the nodes in the graph become similar(Li et al.,2018; Xu et al.,2018). For transformer-based models,Dong et al. (2021)claims that pure attention loses rank doubly exponentially with model depth. AndShi et al. (2022)characterize the oversmoothing problem in transformers by viewing the attention matrix as a form of adjacency matrix in the graph. In this paper, we connect the over-smoothing problem to attention sinks, to show that in some cases attention sinks will influence model’s task learning and cause inferior performance in CL.
+
+SECTION: 3Attention Sinks in Language Models
+
+We first empirically show that certain attention sinks exist in pre-trained LM layers. Then we study their impact by connecting them to an over-smoothing phenomenon, which may influence models’ single-task overfitting and in turn can influence their CL abilities. The attention sinks can also cause cross-task interference in CL, which we discuss in section4.
+
+SECTION: 3.1Empirical Analysis of Attention Sinks
+
+We characterize the presence of attention sinks(Xiao et al.,2024)in LMs using data from NLI datasets SST and MNLI(Socher et al.,2013; Williams et al.,2018a; Wang et al.,2019).
+
+Attention on sink tokens.
+Fig.1illustrates the presence of attention sinks using attention maps, which show high attention scores are allocated to specific input tokens (i.e., sink tokens). The figure also shows sink tokens might receive similar (high) attention scores from all tokens. To empirically quantify these observations, we devise the measurements below.
+
+Letdenote an attention matrix overtokens for a single attention head. An elementdenotes the attention on the-th key token for the-th query token. For the-th (query) token, we have the following measurements :
+
+We averageandacross all attention-heads in each layer.tis the averaged attention score allocated to the-th token, andis the per-degree attention score deviation to the-th token’s average outer degree. We study sink tokens with the largest average outer degrees, and calculate their attention deviations as sink attention deviations.
+
+Fig.2shows the layer-wise average outer degrees and sink attention deviations for BERT and RoBERTa models. In Fig.2(a), tokens with top-3 largest outer degrees obtain 60% attention scores from input tokens, while the top-1 tokens obtain over 20% attention. This shows that a small number of tokens obtain major attention in self-attention layers. In Fig.2(b), we observe that the sink attention deviations are mostly small, except for the first two layers. This shows that all tokens pay similar attention to the sink tokens in the top layers.
+
+Sink tokens are usually common tokens.
+We also find that sink tokens in pre-trained LMs turn out to becommon tokens, ones that appear in many language tasks. These common tokens include special tokens such as (‘[SEP]’), punctuation (‘.’), or the initial tokens in inputs, which are not semantically significant. The right side of Fig.3shows the ratio of sink tokens with the top-1 largest outer degrees that are also common tokens at each layer. Almost all sink tokens are common tokens in the first several layers of the pre-trained model. Even after fine-tuning, the models still have high attention on them in the middle layers.
+
+SECTION: 3.2Connection between Over-Smoothing and Attention Sinks
+
+We show the impact of attention sinks on single tasks by connecting them to an over-smoothing phenomenon, where the attention deviations on sink tokens are a key factor.
+
+Over-Smoothing in transformers. Previous works have identified an over-smoothing phenomenon in transformer-based models: token representations become identical after several self-attention layers. Over-smoothing is closely related to models’ task learning ability and their overfitting on a task(Shi et al.,2022). There are several factors that can lead to over-smoothing, and we focus on the effect of self-attention matrices here.
+
+For a self-attention layer with an attention matrix, letbe its input token representations andits output. The over-smoothing problem is described as:
+
+The distancemeasures the closeness between each token representation inand the averaged token representation, where.is the largest eigenvalue of. Whenis small, representations after the attention layer will be closer to the averaged representations, which causes over-smoothing.
+
+Connection to attention sinks.Over-smoothing has been identified in many transformer-based models. We analyze the eigenvalueto see the property of the attention matrixunder the over-smoothing circumstances (i.e.,is small). With each attention scoreand average outer degreedefined in Section3.1,itis lower bounded as:
+
+The details are in AppendixA. Whenis small, the RHS of Eq. (2) has to be small. In particular, the-th token which has the largest outer degree must have its deviationto be small. Whenis large (as shown in Fig.2), to make the deviation small each attentionneeds to be close to. Therefore, all tokens have similar (high) attention on the token with the largest outer degree, which is an attention sink phenomenon.
+
+We empirically show the connection between attention deviationsand over-smoothing in Fig.3. The over-smoothing degree is reflected by the average cosine similarity between token representations(Shi et al.,2022). Going from lower to higher layers, we observe that the attention deviationdecreaseswhile the representation similarityincreases. This validates the connection between attention sinks and the over-smoothing phenomenon.
+
+Impact of over-smoothing with attention sinks. When over-smoothing occurs with attention sinks above, the sink token representations may dominate the averaged token representation, and make other token representations (including[CLS]) close to them. To learn a task, models may push sink token representations close to the task data representation (Fig.4(a)). Since sink tokens may be irrelevant to tasks (Fig.3right), this may distort pre-trained features and make models less generalizable to OOD data(Kumar et al.,2022).
+
+Comparing BERT and RoBERTa, we observe that pre-trained RoBERTa suffers more from over-smoothing (i.e., high representation similarity), corresponding with low attention deviations on sink tokens at the second and last several layers (Fig.2(b)). Therefore, we hypothesize that RoBERTa may be more vulnerable to feature distortion in task learning, which is reflected by its distorted attention patterns (Fig.1and Fig.3right) after fine-tuning. This may also influence RoBERTa’s CL capacity.
+
+SECTION: 4Attention Sink and Interference in Continual Learning
+
+In this section, we first conduct a case study to show that attention sinks above can cause unnecessary interference when learning across tasks in CL. Then we discuss a transfer vs. interference trade-off induced by attention sinks, which inspires our method in Section5.
+
+SECTION: 4.1Interference in Continual Learning
+
+We study the following CL problem: A model continually learns a sequence of tasks, with no previous tasks’ data accessible when learning new tasks, and no storage of previous tasks’ model parameters. The model has different predictors for different tasks, while the encoder is shared. Each taskconsists of datawhereis the input feature for task, andis its target output.
+
+When learning taskafter task, one way to quantify the cross-task interference on the shared parameteris through the dot product between its (vectorized) gradients on the two tasks’ losses(Riemer et al.,2019):
+
+whereis the dot product operator on the flattened gradients. The interpretation is that interference that leads to forgetting happens when, while the positive knowledge transfer may happen if. For tasks that do not have knowledge transfer, the interference is expected to be 0.
+
+SECTION: 4.2Case Study: Attention Sink Can Cause Unnecessary Interference Between Tasks
+
+We use a case study to show that attention sinks can propagate unexpected interference between irrelevant tasks. The study is based on the attention sink phenomenon characterized in Section3, which showed: (1). models allocate high attention to sink tokens with small deviations; (2). sink tokens are usually common tokens shared across different tasks.
+
+Data.We consider twoirrelevantNLP tasks in a CL setting. For task, we have data instance () whereconsists of embeddings of input tokens. We make the following assumptions about tasks and data:
+
+There is no knowledge transfer between the tasks and there should be no interference (positive or destructive) when learning one task after the other.
+
+Assume there arecommon tokens (e.g., special tokens) in two tasks’ data instances. For all other tokens in a task, we assume they are irrelevant to non-common tokens in the other task, with corresponding embeddings being orthogonal.
+
+Model.We use a model consisting of two single-head self-attention layers.
+For each task, the inputconsists of-dimensional embeddings fortokens. Considering a regression problem (generalizable to classification), the predictionis calculated as:
+
+whereis the attention matrix in the first attention layer,is the attention vector in the second attention layer that integrates all hidden representations for the target task prediction. Bothandare obtained under the self-attention mechanism(Vaswani et al.,2017).is a transformation matrix.is the predictor that maps the representation to an output valuefor task. The loss function is:
+
+For simplicity, we sortandto make thecommon tokens have indicesand others have indices. We assume the common tokens are sink tokens in.
+
+The interference on the transformation matrixbetween task 1 and task 2 mainly depends on the outer degrees of sink tokens and the sink attention deviations.
+
+We calculate interference on the shared parameterbased on Eq. (3) and the model above:
+
+whereandr. When both training losses are non-zero (which is the usual case in CL), interference in Eq. (4) depends on the correlationbetween predictors and the correlationbetween
+representations.
+Since the learned predictors may not be good enough to reflect the orthogonality between task 1 and task 2(Kumar et al.,2022), we have to consider the interference caused by the correlation, discussed below.
+
+Step 1: decomposeand. Generally, for any matrix, we denoteas the-th element of. And for any vector, we denoteas the-th element of.
+
+Denoteas the vector of tokens’ average outer degrees in attention matrices. For the attention, we define its deviation to the-th average outer degree as:. Since the attention vectoris row-stochastic, we decomposeas:
+
+Similarly, we have, wheredenotes the non-sink representations,the sink representation andthe sink representation deviations for task 2.
+
+Step 2: calculating. Based on assumption 2 that non-sink token embeddings from two tasks are orthogonal, we have. Moreover, since sink tokens are common tokens that are supposed to be neutral to other tokens, we hypothesize that their embeddings are nearly orthogonal to other token embeddings (AppendixB). This makes. Then we have.
+
+Therefore,depends largely on tasks’ sink representationsand their representation deviations. Specifically, it is dominated bywhen: (1) each attention deviationin Eq. (5) is close to 0; or (2) the attention scoreis close to 0 when the absolute deviationis large, which makesclose to 0. When the sink tokens’ outer degrees are large, the correlationcan cause high interference between the orthogonal tasks 1 and 2.
+
+SECTION: 4.3Transfer vs. Interference
+
+Since attention sinks on common tokens can propagate unnecessary interference, should we exclude sink tokens that are common tokens (‘common sink tokens’) when calculating attention in CL? To answer this question, we first train models with and without attention on common sink tokens, and then compare their in-task and transfer learning capacities. Results in Fig.4(b) show that when discarding the attention on common sink tokens in training, models have a significant performance drop in the in-task evaluation.
+
+In addition, common sink tokens may benefit tasks with positive knowledge transfer. In Fig.4(b), we use models trained on MNLI data for zero-shot evaluation on SNLI data, which is for the same sentence entailment task but with a different data distribution. Results show that the models’ transfer ability significantly drops after discarding the attention on common sink tokens. We hypothesize that this could be because sink tokens that are common across tasks can easily transfer knowledge on them.
+
+The analysis above motivates us to balance the transfer and interference caused by attention sinks in task learning. Specifically, when allowing models to preserve relatively high attention on sink tokens, we in turn encourage them to pay attention to non-sink tokens that have relatively low attention on sink tokens. This may increase sink attention deviations, which help reduce interference and oversmoothing. We develop a pre-scaling model to achieve this goal, detailed in Section5.
+
+SECTION: 5Method: Pre-Scaling For Diverse Attention
+
+We introduce a pre-scaling mechanism that encourages models to allocate diverse attention to sink tokens and increase attention on non-sink tokens, when learning a downstream task.
+
+As shown in Section3.1, attention sinks exist in pre-trained models. However, since sink tokens are usually common tokens that are not semantically significant, their pre-trained representations may not contain much information related to downstream tasks. On the other hand, pre-trained representations of non-sink tokens may contain more information for task prediction. This motivates us to first allocate task-specific attention on tokens based on their pre-trained representations, for increasing attention on non-sink tokens.
+
+We design a scaling layer to allocate attention scores on tokens based on their contributions to the task. To encourage diverse attention, we have different scaling of attention scores for different classes. The scaling layer is first learned through a probing stage to allocate high attention scores to non-sink tokens based on their pre-trained representations. Then we fine-tune the whole model.
+
+Scaling layer.For each task, letbe the pre-trained representations of theinput tokens, andthe learnable class vectors for theclasses in that task. Each token representationand class vectorarevectors. The scaling layer computes attentionon tokens for classes as:
+
+whereis a learnable linear function. The output for classis calculated by:
+
+whereis the-th row of the attention,is the-th class vector in. We use the cross entropy loss to train the model with scaling layer.
+
+Two-Stage training.For each task, usewe a two-stage training process: (1).probing: the encoder is fixed and we only learn the scaling layer (including class vectors); (2).fine-tuning: the whole model, including the encoder and the scaling layer, is learned for the target task.
+
+For sequential tasks in CL, we follow the task-incremental training where at each task, the loss is only computed over classes in that task. However, the scaling and prediction can be applied over classes in all tasks, and thus our model is general to the task-agnostic setting.
+
+Connection to probing then fine-tuning.Our pre-scaling mechanism has connections to the probing-then-fine-tuning mechanism proposed inKumar et al. (2022), since both use a similar two-step training process. However, our mechanism utilizes a scaling layer to gather diverse representations of all tokens instead of only using the representation of the[CLS]token for prediction. As shown in Fig.5(b), probing-then-fine-tuning under the regular model is a special case in our mechanism while the attention scores in Eq. (6) are 1 for[CLS]token and 0 for other tokens. As claimed inKumar et al. (2022), the two-stage training can reduce feature distortion by first learning good class vectors. These good class vectors may further benefit our pre-scaling mechanism in CL.
+
+SECTION: 6Experiments
+
+SECTION: 6.1Experimental Settings
+
+Datasets.We evaluate four sequences of CL tasks: (1)Yahoo Split: a split of Yahoo dataset for news question-answer categorization(Zhang et al.,2015)with 5 disjoint tasks containing 2 classes each; (3)DB: a split of DBPedia data for Wikipedia article classification(Zhang et al.,2015)with 7 disjoint tasks containing 2 classes each; (4)News Series: a sequence of tasks on news-related data, including AG_news (news classification, 4 classes), MRPC (paraphrase detection, 2 classes)(Dolan & Brockett,2005), RTE (text entailment, 2 classes)(Williams et al.,2018b)and SST (sentiment analysis, 2 classes)(Socher et al.,2013). For the above sequences, we randomly sample 1245 samples per class, which is the least number of class samples in our datasets.
+
+Baselines.We consider two categories of baselines:
+
+One category performs vanilla sequential learning for CL but has different training strategies on each single task, including (1)FT: a model where all parameters are sequentially updated; (2)PT+FT(Kumar et al.,2022): a model first trains the classifier in the probing stage and then fine-tunes the whole model; (3)Prescale(ours): a model first trains the classifier and a scaling layer in the probing stage and then fine-tunes the whole model (with scaling).
+
+Another category is designed with specific CL techniques like experience replay, including (1)ER: a FT model storing all seen examples and performs sparse (1%) experience replay; (2)A-GEM(Chaudhry et al.,2019a): a FT model constraining on gradients to prevent degrading performance of previous tasks; (3)MBPA++(d’Autume et al.,2019): a FT model that stores and retrieves samples to locally adapt the model at inference time(Sprechmann et al.,2018). (4).IDBR(Huang et al.,2021b): a FT model with information-disentanglement-based regularization and replay. We also compare to IDBR without replay, denoted asIDBR(-R); (5)CTR(Ke et al.,2021): an adapter-based task-incremental model with capsules and task transfer routing; (6)L2P(Wang et al.,2022): a prompt-based model that learns to dynamically prompt for different data and tasks.
+We also compare models under multi-task learning (MTL) and separate learning for each task (Separate) as non-CL baselines to show the performance gap from CL models to them. Detailed settings are in AppendixC.
+
+We compare BERT-base and RoBERTa-base models in sequential learning, and use BERT-base for CL-specific models. For BERT models, we use learning rate 2e-5 to train 3 epochs for each task; and for RoBERTa models, we use learning rate 1e-5 to train 5 epochs per task. For probing and pre-scaling, we use the learning rate 5e-4 to train the classifier.
+
+Metrics.We train models in a task-incremental setting where task identifiers are given (task-aware). We evaluate models’ CL performance by evaluating their average accuracy (ACC) and forgetting (FGT) on the sequence(Chaudhry et al.,2019b), with or without task identifiers (task-agnostic). For analysis, we evaluate models’ over-smoothing and attention deviations on sink tokens using metrics in Eq. (1).
+
+SECTION: 6.2Results
+
+RoBERTa does not always outperform BERT in CL.Table1compares BERT and RoBERTa’s CL performance under sequential learning. With fine-tuning, RoBERTa does not always outperform BERT in CL despite its high pre-trained capacity. Specifically, RoBERTa has a lower accuracy than BERT on Yahoo Split and a higher forgetting on News Series. This may relate to its higher over-smoothing and lower sink attention deviations than BERT, which make it more vulnerable to feature distortion and easier to propagate interference.
+
+Prescaling improves RoBERTa’s CL capacity.With PT+FT, RoBERTa consistently outperforms BERT on CL tasks. We believe that is because PT+FT first learns good class vectors, which reduces feature distortion in each single task and then benefits CL. After applying our prescaling method, BERT and RoBERTa achieve further improvements in CL tasks.
+
+Prescaling increases attention deviations.In Fig.6, we compare models’ representational similarity and attention deviations after CL. After prescaling, RoBERTa’s representation similarity decreases while the attention deviations increase. This suggests that our pre-scaling can encourage diverse attention, which reduces over-smoothing and benefits CL.
+
+Prescaling model outperforms CL models with replay.In Fig.5, we compare our pre-scaling model to CL-specific models to evaluate its overall CL capacity. Without experience replay or progressively storing model parameters, Prescale achieves overall best accuracies on CL tasks. Even for the News Series sequence which has knowledge transfer between tasks, Prescale outperforms replay-based models that are effective in this scenario. This validates the effectiveness of our prescaling mechanism in CL.
+
+SECTION: 6.3Ablation Study
+
+Scaling strategies.In Table6.2, we compare our prescaling strategy (Full) to two other scaling strategies: one uniformly distributing attention to all tokens (Uniform); another learning to scale attention only on common sink tokens including special tokens, the punctuation ‘.’ and the second token in the sentence (Sink). Results show that only scaling attention on common sink tokens does not yield improvements to PT+FT, and uniform scaling does not give as much improvement as full scaling. These suggest that the effectiveness of our prescaling strategy does not come only from having distributed attention on tokens.
+
+Scaling visualization.Fig.7shows a heapmap of the scaled attention on the SST data (with task classes {positive, negative}) after training the model on News Series. For the corresponding positive/negative classes, we observe that attention is also distributed on task-related tokens (e.g., charming, affecting) besides common tokens.
+
+Task-agnostic evaluation.In Table6.2, we evaluate models in the task-agnostic setting after task-aware training to show the separation of data representations across tasks. Both PT+FT and Prescale perform better than FT. This may relate to their larger attention deviations and less over-smoothing (Fig.6), which make data representations contain more information from non-sink tokens with different distributions across tasks. On BERT, PT+FT outperforms Prescale. We hypothesize that this is because BERT is pre-trained with the next sentence prediction, and thus[CLS]may contain more general sentence-level information across tasks than the learned scaling. On the other hand, for RoBERTa which does not have sentence-level pre-training, Prescale performs better than PT+FT.
+
+SECTION: 7Conclusion
+
+In this paper, we study an attention sink phenomenon that can cause pre-trained models to perform inferior in CL tasks, despite their pre-trained capacity on downstream tasks. Specifically, we find that the small attention deviation on sink tokens and the fact that sink tokens are usually common tokens across tasks can cause the model having an over-smoothing problem and easily propagate interference during CL. To mitigate such interference, we propose a prescaling mechanism which first learns a scaling layer during probing to allocate diverse attention on non-sink tokens, and then fine-tunes the model with scaling. Results show that our pre-scaling method outperform most CL models and other scaling strategies.
+
+We thank the anonymous reviewers for their helpful feedback to improve the earlier draft of this paper. This material is based on research supported in part by the Air Force Research Laboratory (AFRL), DARPA, for the KAIROS program under agreement number FA8750-19-2-1003.
+
+SECTION: References
+
+SECTION: Appendix AConnection between Over-Smoothing and Attention Sinks
+
+Denoteandis the largest eigenvalue of. Denote the layer’s attention matrix as(is the number of input tokens) and its-th element as. The eigenvalueis lower bounded by:
+
+whereis the average outer degree of the-th token.
+
+Derivation.Each element incan be written as:
+
+whererepresents the-th element in. Becauseis symmetric and positive semi definite, its max eigenvalueis real and positive, which also satisfies:
+
+where. Setas a set of unit vectors, where eachhas the element as 1 at the-th place and others as 0. Thenis lower bounded as:
+
+The RHS above can be further decomposed asto reflect the effects of the outer degree and the per-degree attention deviations.
+
+There are several cases that can makesmall. When the largest average degreeis large,is small when its per-degree attention deviations are small. On the other hand, when the largest average degree is small,can be small even when the per-degree attention deviations are relatively large. In the paper, we focus on the case when the largest average is large, for the observed attention sink phenomenon.
+
+SECTION: Appendix BCorrelation between Sink and Non-Sink Token Embeddings
+
+In Section4, the interferencedepends on correlations between representations of the sink and non-sink tokens, which is related to correlations between their embeddings inand. Here we empirically calculate the correlations (i.e., dot product) between embeddings of the sink and non-sink tokens in BERT and RoBERTa-base, to verify our hypothesis that (common) sink tokens’ embeddings are nearly orthogonal to other tokens’ embeddings. Results are shown in Fig.8.
+
+For both BERT and RoBERTa, embeddings of sink tokens (e.g, [CLS] and [SEP]) have close to 0 correlations to most other token embeddings. On BERT, the punctuation ‘.’ has negative correlations to many other tokens, while on RoBERTa the distribution of its correlations is also centered around 0. We also randomly sample non-sink tokens from the vocabulary and show their embeddings’ correlation distributions as a reference. On BERT, the embedding of non-sink token ‘exchange’ tends to have positive (non-zero) correlation to other tokens’ embeddings. On RoBERTa, although the embedding of the non-sink token ‘aution’ has centered to 0 correlations to other tokens’ embeddings, it has large correlations up to 8. However, the correlation distributions of cls (<s>) and sep (<\s>) tokens’ embeddings have a much smaller range.
+
+Compared to the correlation to other tokens’ embeddings, we also compute the self-correlation on sink tokens’ embeddings as shown in Fig.9. The embeddings’ self-correlations can not be ignored on both BERT and RoBERTa. When the common sink tokens are allocated high attention, the correlation between sink token representations from two tasks may be large, leading to interference in CL.
+
+SECTION: Appendix CDetailed Experimental Settings
+
+In Section 5, we train all models with task-incremental settings (i.e., training with the loss only on classes in that task), while evaluating them in both task-incremental and class-incremental settings. We perform all experiments on one Nvidia RTX A6000 machine.
+
+We provide detailed experimental settings of baselines below:
+
+Probing: We fix the encoder and only train the classifier. We train 5 epochs for each task in BERT and RoBERTa, with the learning rate 5e-4.
+
+FT: We fine-tune the whole model, including the encoder and classifier. We train 3 epochs for each task in BERT, with the learning rate 2e-5; and train 5 epochs for each task in RoBERTa, with the learning rate 1e-5.
+
+PT+FT: We first train the classifier with the same setting in Probing, and then train the whole model with the same setting in FT.
+
+Prescale: We first train the classifier and the scaling layer with the learning rate 5e-4 for 5 epochs, and then train the whole model with the same setting in FT.
+
+IDBR: We train IDBR with the learning rate 3e-5 for 3 epoches per task. We follow the k-means memory selection rule, and the replay batch size is 16 (training batch size)number of tasks in the memory.
+
+CTR: We follow the settings in the original paper, training 5 epochs for each task.
+
+L2P: We have the prompt pool with 100 prompt tokens and select 50 of them to prepend to the input. We train the model with the learning rate 1e-3 for 20 epochs for each task.
+
+ER: We apply sparse experience replay with 1% replay ratio. At each replay time, we sample 32 samples from the memory and perform one-step gradient descent based on them.
+
+A-GEM: We store all previous data in the memory. At each gradient step, we randomly extract 32 samples from the memory and apply the A-GEM gradient projection.
+
+MBPA++: We fine-tune the model with ER and then adapt the model at the inference time. At the inference time, we retrieve 32 nearest samples in the memory for local adaptation.

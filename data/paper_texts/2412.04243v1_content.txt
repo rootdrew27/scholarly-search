@@ -1,0 +1,231 @@
+SECTION: Quantifying the Limits of Segment Anything Model: Analyzing Challenges in Segmenting Tree-Like and Low-Contrast Structures
+
+Segment Anything Model (SAM) has shown impressive performance in interactive and zero-shot segmentation across diverse domains, suggesting that they have learned a general concept of “objects” from their large-scale training. However, we observed that SAM struggles with certain types of objects, particularly those featuring dense, tree-like structures and low textural contrast from their surroundings. These failure modes are critical for understanding its limitations in real-world use. In order to systematically examine this issue, we propose metrics to quantify two key object characteristics:tree-likenessandtextural separability. Through extensive controlled synthetic experiments and testing on real datasets, we demonstrate that SAM’s performance is noticeably correlated with these factors. We link these behaviors under the concept of “textural confusion”, where SAM misinterprets local structure as global texture, leading to over-segmentation, or struggles to differentiate objects from similarly textured backgrounds.
+These findings offer the first quantitative framework to model SAM’s challenges, providing valuable insights into its limitations and guiding future improvements for vision foundation models.
+
+SECTION: Introduction
+
+Segment Anything Model (SAM)[27], the most widely-used foundation model for image segmentation, has demonstrated promising zero-shot and fine-tuned segmentation ability for objects not seen in training, within a wide range of domains since its release, such as biomedical images[30,22,10], remote sensing[6,35], etc. However, certainfailure modesfor SAM have been found empirically, where SAM produces surprisingly underwhelming performance on datasets with specific uncommon objects or atypical contexts, such as those with dense, branching structures (e.g., retinal blood vessels)[36,11], concealed/low-contrast objects[7,39,24], small or irregular objects, and others[24]111We focus on “unintentional” failure modes of SAM, as opposed to intentional adversarial attacks/examples[45,47].. A solution to this problem could simply be fine-tuning the model on such challenging examples using various strategies[29,32,17], but this would still lack an understanding of the underlying causes of the issues, and so may not result in the best solution. As such, it is important to develop a better theory for why these failures happen, in order to better understand (and potentially mitigate) the limitations of SAM for new applications.
+
+In this paper, we propose that several of these failure modes can be explained as SAM misinterpreting textural cues for how it disambiguates an object from its surroundings: it typically confuses objects with irregular, dense tree-like local structure as large-scale textures (resulting in over-segmentation), and similarly is generally challenged by objects that have similar textures to their surroundings.
+We propose metrics developed from first principles for quantifying the characteristics of (1) object tree-likeness and (2) textual separability. Objects tree-likeness (Sec.2.2) is based on concepts such as spatial contour frequency and the difference in typical object variability between global and local scales. Textural separability (Sec.3.1) is based on the detectability of differences in textural features of an object compared to its surroundings.
+We designed these metrics to be simple and interpretable, such that they can be applied to any dataset or object type. We also present them in quickly-computable PyTorch-like algorithmic form that can be applied to any masks.
+
+Next, we begin to probe the effect that these characteristics have on SAM’s segmentation ability through experiments on synthetic data which are designed to cover a range of object tree-likeness (Sec.2.3.1) and textural separability (Sec.3.2.1). These experiments are carefully controlled to disentangle the effects of object shape and texture on performance, as well as mitigate any other potential confounding factors. We then continue with similar experiments on real datasets (Secs.2.3.2and3.2.2) that represent a wide range of objects to segment. In all experiments, we find both the exact measured tree-likeness and the textural separability of objects are noticeably correlated with SAM’s performance (IoU) in segmenting it, over a wide range of object and image types. Our findings are the first to quantitatively model and experimentally verify how the performance of segmentation foundation models is affected by certain measurable object characteristics, providing an explanation for prior findings of SAM’s unexpected failures on new datasets.
+
+Our overall contributions are as follows:
+
+Based on first principles, we propose quantitative metrics for object tree-likeness of Contour Pixel Rate (CPR) and Difference of Gini Impurity Deviation (DoGD), as well as a metric for objecttextural separability.
+
+We present carefully-designed experiments for the segmentation of synthetic images which cover a range of tree-likeness and textural separability, where important factors such as object shape and texture are controlled.
+
+We show that SAM’s segmentation performance tends to negatively correlate with an object’s tree-likeness, and positively correlate with it’s textural separability, on a variety of experiments on both synthetic and real images.
+
+We hope that this inspires future work in understanding the limitations of vision foundation models. We release easy-to-use code for our proposed metrics athttps://github.com/mazurowski-lab/SAM-TexturalConfusion-Metrics.
+
+SECTION: Related Works
+
+In addition to the various “failure modes” and biases ofsegmentation foundation modelsdiscussed in the introduction which motivated this work, various works have also studied the same forgeneral vision models.
+Central to these is the goal of understanding the visual features that networks use to make predictions from images, and whether objectshapeortextureis more important. This is important to study because any unexpected failure of such models will depend on the features used for inference.
+
+Zhang et al.[46]posited that objects within images can be described by three characteristics: shape, texture, and the composition of textures within shapes, and analyzed how these characteristics may affect the challenge of segmenting such objects.
+It is well known that convolutional neural networks’ (CNNs’) predictions are typically biased towards the texture of objects rather than their shape, for both classification[16,38,21,3]and segmentation[46], resulting in curious examples where network predictions are based on texture even when the shape clearly defines a different object. For example,[28]found that when a CNN is presented with images of objects with only their shape visible, not texture (silhouettes), performance was greatly worsened.
+
+It has also been found that the shape-learning behavior of neural networks can differ noticeably depending on the particular training dataset and objective[21,20], motivating us to study the specific behavior of SAM (given its’ unique training dataset and pipeline) in detail. Interestingly, there has been some evidence that vision transformers (like SAM’s image encoder) may instead be biased towards shape, rather than texture for classification tasks[40]. Here, we study segmentation rather than classification, where it is unclear if those results extend, as our results generally point to SAM focusing on texture over shape (to the point of even confusing complex, locally-varying shape itself as texture).
+
+SECTION: 1Methods: SAM Usage and Prompting
+
+We experiment with both the ViT-H (default) and ViT-B standard pretrained SAM models[27]. As is default for SAM, all input images are resized to a resolution of, and normalized to. All images that possess instance segmentations for multiple objects (e.g., iShape and Plittersdorf) will be evaluated by SAM segmenting each of the images’ objects one at a time (guided by clear prompting), with all other mask pixels set as background. In all experiments, we use the oracle-chosen mask out of SAM’s three outputted predictions.
+
+For all experiments on the synthetic images of Sec.2.3.1, we provide a tight bounding box about the object of interest as the prompt. For all experiments on real images as well as the style-transferred images of Sec.3.2.1, we provide the same bounding box as well as a certain number of positive and/or negative point prompts randomly sampled from the object foreground and backgroundwithin the bounding box, respectively, depending on the dataset (full details in AppendixC.1). We use this relatively heavy prompting strategy in order to minimize the ambiguity of instructions provided to SAM, which will also help to minimize any differences of the oracle prediction from the other two.
+
+SECTION: 2The Challenge of Tree-Like Structures
+
+SECTION: 2.1Motivation
+
+We first wished to understand SAM’s challenges in segmenting certain objects with dense, tree-like structures, following our observation of a trend of SAM having difficulty with such objects including retinal blood vessels[34,29]or satellite road images[14,42](seee.g., Fig.2). Interestingly, while both of these object types have branching features, a characteristic which naively could relate to SAM’s failure, SAM’s performance on retinal vessel images is noticeably worse (avg.[34]) compared to on satellite road structures (avg.[14]), which was reproduced in our own experiments (Fig.4).
+
+This motivated us to quantify the features of these types of objects that relate to SAM’s failure.
+We hypothesize that such objects become more challenging to segment when their branching structures aredenseandirregularly-spaced, which we refer to as “tree-like”. We will show that SAM considers such structures as textures rather than shapes, resulting in significant over-segmentation. In the following section we propose how to characterize the tree-likeness of objects using two new quantitative metrics: CPR (Contour Pixel Rate) and DoGD (Difference of Gini Impurity Deviation).
+
+SECTION: 2.2Quantifying Tree-Like Structures
+
+Consider some imagewith a “ground truth” binary segmentation mask for some object within it,(in general, this could also be just one class of some multi-class segmentation mask). We first propose to measure the degree of tree-like structure of the objectaccording to the percentage of the object’s pixels which lie on it’scontour, which are defined as follows.
+
+Given some mask, a pixelis a contour pixel ifand there exists a different pixelsuch thatand, given some small contour width threshold.
+
+In other words, contour pixels have at least one pixel of a different class within a small neighborhood. Takingto be the set of foreground pixels, the set of contour pixels ofis thensuch that, which we use to define theContour Pixel Rate(CPR) of the object as
+
+Intuitively, tree-like objects will have a higher percentage of contour pixels, resulting in higher CPRs. We demonstrate fast computation of CPR in full detail in Algorithm1, via vectorized PyTorch-like pseudocode.
+
+Input: Objectmask(tensor), contour width thresholdR(int).
+
+We alternatively propose to measure the tree-likeness of some object according to how the variability of object presence across different locations in the image differs between global and local scales. Intuitively, irregularly-spaced tree-like structures have high variability at small scales due to alternating frequently between areas of mixed and uniform pixel classes, but low variability at large scales due to the repetitive nature of the structure becoming more homogeneous, which we propose to quantify as follows.
+
+First, we quantify the object presence within somesquare window of the mask anchored at some coordinates,via theGini impurity:
+
+where we denote thesquare window of the mask anchored atas. Here,denotes the probability of the object of classbeing in some pixel within the window, which is computed simply as, whereis the number of pixels in the window of class. In our binary segmentation case, the Gini impurity simplifies to
+
+where we write. The Gini impurity measures the degree of uncertainty (ranging fromto) of whether an object is present in the given window. For example, mask windows containing pixels of mostly one class will have, while having similar pixel amounts of both classes will result in222The Gini impurity is closely related to theentropy(multiplied by), which we use instead of entropy due to it being symmetric and faster to compute, following practices in decision tree learning[4]..
+
+Next, we compute the variability of object presence at a given scale/window size across the entire mask by sampling all possiblewindows with anchors, and computing the standard deviation of the Gini impurity across these windows, as
+
+Finally, we define the Difference of Gini Impurity Deviation (DoGD) between global and local scales as
+
+where the global and local window sizesandare chosen such that. We present DoGD in optimized PyTorch-like form in Algorithm2.
+
+Input: Objectmask(tensor), global and local window sizesa,b(ints).
+
+Intuitively, objects with significant tree-like or fractal-like structure will exhibit relatively large values ofdue to high variability in pixel composition at small scales (frequently alternating between areas of mixed classes and areas of a single class), yet smalldue to structures with high uniformity and/or repetitions at large scales, altogether increasing the DoGD.
+
+We perform all experiments with the hyperparameters for CPR and DoGD set to,, and, which we found via grid search for the values which resulted in the Kendall’sbetween IoU and DoGD with the lowest-value on the held-out DIS training set using ViT-H SAM. We show results using a wide range of other values for these hyperparameters in AppendixB.1, where we found our findings to be consistent for most other settings. Moreover, we note that CPR and DoGD are correlated with each other (Pearsonon average; AppendixD.1), showing their consistency in how they quantify different aspects of tree-likeness.
+
+SECTION: 2.3The Relationship between Object Tree-likeness and Segmentation Performance
+
+In this section, we will first carefully probe the effect of object tree-likeness on SAM’s segmentation performance by testing it on synthetic images which solely possess objects of varying tree-likeness, with different independently chosen, uniform foreground and background textures. These objects are contiguous components samples from retinal blood vessel and satellite road masks, with the full procedure of generating these images detailed in AppendixA.2. Example generated images, masks and SAM segmentation predictions for them are shown in Fig.3. As shown (as well in Fig.4), the objects cover a wide range of tree-likeness as measured by these quantities.
+
+In order to mitigate any confounding on SAM performance due to an object’s textural contrast from its surroundings (which we study in Sec.3), for each maskgenerated by our procedure, we apply SAM toimages created by applyingdifferent randomly-sampled pairs of textures to the object’s foreground () and background (). We then obtain SAM’s final prediction for this object via pixel-wise majority voting over its predictions on theseimages.
+
+In Fig.4we show the relationship between an object’s tree-likeness (as measured by CPR or DoGD) with SAM’s performance (IoU) in segmenting the object, for all generated synthetic objects. We quantify the strength of this relation via rank/non-linear correlation, measured by Kendall’s tau ()[25]and Spearman’s rho ()[37], shown in Table1333We evaluatein addition todue to it being more robust to outliers.. Intriguingly, we see that object tree-likeness is quite predictive of SAM’s performance, with average absolute correlations ofandfor CPR andandfor DoGD;i.e., more prevalent dense tree-like structures corresponding to worse performance.
+
+While this relationship is certainly strong, it is still on synthetic, controlled data. In the following section, we will show that this finding is also present for real data which is subject to noise from a variety of uncontrollable factors.
+
+We will now perform the same analysis on two real datasets which contain objects which cover a spectrum of tree-likeness, DIS5k and iShape.
+DIS5k[33](or “DIS” for short) is a dataset that contains extremely detailed segmentation masks of objects with varying degrees of hollowness, and both regular and irregular tree-like structures. All DIS experiments will be reported on its validation set unless otherwise stated. We show example images with objects with varying degrees of tree-likeness (by CPR) in Fig.1left.
+
+iShape[43]consists of six sub-datasets of real and realistic-appearing synthetic images for instance segmentation of different objects: antenna, branches, fences, logs, hangers, and wires (seee.g.Fig.9). We analyze these classes individually to mitigate potential confounding/noise factors due to inter-class variations; we do not do this for DIS due to the larger number of classes which are much more fine-grained in their differences, additionally because there are few images per class for DIS.
+
+In Fig.5we show how SAM’s performance (IoU) on these images relates to the tree-likeness of the objects which it is segmenting, with accompanying quantitative correlation results shown in Table2.
+In order to reduce the noise incurred by the large variety of segmented objects in the dataset and nuisance confounding factors in the images, we analyze results withaggregated objects: we cluster groups ofobjects/images with similar IoU and tree-likeness (CPR or DoGD) into single datapoints of the average value of these metrics, and similar for the IoU vs. textural separability experiments of Sec.3.
+
+We see that despite the many potential confounding factors in real data, there is still a clear correlation between object tree-likeness as measured by the proposed metrics and SAM segmentation performance. In particular, we see an average absolute correlations ofandfor CPR andandfor DoGD, excluding the antenna and wire objects of iShape which had outlying correlations, likely because those two object classes cover only small ranges of tree-likeness as opposed to the other iShape classes (Fig.5), such that noise from other confounding factors obscures any dependence of performance on tree-likeness.
+
+SECTION: 3The Challenge of Textural Separability
+
+In the previous section, we demonstrated that SAM struggles with segmenting non-conventional shapes, in particular, dense tree-like structures, which we hypothesize is due to the model confusing the dense structure as thetextureof a non-treelike, more regular shape, rather than a shape itself (seee.g.Fig.1left). Similar to this behavior is that even for objects with simpler shapes, SAM can still be confused if the object’s texture is even somewhat similar to its surroundings, which we will study in this section.
+
+SECTION: 3.1Measuring Textural Separability
+
+We will define the textural contrast orseparabilitybetween some object mask and its surroundings
+byhow easily their textures can be distinguished from one another. Motivated by findings that early layers of classification-pretrained CNNs primarily capture low-level features involving edges and textures[44], we will characterize an image’s textures using the first convolutional layer of a ResNet-18[19]pretrained on ImageNet[9]. Denoted by, this outputs a textural feature map corresponding to allwindows in the image.
+
+We then measure the textural separability of an object according to if a simple classifiercan be trained to discriminate between (a) the activations for the pixels of the object foreground and (b) the activations right outside of the object boundary444This procedure is somewhat similar to the probing of hidden activation concepts[2,26], although these works detected concepts (such as textures) at the image level, not at the single activation level as we do here.. We define this explicitly in Algorithm3, whereandrefer toscikit-image.morphologyfunctions[41]. We use simple logistic regression forwith inverse regularization parameter[31]. We also evaluate using other hyperparameter settings, as well as a random forest classifier forinstead, in AppendixB.2, where we found similar results.
+
+SECTION: 3.2The Effect of Textural Separability on Segmentation Performance
+
+Similar to Sec.2.3, in studying the effects of textural separability on SAM’s performance, we also wish to perform experiments on well-controlled synthetic images in order to more carefully disentangle the effects of textural separability shape on performance from the effects due to object shape, before evaluating on real data (in the following section).
+Here, we will do so using neural style transfer[15]to precisely modify the textural contrast of real objects/images. This will involve (1) modifying objects’ shape without altering their background using an inpainting model, followed by (2) applying neural style transfer (NST) to the composite image to adjust the textural contrast of the object with the surrounding image.
+
+We begin with images sampled from the VOC2012 dataset[13]accompanied by objects (instance masks), according to certain criteria. Namely, we pick objects which take up betweenandof the entire image’s area (to have large enough objects while still maintaining sufficient background), sampling 484 objects total (with accompanying background) for study. For each object, we use a Stable Diffusion-based inpainting model (details in AppendixC.2) to remove the object from its corresponding image and fill in it’s mask area with the background. This creates a pair of a background image and a separate object (mask), allowing us to have careful control of modifying the object (and its mask accordingly) before placing it back into the inpainted background. For a given object, we then create three types of composite images with varying degrees of changes to the object’s shape (without modifying the background):
+
+Controlled:the object is not modified.
+
+Altered:the object undergoes major non-affine geometric transformations (see App.C.2), resulting in shape modification and its texture being squeezed or expanded.
+
+Mixed:this variant uses pixels from the altered image where the original and altered masks overlap, and pixels from the original object where they do not overlap.
+
+After one of these three composite image types is created, we use neural style transfer (NST) to apply a texture to the image (similar to experiments in[16]) randomly sampled from Colored Brodatz[1], via an implementation of the NST model of Gatys et al.[15](details in AppendixC.2). We illustrate an example of this entire procedure in Fig.6.
+
+We adjust textural separability by performing the style transfer at eight different degrees of severity using different settings for the weighting hyperparameters that control the balance between content preservation and style transfer (details in AppendixC.2), with example styled images shown in Fig.7(more in Appendix.A.3). In Fig.8left, we validate this scheme by showing that indeed, steadily increasing the NST intensity results in decreasing textural separability.
+
+In Fig.8right, we show how SAM’s segmentation performance changes with respect to style transfer intensity on the test set, for each of the three types of object transformations. We first see that SAM’s performance decreases with lower textural separability/higher NST intensity.
+Second, there is an interesting pattern of clear gaps in segmentation performance between the three object transformation types. SAM performs best on thealteredobjects/foregrounds, which have both distorted shape and texture, compared to the un-altered/controlledobjects, with themixedobjects in-between. This further demonstrates the effect of textural contrast on segmentation performance, as the altered objects have additional textural contrast to their backgrounds due to the transformations which were applied to their shape, boundary and texture.
+
+We will now evaluate datasets of real images; iShape (Sec.2.3.2) and Plittersdorf[18], both of which were used in the original SAM paper[27], and possess objects with a wide range of textural separability from their surroundings. Plittersdorf consists of camera trap video frames of wild deer recorded in a wildlife park. These frames often have low contrast objects due to frequent low-light conditions, making it a useful dataset for this analysis. Example images and objects from both datasets are shown in Fig.9.
+
+In Fig.10, we show how the textural separability (Algorithm3) of these objects relates to SAM’s segmentation performance on them, with correlation results shown in Table3.
+Overall, across all datasets we see a fairly strong correlation between textural separability and segmentation performance (average correlation ofand), especially considering the variety of objects and backgrounds, with objects with low separability resulting in especially poor segmentation (). In these cases, SAM was confused by objects close to the object of interest whichalsohave similar textures (seee.g., Fig.10, right).
+
+SECTION: Discussion
+
+First, we see that SAM’s performance issues on cases of high tree-likeness (Sec.2.3) were primarily due to over-segmentation, rather than under-segmentation; the model would frequently generate large false-positive regions in the empty space of densely packed, thin tree-like structures (e.g., Figs.3, right and1, left). This could not simply be due to image resolution/downsampling blurring the thin objects, as for structures which are also thin but more sparsely packed, the over-segmentation is reduced (seee.g., Fig.3, center rightmost). We therefore hypothesize that the root of SAM’s failure on these objects may lie in the highly repetitive yet irregular,densepatterns inherent to tree-like structures in particular: SAM confuses these patterns of shape as the texture of a more regularly-shaped object.
+
+In the cases of both tree-like and low-textural contrast objects, SAM either has trouble with correctly delineating an object’s shape when faced with a “confusing” textural cue, be it either a dense, irregular shape which appears to instead be a texture, or an object texture that is similar to its surroundings. One explanation for this is that SAM’s training set SA-1B[27]possessed few objects with these qualities. This seems likely for tree-like objects, given the typically low concavity of objects in SA-1B (Fig. 6, right in[27]), which were captured in photographic contexts where such objects are uncommon. Low-textural contrast objects are similarly uncommon in most photographs, and furthermore, segmenting objects is generally more challenging if they are harder to pick out from their surroundings.
+
+A simple application of our findings and proposed metrics for the tree-likeness and textural separability of objects would be to predict if SAM is expected to perform underwhelmingly on new data, according to if the objects’ measured tree-likeness is high or the textural separability is low. Similarly, the general diversity of objects in a segmentation foundation model’s training/fine-tuning dataset could be measured according to the dataset’s distribution of these metrics, which could inform whether additional training data is needed to be acquired/annotated to develop a better generalist model.
+
+For our findings of the correlations between the object characteristics measured by our metrics and SAM’s performance in segmenting such objects, we attempted to minimize the influence of other confounding factors which could effect segmentation performance by first establishing a baseline with our carefully-controlled synthetic data experiments. We then chose real evaluation datasets which covered a wide range of object types according to these metrics in order to gain a better “signal-to-noise ratio” for the studied trends. However, it is impossible to mitigate all potential confounding factors which could affect performance in real data, which is why our correlation findings are still noticeable for the real datasets, yet not quite as tight as on the synthetic data.
+
+We do not evaluate the 2D version of the recently released SAM 2 model due to it likely resulting in similar behavior as SAM 1, along with evidence that oracle predictions of SAM and SAM 2 are typically similar in performance to withinIoU[12].
+
+Another future direction would be to explore the specific component(s) of SAM which can be most attributed to these failures (in a mechanistic sense), which could guide further model development. We deem it likely that the susceptible component of SAM is the image encoder, simply because it is the main backbone of the model which extracts features to be used by the lightweight mask decoder, but obtaining a more fine-grained answer would require a careful treatment.
+
+SECTION: Conclusion
+
+In this paper, we quantitatively modeled how the segmentation performance of SAM relates to certain measurable object characteristics: tree-likeness and textural separability. We find SAM’s performance to typically be noticeably correlated with these factors, showing the need for further work in understanding and potentially mitigating such “failure modes” of vision foundation models.
+
+SECTION: Acknowledgements
+
+Research reported in this publication was supported by the National Heart, Lung, and Blood Institute of the National Institutes of Health under Award Number R44HL152825. The content is solely the responsibility of the authors and does not necessarily represent the official views of the National Institutes of Health.
+
+SECTION: References
+
+Supplementary Material
+
+SECTION: Appendix AAdditional Dataset Details
+
+SECTION: A.1Retinal Blood Vessel and Road Satellite Images
+
+The retinal blood vessel and road satellite image object masks which we use to generate the synthetic images for the experiments in Sec.2.3.1, are from the Retina Blood Vessel[23]and the Road Extraction Challenge data of DeepGlobe18[8]. For our retinal vessel mask set, we use the vessel masks from the training set of 80 image/mask pairs, and for our road mask set, we randomly sample the same number of masks from the split-merged full dataset, in order to ensure that these two object types appear equally in the synthetic dataset of Sec.2.3.1.
+
+SECTION: A.2Synthetic Tree-like Object Images
+
+Our algorithm for creating synthetic images of tree-like objects (used in Sec.2.3.1) is shown as follows.
+
+Sample object maskfrom either retinal blood vessel or satellite road image datasets (details in AppendixA.1).
+
+Randomly select one of the contiguous components of, denoted, and enclose it with a tight bounding box.
+
+Resizesuch that its bounding box is, and randomly place it in a blankimage.
+
+Apply two different textures randomly sampled from Colored Brodatz[1]to the foreground () and background (), resulting in the final image.
+
+In Fig.12we show example images generated with different foreground and background texture combinations for various objects.
+
+SECTION: A.3Neural Style Transfer (NST) Generated Images
+
+In Fig.11we provide additional example images generated via inpainting and neural style transfer for the textural separability experiments of Sec.3.2.1.
+
+SECTION: Appendix BHyperparameter/Ablation Studies
+
+SECTION: B.1Object Tree-likeness Experiments
+
+Tables4and5show results on the synthetic tree-like dataset using a wide range of CPR and DoGD hyperparameters (and, respectively).
+
+Tables6,7,8, and9show results on DIS and iShape using a wide range of CPR and DoGD hyperparameters (and, respectively).
+
+SECTION: B.2Object Textural Separability Experiments
+
+Table10show the textural separability experiment results on real data (iShape and Plittersdorf) using various hyperparameters and models for the classifier.
+
+SECTION: Appendix CAdditional Experimental Details
+
+SECTION: C.1SAM Prompting Strategies
+
+In addition to the SAM prompting details presented in Sec.1, all real and style-transferred (NST) images are prompted with (1) a tight bounding-box and (2) several positive and/or negative prompts randomly sampled from either the foreground or background of the object mask, respectively, with respective countsand. For iShape, we use; for DIS, we useanddue to the complexity of the objects. For Plittersdorf and NST images, we simply useand, due to the objects typically possessing simple shapes.
+
+SECTION: C.2Neural Style Transfer Experiments
+
+For the NST experiments (Sec.3.2.1), the inpainting model used is Runway’s stable diffusion inpainting pipeline,fp16variant. The NST model itself is an implementation of[15]based onhttps://github.com/pytorch/tutorials/blob/main/advanced_source/neural_style_tutorial.py, using typical settings of a standard VGG19 CNN with content layer ofconv_4, style layers ofconv_ifori = 1, 2, 3, 4, 5, and ImageNet normalization.
+
+As mentioned in Sec.3.2.1, we perform style transfer experiments for a monotonically-increasing range of eight degrees of style transfer intensity. This is created by defining content and style weightsand, respectively for the NST algorithm according to
+
+whereranges linearly fromtowith eight equally-spaced values, representing the degree of style transfer intensity.
+
+The procedure that creates the “altered” version of objects via non-affine transformations is detailed as follows.
+
+Apply a non-affine transformation created using thealbumentationsPython library[5]to both the image and the object/mask, defined shortly.
+
+Clean up unexpected obsolete regions.
+
+Properly align the location of the distorted object.
+
+Remove small isolated regions of the object.
+
+In Python code, this is implemented as follows, given an input image NumPy arrayraw_img_arrand corresponding binary object maskraw_msk_arr:
+
+SECTION: Appendix DAdditional Results
+
+SECTION: D.1Correlation Between Metrics
+
+In Fig.D.1, we show the relationship between our proposed tree-likeness metrics CPR and DoGD on all three datasets (with default hyperparameters and ViT-H SAM), quantified by correlations shown in Table11.
