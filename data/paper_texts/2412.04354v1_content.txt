@@ -1,0 +1,517 @@
+SECTION: Multi-Scale Node Embeddings for Graph Modeling and Generation
+
+Lying at the interface between Network Science and Machine Learning, node embedding algorithms take a graph as input and encode its structure onto output vectors that represent nodes in an abstract geometric space,
+enabling various vector-based downstream tasks such as network modelling, visualization, data compression, node classification, link prediction, and community detection.
+Two apparently unrelated limitations affect these algorithms. On one hand, it is not clear what the basic operation defining vector spaces, i.e. the vector sum, corresponds to in terms of the original nodes in the network. On the other hand, while the same input network can be represented at multiple levels of resolution by coarse-graining the constituent nodes into arbitrary block-nodes, the relationship between node embeddings obtained at different hierarchical levels is not understood. Here, building on recent results in network renormalization theory, we address these two limitations at once and define a multiscale node embedding method that, upon arbitrary coarse-grainings, ensures statistical consistency of the embedding vector of a block-node with the sum of the embedding vectors of its constituent nodes. We illustrate the power of this approach on two economic networks that can be naturally represented at multiple resolution levels: namely, the network of international trade between (sets of) countries and the network of input-output flows among (sets of) industries in the Netherlands. We confirm the statistical consistency between networks retrieved from coarse-grained node vectors and networks retrieved from sums of fine-grained node vectors, a result that cannot be achieved by alternative methods.
+Several key network properties, including a large number of triangles, are successfully replicated already from embeddings of very low dimensionality, allowing for the generation of faithful replicas of the original networks at arbitrary resolution levels.
+
+SECTION: IIntroduction
+
+Complex networks capture a variety of socially relevant processes, from economic activities to interactions among brain regions[1,2,3].
+Indeed, every dyadic interaction can be described by properly defining which are the actors (nodes) and the type of connections among them (edges). By defining the nodes as the sectors and the edges as the transactions among them, the Input-Output network (ION)[4]is recovered. Again, by defining the nodes as the states and the edges as the trade among them, the World Trade Web (WTW)[5]is obtained. On the other hand, if nodes were seen as the brain regions connected by electrical stimuli, the brain network is represented. In particular, this flexibility allows for arbitrary definitions of the nodes even when looking at the samephenomenonthat is generating the data (generative process). For example, one could have access to the network involving the most detailed sector classification (National Industry), whereas another one only at the community level (Industry) - see the upper part ofFigure 1. The same reasoning applies naturally in other contexts (neuroscience, social sciences,), as community structures help in simplifying the heterogeneity of the graph[6,7]. Therefore, seen at a coarser resolution, the graph represents the interactions among block-nodes, and it would beuniquelyrecovered after the specification of the partitions. This scheme could be iterated at wish to produce amulti-scaleunfolding of the original graph withnestedpartitions: pictorially, the base of a pyramid is the observed network, whereas the coarser levels are the cross-sections of the pyramid. Lastly, it is worth noticing that the properties of each lower-resolution graph change with levels. For instance, the firm graph is less dense than the sector one since there will be fewer nodes to redistribute links to.
+
+Here, assuming to know the nodes, we aim at modeling their interactions by assigning a probability for every pair of nodes (or edge or link)[8]: the higher the probability, the more likely is that edge to exist in a sampled graph. Ultimately, the measurements over the observed graph should coincide with the average over the sampled networks. This exercise is called, in general,network modelingbut alsonetwork reconstruction[9]or (binary)edge classification[10]in the machine-learning literature.
+
+To tackle this problem, many machine-learning models usenode embeddings[11,12,2]. As highlighted by the arrows inFigure 1, one mayassigna set of coordinates for every node and, then, extract the probability for the network’s edges. The optimalnode embeddingsare the vector of parameters that optimize a functional involving the observed graph and the model, for e.g. the likelihood. Therefore, these vectors are interpreted as informative features about the nodes that can be deployed to different tasks, such as community detection or node classification[13].
+
+Two hallmarks of real-world graphs are 1)low density(sparsity) and 2)high triangle density, where there are many triangles incident to low-degree vertices[14]. It was recently proven thatlinearnode embedding methods, such as node2vec[11], are not capable of reproducing the triangle density[14]. To overcome this drawback, LogisticPCA[15]optimized the vectors for anon-linearlogistic function. Furthermore, Chanpuriya et colleagues proposed the “symmetric” LogisticPCA (LPCA)[16]to deal with undirected networks (seesubsection III.1).
+
+As mentioned, a phenomenon can be studied at different scales. By combining nodes into communities we go from a microscopic to a coarse grained scale. Nevertheless, most of the models, e.g. LPCA, regard a network only at one scale, providing the optimalembeddingsfor that level. If nodes were merged into communities, the block-vectorshave to be recomputed. In other words, the two sets of vectors are completely unrelated, as if the models see the two networks as realizations of two distinctprocesses- even though it is not the case. there is no prescription to use the node embeddings from a lower level to create an embedding for a community. For this reason, we would refer to this class of models as “single-scale” models (SSM).
+
+To tackle the renormalization problem on networks, several methods have been proposed in the literature, but they all rely on strong assumptions that limit their use cases[17]. More concretely, the most promising one[3]assumes that the nodes are embedded in a hyperbolic plane, all the coarser networks arescale-freeand the block-nodes containmicro-nodes. The latter restriction doesn’t allow to aggregate the nodes with the “most natural” way induced by the studied phenomenon, e.g. geographical distances for the WTW or the sector (industry) for the ION.
+To overcome this limitation, themulti-scalemodel[17]was proposed, which isgeneralizableat higher levels and allows for any arbitrary partition of the microscopic nodes. Indeed, the block parameters areuniquelyobtained by summing thevectorsof the nodes belonging to a community (renormalization rule) - this mimics theuniqueidentification of the coarser network starting from the microscopic one.
+
+In this work, we enhance the scalarmulti-scalemodel withnode embeddings(MSM). Therenormalization rulefor vectors is shown inFigure 1: each communityembeddingis the summation of its lower-level ones. Therefore, the MSM provides an interpretation of thesumof node embeddings, which is rarely addressed in the literature111The successes of Natural Language Processing are also due to the effective representation of a phrase obtained by summing the embedding for each word of it[18]. This is hardly replicated in a graph setting as it is intrinsically more complex than a language.[19]. Due to therenormalization rule, the MSM has the additional benefit of having to be fitted only at the ground level, further implying a lower computational complexity with respect to a single-scale model to be tailored at every level.
+
+The rest of the paper is organized as follows.
+Insection III, we introduce the LogisticPCA and the Multi-Scale Model (MSM) alongside its renormalization rule.
+Insubsection IV.1, we describe the ING Input-Output Network and the World Trade Web datasets. Furthermore, we present thecoarse-grainingprocedure to obtain thehigher-scalenetwork.
+Insection VI, we show the multi-scale results of the two models and discuss the implications of the theoretical results over either network- and machine-learning scores.
+Finally, in the Appendices, we store all the technical details supporting the results in the main text.
+
+SECTION: IIGraph Renormalization
+
+In this section, we will introduce the mathematical description of a graph and its coarse-graining procedure. We use the subscriptto identify the base graph whereasfor its aggregated versions. In addition, we refer to a generic quantity at levelas-quantity, e.g. the2-vectorsand2-nodesare, respectively, the node embeddings and block-nodes at level.
+
+Consider a binary undirected graph with“microscopic” nodes(labelled as)
+and their connections (called edges or links), i.e.
+
+whereif there was an edge amongandotherwise.
+This system could be represented by anadjacency matrixwhich has to be symmetric, i.e., since the graph isundirected. We don’t account for multiple edges, whereas we do for self-loops in the diagonal of, i.e.. Unless explicitely specified, we would use the notationwithas a chosen quantity when the results are valid for any level, e.g. if.
+
+SECTION: II.1Coarse-Graining
+
+In order find the coarse-grained version of the graph, we definenon-overlapping arbitrarypartitionsof the microscopic nodes into block-nodes
+
+Secondly, we assume that two communities are connected if there was at least one edge between their internal nodes, i.e.
+
+where
+the operation used is thelogical ORover the edges connecting two communities. That is, only the zeros are preserved whereas the possible multiple-edges among the lumped nodes are projected to one. Moreover, note thatis onlysurjectivebut notinjective, since multiple nodesare merged into, and that we allow for self-loops as we didn’t require. At a higher level, the self-loop proxies there isat least one connectioninside the community either because links among nodes or self-loops edges. In this way, we built theadjacency matrixwhich is binary and symmetric as. To ease the recalling, we will refer toas0-graph,as1-graph, themicroscopic nodes asand the block-nodes as.
+
+The lumping procedure could be iteratedtimes by specifying the partitionofintoblock-nodes
+
+However, since the partitionsare not overlapping, one can define their compositionas
+
+This provides adirectmapping ofinto block-nodes.
+Therefore, theis recovered both applying iteratively theEquation 1ordirectlyviaEquation 2
+
+whereis the inverse ofEquation 2.
+
+Thenestedcan be uniquely parametrized in terms of a dendrogram as shown in[17]. By following an “horizontal” cut of the dendrogram, one obtains the community partitions at the same scale, e.g. for the WTW by merging states nearer than a fixed geographical distance. In contrast, by cutting the dendrogram at different heights, one recovers the “multiscale” clusters, e.g. a state interacting with a continent.
+
+In many cases, the problem setting suggests a partitioning of the nodes into communities without an explicit distance matrix, e.g. the classification of the Industries based on the NAICS-codes digits. They characterize each Industry by a number atdigits, e.g. Full-Service Restaurants (722511), but also their clusters by progressively removing the last number up todigits, e.g. Accommodation and Food Services (72). More concretely, the industries sharing the firstdigits are merged into a block-node at thelevel (cfr. Hamming Distance). The dendrogram can be built by setting the height where the blocks split into sub-cluster as.
+
+Lastly, if the problem doesn’t come with any “natural” partition, it would be possible to merge the0-nodesrandomly by creating a dendrogram from a random distance matrix.
+
+SECTION: IIIModels
+
+In the previous sections, we highlighted that onephenomenoncould be studied at different resolutions.
+In particular, since every adjacency matrixis binary and undirected, every edgecould be seen as a Bernoulli random variable. Since the theory is valid for every scale, we will remove the dependence on the levelon each quantity, e.g.(seesection II). Hence, for every resolution the adjacency entries are
+
+To model this hierarchical structure, we will use the LogisticPCA[16]and the new MSM. We selected LPCA as the representative for the SSM whereas, at the best of our knowledge, only the MSM accounts for arenormalization ruleover arbitrary partitions of the nodes.
+
+SECTION: III.1Logistic PCA
+
+LPCA222The authors have historically called LPCA thedirectedLPCA, but there was no straightforward acronym for itsundirectedcounterpart[16]. Since in this work, we will use only the symmetric one, we will call it LPCA for easiness.[16]is a probabilistic model which aims to classify each edge as existing (class) or non-existing (class). This is a common “spam / non-spam” problem[13], but applied to objects (the links) that are not carrying explicit features - that is why node embeddings come into play.
+
+The connection probability reads
+
+where the node embeddings
+
+were introduced by the Chanpuriya et colleagues to grasp the “homophily” and “heterophily” natures of a node respectively (see Supp.Mat.I).
+By defining the non-negative matrices asand similarly for, the scalar product among them becomesimplying.
+Therefore, the node embeddings are obtained by maximizing the likelihood[20]
+
+subject to.
+
+SECTION: III.2Multi-Scale Model
+
+The natural way of modellingis deployingrenormalizationmodels that have to beself-consistentacross scales and allowing for arbitrary partitions. The multi-scale model[17]is the only one that takes into account all these properties (cfr.[3]for homogeneous partitions). In addition, by equipping the (global) multi-scale model with node embedding, the connection probability for the new multi-scale model (MSM) reads
+
+subject tosince the probability has to be bounded (). In principle, one should impose, but this is equivalent to restricting every component to be non-negative, i.e.(see Supp.Mat.II.6). The normis the one induced by the scalar product. In general,could be interpret as the propensity ofto create a link with another node. Theoretically, this role in encoded by its modulus (significance) and its relative angle (similarity) with the other embeddings. On the other hand,rules the self-loop of node. A more detailed interpretantion of the node embeddings is lacking in the literature, but it is out of the scope for this work.
+
+As for LPCA,are obtained by maximizing the likelihood
+
+whereis the vertical stacking of the embedding vectors, i.e.. We optimized only the vectors of thestructural inequivalentnodes (see Supp.Mat.II.4).
+Theloopparametersare fixed to
+
+after the training of the node embeddings.
+Indeed, for each node, the likelihood of the self-loopsdisplays only one term related to the presence () or absence of the self-loop (). Therefore, by maximizing the likelihood the reached values for the loop parameters will be exactly the ones set above.
+
+The MSM enforces the equality among therenormalizedand thecoarse-grainedprobabilities333The notation for the different probabilities uses the(hat) to refer to thePwith fitted parameters. On the contrary, the(check) reuses the 0-level parameters (the opposite of), and the(tilde) resembles the “S” of “summed” for the renormalized probabilities.with the same functional form ([17], Supp.Mat.II), namely
+
+These two conditions are calledself-consistencyandscale-invariance.
+Here, we will use again the subscriptto highlight thatare thefittedvectors at finest level, whereasare the parameters at the levelwhere we set the block-nodes as. Therefore, by assuming that the block-node parameters are thesumof the lower level ones, i.e.
+
+Equation 14are satisfied by means ofEquation 10(seesection II).
+In this way, the MSM at levelis recovered by inserting them in theEquation 10, namely
+
+Thanks to thesummation rule, the MSM has a lower computational complexity with respect to the single-scale models (seesubsection II.7) as they need to be refitted at every scale.
+
+In this essay, we took advantage of this property by fitting theembeddingsvector from the observed network to recover all the coarserfor everyby means ofEquation 15. Finally, the probabilityamongwas obtained by inserting theinEquation 10.
+
+SECTION: IVApplications
+
+SECTION: IV.1ING Input-Output Network
+
+ING Bank N.V. regularly reports the economic transactions of all ING clients for different years.
+We focused on the payments for the year 2022 between ING firms by removing theindividualor non-Dutch clients, the flows of money sent/received by a non-ING account and the payments circulating inside a firm, i.e. self-payments. Since ING is the biggest bank in The Netherlands[21], this gave us the possibility of analyzing a major portion of the market.
+
+More precisely, we chose the year 2022 both to ease the numerical calculations and to avoid skewed distributions by the aftermath of the COVID-19 pandemic. However, the procedure may be easily replicated for other time intervals, e.g. 3 years span, quarterly,
+
+At the firm-to-firm (f2f) resolution, the dataset is composed bywhich imply a density. Therefore, the network isbig and sparse. From this network, we aggregated the firms by NAICS (North American Industry Classification System) codes and set an edge among two sectors if there wasat least onelink among the firms of each community (seeEquation 3). Then, we filtered out the “Public Administration” (92), “Finance and Insurance” (52), “Management of Companies and Enterprises”/“Holdings” (55) sectors to retain aproductionION. Roughly, the reasons underneath the payments from/to the sectors52-55-92are not directly connected with a product/service. In particular, the “Public Administration” fluxes includes taxes and fees; the “Finance and Insurance”, money management, e.g. loans, that are not part of the production chain of any good; and the “Management of Companies and Enterprises”/“Holdings” are a collection of business entities, controlling stocks in other companies. Lastly, we mapped, for simplicity, the 6-digits NAICS codes to integers, i.e..
+
+This is a first application of the MSM on themultiscale structurebuilt from the ION. Therefore, we studied only theeconomic relationshipsamong the sectors discarding the directionality and the amount of money of the link. In other words, each edge isreciprocated and binary. For example444To be precise, the notation for the nodesrefers to the observed microscopic nodes, namely, ifwas the total amount of money sent fromat level, wereciprocatedthe weight by setting[5]andifand imposedto create abinaryedge. In this way, a bidirectional link is created, i.e.every time there wasat leastone directed flow among two sectors.
+The empirical ION is composed bysectors andlinks, which imply a densityby 4 order of magnitudes.
+
+In the previous section, we obtained thebinary undirectedadjacency matrixrepresenting the interactions among the 6-digits sectors (0-nodes). Here, we describe the coarse-graining procedure producing themulti-scaleunfolding of.
+
+At first, the0-nodeswith the firstdigits, with, are lumped together in the-nodes, e.g. the sectorswould be merged in the samecommunity starting from555In general, the model accepts every othernon-overlappingpartition of the 0-nodes[17], e.g. Louvain[7,22]..
+
+Secondly, we set an edge among twoif there wasat least onelink among their higher resolution members. More formally, thecoarse-grainedis calculated by applying theEquation 4. We chose thisone-stepprocedure to easily generate every level without passing into the intermediate scales. However, the MSM accept everyarbitrary-stepsscheme, e.g. ifthenis also possible. Note that the coarse-grained graphs becomefully-connectedfrom. Therefore, thestatisticalmodelling would be possible up to.
+
+SECTION: IV.2World Trade Web
+
+As a second application, we considered the World Trade Web (WTW) from the Gleditsch dataset[23], which reports the international trade flows (imports and exports) among all the world countries. We selected the year 2000 (the most recent one) and removed the states that were not reported in the BACI-CEPII GeoDist[24]as we would use the geographical distances to coarse-grain the WTW.
+This results in0-nodes. Although we analyzed the year 2000 the methodology can be applied also to other years.
+
+The dataset provides two columns which display, for every pair of nodes: theexportandimportamongin USA dollars. However, by flipping, theexportandimportdon’t coincide with the previous value. Therefore, we used only the redefined[25]as the amount of trade from.
+
+As done for the ION, wesymmetrizedthe connections by mapping, i.e. the average flow between the two directions. By renamingas, it follows that the weights are symmetric, i.e.. Note that the WTW has a highreciprocityof links, i.e. the connections in the WTW are almost always corresponded[26]. Therefore, its undirected approximation is a legitimate starting point to study the system.
+Moreover, webinarizedthe import-export matrix to get an adjacency matrix among the states. Formally, we projected all the positive values of the weighted matrixto one, i.e.where theis the Heaviside function.
+
+To coarse-grain the empirical WTW, assumed at level, we used the geographical distances[24]to iteratively merge “close” nodes into block-nodes as in[17]. Technically, this is done by means of asingle-linkage agglomerative clusteringmodel which returns a dendrogram where theleavesare the 0-nodes, thebranching pointsare the block-countries, and theheightof each branching point represents the distance, obtained via the single-linkage, between two leaves following the corresponding branches. Therefore, to calculate the partitionswe cut the dendrogram athierarchical heights, such that the number of block-countries, namely, are. Note that the coarse-grained graphs become fully-connected from. Therefore, thestatisticalmodelling would be possible up to.
+
+SECTION: VMethodology
+
+In this section, we will define the scores used to evaluate the models over the ION and the WTW.
+
+SECTION: V.1Embedding Dimension
+
+The choice of thebestembedding dimension is still an active Research topic[27,28,29]. Here, we relied on the “Minimum Description Length” principle approximated by the Bayesian Information Criteria (BIC)[28]. In the Supp.Mat.Table 1, we reported the BIC scores over the dimensionsand also, for completeness, the AIC ones[27]. Thebestdimension, according to BIC, depends on the resolution levels: for the ION,whereas. Since the WTW is a less complex network, the BIC selects everytime the lowest dimension, i.e.(see Supp. Mat.). This result could be expected since having more nodes, as for the lower levels, it implies more heterogeneity and, therefore, a bigger embedding dimension to grasp the ION. However, since this is the first time the MSM has been proposed, we will show the scores for all thedimensions.
+
+SECTION: V.2Renormalization of LPCA
+
+Having fitted the(at level), in order to model, one may either proceed with theEquation 8or by refitting LPCA at that level. However, both solutions have similar drawbacks as there is no renormalization rule enforcing thescale-invariance(cfr.Equation 15). In the following, we will analyze them in detail.
+
+Firstly, one may calculatefrom the RHS of theEquation 13. Nevertheless, as shown in Supp.Mat.I.2, it wouldn’t be possible to rearrange theto recover alogisticfunction with renormalized parameters. Hence, the resulting method would no longer belong to the logistic parametric family. In other words, LPCA is notself-consistentunder coarse-graining.
+
+In addition, note that the calculation ofrequires a greater complexity than the MSM Supp.Mat.subsection II.7.
+
+Secondly, by refitting LPCA at level, one would find another set of vectors that, in general, are unrelated with the(-1)-vectors. To the point of view of LPCA, the different levelsare realizations of differentgenerative process.
+
+To enforce relatedness of thevectors, we forced the lower-resolution parametersto be a function of the higher-resolution ones. Since there is no natural way of combining them, we used theEquation 15, namely
+
+whereare the block-nodes at level.
+Then, to imposed self-consistency, the parameters are inserted in LPCA activation function, i.e.
+
+At this point, the machinery providesself-consistency and relatednessof LPCA across scales as the MSM does naturally. Hence, we can fairly compare their expected values with respect to.
+
+SECTION: V.3Comparison Among Probabilities
+
+For every level, both LPCA and MSM give rise to 3 probability functions666For the MSM, the symbols on top ofrefers to different values of theinnerparameters since its functional form does not vary by construction.: thefitted,summedand thecoarse-grained. Hence, we produced a cross comparison among them to understand their hallmarks.
+
+Firstly, we will compare for each model how therelates with, i.e.Equation 18againstEquation 8andEquation 16againstEquation 14.
+
+Secondly,against, namelyEquation 18againstandEquation 16against.
+
+The insets, displayed in some figure, are reporting thehistogram of the density of points inside each bin777We set the number of bins equal toboth along the x- and y- axis., i.e.
+
+where(“xy” refers to its center of mass) is the total number of points andthe number of pairs.
+Finally, we colored the bins according to(creating a heatmap) - the bigger the value, the lighter the color.
+
+The missing evaluation ofagainstis due to the fact thecoarse-grainedprobability spoils the LPCA functional form (seesubsection V.2) whereasfor the MSM. Therefore, we used it only to check numerically theEquation 13in the first comparison.
+
+SECTION: V.4Scores
+
+SECTION: V.5Network Measurements
+
+The fundamental topological properties of a network are thedegree, theaverage nearest neighbor degree(ANND) and thebinary clustering coefficient(CC)[8].
+Formally, each of such measurements is a functionof anadjacency matrix representing a graph.
+
+Here, we compute them both in the observed networkand as expected by the model. More precisely, thedegreecounts the number of edges that are incident to a node, i.e.
+
+and its expected value is given by
+
+wheredenotes the expected value over the ensemble of graphs sampled from.
+Movingtwo-hopsaway from, theANNDreports the average degree of the neighbors of the node, i.e.
+
+whereas its expected value reads
+
+where in the second passage we took advantage on the first order approximation(delta approximation)[30].
+Lastly, theCCis defined as the ratio among the number of triangles of nodeand its number of wedges, namely
+
+whereas the expected one is
+
+For more complicated measurements, e.g. the variance of theANND, thedelta approximationwon’t be valid and one has to estimate them as the average over asufficiently largeensemblewhereis the number of graphs.
+In particular, having optimized the parameters of the model, we can generate unbiased realizationsby sampling eachindependently with probability[30,17].
+
+In the limit of, thesampledaverage of any measuremeets itsanalyticalestimations[17], i.e.
+
+whereis a matrix drawn from the set of the undirected binary graphsofnodes.
+
+Lastly, to estimate the uncertainty of the model over the sampled realizations, we calculated the-th (-th) percentile ofcalculated withlinear approximation(see[31]). These values are seen as upper and lower bounds of thedispersion intervals[26]which containsof the measurementsover the sampled graphs. Note that in the whole procedure we arbitrarily fix the percentage of “dispersion” to[26], but other values are also allowed.
+
+SECTION: V.6Reconstruction Accuracy
+
+In order to have a cross-comparison among all the levels and models, we exploited thereconstruction accuracy[26]. This measure is defined as the fraction of times an observed statisticsfalls within thedispersion interval(seesubsection V.5). More formally, the reconstruction accuracy at levelfor the statisticsis defined as
+
+whereis the indicator function888Further refinements are possible, but we stick with this definition for the sake of simplicity..
+Roughly, it counts the frequency at which the sampled ensemble includes the observed statistics. If all the observed statistics, e.g. degrees, were included in the interval, the accuracy would be, whereas the accuracy would beif none of them were included.
+
+SECTION: V.7Rescaled ROC and PR Curves
+
+The LPCA and MSM could be seen asbinary classifiersthat predict the presence of a link between two nodes. For this reason, we evaluated them also for the common metrics used in theMachine Learningfield: theexpectedconfusion matrix, the Receiver Operating Characteristic (ROC) and the Precision-Recall (PR) curves[32,33].
+Firstly, theexpectedconfusion matrix is amatrix that reports the expected value of True Positives (TP), i.e., False Positives (FP), i.e., True Negatives (TN), i.e., and False Negatives (FN), i.e.[34]. By combining these scores, one recovers the True Positive Rate (TPR), the False Positive Rate (FPR) and the Positive Predictive Value (PPV)[33], namely
+
+where,.
+ It’s possible to “activate” these scores by mapping the entriestoand otherwise to. For convenience, we will call them.
+The ROC and PR curves are obtained by spanning[32]and plotting, respectively, the TPR against the FPR, and the TPR against the PPV (seeFigure 4). Interestingly, if, then, whereas if,.
+
+As a reference model, it is commonly employed a random classifier predicting the majority class, i.e.. In the ROC plane, this naive model spans the identity line, and an “L” shape in the PR plane which depends on the link density999As the density increases the corner will be right-shifted and vertical line bent forming a “” shape. Nonetheless, since we are interested in ranking thesummedmodels, we rescaled the Area Under the Curve (AUC) to highlight the advantage with respect to thenaiveclassifier. Specifically, we defined
+
+Therefore, the perfect classifier would still havebut the random one. ThenewAUCs can be negative, as a signal of a worse performance than the random classifier.
+
+SECTION: V.8Triangle Density
+
+Inspired by[15], we computed theexpectednumber of triangles for every model at disposal101010In this essay, our objective was to modelprobabilisticallythe observed network rather than describing itexactly, namely the limit where..
+Specifically, the expected density of triangles at a certain levelis defined as
+
+whereis the number of observed triangles (seeEquation 26) calculated on the subgraphcomposed by the nodeswith degree lower (or equal) than a threshold[14,15].
+Its expected value reads
+
+whereand the probabilitiesrefers to the summed model.
+
+SECTION: VIResults and Discussions
+
+Here, we present the results of the LPCA and MSM models applied to the ION and WTW datasets.
+
+SECTION: VI.1Scale-Invariance Evidence and Multi-Scale Clustering Coefficient
+
+InFigure 2a, it is represented the behavior of thesummedprobability against thecoarse-grained(seeEquation 13) as described insubsection V.3.
+
+We chose the lowest embedding dimensionsandto highlight the differences among the models even in the simplest case. Specifically, the identity line depicts the scale-invariant nature (Equation 13) which is met only by MSM. On the other hand, LPCA systematically underestimates the coarse-grained version, since the0-vectors, maximizing the likelihood at, get lower values than the ones needed to enforce scale-invariance.
+
+By taking asufficiently largeembedding dimensionsand, we reported inFigure 2ba cross-comparison between the LPCA-(8,8) and MSM-16 focusing on the multi-scale CC. At a plain eye inspection, LPCA-(8,8) is outperforming MSM-16 at level 0 (where we fitted the models); whereas it is the other way around at level. More quantitatively at level, thewhile. Additionally, we exploited the relative Froebenius error among thefittedprobabilityand the adjacency matrix defined as[15]
+
+to obtain that. The comparison is further enriched by the insets displaying the summedagainst the fittedateither for LPCA and MSM - the identity line represents the perfect match. Technically, we created ahistogram as described insubsection V.3.
+
+Here, we verifynumericallythat LPCA is not scale-invariant and the agreement of the expected CCs with respect to the observed ones. Comparable results were also obtained for the other levels and measures, namely the DEG and ANND - for ION at(seeFigure 3), but refer to the Supplementary Material for the WTW and the other levels. Hence, as expected from the theory, the MSM provides the best modelling of the multi-scale ION.
+
+SECTION: VI.2Expected Values of the Network Measurements
+
+InFigure 3, we display the key network properties at level(seesubsection V.5) calculated for the empirical network, as expected by the summed modeland by the refitted one(seesection IIIandV.2). The dimensionwe used arefor the LPCA(LPCA-(8,8))andfor the MSM(MSM-16).
+
+We computed the observed properties as insubsection V.5. Then, focusing on the fitted model, we sampledrealizations in order tocalculateas reported inEquation 31. In addition, we obtained the dispersion interval for each measurement with- the bars attached to every sampled average in the plot. Lastly, we re-applied the same procedure to the summed model.
+
+In the upper panel, we report the observed measurements (x-axis) and the expected ones (y-axis) both for the summed model (orange points) and the fitted one (blue points). Needless to say, the identity line represents the perfect match of the predicted quantities with the observed properties. The single inset depicts the scattered plots ofagainstas described insubsection VI.1.
+
+As expected fromFigure 2a, LPCA does not recover the measurements on average whereas the MSM can approximate them including most of the observed points in the dispersion intervals. In addition, by looking at the inset in the upper-left plot,approximatesonly for the MSM. This result, differently fromEquation 13, was not enforced theoretically, and it explains the good agreement of the MSM measurements through the coarse-grained levels.
+
+In the lower panel, it is displayed the behavior of the network measurements as the degrees increase. From the left-most plot, one finds the complementary cumulative distribution function (CCDF) of the degrees, the ANND and the CC. Since the real CCDF is decreasing, the observed network has a higher presence of lower-degree nodes than the hubs whereas it is notscale-freeas its shape is not a straight line in log-log scale. Similarly, the ION (WTW) isdisassortativeandhierarchicalsince, respectively, the high-degree nodes are connected to low-degree ones, and they trade with loosely-interacting partners[35].
+
+These plots underscore that the MSM-16, not only capture the CC (seeFigure 2b), but also thelower-hopsmeasurements and behaviors. As expected, the LPCA-(8,8) provides a good fit only at the fitted scale as depicted by the blue points forand.
+
+SECTION: VI.3Reconstruction Accuracy and ROC-PR Curves
+
+InFigure 5a, one can find the reconstruction accuracy (seeEquation 33) for the DEG, ANND, CC across the available levels for the ING network, i.e.[26]. In particular, we reported thesummedLPCA with dimensionsand, and thesummedMSM with.
+Since we have fitted every model at, only most of the trends are peaked at the resolution scale, for e.g. the MSM-1 has a higher CC at levelthan at. In addition, out of the fitted level, the LPCA fails in generating an ensemble of networks that are consistent with the observed one. Contrarily, the MSM ensemble includes the measures at every level apart from resolutionwhere the topology change could not be grasped only by the0-parametersand therenormalizationrule. Especially for, the MSM overestimates the DEG, ANND, CC since the summation of the 0-parameters lead to bigger values than the 2-parameters fitted at level. As said, this is not per se a problem of the MSM since thescale-invarianceenforces theinnerconsistency of the MSM (seeEquation 13) rather than recovering the fitted parameters at every level. Also, the choice of thepathologicalpartition leads to worse results than expected as discussed insubsubsection VI.3.1.
+In addition, by increasing the number of parameters, i.e., the reconstruction accuracy improves, but it leads to overfitting as highlighted by the higher BIC scores reported in Supp.Mat.Table 1. Another way to tackle this deviation, could be to introduce a dyadic relationshipamong the nodes as done in[17]. However, this is out of the scope of this work.
+
+InFigure 5b, one may arrive to similar conclusions but looking at different scores: the Area-Under the Curve (AUC) for the Receiver Operating Characteristic (ROC) and the Precision-Recall (PR) curves[33]. The illustrations underline thephase separationdue to their functional forms. In particular, even if LPCA-(8,8) outperforms all the other candidates at, its performances decreases with the scales; so, does LPCA-(1,1). On the contrary, the MSM displays growing scores since, due to the density increase, the TP are likely to grow in number. Hence, the ROC and PR curves are pushed towards theandupper boundaries.
+
+In conclusion, the MSM can consistently model all the coarse-grained levels, whereas the LPCA outperforms the MSM only at the fitting scale. This implies that, by fine tuning the functional form, one can prioritize either thesingle-scale “overfitting”with LPCA or thegeneralizationcapability with the MSM.
+
+The agreement of the summed model and the observed (coarser) graph depends on the chosen partitions. In other words, by recalling the notation used in as inEquation 1andEquation 13, the relationship
+
+depends on the partition sinceare functions of. Therefore, one can engineer a partitionthat spoils the latter approximation by requiring thataddresses the zeros of(cfr.Equation 44) through
+
+As said,would provide a partition leading to worse results than the ones observed for ION and WTW.
+
+SECTION: VI.4Expected Number of Triangles
+
+The authors of[15]show that it is possible, by introducing LPCA, to reproduce the triangle density (TriDens) for an embedding dimensionlowerthat the number of nodes (cfr.[14]). Here, we show theexpectedTriDens as described byEquation 41,Equation 42.
+
+InFigure 6, the filled azure dots depict the observed TriDens whereas the other markers identify each model: azure circles (LPCA-(1,1)), orange triangles (LPCA-(8,8)), green circles (MSM-1), red circles (MSM-2), violet crosses (MSM-8), brown triangles (MSM-16). InFigure 6a, it is reported the levelwhere it is clear that even the lowest embedding dimension () well approximates the TriDens. By construction, asincreases, the difference among the TriDens vanishes until it coincides atsince the subgraph of hubs is likely not to contain triangles in adisassortativenetwork (seeFigure 3). This result is not in contrast with the previous works[14,15]since we are computing theexpectedTriDens rather than theexactone. By coarse-graining the networkFigure 6bat, the MSM models are in a good agreement with thecoarserTriDens. In particular, as seen inFigure 3, asincreases, also the estimates improve. On the contrary, LPCA are underestimating the considered score being biased because, as said previously, it is not generalizable to lower resolutions.
+
+SECTION: VIIConclusions
+
+The power of graphs relies on their ability to accommodate different kind of interactions by a suitable definition of nodes and edges.
+By arbitrarily identifying a node as the aggregation of microscopic entities the resulting network is acoarse-grainedversion of the original one. By repeating this procedure several times, one obtains amulti-scaleunfolding of the observed graph. We have applied this procedure on the ION and the WTW (seesubsection IV.1) showing how onegenerative processcould be represented at several resolutions.
+
+A relevant part of thenode-embeddingliterature[36]aims at find the optimal representation of the nodes at a single scale, neglecting these numerous ways of tracking down the generative process. To stress the point, weappliedeither asingle-scalemethod from the machine-learning field, i.e. LPCA[16], and thenewmulti-scale models enriched withnode embeddings(MSM)section III. The key assumption is that, similarly to the generative process, the models must bescale-invariantthrough the scales. Since the MSM is built with this premise, it would naturally beself-consistentwhereas we forced LPCA to be self-consistent by applying the same renormalization rule of the MSM (Equation 17). In particular, the renormalization rule (Equation 15) states that the community vectors are thesumof their inner-node vectors. This allows for a principled interpretation of the sum of the node embeddings which is not possible with LPCA and, in general, with the single-scale models.
+
+Atfittingscale, LPCA outperforms MSM in every metric we have considered insection V. At higher scales, the ranking is reversed (seeFigure 5) as the predictions of LPCA highly deviates from the observed structure - this defined this change assingle-scale overfitting. More specifically, inFigure 2a, we visualized at which extent imposing the self-consistency makes LPCA diverge from its coarse-graining probability - the MSM satisfies this identically.
+Secondly, we showed the agreement (disagreement) of the expected network measurement by using the summed MSM (LPCA). This implies that LPCA has to be fitted at every level as if every scale would be generated by a different generative process. Therefore, also the node embeddings would not be related to each other. On the contrary, the MSM can be fitted at the highest resolution, providing the fundamental vectors that can be summed to obtain the higher-level embeddings. This is a clear advantage of the MSM over the LPCA - even computationally as reported in the Supp.Mat.subsection II.7.
+
+As cross-comparison between the models, we visualized the Reconstruction Accuracy (Figure 5a), the AUCs (Figure 5b) and the expected number of triangles (Figure 6). Specifically, the Reconstruction Accuracy highlights that the ensembles, generated by the two models, includes the observed quantities at level. However, by changing scale, LPCA generates graphs that are not related to the empirical one. Interestingly, also the MSM struggles to recover the observed properties at levelbecause the graph topology changes more than what expected by the model. In particular, without thedyadicparameters, the MSM overestimates the 0-parameters which lead to a higher density of edges at level(see the z-score in the legend ofFigure 3b). As a consequence, all the measurements are overestimated and the dispersion interval can’t include the observed values. InFigure 5b, it has been depicted the clear sign of single-scale overfitting: the predictability of LPCA is restricted tosince the AUCs constantly decrease when it is applied to higher levels. Lastly, the analysis of the expected triangular density (Figure 6) shows that it is possible to generate networks with comparable values as the observed triangular density. As said before, this possibility is spoiled under aggregation for the LPCA, but it is preserved for the MSM.
+
+In conclusion, LPCA, developed using themaximum Shannon entropyprinciple, is the best model at its fitted level but struggles to accurately represent the network’s structure at other scales. In contrast, the multi-scale model (MSM), based on thescale-invarianceprinciple, consistently captures coarser resolutions, such as the ION and WTW. The decline in LPCA’s predictive performance at higher scales suggests that MSM provides a better balance for modeling the multi-scale structures. In addition, the MSM offers a meaningful interpretation of node embedding sums, as they naturally generate lower-resolution levels, making it a more versatile and comprehensive approach for analyzing networks.
+
+SECTION: VII.1Future Perspectives
+
+Although this work used undirected and binary models, it was a good starting point to extend the analysis to directed methods[37]and, hence, the interpretation of the resultingdirectednode embeddings within the economic theory. For the weighted part, there is still theoretical work to do to understand how the weights could be included in the MSM framework.
+
+SECTION: VIIIACKNOWLEDGMENTS
+
+We thank ING Bank N.V. for their support and active collaboration. A special thanks to the whole DataScience team at ING Bank for their advice that helped shape this research.
+
+SUPPLEMENTARY MATERIALaccompanying the paper“Multi-Scale Node Embeddings for Graph Modeling and Generation”by R. Milocco, F. Jansen and D. Garlaschelli
+
+SECTION: INon-Negative Logistic PCA
+
+The non-negative LPCA (LPCA)[15]aims to classify every edgeas existing (0) or non-existing (1). By treating every entryof the adjacency matrixAas a Bernoulli random variable (Equation 5), this comes down to the factorization
+
+whereis the logistic function depending on the scalar product of two embedding per nodes assumed to encode the role of each node in the network, namely.
+The compact formulation on the LHS was written in terms of the matricesthat are created by stacking horizontally the vectorsrespectively.
+
+Similarly, for the MSM (section III), the LPCA vectors are fitted by means by maximizing the log-likelihood estimation”[38]. In particular, the log-likelihood and its gradient read
+
+where the last passage is taken fromBCE-TensorFlowfor numerical stability. Note that the stationarity conditions
+
+can’t be split in a part dependent only by the adjacency matrix as for the Exponential Random Graph models[30]. Hence, LPCA hasn’t asufficientstatistics and one has to use the whole adjacency matrix.
+The motivation for having two vectors per node boils down to the framework studied in[15]. Specifically, the authors analyzed a dating graph reporting the messages exchanged among the male-female users living in two different cities.
+Hence, they have introduced two vectors per node to grasp the heterophily (malefemale) and homophily (same city) “role” of each user. In the ION setting, we leave out this interpretation just considering them as parameters to be optimized.
+
+SECTION: I.1Renormalizing the LPCA
+
+The LPCA does not have a recipe to renormalize the parameters and produce an “up-scaled” version of it. Nonetheless, it is possible to model the multi-level structureeither byfittingat every level or bycoarse-graining() as given by
+
+whereare the block-nodes at level. However,spoils theself-consistency111111As said,provides multiple representation of the samegenerative process. Hence, the model should mimic this feature withself-consistency.of LPCA; a property that allows one functional form for all the levels. In particular,Equation 8is a product of logistic functions which is not re-writtable as a logistic function.
+
+Since we want to test the capability of the model to remain self-consistent, we will renormalize the parameters by summing the microscopic parametersEquation 17as done for the MSMEquation 15and check for its agreement with the empirical quantities.
+
+As pointed out insubsection II.7, in order to compute, the computational complexity is higher than thesummed. Therefore, for the fairest comparison among the models, we will use.
+
+SECTION: I.2Inconsistency of the LPCA: a trivial example
+
+By referring toFigure 1, the microscopic network of 3 nodesmerges into the communitycontaining respectively the nodesand the node, namely.
+
+ABlevel 1
+
+In addition, to stress the point we will switch-off the dependence on. Therefore, the connection probability of the communitiesfrom theEquation 18as
+
+which is different from the coarse-grained (Equation 8)
+
+From the previous results, it is clear that fromone can’t recover theby definingsimilarly toEquation 15. Therefore, the model is not renormalizable.
+
+SECTION: IIDerivation of the multi-scale probability
+
+Here, we derive the multi-scale model formulation enhanced withvectors(MSM). As in the main text, we will consider a coarse-graining procedure fromtoeven though the treatment will hold for every pairwith. See[17], for further details even for the following passages.
+
+Before introducing the model, it is worth to recall the problem settings to generate the observed multi-scale structure.
+Concretely, let us consider thebinaryundirected adjacency matrixat leveldescribing the microscopic interactions among the 0-nodes. Subsequently, ahierarchical and non-overlappingpartition of the microscopic nodesprescribing the community (block-nodes) membership of the lower-level nodes. Concretely, the block-nodeshosting all thenodes is obtained by
+
+where we have defined. Lastly, aruleto assign a link among blocks, namely
+
+whereand. Therefore, by iterating the procedure it is possible to create the nested set of networks describing theoriginalphenomenon at different resolutions.
+
+In order to model this architecture, one needs several assumptions. Thefirst onerequires that the MSM must describe the microscopic matrix. Similarly tosection I,subject toandwhereis the ensemble of all the binary symmetric graphs withnodes.
+
+In line with[17], we further assume that
+
+is given by a product (to-be-defined) between thedimensional vectorswith additional node-wise parametersonly active in the self-loop part ().
+In particular,encodes the capability of nodeto connect to the other nodes; whereasits propensity for aself-interaction. Since the principles leading to an edge are different to the self-loop ones, we introduced two independent parameters.
+Furthermore, the matrix of parameterscould include also adyadicrelationship among the nodes. The higher order terms have been discarded since they will not be fully compatible with the hypothesis of “independent edges”. For further details we refer to[17].
+
+To highlight the parameter dependence of the model, in the following, we will use the notationwhere. Technically,and.
+
+Fittedat the ground level, the ensemble generated by the MSM contains multiple configurations that, after coarse-graining, lead to the observed macroscopic[17], i.e.. In turns, this induces the probability of observingas
+
+To enforce thescale-invarianceproperty, we require that thefunctional formof the MSM has to be independent from the chosen scale, i.e.. Furthermore, that the model can generate the possible-graphs in two equivalent wayshierarchicallyordirectly. The former one refers toEquation 11, and it prescribes to generate the-graph ensemble with probabilityand, then, coarse-graining themtimes via the partitions. The other way around, the second one requires torenormalizethe parametersand, then, directly modelvia.
+Imposing both requirements
+
+where we have defined the LHS and RHS of the first equation asrespectively.
+In other words, the form of thewill depend on the scaleonly through the renormalized parameters. Moreover, by assuming that the links are statistically independent, the previous equation yields
+
+whereand
+
+depend, respectively, on the renormalized and the fitted parameters at level. Note that we didn’t usebecause the functional form would bescale-invariantand the only dependence on the scale is through the parameters.
+The interpretation is similar to theEquation 9: the probabilitythat there is one among the block-nodesis given by the probability that there isat least one linkamong the microscopic nodes.
+Specifically, it requires that the model remainsself-similarwhereas the parameters renormalize under renormalization (scale-variant).
+
+The RHS returns the coarse-grained probability for every model, e.g. the MSM and LPCA. The crucial difference is that for the SSM(cfr.Equation 14) because they are scale-invariant. For a concrete example, we refer to the sections where the models have been introduced.
+
+By taking the logarithm of both sides of theEquation 13, the only functional form compatible with that constraint
+
+whereis a positive function such that. Proceeding as in the main reference, one may assume thatfor every level. In addition, the vectorial productshould be bilinear in order to allow forEquation 13, namely. Still, since the connection probability is symmetric, the matrixMcould be set as the identity, i.e.(seesubsection II.1). By taking the exponential of
+
+one ends up with the (off-diagonal)scale-invariantprobabilityEquation 16. For the self-loops part, the steps are similar to the ones described in the main reference.
+
+SECTION: II.1Bilinearity Requirement
+
+ABlevel 1
+
+In this subsection, we describe why theproduct must be bilinear and whyMcan be taken as the identity matrix given that the probability is symmetric. To start with, inFigure 2, there have been represented 4 nodesat levelmerging, at level, intoand.
+Hence, fromEquation 13, the non-existence of a link (gray dashed lines) among the communitiesreads
+
+and the rightmost side enforces that thehas to be a bilinear function.
+
+As said in the main text, the connection probability is symmetric, namely. In turns, this leads to. In addition, since,Mis also positive semidefined as. Therefore,has positive eigenvalues such that
+
+where(cfr. Cholesky decomposition). Briefly, choosing an arbitrary (symmetric)matrix will lead towithare optimized with. Hence, for simplicity, we rely on.
+
+Lastly, fixing, allows recovering the product among scalarsfor. This was a successful way of modelling real world networks, e.g.[17,30].
+
+SECTION: II.2Loop parameters estimate
+
+The log-likelihood regarding theself-loopsreads
+
+which depends either on vectorsbut also on. Since the probability is bounded,. Moreover, as for every nodethere would be only one of the two terms in the above likelihood,is going to take the values reported inEquation 13. Hence, after having obtained the, we fixedto exactly reproduce the self-loops at levelas prescribed byEquation 13.
+
+SECTION: II.3Gradient of the log-likelihood
+
+To efficiently calculate the maximum of the MSM likelihood, one needs the analytical expression of the gradient. In particular, by differentiating with respect to the-th component of the-th embedding vector, one gets
+
+where we have used
+
+Thus, by renaming the indexes,
+
+Lastly, by leveraging on the gradient and the likelihood, we performed the optimization by means of three optimizers: Adam implemented from[39]; while Truncated-Conjugate Gradient and L-BFGS-B by means of the SciPy library[40].
+
+SECTION: II.4Structural Equivalence is not Statistical Equivalence for multidimensional-node embeddings
+
+Calculating the gradientEquation 25for nodesat the maximum of the likelihood, one gets
+
+By further assuminghave same neighbors (Structural Equivalence- StructE), i.e., it is possible to rearrange the above equations into
+
+where we have defined
+
+For,
+
+is a monotonic function of, thus there exists an inverse functionsuch that. In other words, two nodesthat have the same neighbors, they arestatistically equivalent(StatE). The inverse implication is also true, i.e.by following the same steps backwards.
+In conclusion, for, Structural Equivalence is equivalent to Statistical Equivalence:.
+
+This result does not hold forsinceis not monotonic inas it depends on the scalar product. However, ifhave the same neighbors, they have the same role in the network, and so the model should have the same parameters for the two nodes. Formally,
+
+By recalling the notation used before, we are imposing that StructE implies StatE.
+
+To find the node embeddings in thereduceproblem, one starts by defining the set of nodes which share the same neighbors aswhereare the nodes with the same neighborhood with respect to the node. Referring toFigure 2and considering the gray dashed lines as existing connection,and.
+Secondly, by defining the nodewith the lowest index among, as the representative of that StructE class, one obtains a set of pivotal nodes related to StructE. At this point, the number of parameters decreased fromtowhereis the number of elements the sethas.
+In order to recover, the value of the representative parameteris copied to all the members of the class, formally
+
+whereare the representative nodes. In this way, it is possible to use the likelihoodEquation 11with fewer parameters than in the original formulation.
+
+Since the selected optimizers ([40]) are not “stochastic”, one may obtain the StatE between the embeddings by starting from the same initial conditions for StructE nodes. Indeed, the parameter updates will be the same as they depend on the neighborhood as shown byEquation 4,25.
+
+In conclusion, for, the StructE - StatE relied on the monotonic function; whereas it is not the case for. Therefore, to enforce StatE, one may reduce the problem and optimize only the representative of the StructE classes.
+
+SECTION: II.5Removal of deterministic nodes
+
+Network modelling assumes that the observedis a realization of a random process. However, it may happen that some nodes weredeterministic, i.e. fully-connected (FC) or disconnected (D) to the other nodes. Therefore, its behavior would betriviallyrecovered by setting the hidden variable of the FC nodes to infinity or the D nodes to zeros for theEquation 10. That is, there is no need of fitting aprobabilisticmodel to grasp its role in the graph. For example, assumeand that the nodesis fully-connected whereasis disconnected. After the optimization, they will end up havingor. In turn, sinceimplying that they will not contribute on the ensemble fluctuation. Hence, one may hard code their variable, as seen before, to account for their roles in the graph. This way of finding the deterministic node parameters doesn’t spoil the renormalization of the parameters. Indeed, looking atEquation 15, a FC nodes would produce a FC block-node for every coarser level; whereas a vanishing parameter gives the freedom to the other terms in the summation.
+
+SECTION: II.6From Constrains to Bounds
+
+The MSM probability requires a positive inner products
+
+for every pair of nodes, in order to guarantee.
+
+Here, we will prove that the above constraints is equivalent of setting all vector components to be non-negative, namely. Roughly, the spanned region by the embeddings is enclosed in one quadrant of the space, and it is possible to rotate the vectors to lay in the positive quadrant.
+
+The steps to show this are the following. First, since we are interested on the sign among the vectors, one may restrict to the set of unit vectorswhereand assume.
+Taking into consideration alsoEquation 30, the considered set is
+
+which by construction has to property that
+
+If one takes the most “clockwise” and “anticlockwise” vectors in the setdefined as
+
+by construction they form an angle. Therefore, ifthe treatment is finished since the vectors lay in the positive quadrant. On the other hand, if, the vectors lay in the negative quadrant and they can be rigidly rotated to lie on the positive quadrant, i.e..
+
+SECTION: II.7Algorithmic Complexity
+
+As described in thesubsection I.2, in order to describe a coarser graph without refitting the parameters, one should to use the RHS ofEquation 13121212This spoils its functional form, but this would be the only way to avoid refitting the same model at a higher scale. Specifically, the algorithmic complexity to obtain oneiswhere the evaluation ofis assumed to have a complexity. Hence, to compute the complexity of, one has to sum over all the pairs, i.e.
+
+whereare the number of structural inequivalent nodes at.
+On the other hand, assuming the “sum” of vectors inEquation 15of order, the complexity of(seeEquation 16) reads
+
+where the summation over theparameters counts asoperations andare all pairs at the levelfor the full.
+
+The improvement is reported by the ratio of the two complexities, namely
+
+Focusing on level,
+
+one saves two order of magnitude by proceeding with the summed MSM rather than the coarse-grained LPCA. Hence, by means ofEquation 17, LPCA recovers the same complexity of summed MSM; thereby enabling for a comparison of equal complexity.
+
+SECTION: II.8Principled Embedding Dimension via Information Criteria
+
+(a) AICs by model class for IONModelDimLevel 0Level 1Level 2Level 3LPCA(1, 1)0.57640.66610.54480.3733(8, 8)0.50720.57790.40252.6648e+17MSM10.57840.66580.54080.409720.55160.63410.51290.384130.54340.62420.50120.379140.53780.61690.49840.383150.53360.61270.49850.404660.53110.60880.49790.423270.53040.60740.49680.457480.52870.60520.49760.511890.530.60730.4980.5588100.53050.60640.50020.6091110.53110.61050.51170.6671160.53650.62260.53280.9697
+
+(a) BICs by model class for IONModelDimLevel 0Level 1Level 2Level 3LPCA(1, 1)0.6220.72950.66050.7189(8, 8)0.87181.08561.32762.6648e+17MSM10.60120.69750.59870.582520.59720.69760.62850.729630.61170.71940.67460.897440.62890.74390.72971.074150.64760.77140.78771.268460.66780.79920.84491.459770.690.82950.90151.666780.71110.85910.96021.893990.73520.89291.01842.1136100.75840.92371.07852.3367110.78180.95951.14772.5675160.90111.13031.45793.7339
+
+To determine the “best” embedding dimension for LPCA and MSM, we used the Akaike Information Criterion (AIC) and the Bayesian Information Criterion (BIC)[27],[28]. These scores are defined as
+
+whereis the number of parameters,the number of observations andthe likelihood of the model. They encode the trade-off between the goodness-of-fitand the complexity of the model. Therefore, the “best model” is the one with theminimumAIC or BIC; which one of the two remains a debated choice: the AIC is asymptotically equivalent to the Kullback-Leibler divergence among thegeneratingmodel and acandidateone[27]whereas the BIC to the Description Length (DL)[28]. As the DL is the only one embodying the “trade-off” paradigm, we decided to select theminimumBIC criterion. InEquation 38, the scores are not comparable across scale, therefore, wenormalizedthe AIC and BIC scores as
+
+whereand. This doesn’t affect the ranking, but it provides the AIC and BICper pair.
+
+The results are summarized inTable 1for the ION andTable 2for the WTW where the best scores (minimum) are highlighted in green whereas the worst (maximum) in red. The comparison is provided among LPCA and MSM as they have a different functional forms especially in the combination of the parameters. We have considered only two levels for LPCA as the benchmark for lowestand “maximum”with respect to our computational facility. On the other hand, we spanned more dimensions for MSM to provide an extensive description of the model performances. Recall that, by increasing the level of coarse-graining, the network tends to beless complex: theEquation 9likely densifies the network implying that the nodes will have more similar roles. Therefore, theidealdimensiondecreases. Lastly, theaverageBIC score is calculated to provide aglobalview of the model performances. Thus, the best model is the one with the lowestaverageBIC score across levels. Overall, the best models areLPCA-(1,1)andMSM-1as BIC penalizes more than AIC the complexity of the model. However, in the following we will display the behavior also of thefor MSM andto assess the model performances at higher dimensions.
+
+SECTION: II.9Statistical Impossibility into the application of Train and Test Split
+
+Since every pair is seen as a Bernoulli random variablenot identically distributed[41,8], this implies that every link has to be accounted in the training procedure since it isnot already modelledby other pairs.
+
+SECTION: IIIWorld Trade Web results
+
+In this section, we report the same results presented in the main text, but for the World Trade Web. The conclusions are the same as for the ING network.
+
+SECTION: References

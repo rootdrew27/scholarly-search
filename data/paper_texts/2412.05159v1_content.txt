@@ -1,0 +1,107 @@
+SECTION: Enhancing Cross-Language Code Translation via Task-Specific Embedding Alignment in Retrieval-Augmented Generation
+
+We introduce a novel method to enhance cross-language code translation from Fortran to C++ by integrating task-specific embedding alignment into a Retrieval-Augmented Generation (RAG) framework. Unlike conventional retrieval approaches that utilize generic embeddings agnostic to the downstream task, our strategy aligns the retrieval model directly with the objective of maximizing translation quality, as quantified by the CodeBLEU metric. This alignment ensures that the embeddings are semantically and syntactically meaningful for the specific code translation task. Our methodology involves constructing a dataset of 25,000 Fortran code snippets sourced from Stack-V2 dataset and generating their corresponding C++ translations using the LLaMA 3.1-8B language model. We compute pairwise CodeBLEU scores between the generated translations and ground truth examples to capture fine-grained similarities. These scores serve as supervision signals in a contrastive learning framework, where we optimize the embedding model to retrieve Fortran-C++ pairs that are most beneficial for improving the language model’s translation performance. By integrating these CodeBLEU-optimized embeddings into the RAG framework, our approach significantly enhances both retrieval accuracy and code generation quality over methods employing generic embeddings. On the HPC Fortran2C++ dataset, our method elevates the average CodeBLEU score from 0.64 to 0.73, achieving a 14% relative improvement. On the Numerical Recipes dataset, we observe an increase from 0.52 to 0.60, marking a 15% relative improvement. Importantly, these gains are realized without any fine-tuning of the language model, underscoring the efficiency and practicality of our approach.
+
+Enhancing Cross-Language Code Translation via Task-Specific Embedding Alignment in Retrieval-Augmented Generation
+
+Manish Bhattarai1,
+Minh Vu1,
+ Javier E. Santos2,Ismael Boureima1,Daniel O’ Malley2,1Theoretical Division, Los Alamos National Laboratory, Los Alamos, NM 87544,2Earth & Environmental Science Division, Los Alamos National Laboratory, Los Alamos, NM 87544Correspondence:ceodspspectrum@lanl.gov
+
+SECTION: 1Introduction
+
+Cross-language code translation is a critical task in modern software development, especially as legacy programming languages, such as Fortran, continue to be prevalent in scientific computing, while more contemporary languages like C++ are favored for their performance and versatility in production environments. The goal of automatic translation from Fortran to C++ is to preserve the functionality and structure of legacy code while benefiting from the optimizations and ecosystem of C++. However, achieving high-quality translations that adhere to the syntax and semantic norms of the target language remains a challenging problem, particularly when there is a lack of large, aligned datasets or evaluation metrics that cover both source and target languages effectively.
+
+Traditional approaches to cross-language translation, such as Retrieval-Augmented Generation (RAG)(Lewis et al.,2020)typically involve two phases: first, retrieving relevant examples from a database, followed by a language model generating code conditioned on both the query and the retrieved examples. In prior efforts, the retrieval models in RAG systems have relied on general-purpose embedding models(Bhattarai et al.,2024;Li et al.,), which are not tailored to the specific nuances of code translation. These embeddings aim to retrieve relevant pairs from the source and target languages but do not directly optimize for the quality of the generated code. As a result, while the retrieved examples may be relevant in a broad sense, they often fail to guide the language model towards producing translations that maximize fidelity to the ground truth in the target language.
+This gap is particularly problematic in scenarios where explicit metrics, such as CodeBLEURen et al. (2020)-designed to assess both syntactic and semantic correctness of translated code—are only available for the target language (e.g., C++ in this case). Without aligning the retrieval mechanism to such a task-specific metric, the system may retrieve suboptimal examples, leading to poor code generation performance. The inability to leverage task-relevant quality metrics during retrieval weakens the overall system, limiting its effectiveness in high-accuracy code translation tasks.
+To address these limitations, we propose a novel contrastive learning framework that aligns the retrieval phase of the RAG system with the goal of maximizing the CodeBLEU(Feng et al.,2020)score for the generated C++ code. We collect a dataset of 25,000 Fortran code examples from Stack V2(Lozhkov et al.,2024)and use the LLaMA 3.1-8B(Touvron et al.,2023)model to generate corresponding C++ translations. In the absence of ground truth C++ translations, we evaluate the quality of these translations using pairwise CodeBLEU similarity scores. This metric captures both syntactic correctness and semantic fidelity, providing a robust signal for aligning the retrieval model through contrastive learning.
+
+The proposed approach aims to addresses the shortcomings of general-purpose embedding models by integrating task-specific metrics into the retrieval optimization process. By aligning the retrieval model with the downstream task of producing high-quality C++ code, our method ensures that the examples retrieved during inference are not just broadly similar but are semantically and syntactically aligned in a way that enhances the LLM’s generative performance. The result is a significant improvement in translation quality, as measured by CodeBLEU, over previous methods that lack such alignment.
+
+Our contribution is twofold: first, we demonstrate the effectiveness of contrastive learning for fine-tuning retrieval models in the context of cross-language code translation, using a task-specific metric to guide alignment. Second, we show that optimizing retrieval for downstream generation tasks can lead to state-of-the-art results, particularly in cases where aligned datasets are not readily available for both source and target languages. This work not only advances the field of code translation but also opens up new possibilities for applying similar techniques to other language pairs and domains where task-specific evaluation metrics are available for only one side of the translation.
+
+SECTION: 2Related Work
+
+Historically, code translation strategies before the advent of LLMs relied heavily on rule-based and statistical machine translation (SMT) systems(Koehn,2009). These systems used predefined rules or statistical mappings between the source and target programming languages, such as tree-based translation approaches that mapped syntax trees between languages. While these methods provided structured and interpretable outputs, they were limited in their ability to handle the semantic complexities of different programming languages and struggled with code diversity, edge cases, and idiomatic translations.
+
+With the rise of deep learning and LLMs, fine-tuning models on large datasets became the go-to method for improving code translation. Models like CodeBERT(Feng et al.,2020)and Codex(Chen et al.,2021), when fine-tuned on specific language pairs, improved translation quality by leveraging vast amounts of parallel code data. However, the main limitation of LLM fine-tuning lies in the resource-intensive process. Fine-tuning requires substantial amounts of labeled data and computational resources, making it impractical for niche or legacy languages like Fortran, where parallel data may be scarce.
+
+As a next step, task-specific alignment of LLMs emerged to improve translation by better guiding the model’s output. While alignment techniques help improve output fidelity, they still necessitate fine-tuning or explicit modification of the LLM itself, which can be resource-intensive and may still fall short of generalization when translating between languages with significant structural differences(Mishra et al.,2024).
+
+RAG introduced a more flexible approach by allowing LLMs to retrieve and condition their outputs on example pairs from a relevant dataset. While RAG improves translation by augmenting the model’s input, the effectiveness of this strategy depends on the quality and relevance of the retrieved examples. In an example case(Bhattarai et al.,2024), the retrieval step relies on general-purpose embeddings like Nomic-Embed or CodeBERT, which, although effective at retrieving semantically similar code, are not optimized for specific downstream metrics like CodeBLEU. As a result, the LLM might not always retrieve the examples that would best assist in producing translations aligned with target-specific quality metrics.
+
+The approach we propose offers a significant advantage by focusing on semantic alignment of the retrieval mechanism without the need to fine-tune the LLM itself. Through contrastive learning, we optimize the embedding model to retrieve Fortran-C++ pairs that are more likely to maximize the downstream metric (e.g., CodeBLEU) when used by the LLM for generation. This strategy ensures that the most relevant examples are retrieved for each translation task, improving the generation quality without requiring computationally expensive fine-tuning of the LLM. This retrieval alignment makes RAG more efficient and better suited for translating between languages where high-quality paired datasets may not be available. By concentrating on improving the quality of retrieved examples, our method achieves high-quality translation with minimal additional model training, leveraging existing LLM capabilities more effectively.
+
+SECTION: 3Methods
+
+This section provides the technical description of our proposed method.
+
+SECTION: 3.1Problem setting
+
+We consider the standard code translation scenario leveraging a language model, in which a target translated codeof a query source codeis generated using:
+
+In practice, conditioningonexample pairs of source and target code, can significantly enhance translation. This few-shot learning approach can be expressed as:
+
+In a RAG framework, this process is further refined by integrating a retrieval mechanismthat identifies the most pertinentexample pairs from a large corpusbased on the query. By expressing this retrieval step as, we can describe the conventional translation scenario leveragingas
+
+In practice, the input source code are embedded using a neural network, which are generally agnostic to the downstream task. We denoteas the embedding of the source codeunder the embedding. Hence, Eq.2can be expressed as
+
+under the usage of the embedding model. Here, the notationrefers to the fact that the embedding is applied onto the corpus of.
+
+Some common embedding modules for code translation are Nomic-EmbedNussbaum et al. (2024), StarEncoder(Li et al.,2023), and CodeBERTFeng et al. (2020). However, as the performance of the translation task heavily depends on the relevance and the alignment of the retrieved examples with respect to the query, as we will show in the following discussion, it is beneficial to optimizefor better code translation performance. In this manuscript, we use notationandto refer to aligned and unaligned embedding modules, respectively.
+
+SECTION: 3.2Task-Specific Embedding Alignment
+
+Our method involves aligning the Fortran embedding modelusing contrastive learning based on CodeBLEU similarity scores, followed by applying this aligned model within a RAG framework for improved cross-language code translation from Fortran to C++, as shown in Figure1I.
+
+Embedding Similarity:Given a pre-trained embedding module, we directly leverage the CodeBLEU similarity computed from the language modelto train an aligned embedding modulefor the downstream code translation task. The following discusses how to extract the CodeBLEU similarity from.
+
+From a source dataset of Fortran code snippets, we generate the corresponding C++ translationsusingwithout RAG retrieval:
+
+Then, we compute the pairwise CodeBLEU similarity scores(Ren et al.,2020)between all generated translation pairs:
+
+where the CodeBLEU score matrixis a weighted linear combination of four components: the n-gram match, the weighted n-gram match, the syntactic AST match, and the semantic data flow match. These components capture the syntactic and semantic similarities between the generated C++ translations:
+
+is the traditional BLEU score up to n-grams.
+
+assigns weights to n-grams based on their importance.
+
+measures the similarity between the abstract syntax trees (AST) of the code snippets.
+
+assesses the similarity in data flow between code snippets.
+
+Intuitively, a high value ofindicates that the source code snippetsand, when translated by, produce similar target code, suggesting thatandare semantically similar with respect to the translation task. Therefore, our approach aims to learn a fine-tuned embedding modulethat utilizesto enhance code embedding alignment. The approach is expected to guidein a way that enhances the code translation task leveraging.
+
+Embedding Alignment:
+
+To align the embedding space of code snippets with the semantic similarities measured by CodeBLEU, we propose the Soft Information Noise-Contrastive Estimation (S-InfoNCE) loss applied to the embeddings resulting from the trainable embedding module. On a high level, our proposed S-InfoNCE can be considered a soft version of the InfoNCE loss proposed for contrastive learning(van den Oord et al.,2018).
+
+Given a batch ofcode snippets, we compute their embeddingsand then calculate the pairwise cosine similarities between those embeddings, scaled by a temperature parameter:
+
+Our proposed S-InfoNCE loss integrates these continuous similarity scores to weigh the contribution of each pair. Specifically, the loss component between codewith respect to codeis given as:
+
+and the S-InfoNCE loss is the sum over all code pairs:
+
+Finally, the embeddingis optimized by minimizingusing gradient descent.
+
+Compared to the conventional InfoNCE loss for contrastive learning(van den Oord et al.,2018), our proposed loss differs in its usage ofas a soft indicator for encoding a continuous similarity between the pair, rather than a binary indicator of class membership (same class or not). This gives rise to the termsoftInfoNCE, or S-InfoNCE. In the typical InfoNCE loss, the termis included only if the pairbelongs to the same class, assuming discrete classes are available. However, since such discrete class labels do not exist in the code translation task, we adoptas a soft version of this indicator function, allowing for a more nuanced representation of similarity between code pairs.
+
+The stationary points of the S-InfoNCE loss (Equation8) satisfy:
+
+for all.
+
+Furthermore, the optimal loss is the weighted sum of the entropy of the CodeBLEU similarity distribution for each input code:
+
+whereis the entropy function andis a probability vector whose-th component is
+
+For brevity, let us define:
+
+: the CodeBLEU similarity between the target code translationsand.
+
+, where: the normalized exponential of the cosine similarity between the embeddings of source code snippetsand.
+
+The S-InfoNCE loss can be rewritten as:
+
+Our goal is to minimizewith respect to. This can be viewed as a constrained optimization problem over the variables, subject to the normalization constraints:
+
+We formulate the Lagrangianas:

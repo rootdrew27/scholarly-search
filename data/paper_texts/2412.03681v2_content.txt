@@ -1,0 +1,184 @@
+SECTION: AcquiredTASTE:Multimodal Stance Detection with Textual and Structural Embeddings
+
+Stance detection plays a pivotal role in enabling an extensive range of downstream applications, from discourse parsing to tracing the spread of fake news and the denial of scientific facts. While most stance classification models rely on textual representation of the utterance in question, prior work has demonstrated the importance of the conversational context in stance detection.
+In this work we introduce TASTE – a multimodal architecture for stance detection that harmoniously fuses Transformer-based content embedding with unsupervised structural embedding. Through the fine-tuning of a pretrained transformer and the amalgamation with social embedding via a Gated Residual Network (GRN) layer, our model adeptly captures the complex interplay between content and conversational structure in determining stance. TASTE achieves state-of-the-art results on common benchmarks, significantly outperforming an array of strong baselines.
+Comparative evaluations underscore the benefits of social grounding – emphasizing the criticality of concurrently harnessing both content and structure for enhanced stance detection.
+
+AcquiredTASTE:Multimodal Stance Detection with Textual and Structural Embeddings
+
+Guy BarelBen Gurion Universityguybare@post.bgu.ac.ilOren TsurBen Gurion Universityorentsur@bgu.ac.ilDan VilenchikBen Gurion Universityvilenchi@bgu.ac.il
+
+SECTION: 1Introduction
+
+Stance detection is the task in which the attitude of a speaker towards a target (individual, idea, proposition) is identified. A typical example provided bySomasundaran and Wiebe (2010): Given an utterance U (“Government is a disease pretending to be its own cure”) and a target T (universal health care), we wish to determine the speaker’s stance, as reflected in U toward the target T. Notice that the target is not explicitly mentioned by the speaker. A shared task with a similar setting was introduced in SemEval byMohammad et al. (2016).
+
+However, opinions are not expressed in a vacuum but rather in a conversational context. The speaker’s stance may emerge as the conversation evolves. This idea echoes Goffman’s classic assertion in Response CriesGoffman (1978): “Utterances are not housed in paragraphs but in turns at talk, occasions implying a temporary taking of the floor as well as alternation of takers”.
+
+Indeed, some works look beyond the utterance level and address its context – whether the speaker level or the conversational levelWalker et al. (2012a); Sridhar et al. (2015); Johnson and Goldwasser (2016); Joseph et al. (2017); Li et al. (2018); Pujari and Goldwasser (2021), among others. Stance detection based on the conversation structure alone was recently demonstrated byPick et al. (2022).
+
+Focusing on conversational stance, we are interested in detecting stance in a multi-participant conversation, both on the utterance and speaker level. To this end, we propose TASTE – a multimodal architecture combining Textual And STructural Embeddings. Multi-participant conversations unfold in tree structures that can be converted to speaker graphs (see details in Section3.2). TASTE uses LLMs to represent utterances; The max-cut graph optimization problem is used to derive contextual node (speaker) embeddings from the conversation graph. The embeddings of the two modalities are fused through a GRN layer. We considered several other text and node representations as well as different ways to combine them in a principled way.
+
+Our architecture has two key benefits:
+First, it consistently outperforms an array of strong baselines, including the state-of-the-art, across topics in commonly used datasets.
+Second, through ablation and careful analysis, we get a glimpse of the interdependence of text and conversation structure.
+
+We find that the heavy lifting is achieved by the conversation structure. Teasing text and structure modalities apart, we find that, in most cases, using the structure alone outperforms text-based models. Combining the textual modality with the structural further adds, on average, 12% to the accuracy.
+This result should not be read as “structure is more important than text”. Rather, we maintain that the stance signal is encoded in a structure with a higher signal-to-noise ratio compared to text. This makes sense as texts are produced in a conversational context by subjective individuals. We further discuss this idea in Section7as it goes back to the sociolinguistics concepts of faceGoffman (1955), conversational normsGrice (1975), and communication groundingClark and Brennan (1991).
+
+SECTION: 2Related Work
+
+Early work tackled stance detection by identifying specific lexical forms.Biber and Finegan (1988)consider six adverbial categories that mark the speaker’s stance. Lexicons of word categories reflecting psychological states such as LIWCTausczik and Pennebaker (2010)and MPQAWilson et al. (2005)were used effectively bySomasundaran and Wiebe (2010); Murakami and Raymond (2010); Yin et al. (2012); Walker et al. (2012a); Wang and Cardie (2014); Elfardy and Diab (2016)among others.
+
+Recent works fine-tune LLMsSamih and Darwish (2021); Kawintiranon and Singh (2021), or employ zero-shotAllaway and McKeown (2020); Liang et al. (2022); Allaway and McKeown (2023); Weinzierl and Harabagiu (2024)and few-shot frameworksLiu et al. (2021,2022); Wen and Hauptmann (2023); Khiabani and Zubiaga (2024).
+These works use the textual content of an utterance as the sole or primary signal.
+
+Speaker (user) and social attributes are extracted and used to enrich textual attributes in training regression and SVM models to predict utterance-level stanceAldayel and Magdy (2019); Lynn et al. (2019), whileMurakami and Raymond (2010); Walker et al. (2012b); Yin et al. (2012)use the conversation structure with textual markers. Branch-BertLi et al. (2023)uses part of the conversation structure, i.e. a branch in the conversation tree in order to provide their stance classifier with some contextual information. While it is shown that the naive turn-taking structure that is captured in a branch does not fair well with graph-based embeddingsPick et al. (2022), a turn-taking modeling combined with a LLM achieved improved results comparing to text-only modelsWen et al. (2024).
+
+The relationship between the post and the user level is addressed bySridhar et al. (2015); Benton and Dredze (2018); Li et al. (2018); Conforti et al. (2020).
+A hierarchical model combining text and user representation is proposed byPorco and Goldwasser (2020).Pick et al. (2022)andZhang et al. (2023)demonstrate that structure alone can achieve competitive results on both the utterance and the speaker levels.
+
+These works, using or combining the different modalities, serve as our baseline models (see Section5) and as the reference point for our analysis and discussion (Sections6&7).
+
+Modalities indicate the differentmediumsthat information is conveyed through text (in natural language), code (formal language), audio, visual, etc. Using more than a single modality achieves an improvement in the performance of many ML systems on multiple tasks. In multimodal learning, the representations of the different modalities are used explicitly in the training phaseRamachandram and Taylor (2017); Xu et al. (2023), rather than just defining a feature vector, e.g.,Aldayel and Magdy (2019); Lynn et al. (2019).
+
+Naturally, the common modalities that are used are those with mature uni-modal frameworks such as Transformers and CNNs for text and image processing and generationMao et al. (2016); Yu et al. (2017); Sharma et al. (2018); Ramesh et al. (2021); Ding et al. (2022); Rombach et al. (2022);Ramesh et al.; Kwak et al. (2023); modalities that are closely related such as conversational audio with its transcribed text, e.g.,Lai et al. (2019); Yao et al. (2020); Yao and Mihalcea (2022), or code segments coupled with documentation, e.g.,Kwak et al. (2023)and commercial products like Github’s Copilot, OpenAI’s Codex, and Google’s Gemini.
+
+Two of the works mentioned above explicitly address multi-modality in the context of stance detection. However, we note that the second modality used byWeinzierl and Harabagiu (2024)is the visual (image) modality; Multimodality inKhiabani and Zubiaga (2024)refers to the use the different modalities independently to train a number of independent classifiers.
+
+In this paper, we apply the multimodal framework over two modalities: text and social context.
+
+SECTION: 3Methodology
+
+SECTION: 3.1Task Definition
+
+Given a set of authorsparticipating in a discussion, the setdenotes the utterances produced bythrough the discussion, where each utteranceand userhave a label(pro,con).
+
+In this work, we address two distinct stance prediction tasks: utterance-level and author-level. At the utterance level, the classification task is straightforward – learning a classifierthat minimizes some loss function. The dot inrepresents additional input that the classifier may take besides the utterance. In our case, this extra input is the speakers’ network graph (see Figure1). In other cases that can be meta-data like the speaker’s age, gender, etc.
+
+At the author/speaker level, we assume stance labels are assigned to speakers. This assumption is valid if a speaker holds a pre-formed and stable stance throughout the discussion. This is inherently the case in debate-like discussions like those in our datasets.
+The task, in this case, is to train a classifier, in which all the utterances of a user are fed to the classifier, plus additional data (the graph in our case).
+
+SECTION: 3.2Model Architecture and Components
+
+The model depicted in Figure2is the utterance-level classifier. It receives as input two modalities: textual and structural. The textual modality is the embedding of the utterance, and the structural is an embedding of the speaker (details below). The two embeddings are then fused using a GRN unit and fed into an MLP classifier. The MLP outputs a vector that quantifies the likelihood of each tagin the tagset(in our case), and the binary prediction is the tag with maximum likelihood.
+
+The author’s stance is computed by feeding all her utterances into the model (Figure2), getting the prediction for each utterance separately, and taking the majority vote.
+
+In the remainder of this section, we describe the model components in more detail.
+
+The representation of an utteranceis derived directly from the pretrained model. Specifically,, the content embedding for, is obtained as the [CLS] token vector, which is extracted by feedingto pretrained Sentence-BERTReimers and Gurevych (2019).
+
+We followPick et al. (2022)in the structure representation and user embedding. The discussion tree is first converted to a conversation graph (see Figure1); each node represents a speaker, and an edgebetween nodesandindicates a direct interaction between them.indicates the weight of, determined by the number and type of interactions. The edge weights in the interaction graph are calculated as:
+
+whereandindicate the number of direct replies and quotes, between usersand. The hyper-parametersandare used to reflect the significance of the type of interaction, often based on the conversational norms expected in the specific platform. Through empirical testing, we determined the optimal values for these weights. For the 4Forums dataset, where interactions typically consist of direct replies to the original post (OP) and selective quoting of pertinent content, the optimal values were found to beand. Conversely, for CreateDebate,was set at 1.0 andat 0.0, reflecting the infrequent use of quotes in this platform.
+
+The intuition underpinning the structural embedding is that stronger disagreements lead to more intense interactions in the discussion tree, reflected as heavier-weight edges in the network. Thus, the user embeddings are trained to maximize the distance between users that are connected by heavy edges (max-cut). Mathematically, the divergence in views betweenandcan be encoded in a distance metricbetween two vectors. The maximal value ofis 1 (for antipodal vectors/stances), and the minimum is 0 (when, same stance). This all leads to the following optimization problem over all pairs of interacting authors:
+
+whereandare the unit vector embeddings for usersandandis the-dimensional unit sphere (is the number of users).
+
+The optimization program in Eq.(2) is called a Semi-Definite Program (SDP) and can be efficiently solved using algorithms like the Ellipsoid method. We use the SDP proposed byGoemans and Williamson (1995)as a relaxation for the max-cut problem. Figure1illustrates the relation between the max-cut problem and the SDP solution.
+
+Gated Residual Networks (GRNs), as proposed byLim et al. (2021), present an innovative approach to integrating a primary input vector with multiple context vectors of which relevance may vary. Notably, GRNs have proven to be particularly effective in handling datasets that are both relatively small and characterized by noise.
+In its basic form, the GRN unit processes a primary input vector, denoted, along with a context vector:
+
+We take the user content embedding as the primary vector and the user embedding as the context, fusing them through the GRN (taking the structural embedding as the primary vector and the text embeddings as the context yielded suboptimal results).
+
+SECTION: 4Data
+
+Our analysis is conducted on two distinct datasets: 4Forums, introduced byWalker et al. (2012a), and CreateDebate, presented byHasan and Ng (2014). These datasets have been widely used in prior work on stance detection, e.g.,Walker et al. (2012a); Sridhar et al. (2015); Abbott et al. (2016); Li et al. (2018); Pick et al. (2022). For the reader’s convenience, we provide a brief overview of the datasets, emphasizing their unique characteristics.
+Descriptive statistics, comparing the two datasets are presented in Table1.
+
+4Forums (no longer online) was a platform for political debates. Introduced byWalker et al. (2012a), the dataset includes annotations for agree/disagree stances in 202 debates on four major topics: abortion, evolution, gay marriage, and gun control. Annotations are provided at the user level. Gold labels of utterances are derived by broadcasting the author’s label to his posts.
+
+CreateDebate, is an online platform developed as “a social tool that democratizes the decision-making process through online debate”.
+A user (the ‘OP’) starts a debate by posing a question (e.g., “Should abortion be illegal: Yes or No?”). Other users can respond to the OP or to other users by adding a support, dispute, or clarification message. A benchmark containing 200 debates over four topics (abortion, gay rights, the legalization of marijuana, and Obama) was introduced byHasan and Ng (2014). Self-annotation by debate participants provides gold labels at the utterance level. The most frequent self-assigned tag serves as the gold label of user.111Indeed, over 95% of the users self-annotated all of their utterances with the same label.
+
+SECTION: 5Experimental Settings
+
+SECTION: 5.1Baselines
+
+We compare our architecture to four other models based on text, structure or both:
+
+The STEM algorithmPick et al. (2022)is a stance classification algorithm that uses only the conversation structure. At its core, it is based on the SDP spelled in Eq. (2) and has shown superior results in author-level stance detection across datasets. It proceeds in three steps, the first is to compute the 2-core of the conversation graph; next compute the SDP embedding on the 2-core and derive author classifications from the vectors; finally, propagate the labels to the non-core part of the graph in a greedy manner. The derivation of author labels from SDP vector embedding is done via hyper-plane roundingGoemans and Williamson (1995). The geometric positioning of the user vectors on the-dimensional sphere is illustrated in Figure1.
+
+A simplified version of STEM, which we call for simplicity SDP, skips the 2-core computation and applies SDP to the entire graph. The labels are derived using the hyperplane rounding technique.
+
+The Probabilistic Soft Logic (PSL)Sridhar et al. (2015)approach combines the expressiveness of first-order logic with the probabilistic modeling capabilities of graphical models. It allows for the flexible specification of complex, relational structures and dependencies in the data, making it well-suited for tasks such as stance detection. PSL formulates the problem as a joint probabilistic inference task, where the goal is to infer the most likely values of the unobserved variables (such as stance labels) given the observed data (such as textual features).
+
+Sentence-BERT is a modification of the BERT model specifically designed for sentence embeddings. Developed byReimers and Gurevych (2019), S-BERT fine-tunes BERT by training it on a siamese and triplet network architecture, which allows it to learn better sentence embeddings. These embeddings are capable of capturing semantic similarity between sentences, making them useful for various natural language processing tasks like sentence classification, semantic search, and clustering. S-BERT has been shown to outperform traditional BERT embeddings in tasks that require an understanding of sentence-level semantics.
+
+The Global Embedding model, as introduced byLi et al. (2018), leverages both text and structural information within online debates to create a unified global embedding. Unlike traditional methods that might treat text and structure separately, their method captures the nuanced interplay between an author’s contributions and the broader conversational context. While their approach closely aligns with our methodology in considering both structural and textual information, their model integrates these two dimensions into a single global embedding, contrasting with our technique of generating distinct embeddings for text and structure separately.
+
+SECTION: 6Results and Analysis
+
+Table2(a–d) compares TASTE and the baseline models for utterance and user level over the two benchmarks and across topics. The table also provides results of three variations of the TASTE architecture: (1)uses GRN to fuse the SDP and the S-BERT embedding; (2)skips the GRN, concatenates the two embeddings and pushes them into the MLP layer; (3)uses a node2vecGrover and Leskovec (2016)instead of SDP.
+
+Keeping in line with previous works, we use accuracy as the base metric to evaluate the models. Reported values are average accuracy of a 5-fold cross-validation setting. All results achieved statistical significance with-values less thanin paired-tests comparing themodel against the baseline models.
+
+achieves best performance in 3 out of 4 tasks (2a-c), across all topics.was ranked second, trailing STEM, in the fourth task at Table2d. However, replicating the work ofPick et al. (2022)we observed that they excluded users lacking strong inter-annotator agreement; these are probably the more challenging cases. In contrast, our application of TASTE and the SDP considers all users, hence the observed differences in performance in some cases.
+The other two versions of TASTE are often competitive but are outperformed by some of the baselines. This trend emphasizes the advantage provided by the learning SDP embeddings, compared to node2vec, and of the use of the GRN unit for vectors fusion, compared to concatenation.
+Finally, we observe that SDP alone achieves excellent results – being the strongest of the baselines in tasks a–c.
+
+Using uni-modal approach, we can tease the content and the structure apart and gain some interesting insights about interplay between them. intense (dense) though short (in utterance length) interactions, such as those in the Abortion, Evolution, and Gay Marriage topics, are better captured by structural models such as the SDP, while less intense interactions that exhibit longer utterances, such as in Gun Control, are better captured by text based embeddings such as S-BERT. The uni-modal results along with the number of interactions and the number of tokens in each topic are provided in Table3in AppendixA.
+
+This pattern can be explained in a number of ways: (i) in highly interactive but less verbose environments, the structure of interactions becomes more important in indicating stance. The structure of the discourse, encompassing aspects such as the frequency and network of replies, becomes a potent indicator of the users’ stances, and (ii) long argumentation is correlated with sparser networks since participation is more demanding. On the other hand – the longer texts provide stronger signal to be exploited by text-based models.
+
+These results suggest that the effectiveness of structure vs. content-focused models also depends on the conversational dynamics that constitute the (local) social context.
+
+Integrating content and structural information in a multimodal manner proves robust across datasets, topics, and conversational dynamics. The multimodal approach grounds the potentially rich textual content in the relevant social context. An additional analysis of a concrete example is provided in AppendixB, underscoring the benefits of our multimodal approach.
+
+Using SDP to obtain node embeddings proved superior to the more traditional node2vec approach, with performance gains between 0.09 and 0.17. We attribute the difference in performance to two factors: (i) node2vec performs best on networks much larger than the conversational networks in our datasets, and (ii) The node2vec approache aims at minimizing the distances between neighbouring nodes, while in our case we actually try to separate them, given the intuition that they reflect opposite stances. The SDP, on the other hand is designed to achieve exactly that via the max-cut.
+
+We considered a naive yet commonly used fusion strategy, namely concatenation of the representations (see results in Table4in AppendixC). Using a GRN layer significantly outperforms concatenation across all topics. This notable difference in the results can be attributed to the GRN layer’s ability to scrupulously combine the distinct properties of both content and structure embeddings. Unlike simple concatenation, which merely amalgamates or adds up the information, the GRN layer applies a more nuanced approach. It effectively ‘gates’ the information from each embedding, allowing for a selective integration process. This gating mechanism is particularly advantageous in handling smaller and noisier datasets where discerning relevant information is critical. The GRN layer’s capacity to attend to the the most pertinent features from both content and structural data results in a more accurate and robust stance detection model.
+
+Examining the error rate of TASTE at the author level with regards to the number of utterances per user, we observed that the error rate over users with only one or two utterances isthe average error rate, and an order of magnitude higher than the error rate over users with twenty utterances or more (which drops to only 0.05). Nevertheless, TASTE outperforms other models even over the users with a low number of utterances. These results again confirm our intuition: Sharp stance differences are reflected by the conversation dynamics. The more intense the conversation – the more utterances a user makes (high engagement), providing a stronger signal in both modalities. However, the structural embeddings enhance the signal even in cases of a curtailed contribution of one or two utterances.
+
+The performance gap between TASTE and other models is notably smaller at the author level than at the post level. This can be explained by the inference stage methodology, which determines a user’s stance through majority voting across all their posts. Consequently, if a model accurately predicts the majority stance of a user’s posts, it achieves perfect accuracy for that user, which is a harder task than correctly classifying each individual post by that same user. Therefore, the latter task is more effective at highlighting performance differences between models.
+
+SECTION: 7Discussion
+
+In linguistics, cognitive science, and communication studies the concept ofgroundingrefers to a communication phase in which the interlocutors assume or establish the common ground required for mutual understandingHarnad (1990); Clark and Brennan (1991); Lewis (2008). In the field of AI (NLP, Autonomous Agents, etc.), the term ‘grounding’ usually means that models are trained with respect to other modalities that reflect the “environment”. Typical examples include visual and audio modalities, e.g.,Ngiam et al. (2011); Mao et al. (2016); Yao and Mihalcea (2022). This latter practical approach to grounding could be viewed as a limited implementation of the broader concept of communication groundingChandu et al. (2021). Our results empirically confirm fundamental frameworks such as face workGoffman (1955)and the cooperative principleGrice (1975)– in which texts are interpreted upon grounding in the (limited) social context – the conversation graph.
+
+Some recent work (see Section2) use other, more recent, datasets. The focus of this work is the interplay between content and speaker dynamics, hence whese datasets cannot be used for proper comparison of the utterance level, nor for speaker-level stance.
+
+The work ofLi et al. (2018), explicitly modeling text and structure, is the most similar to our work. However, while their strategy for integrating text, speaker, and structure can be viewed as early fusion222We note that Li et al. do not refer to their model as multimodal and do not explicitly refer to the fusion strategy., resulting in global embeddings in one shared space, our methodology combines embeddings of the different modalities using joint (hierarchical) fusion strategyHuang et al. (2020); Xu et al. (2023). We believe that the joint fusion of separate embeddings provides flexibility that results in higher efficiency. Specifically, it allows the use of the SDP for speaker representation. These non-orthodox embeddings are learned efficiently at the conversation level in a completely unsupervised manner.
+
+SECTION: 8Conclusion
+
+We introduced TASTE, a multimodal model fusing Text and STurcture Embedding model, designed for stance detection. The model effectively leverages the intricate interplay of conversation content and structure to compute comprehensive user embeddings. We have shown that the application of a GRN layer, initially utilized for multi-horizon time-series forecasting as described byLim et al. (2021), is particularly advantageous for the task we are addressing, especially considering the constraints of our relatively small dataset. Our evaluation of the 4Forum and CreateDebate datasets, alongside comparisons with state-of-the-art models, highlights the distinct advantages of TASTE.
+
+Furthermore, our analysis revealed a notable correlation between stance classification accuracy and the balance of textual depth and interaction frequency. Specifically, in scenarios where
+participant interactions are frequent yet text contributions are succinct, structural-based models gain an upper hand. Conversely, in conversations characterized by lengthier texts but fewer interactions, content-based models excel.
+
+While uni-modal approaches have their respective advantages in certain scenarios, it is the integration of both these elements that consistently leads to the most solid and reliable outcomes.
+This combined approach not only delves into the detailed and subtle aspects of the textual content but also leverages the patterns and complexities in human interactions, in line with theoretical frameworks established byGoffman (1955,1978); Grice (1975)and others.
+
+SECTION: 9Limitations
+
+Our approach suffers from a number of limitations that would be addressed in future work.
+
+First, although the 4Forums and CreateDebate datasets are commonly used and allow us to compare our work to relevant previous works, further evaluation on more diverse and contemporary datasets, such as social media platforms like X (Twitter) or Reddit, would improve the generalizability of our findings.
+
+A second, though related, limitation stems from the focus on English datasets. The performance of the model highly depends on conversational norms and dynamics, which may vary across languages and platforms.
+
+Finally, the model, at least when applied on the user level, is based on the implicit assumption that a speaker holds a pre-formed and stable stance throughout the discussion. While this assumption holds in the datasets we use, it may not hold in other datasets, e.g., Reddit’s Change My View in which users are encouraged to persuade each other: “A place to post an opinion you accept may be flawed, in an effort to understand other perspectives on the issue. Enter with a mindset for conversation, not debate.” Future work should address the (optimistic) case in which speakers are less dogmatic and open to change of hearts. We plan to address this by combining our architecture that depends on the global conversation structure with the local turn taking recently explored byWen et al. (2024).
+
+SECTION: References
+
+SECTION: Appendix AUni-modal Results
+
+Table3presents uni-modal results, along with the number of interactions and the number of tokens in each topic. The table promotes an interesting observation regarding the interplay between content and structure: intense (dense) though short (in utterance length) interactions, such as those in the Abortion, Evolution, and Gay Marriage topics, are better captured by structural models such as the SDP, while less intense interactions that exhibit longer utterances, such as in Gun Control, are better captured by text based embeddings such as S-BERT.
+
+SECTION: Appendix BAnalysis of an Illustrative Example
+
+The exchange presented in Figure3provides an example for the value of the multimodal framework and the contribution of the SDP to understanding the global structure of a discussion. In this discussion on gun control, participants engage in a more complex interaction pattern than simple turn-taking, where each comment directly opposes the previous one. Instead, participants often respond supportively to others’ comments, creating a nuanced dynamic which locally violates the max-cut assumption, a violation that may also affect the tone of the comment. The first comment of C, which locally violates the max-cut hypothesis, is such an example of supportive utterance which reads quite ambiguous when taken out of context. However, by adding to the model the global overview of the SDP, our model can accurately capture these interactions and correctly classify the participants’ stances, circumventing the local max-cut violation and the diluted tone of the utterance. Diving into specific results, relying solely on SBERT led to a 71% accuracy for the entire conversation from which this excerpt is taken, while our best TASTE model achieved a 92% accuracy. This significant improvement underscores the effectiveness of combining textual and structural embeddings for nuanced stance detection.
+
+SECTION: Appendix CGRN and Naive Fusion
+
+Table4provides the GRN and the the concatenations results for the two datasets.
+
+SECTION: Appendix DTechnical Specifications
+
+We trained TASTE with a maximum of 10 epochs, employing the AdamW optimizerLoshchilov and Hutter (2019)with a batch size of 16. A learning rate decay strategy was utilized, starting the learning rate within the range of. This rate was halved each time the validation loss showed no improvement every three epochs. The training was terminated when either the learning rate was reduced to the minimum threshold of, or when the maximum epoch limit of 10 was reached.
+To avoid data leakage, we ensured that posts from the same author were not included in both training and test sets simultaneously.
+In both training and testing we used Google’s co-lab environment with T4 GPU. Training each TASTE version, and also running each experiment ran for on average for no more than two hours.

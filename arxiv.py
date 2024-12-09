@@ -287,7 +287,8 @@ if __name__ == "__main__":
         'ti:"machine learning"',
         'ti:"transformers"',
         'ti:"vision transformers"',
-        'ti:"deep learning"'
+        'ti:"deep learning"',
+        'ti:"embeddings"'
     ]
     
     results = process_multiple_search_terms(

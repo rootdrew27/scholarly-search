@@ -1,0 +1,211 @@
+SECTION: 1Introduction
+
+Text-based deep generative models have achieved extensive adoption in the field of image synthesis. Notably, GANs[50,20,31,59], diffusion models[58,53,17,56], autoregressive models[74], and their hybrid counterparts have been prominently utilized in this domain.
+
+Diffusion models
+have made remarkable progress due to their exceptional realism and diversity. It has seen rapid applications in other domains such as video generation[33,69,79], 3D generation[51,41,67]and speech synthesis[29,27,36]. In this work, we focus on Stable Diffusion (SD) models for real image editing.
+This capability is important for many real-world applications, including object replacement in images for publicity purposes (as well as personalized publicity), dataset enrichment where rare objects are added to datasets (e.g. wheelchairs in autonomous driving datasets), furniture replacement for interior design, etc.
+
+Researchers basically perform real image editing with two steps:projectionandmanipulation. The former aims to either adapt the weights of the model[60,43,34,71]or project given
+images into the latent code or embedding space of SD models[46,18,5,22].
+The latter aims to edit the latent code or embedding to further manipulate real images[32,44,10,75,13]. In the firstprojectionstep, some works finetune the whole model[32,65,57,34,19,71]or partial weights of the pretrained model[37,72]. Yet, finetuning either the entire or part of the generative model with only a few real images suffers from both the cumbersome tuning of the model’s weights and catastrophic forgetting[37,68,72].
+Other works onprojectionattempt to learn a new embedding vector which represents given real images (keeping the SD model frozen)[26,18,5,22,61,77,16]. They focus on optimizing conditional or unconditional inputs of the cross-attention layers of the classifier-free diffusion model[26].
+Textual Inversion[18]uses the denoising loss to optimize the textual embedding of the conditional branch given a few content-similar images.
+Null-text optimization[46]firstly inverts the real image into a series of timestep-related latent codes, then leverages a reconstruction loss to learn the null-text embedding of the unconditional branch (see Fig.1(middle)).
+However, these methods suffer from the following issues.Firstly, they lead to unsatisfactory results for selected regions, and unexpected changes in non-selected regions, both during reconstruction and editing (see the Null-text results in Fig.2; the structure-dist () for Null-text Editing and editing by our method are 0.046 and 0.012 in the first row, and 0.019 and 0.054 in the second row).Secondly, they require a user to provide an accurate text prompt that describes every visual object, and the relationships between them in the input image (see Fig.3).Finally, Pix2pix-zero[49]requires the textual embedding directions (e.g, catdog in Fig.9(up, the fourth column)) with thousands of sentences with GPT-3[9]before editing, which lacks scalability and flexibility.
+
+To overcome the above-mentioned challenges, we analyze the role of the attention mechanism (and specifically the roles of keys, queries and values) in the diffusion process. This leads to the observation that the key dominates the output image structure (the “where”)[24], whereas the value determines the object style (the “what”).
+We perform an effective experiment to demonstrate that the value determines the object style (the “what”). As shown in Fig.4(top), we generate two sets of images with prompt embeddingsand.
+We use two different embeddings for the input of both key and value in the same attention layer. When swapping the input of the keys and fixing the input of the values, we observe that the content of generated images are similar, see Fig.4(middle). For example, The images of Fig.4(middle) are similar to the ones of Fig.4(top). When exchanging the input of the values and fixing the one of the keys, we find that the content swaps while preserving much of the structure, see Fig.4(bottom). For example, the images of the last row of Fig.4(bottom) have similar semantic information with the ones of the first row of Fig.4(top). It should be noted that their latent codes are all shared111The first row of top, middle, and bottom shares a common latent code, and the second row also shares a common latent code., so the structure of the results in Fig.4(middle) does not change significantly.
+This experiment indicates that the value determines the object’s style (the “what”).
+
+Therefore, to improve the projection of a real image, we introduceStylediffusionwhich maps a real image to the input embedding for the value computation (we refer to this embedding as theprompt-embedding), which enables us to obtain accurate style editing without invoking significant structural changes.
+We propose to map the real image to the input of thevaluelinear layer in the cross-attention layers[8,66]providing freedom to edit effectively the real image in the manipulation step.
+
+We take the given textual embedding as the input of thekeylinear layer, which is frozen (see Fig.1(right)). Using frozen embedding contributes to preserving the well-learned attention map from DDIM inversion, which guarantees the initial editability of the inverted image.
+We observe that the system often outputs unsatisfactory reconstruction results (greatly adjusting the input image structure) (see Fig.2(first row, second column) and Fig.15(first row, second column)) due to locally less accurate attention maps (see Fig.15(first row, and third column)).
+Hence, to further improve our method, we propose an attention regularization to obtain more precise reconstruction and editing capabilities.
+
+For the second manipulation step, researchers propose a series of outstanding techniques[32,44,10,75,13,47,30,78,52,40]. Among them, P2P[24]is one of the most widely used image editing methods.
+However, P2P only operates on the conditional branch, and ignores the unconditional branch. This leads to less accurate editing capabilities for some cases, especially where the structural changes before and after editing are relatively large (e.g., “…tree…”“…house…” in Fig.5). To address this problem, we need to reduce the dependence of the structure on the source prompt and provide more freedom to generate the structure following the target prompt. Since the unconditional branch allows us to edit out concepts[4,64]. Thus, we propose to further perform the self-attention map exchange in the unconditional branch based on P2P (referred to asP2Plus), as well as in the conditional branch like P2P[24]. This technique enables us to obtain more accurate editing capabilities (see Fig.5(third column)). We build our method on SD models[56]and experiment on a variety of images and several ways of prompt editing.
+
+Our work thus makes the following contributions:
+
+State-of-the-art methods (e.g., Null-text inversion) struggle with unsatisfactory reconstruction and editing. To precisely project a real image, we introduceStyleDiffusion. We use a simple mapping network to map a real image to the input embedding forvaluecomputation.
+
+We propose an attention regularization method to enhance the precision of attention maps, resulting in more accurate reconstructions and improved editing capabilities.
+
+We propose the P2Plus technique, which enables us to obtain more powerful editing capabilities, especially when the source object is unrelated to the target object.
+This approach addresses the limitations of P2P, which fails to function effectively in such cases.
+
+Through extensive experiments, we demonstrate the effectiveness of our method for accurately reconstructing and editing images.
+
+SECTION: 2Related work
+
+SECTION: 2.1Transfer learning for diffusion models
+
+A series of recent works has investigated knowledge transfer on diffusion models[60,43,46,18,5,39,34,19,71,22,61,38,77,16]with one or a few images.
+Recent work[32,44,10,75,13,47,30,78,52,40,11]either finetune the pretrained model or invert the image in the latent space of the pretrained model.
+Dreambooth[57]shows that training a diffusion model on a small data set (ofimages) largely benefits from a pre-trained diffusion model, preserving the textual editing capability. Similarly, Imagic[32]and UniTune[65]rely on the interpolation weights or the classifier-free guidance at the inference stage, except when finetuning the diffusion model during training. Kumari et al.[37]study only updating part of the parameters of the pre-trained model, namely thekeyandvaluemapping from text to latent features in the cross-attention layers.
+However, updating the diffusion model unavoidably loses the text editing capability of the pre-trained diffusion model. In this paper, we focus on real image editing with a frozen text-guilded diffusion model.
+
+SECTION: 2.2GAN inversion
+
+Image inversion aims to project a given real image into the latent space, allowing users to further manipulate the image. There exist several approaches[14,21,28,42,70,73]which focus on image manipulation based on pre-trained GANs, following literately optimization of the latent representation to restructure the target image. Given a target semantic attribute, they aim to manipulate the output image
+of a pretrained GAN. Several other methods[1,80]reverse a given image into the input latent space of a pretrained GAN (e.g., StyleGAN),
+and restructure the target image by optimization of the latent representation. They mainly consist of fixing the generator[1,2,54,62]or updating the generator[3,55].
+
+SECTION: 2.3Diffusion model inversion
+
+Diffusion-based inversion can be performed naively by optimizing the latent representation.[15]show that a given real image can be reconstructed by DDIM sampling[60]. DDIM provides a good starting point to synthesize a given real image. Several works[6,7,48]assume that the user provides a mask to restrict the region in which the changes are applied, achieving both meaningful editing and background preservation. P2P[24]proposes a mask-free editing method. However, it leads to unexpected results when editing the real image[46]. Recent work investigates the text embedding of the conditional input[18], or the null-text optimization of the unconditional input (i.e., Null-text inversion[46]). Although having the editing capability by combining the new prompts,
+they suffer from the following challenges
+(i) they lead to unsatisfying results for the selected regions, and unexpected changes in non-selected regions, and (ii) they require careful text prompt editing where the prompt should include all visual objects in the input image.
+
+Concurrent work[49]proposes pix2pix-zero, also aiming to provide more accurate editing capabilities of the real image. However, it firstly needs to compute the textual embedding direction in advance using thousand sentences.
+
+SECTION: 3Method
+
+SECTION: 3.1Background
+
+DDIM inversion proposes an inversion scheme for unconditional diffusion models. However, this method fails when applied to text-guided diffusion models. This was observed by Mokady et al.[46], who propose Null-text inversion to address this problem. However, their methods has some drawbacks: (1) unsatisfying results for selected regions and unexpected changes in non-selected regions, and (2) they require careful text prompt editing where the prompt should include all visual objects in the input image.
+
+Therefore, our goal is to obtain a more accurate editing capability based on an accurate reconstruction of the real imageguided by the source prompt.
+Our method, called StyleDiffusion, is based on the observation that thekeysof the cross-attention layer dominate the output image structure (the “where”), whereas thevaluesdetermine the object style (the “what”). After faithfully projecting the real image, we propose P2Plus, which is an improved version of P2P[24].
+
+Next, we introduce SD models in Sec.3.2, followed by the proposed StyleDiffusion in Sec.3.3and P2Plus in Sec.3.4. A general overview is provided in Fig.6.
+
+SECTION: 3.2Preliminary: Diffusion Model
+
+Generally, diffusion models optimize a UNet-based denoiser networkto predict Gaussian noise, following the objective:
+
+whereis a noise sample according to timestep, andis the number of the timesteps. The encoded text embeddingis extracted by a Clip-text Encoderwith given prompt:.
+In this paper, we build on SD models[56]. These first train both encoder and decoder. Then the diffusion process is performed in the latent space. Here the encoder maps the imageinto the latent representation, and the decoder aims to reverse the latent representationinto the image. The sampling process is given by:
+
+whereis a scalar function.
+
+For real-image editing with a pretrained diffusion model, a given real image is to be reconstructed by finding its initial noise.
+We use the deterministic DDIM model to perform image inversion.
+This process is given by:
+
+DDIM inversion synthesizes the latent noise that produces an approximation of the input image when fed to the diffusion process. While the reconstruction based on DDIM is not sufficiently accurate, it still provides a good starting point for training, enabling us to efficiently achieve high-fidelity inversion[24]. We use the intermediate results of DDIM inversion to train our model, similarly as[13,46].
+
+SD models achieve text-driven image generation by feeding a prompt into the cross-attention layer. Given both the text embeddingand the image feature representation,
+we are able to produce the key matrix, the value matrixand the query matrix, via the linear networks:. The attention maps are then computed with:
+
+whereis the projection dimension of the keys and queries. Finally, the cross-attention output is, which is then taken as input in the following convolution layers.
+
+Intuitively, P2P[24]performs prompt-to-prompt image editing with cross attention control. P2P is based on the idea that the attention maps largely control where the image is drawn, and the values decide what is drawn (mainly defining the style).
+Improving the accuracy of the attention maps leads to more powerful editing capabilities[46].
+We experimentally observe that DDIM inversion generates satisfying attention maps (e.g., Fig.15(second row, first column)),
+and provides a good starting point for the optimization. Next, we investigate the attention maps to guide the image inversion.
+
+SECTION: 3.3StyleDiffusion
+
+As shown in Fig.6(I), given a pair of a real imageand a corresponding prompt(e.g., ”dog”), we perform DDIM inversion[15,60]to synthesize a series of latent noisesand attention maps, where, which is the extracted latent code of the input image222Note when generating the attention mapin the last timestep, we throw out the synthesized latent code..
+Fig.6(II) shows that our method reconstructs the latent noisein the order of the diffusion process, where. Our framework consists of three networks: a frozen ClipImageEncoder, a learnable mapping networkand a denoiser network. For a specific timestep, the ClipImageEncodertakes the input imageas an input. The outputis fed into the mapping network, producing the prompt-embedding, which is fed into the value networkof the cross-attention layers. The input of the linear layeris the given textual embedding. We generate both the latent codeand the attention map.
+Our full algorithm is presented in algorithm1.
+
+The full loss function consists of two losses:reconstruction lossandattention loss, which guarantee
+that both the denoised latent codeand the corresponding attention mapat inference time are close to the ones:andfrom DDIM inversion, respectively.
+
+Since the noise representations () provide an initial trajectory which is close to the real image, we train the networkto generate the prompt embedding, which is the input of the value network. We optimize thein such a manner, that the output latent code () is close to the noise representations (). The objective is:
+
+,
+
+It is known that a more accurate attention map is positively correlated to the editing capability[46].
+The attention map, which is synthesized during the DDIM inversion, provides a good starting point. Thus, we introduce attention regularization
+when optimizing the mapping networkto further improve its quality. The objective is the following:
+
+,
+
+whereandcan be obtained with Eq.4.
+
+The full objective function of our model is:
+
+In conclusion, in this section, we have proposed an alternative solution to the inversion of text-guided diffusion models which aims to improve upon existing solutions by providing more accurate editing capabilities, without requiring careful prompt engineering.
+
+SECTION: 3.4P2Plus
+
+Having inverted the text-guided diffusion model, we can now perform prompt-based image editing (see Figs.2and9). We here outline our approach,
+which improves on the popular P2P
+
+P2P performs the replacement of both the cross-attention map and the self-attention map of the conditional branch, aiming to maintain the structure of the source prompt, see Fig.7(middle). However, it ignores the replacement in the unconditional branch. This leads to less accurate editing in some cases, especially when the structural changes before and after editing are relatively large (e.g., “…tent…”“…tiger…” ). To address this problem, we need to reduce the dependence of the structure on the source prompt and provide more freedom to generate the structure following the target prompt. Thus, as shown in Fig.7(bottom) we propose to further perform the self-attention map replacement in the unconditional branch based on P2P (an approach we callP2Plus), as well as in the conditional branch like P2P. This technique provides
+more accurate editing capabilities. Like P2P, we introduce a timestep parameterthat determines until which step the injection is applied. Fig.8shows the results with differentvalues.
+
+SECTION: 4Experimental setup
+
+SECTION: 4.1Training details and datasets
+
+We use the pretrained Stable Diffusion model. The configuration of the mapping networkis provided in Tab.1. We set.is a timestep parameter that determines which timestep is used by the output of the mapping network in the StyleDiffusion editing phase. Similarly, we can set the timestep(as in the conditional branch in P2P) to control the number of diffusion steps in which the injection of the unconditional branch is applied.
+We use Adam[35]with a batch size of 1 and a learning rate of 0.0001. The exponential decay rates are. We randomly initialize the weights of the mapping network following a Gaussian distribution centered at 0 with 0.01 standard deviation. We use one Quadro RTX 3090 GPUs (24 GB VRAM) to conduct all our experiments. We randomly collect a real image dataset of 100 images (with resolution) and caption pairs from Unsplash(https://unsplash.com/) and COCO[12].
+
+SECTION: 4.2Evaluation metrics
+
+Clipscore[25]is a metric that evaluates the quality of a pair of a prompt and an edited image. To evaluate the preservation of structure information after editing, we use Structure Dist[63]to compute the structural consistency of the edited image. Furthermore, we aim to modify the selected region, which corresponds to the target prompt, while preserve the non-selected region. Thus, we also need to evaluate change in the non-selected region after editing. To automatically determine the non-selected region of the edited image, we use a binary method to generate the raw mask from the attention map. Then we invert it to get the non-selected region mask. Using the non-selected region mask, we compute the non-selected region LPIPS[76]between the real and edited images, which we denoteNS-LPIPSfor non-selected LPIPS. A lower NS-LPIPS score means that the non-selected region is more similar to the input image. We also use both PSNR and SSIM to evaluate image reconstruction.
+
+SECTION: 4.3Baselines
+
+We compare our method against the following baselines.Null-text[46]inverts real images with corresponding captions into the text embedding of the unconditional part of the classifier-free diffusion model.SDEdit[44]introduces a stochastic differential equation to generate realistic images through an iterative denoising process.Pix2pix-zero[49]edits the real image to find the potential direction from the source to the target words.DDIM with word swap[49]performs DDIM sampling with an edited prompt generated by swapping the source word with the target. We use the official published codes for the baselines in our comparison to StyleDiffusion.
+We also ablate variants of StyleDiffusion.
+
+SECTION: 5Experiments
+
+SECTION: 5.1Qualitative and quantitative results
+
+Fig.9presents a comparison between the baselines and our method.SDEit[44]fails to generate high-quality images, such as dog or cat faces (second column).Pix2pix-zero[49]synthesizes better results, but it also modifies the non-selected region, such as removing the plant when translating catdog. The official implementation ofpix2pix-zero[49]provides the editing directions (e.g, catdog), and we directly use them. Note thatpix2pix-zero[49]requires that the editing directions are calculated in advance, while our method does not require this. Fig.9(last three rows, fourth column) shows thatDDIM with word swaplargely modifies both the background and the structural information of the foreground. MasaCtrl[10]is designed for non-rigid editing and tries to maintain content consistency after editing. It often changes the shape of objects when translating from one to another (Fig.9(fifth column)). For example, when translating dog to cat, although MasaCtrl successfully performs the translation, it changes the shape, such as making the head of the cat larger than in the original image (Fig.9(second row, the fifth column)).
+Our method successfully edits the target-specific object, resulting in a high-quality image, indicating that our proposed method has more accurate editing capabilities.
+
+We evaluate the performance of the proposed method on the collected dataset. Tab.2reports, in terms of both Structure distance and NS-LPIPS, that the proposed method achieves the best score, indicates that we have superior capabilities to preserve structural information. In terms of Clipscore, we get a better score than Null-text (i.e., 77.9vs 75.2), and a comparative result with SDEdit.DDIM with word swapachieves the best Clipscore. However,DDIM with word swapnot only changes the background, but also modifies the structure of the selected-regions (see Fig.9(last three rows, fourth column)). Note that we do not compare to pix2pix-zero[49]in Fig.9(last three rows), since it first needs to compute the textual embedding directions with thousands of sentences using GPT-3[9]. We also evaluate the reconstruction quality and the inference time for each timestep. As reported in Tab.3, we achieve the best PSNR/SSIM scores, with an acceptable time overhead.
+
+Furthermore, we conduct a user study, asking subjects to select the results that best match the following statement:which figure preserves the input image structure and matches the target prompt style(Fig.10). We apply quadruplet comparisons (forced choice) with 54 users (30 quadruplets/user).
+The study participants were volunteers from our college. The questionnaire consisted of 30 questions, each presenting the original image, as well as the results of various baselines and our method. Users were tasked with selecting an image in which the target image is more accurately edited compared to the original image. Each question in the questionnaire presents five options, including baselines (DDIM with word swap, Nul-text, SDEdit, and MasaCtrl) and our method, from which users were instructed to choose one. A total of 54 users participated, resulting in a combined total of 1620 samples (30 questions1 option54 users) with 740 samples (45.68%) favoring our method. In the results of the user study, the values for DDIM with word swap, NullText, SDEdit, MasaCtrl, and Ours are 15.37%, 15.43%, 9.38%, 14.14%, and 45.68%, respectively.
+
+Fig.11shows that we can manipulate the inverted image with attention injection (replacement), refinement (adding a new phrase) or re-weighting using P2Plus.
+For example, we translateglassesintosunglasses(Fig.11(first row)). We addChinese style(new prompts) to the source prompt (Fig.11(third row)).
+We scale the attention map of the “flowers” in prompt “a tree with flowers in front of a house”, resulting in a stronger effect (Fig.11(fourth row)).
+These results indicate that our approach manages to invert real images with corresponding captions into the latent space, while maintaining powerful editing capabilities.
+
+We observe that StyleDiffusion (Fig.12(last column)) allows for object structure modifications while preserving the identity within the range given by the input image cross-attention map, resembling the capabilities demonstrated by Imagic[32]and MasaCtrl[10](Fig.12(third and fourth columns)).
+Furthermore, StyleDiffusion can preserve more accurate content, such as the scarf around the dog’s neck (Fig.12(fifth column)).
+In contrast, Null-text[46]does not possess the capacity to accomplish such changes (Fig.12(second column)).
+
+StyleDiffusion can additionally be applied to many real-world applications, including object replacement in images for publicity purposes (as well as personalized advertising: see Fig.13(first row)), dataset enrichment by adding rare objects (e.g., wheelchairs in autonomous driving datasets: Fig.13(second row)), furniture replacement for interior design (Fig.13(third row)), etc.
+
+SECTION: 5.2Ablation study.
+
+Here, we evaluate the effect of each independent contribution to our method and their combinations.
+
+Although P2P obtains satisfactory editing results with attention injection in the conditional branch, it ignores attention injection in the unconditional branch (as proposed by our P2Plus in Sec.3.4).
+We experimentally observe that the self-attention maps in the unconditional branch play an important role in obtaining more accurate editing capabilities, especially when the object structure changes before and after editing of the real image are relatively large, e.g., translatingbiketomotorcyclein Fig.14(left, third row). It also shows that the unconditional branch contains much useful texture and structure information, allowing us to reduce the influence of the unwanted structure of the input image.
+
+We evaluate variants of our method, namely
+(i) learning the input prompt-embedding for thekeylinear layer and freezing the input of thevaluelinear layer with the one provided by the user, and (ii) learning the prompt-embedding for bothkeyandvaluelinear layers. As Fig.14(right) shows, the two variants fail to edit the image according to the target prompt. Our method successfully modifies the real image with the target prompt, and produces realistic results.
+
+We perform an ablation study of attention regularization. Fig.15shows that the system fails to reconstruct partial object information (e.g., the nose in Fig.15(first row, second column)), and learns a less accurate attention map (e.g., the nose attention map in Fig.15(first row, third column). Our method not only synthesizes high-quality images, but also learns a better attention map even than the one generated by DDIM inversion (Fig.15(second row, first column)).
+
+Fig.16illustrates the reconstruction and editing results of value-embedding optimization, that is, similar to our method extracting the prompt-embedding from the input image but directly optimizing the input textual embedding. Value-embedding optimization fails to reconstruct the input image. Null-text[46]draws a similar conclusion that optimizing both the input textual embedding for thevalueandkeylinear layers results in lower editing accuracy.
+
+After inverting a real image with StyleDiffusion, we leverage SDEdit to edit it. Only using SDEdit, the results suffer from unwanted changes, such as the orientation of the dog (Fig.18(first row, second column) and the texture detail of the leg of the dog (Fig.18(second row, second column)). While combining StyleDiffusion and SDEdit significantly enhances the fidelity to the input image (see Fig.18(third column)). This indicates our method exhibits robust performance when combining different editing techniques (e.g., SDEdit and P2Plus).
+
+Recently, some methods have been proposed[45,23]that do not use optimization.
+Negative-prompt inversion (NPI)[45]replaces the null-text embedding of the unconditional branch with the textural embedding in SD to implement reconstruction and editing.
+Proximal Negative-Prompt Inversion (ProxNPI)[23]attempts to enhance NPI by introducing regularization terms using proximal function and reconstruction guidance based on the foundation of NPI.
+While these methods do not require optimizing parameters to achieve the inversion of real images, like to the method shown in Fig.1, they suffer from challenges when reconstructing and editing images containing intricate content and structure (see Fig.17(second and third columns, sixth and seventh columns)).
+Due to the absence of an optimization process in these methods, it is not possible to utilize attention loss to refine the attention maps like Null-text+(Fig.15), consequently limiting the potential for enhancing reconstruction and editing quality.
+
+As a final illustration, we show that StyleDiffusion can be used to perform style transfer.
+Fig.20(left) shows how, given a content image, we use DDIM inversion to generate a series of timestep-related latent codes. They are then progressively denoised using DDIM sampling. During this
+process, we extract the spatial features from the decoder layers. These spatial features are injected into the corresponding layers of StyleDiffusion model. Note that we first optimize StyleDiffusion to reconstruct the style image, then use both the well-learnedand the extracted content feature to perform the style transfer. Fig.20(right) shows that we can successfully combine both content and style images, and perform style transfer.
+
+SECTION: 6Conclusions and Limitations
+
+We propose a new method for real image editing. We invert the real image into the input of thevaluelinear mapping network in the cross-attention layers, and freeze the input of thekeylinear layer with the textual embedding provided by the user. This allows us to learn initial attention maps, and an approximate trajectory to reconstruct the real image. We introduce a new attention regularization to preserve the attention maps after editing, enabling us to obtain more accurate editing capabilities. In addition, we propose attention injection in the unconditional branch of the classifier-free diffusion model (P2Plus), further improving the editing capabilities, especially when both source and target prompts have a large domain shift.
+
+While StyleDiffusion successfully modifies the real image, it still suffers from some limitations. Our method fails to generate satisfying images when the object in the real image has a rare pose (Fig.19(left)), or when both the source and the target prompts have a large semantic shift (Fig.19(right)).
+
+SECTION: Declaration of competing interest
+
+The authors have no competing interests to declare relevant to the
+content in this study.
+
+SECTION: References
