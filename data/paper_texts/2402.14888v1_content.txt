@@ -1,0 +1,141 @@
+SECTION: Efficient data selection employing Semantic Similarity-based Graph Structures for model training
+
+Recent developments in natural language processing (NLP) have highlighted the need for substantial amounts of data for models to capture textual information accurately. This raises concerns regarding the computational resources and time required for training such models. This paper introducesSEmantics for dataSAliency inModel performanceEstimation (SeSaME). It is an efficient data sampling mechanism solely based on textual information without passing the data through a compute-heavy model or other intensive pre-processing transformations. The application of this approach is demonstrated in the use case of low-resource automated speech recognition (ASR) models, which excessively rely on text-to-speech (TTS) calls when using augmented data. SeSaME learns to categorize new incoming data points into speech recognition difficulty buckets by employing semantic similarity-based graph structures and discrete ASR information from homophilous neighbourhoods through message passing. The results indicate reliable projections of ASR performance, with aaccuracy increase when using the proposed method compared to random predictions, bringing non-trivial information on the impact of textual representations in speech models. Furthermore, a series of experiments show both the benefits and challenges of using the ASR information on incoming data to fine-tune the model. We report adrop in validation loss compared to random sampling,WER drop with non-local aggregation when evaluating against a highly difficult dataset, andWER drop with local aggregation and high semantic similarity between datasets.
+
+SECTION: 1Introduction
+
+Cutting-edge advancements have emerged across several areas of artificial intelligence, including large language modelsYang et al. (2019), multi-modal and context-aware modelsLi et al. (2019), conversational AIBrown et al. (2020)and vision transformersSharir et al. (2021). While they gain robustness and generalizability across tasks, they often become more computationally expensive and data-demanding. This leads to problems concerning the availability of trustworthy data(Chen et al.,2017), budget allocation, and environmental impact.
+
+A ubiquitous example of a system requiring substantial quantities of data is automated speech recognition (ASR), for which large-scale training can significantly improve model performanceLong et al. (2019). Examples of commonly used benchmark datasets are VoxLingua107, containing speech segments extracted from YouTube videos that amount tohours of data, and LibriSpeech, incorporatinghours of audiobook data(Li et al.,2020).
+Training an ASR system has several challenges: (1) the computational workload and time required for processing audio data are costly, and (2) several low-resource languages lack annotated data. Data augmentation is one of the most common techniques to compensate for a low resource settingWei and Zou (2019); Park et al. (2019). However, it is not necessarily the case that adding vast quantities of synthetic data will proportionally improve the model’s performance, while it does add to the computational workloadSun et al. (2017).
+
+We presentSEmantics for dataSAliency inModel performanceEstimation (SeSaME), a novel graph-based approach to finding salient training instances using semantic similarity between data points. Specifically, we focus on the ASR task and investigate if, given a set of textual utterances, we can select a subset for fine-tuning an ASR system and achieve better performance as if fine-tuning on a random sample from the same dataset.Our intuition is to use the measured model to infer its evaluation performance on a new dataset through label recovery on the utterance level based on semantic similarity between the new sentences and the observed data.Efficient data sampling brings two advantages: (1) compute benefits by reducing speech synthesis calls and (2) lower carbon footprint as a result of more efficient training.
+We propose an approach to estimating ASR performance using semantic similarity-based graph neural networks and leverage the salient data points for fine-tuning an ASR system. In this paper, we answer the following research questions: (1) can we use semantic priors and graph-based structures to predict the performance of an ASR model? and (2) if so, how can we use the leveraged information to sample data points and fine-tune the ASR model?
+
+Our key contributions are the following:
+
+We propose SeSaME, a novel approach to modelling the performance of a model in discrete space using graph-based semantic similarity using textual data alone.
+
+We leverage known model performance to efficiently sample new data for fine-tuning.
+
+We show that by incorporating an attention mechanism, our proposed sampling procedure achieves aWER improvement compared to the baseline.
+
+The remainder of the paper is organized as follows: In Section3we formalize the approach of using textual semantic similarity graph structures to predict ASR performance. Section4presents the experimental setup for training and fine-tuning the ASR and GNN models, repectively. Section5discusses the results and answers the research questions, while Section6lays down the conclusions of the experiments and proposes future research directions.
+
+SECTION: 2Related Work
+
+In this section, we outline the definitions needed for formulating our approach.
+
+Graph Neural NetworksGraph neural network (GNN) architectures emerged as powerful tools for processing and exchanging node, edge and structure information(Zhou et al.,2020)through message passing. Message passing (MP) updates each node representation based on its 1-hop neighbourhood information. MP layers differ by choice of the aggregation function over the 1-hop neighbourhood. Depending on the architecture, the aggregation can take different forms. We will study and compare the impact of local aggregation, i.e., GCN(Kipf and Welling,2016), GIN(Xu et al.,2019), and GraphSAGE(Hamilton et al.,2017), with non-local aggregation, i.e., GAT(Velickovic et al.,2017).
+
+Label RecoveryAssume a graph, whereis the set of vertices andis the set of edges representing connections between nodes. Thelabel recovery taskis the problem of inferring missing labels for a set of nodesfrom available information, i.e., known labels of nodes. The labels can be either discrete, i.e., in which case the task is a classification problem, or continuous, i.e., in which case the task is a regression problem.
+
+HomophilyIn the context of social networks, homophily has been expressed as the tendency of nodes to connect with others that exhibit similar characteristics. In contrast, heterophily is the tendency of nodes to gather into scattered groups. It has been shown that the degree of homophily directly impacts the performance of graph models in a label recovery taskKe and Honorio (2018), i.e. higher homophily leads to better performance. We use the Schelling model(Pollicott and Weiss,2001)to assess the homophily of sampled neighbourhoods in the graph structure for different ASR utility functions. Accordingly, we choose the utility that exhibits a higher degree of homophily for optimizing the performance of the graph model on the label recovery task.
+
+SECTION: 3Methodology
+
+In this section, we explain SeSaME, our semantic graph-based sampling approach, considering the following ASR use case: assume access to a high-cost pre-trained ASR model; we want to estimate its performance on a new dataset without explicitly using the data, i.e., without making a forward pass; the only available information is the prior training data points and their ASR performance. We formalize and split our approach in two parts: (1) the train pass (see Figure1) constructs and trains a semantic similarity graph using the available training data and its ASR evaluation metrics, and (2) the fine tune pass (see Figure2) uses the graph structure for mapping incoming data points to ASR performance, and uses the leveraged information for sampling a subset of the incoming data for further fine-tuning the ASR model. A summary of the notation used throughout this section is presented in AppendixA.
+
+SECTION: 3.1Train Pass
+
+ASR TrainingConsider a textual datasetand a text-to-speech (TTS) enginethat receives as inputand generates its corresponding synthetic audio. The audio synthesis is then used for training an ASR model. The ASR model predicts a hypothesis for each data point and is evaluated against its reference (ground truth) sentence using Word Error Rate (WER), which measures the percentage of incorrectly recognized or substituted words in the sentence.
+
+Our intuition is that we can infer the model’s performance on a new datasetusing the observed WER and the semantic similarity ofwith. The approach is inspired by the RHO-LOSS(Mindermann et al.,2022)utility function presented in Equation1, which has been proven efficient in sampling task-relevant, non-redundant and non-noisy data for training on a wide range of datasets and tasks. We will use the first term of the function to define a label for each sentence in:
+
+whererepresents the input waveform fed to the ASR model,is the prediction (hypothesis),is the training loss of the model, andis the loss of the model when trained on a smaller adjacent dataset, called the holdout dataset;
+
+We aim to choose a labelling utility functionthat has the following properties: it is suitable for evaluating the ASR model, it is representative of homophilous relationships between input sentences, and it can be discretized into ordinal labels. We have experimented with both WER and CTC loss as utility functions; we chose to use WER as it exhibits a higher degree of homophily in the graph.
+
+The WER metric is defined as follows:
+
+Equation2can be interpreted as the percentage of incorrectly substituted, deleted and inserted words, denoted as, compared to the total number of wordsin the reference, where. The typical value for WER is, however, it can exceed the upper bound when the prediction (hypothesis) is longer than the ground truth sentence (reference). A lower WER indicates better performance.
+
+However, WER has one nontrivial disadvantage when using it in an ordinal regression task: it is a continuous variable. To mitigate this issue, we discretise WER intobuckets according to their distribution in, bringing WER from a continuous to a discrete space. Each sentence inis mapped to a WER value which is associated with one of the defined classes to create a label.
+
+Graph CreationWe can construct an undirected weighted graphwith nodesand edgesusingand the inferred WER labels as follows:
+
+Each nodeis associated with the textual representation of one single data point from. The textual representations are modelled as BERT embeddings(Devlin et al.,2018). We use the BERT base uncased model.
+
+Two utterancesare connected through an edgeiff the semantic similarity between them exceeds a configurable threshold. The similarity between any pair of sentences is calculated on the node embeddings and not the waveform.
+
+Computing semantic similarity in a large, fully connected graph is computationally infeasible. As an alternative, we apply approximate nearest neighbours (ANN) search to connect edges in the graph with cosine similarity as edge weightsHajebi et al. (2011).
+
+Moreover, since the objective of this study is to predict ASR performance without making any TTS calls for converting augmented textual data into audio samples, waveform features are not employed in the graph creation process.
+
+Graph Neural NetworksWe aim to learn a mapping between textual utterances and their WER labels, for which we train a GNN model that takes as inputand outputs a WER prediction for each node. There are two reasons for modelling this problem using graph structures: (1) aggregating information through message passing (our intuition is that similar utterances have a similar impact on the ASR model), and (2) using edge weights (the degree of similarity should have an impact in the message passing process).
+The WER labels indicate how well the ASR model can map its equivalent audio waveform to the reference sentence. We formalize the problem as an ordinal regression task by defining the label encoding and loss functions:
+
+Label Encoding: If a data pointis mapped to a label, it is automatically classified into all lower labels. The target of inputiswherewithis set toand all other elements to.
+
+Loss Function: We use binary cross entropy as a loss function to differentiate distance magnitudes between predictions and real targets. It has two advantages: (1) treating each class as a binary classification task and (2) applying a logarithmic scale between classes, ensuring a higher loss for wrong predictions that are further apart from the ground truth label.
+
+SECTION: 3.2Fine Tune Pass
+
+Consider a new augmented datasetwhich contains textual utterances for further fine-tuning the ASR model. Instead of passing it through the TTS engineand ASR modelas previously done with, the GNN mapping can be used for predicting the importance of individual entries inon fine-tuningby creating a new graph.
+
+The textual representations ofare added to the existing graphby creating a nodefor each sentence in, computing its approximate nearest neighbors, and adding edges fromto its neighbors. The edge weights are the cosine similarities between nodes. The labels of the holdout dataset are predicted by passingthrough the trained GNN and solving the label recovery task.
+
+The inferred labels ofindicate how well the ASR model performs on new incoming data without including them in training or even processing their audio synthesis.
+We can use these projected WER labels to sample a subset of points fromfor further fine-tuning.
+
+SECTION: 4Experimental Setup
+
+In this section, we specify the data and models used, i.e., ASR and GNN architectures, training hyperparameters, and preliminary results that influenced modelling decisions.
+
+DataWe use the Common Voice Corpus 11.0 English dataset(Ardila et al.,2019)which is available for public use. It contains overk hours of recorded audio sourcing from overk different voices with varying accents, which include demographic metadata such as names, age and locations. Each data point contains an audio file sampled atkHz and its corresponding textual transcription. Several pre-processing steps have been taken, i.e. lowercasing and removing punctuation. Moreover, we eliminated time-stretching outliers with over 165K parameters and data points for which the audio file was unavailable. After pre-processing, the train, validation and test datasets have a size ofk,k andk data points. As described in Section3, we create buckets out of the WER evaluation metric to create ordinal categorical labels for our dataset. The buckets are chosen so that the classes do not differ too much in size. We divide WER into seven classes by grouping all utterances with a WERwhere. In the case when WERwe include the utterance into the last bucket.
+
+ASR modelWe employ the wav2vec2 XLS-R-300M model for cross-lingual speech representation learning. It comprises a CNN feature extractor, a feature encoder generating multilingual speech units, and a transformer. It has been pre-trained usingk hours of unlabeled speech from open-source datasets such as VoxPopuli(Wang et al.,2021), Common Voice(Ardila et al.,2020), VoxLingua107(Valk and Alumae,2021)and BABEL(Punnakkal et al.,2021).
+To use the XLS-R-300M architecture in an ASR setting, we drop the transformer and fine-tune it to solve a connectionist temporal classification (CTC) task.
+We train the model with Common Voice English for 20 epochs using a batch size of 8 utterances, Adam optimizer, learning rate of, CTC loss function, and evaluate it with WER.
+
+GNN ModelsDuring the experimental phase we discovered that the BERT embeddings are not sufficiently discriminative between classes, making it difficult for the GNN to learn a mapping from textual utterances to their WER labels. To mitigate this issue, we employ a feature embedding MLP trained with self-supervised contrastive lossKhosla et al. (2020)to push BERT embeddings closer together if assigned to the same class or further apart if assigned to different classes. The MLP has two linear layers that keep the BERT dimensionality consistent and oneactivation function. Using the MLP BERT embeddings, we deploy four GNN models:
+
+Graph Convolutional Network (GCN): GCNKipf and Welling (2017)is a Graph Neural Network (GNN) architecture that applies a multilayer local aggregation function (MLA). It is an efficient and unbiased method of solving the label recovery problem in a graph structure.
+
+Graph Isomorphism Network (GIN): GINXu et al. (2019)is a more flexible and expressive architecture than GCN, which also uses a local aggregation technique.
+
+GraphSAGE: GraphSAGEHamilton et al. (2017)is an inductive learning GNN that learns an aggregation function to recognize both local information and global position. The graph is thus able to learn complex properties of the neighbourhoods, which leads to better generalization on unseen nodes.
+
+GAT: GATVelickovic et al. (2018)is a non-local aggregation GNN that makes use of masked self-attention layers to attribute attention weights to different neighbourhoods of a node in. GAT brings the advantage of not needing to rely on homophilous graphs.
+
+Each GNN model consists ofmessage passing layers with a hidden dimensionality reduction fromtonodes and tanh as nonlinearity, one linear layer and a final sigmoid function for each class output node. The GNNs are trained forepochs using drop edge(Rong et al.,2020)with probabilityto avoid over smoothing, Adam optimizer, weight decay, learning rate, binary cross entropy, and evaluated across accuracy and one frame agreement (OFA). The OFA metric is calculated by considering a predictioncorrect if it is either equal to the ground truth labelor a class at a one-hop distance from. This metric allows the model to make wrong label predictions as long as they are ordinally close to the ground truth.
+
+SECTION: 5Results and Discussion
+
+We evaluate SeSaME by comparing the ASR performance when fine-tuned on the predictions of the graph-semantic estimation model versus random sampling. This is done by (1) analyzing the validation metrics for GNN training on the ordinal regression task and (2) estimating the saliency of the retrieved data points by conducting three comparison fine-tuning experiments.
+
+To this end, we define the evaluation datasets:
+
+random dataset:k data points randomly sampled from the test set,
+
+difficult dataset:data points from the test set labelled as very difficult to learn,
+
+semantic similarity dataset:k data points from the test set labelled as difficult, which also exhibit a high semantic correspondence with the GNN sample. More precisely, we first sample difficult points from the holdout set as identified by the GNN model. Then, we extract difficult points from the test set, and calculate the average cosine similarity between each test point against the GNN sample. Finally, we pick the firstk test data points with the highest similarity with the GNN sample, enforcing textual correspondence between the two datasets.
+
+For fine-tuning the ASR model, we sampledifficult nodes as predicted by SeSaME. The sampling process involves picking the nodes with inferred labels starting from the last bucket as defined in. If the current bucket does not cover the whole sample size, we move one bucket to the left until the sample is complete. For the last bucket we access, i.e., a class with size, we randomly pick the remainingutterances from.
+
+When evaluating against the random and semantic similarity datasets, the fine-tuning process is done onepochs. When evaluating against the difficult dataset, the fine-tuning takes place for onlyepochs because the models do not converge for longer training.
+
+GNN trainingThe performance of the GNN models on the ordinal regression task is summarized in Table1. We report train and validation accuracy, and one-frame agreement (OFA). The calculated gain is between GIN and the random predictions, indicating how many times GIN is better at mapping textual information to speech recognition performance.
+
+The results show a performance increase from the random accuracy ofto a SAGE accuracy of. The evaluation MSE drops from the random value ofbyto an MSE offor SAGE, and an MSE ofwith GAT. In short, we observe that both local and non-local GNN models can successfully map a transformation between textual utterances to predicted ASR performance.
+
+ASR fine-tuningThe random test results indicate that both the test loss and WER do not differ between sampling approaches. However, the WER drops fromwithout fine-tuning to approximatelywhen using any GNN. This indicates that when evaluating against a random test dataset, any sampling approach has the same positive effect relative to no further model fine-tuning. To compare with existing metrics, the SOTA performance on a speech recognition task using the CommonVoice English test set is reported to a WER ofusing a language modelling head, and WER ofwithout the LM head. We achieved a WER ofon the test set when fine-tuning the XLS-R-300M model forepochs with the CTC task. The similar test loss and WER results across GNN and random sampling indicate thatSeSaME does not improve ASR fine-tuning when evaluated on random test data.
+
+Table3shows the results when evaluating against the difficult dataset. Unlike the previous experiment, this evaluation highlights a considerable difference in training loss values between GNN and the random baseline, e.g.,for GIN, andfor the random sample, indicating that the GNN models are indeed able to predict and sample data points that are difficult to train on. The GNN test loss values are considerably lower than random, indicating that sampling difficult points can improve the test loss, but the evaluation WER metric for local aggregation is lower than the random sampling baseline. However, GAT shows significantly better performance, with adecrease in test loss compared to random sampling. GAT also achieves an impressive WER decrease ofcompared to the random, meaning thatusing the attention mechanism, we can effectively improve fine-tuning of an ASR system without passing the data through the model, and without any audio processing. These results indicate thatwe can apply SeSaME combined with non-local aggregation to efficiently sample and fine-tune an ASR model on difficult points.
+
+Results from Table1clearly indicate that semantically-driven graph structures can predict the difficulty of incoming data for ASR training. However, tables2and3show that leveraging this information for ASR fine-tuning is non-trivial, as data points predicted as difficult do not necessarily exhibit semantic correlation to the difficult points in the test set. The reasons behind an incoming utterance being predicted as difficult can be manyfold, e.g., background noise, incomprehensible audio, or simply highly different content. To better understand the role of semantic correlation between incoming utterances and the test dataset, we conduct one final evaluation on a subset of the test data with close textual cosine similarity to the GNN sample (see table4).
+
+Our findings indicate that having semantic similarity between the sampled and test datasets does help in lowering the WER of non-local GNNs. Table4shows that fine-tuning with the semantically similar dataset as sampled using GAT brings the training loss from the random baseline value ofto a much better performance of. Interestingly, when evaluating against difficult points (Table3), GAT shows an impressivedrop in WER; however, it is gained back in Table4when we add textual correspondence. While this seems counterintuitive, evaluating against the most difficultof the data points (Table3) versus the most difficultdata points (Table4) is a significantly heavier task. For the first one, there is more room for improvement in the model evaluation performance, as confirmed by the evaluation WER. While for the latter, fine-tuning is trivial, therefore there is little room for substantial improvement.
+
+SECTION: 6Conclusion
+
+We presentedSeSaME(SEmantics for dataSAliency inModel performanceEstimation), a graph-based approach for identifying salient data points based on semantic similarity. The application of this approach is studied in the use-case of low-resource ASR models, which make heavy use of speech processing and transcription calls.
+
+To assess SeSaME, we conduct a comparative analysis of the ASR performance when fine-tuned with graph-based estimation versus random sampling. The results indicate that our method can successfully predict the speech recognition performance of the dataset based on textual information alone. Moreover, the results clearly indicate that we can use this information for efficiently fine-tuning an ASR model when combined with a robust semantic similarity relationship between the datasets and an attention mechanism. However, fine-tuning becomes a more complex problem when employing local aggregation.
+
+Future researchFor future research, we propose three directions: (1) a more extensive study on how semantic correlation between difficult points in sampled and test data influences fine-tuning performance, (2) an approach using the full version of RHO-LOSS as described in Equation1, and (3) including a feedback loop from the fine-tuning predictions to the graph structure for redefining the WER labels.
+
+SECTION: References
+
+SECTION: Appendix ANotations

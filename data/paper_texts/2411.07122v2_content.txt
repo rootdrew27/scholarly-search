@@ -1,0 +1,179 @@
+SECTION: Scar: Sparse Conditioned Autoencoders forConcept Detection and Steering in LLMs
+
+Large Language Models (LLMs) have demonstrated remarkable capabilities in generating human-like text, but their output may not be aligned with the user or even produce harmful content.
+This paper presents a novel approach to detect and steer concepts such as toxicity before generation.
+We introduce the Sparse Conditioned Autoencoder (Scar), a single trained module that extends the otherwise untouched LLM.Scarensures full steerability, towards and away from concepts (e.g., toxic content), without compromising the quality of the model’s text generation on standard evaluation benchmarks.
+We demonstrate the effective application of our approach through a variety of concepts, including toxicity, safety, and writing style alignment.
+As such, this work establishes a robust framework for controlling LLM generations, ensuring their ethical and safe deployment in real-world applications.111Code available athttps://github.com/ml-research/SCAR
+
+SECTION: 1Introduction
+
+Large Language Models (LLMs) have become central to numerous natural language processing (NLP) tasks due to their ability to generate coherent and contextually relevant text[zhao_survey_2023,chang_survey_2024,wei_emergent_2022].
+However, deploying these in real-world applications presents distinct challenges[kasneci_chatgpt_2023,solaiman2024evaluatingsocialimpactgenerative,Friedrich2022RevisionTI].
+LLMs mainly behave as opaque systems, limiting the understanding and interpretability of their output.
+As such, they are prone to generate toxic, biased, or otherwise harmful content. Anticipating and controlling the generation of these texts remains a challenge despite the potentially serious consequences.
+
+Recent studies have systematically demonstrated the prevalence of bias and toxicity in LLMs[bommasani2021opportunities,weidinger2021ethical,liang2023holistic].
+These works have led to the creation of evaluation datasets[gehman2020realtoxicityprompts,tedeschi2024alert]and tools to identify toxic content[noauthor_perspective_nodate,inan2023llama,helff2024llavaguard]. The dominant technique to mitigate the generation of unwanted text is fine-tuning on dedicated datasets[ouyang24training,rafailov_direct_2024]. Although these approaches have shown promise in mitigating toxicity, they can still be circumvented[wei_jailbroken_2023], are computationally expensive, and often do not generalize to unseen use cases. In addition, these methods encode static guardrails into the model and do not offer flexibility or steerability. More flexible techniques have been proposed in recent work[turner_activation_2024,dathathri_plug_2020,pei_preadd_2023], but suffer from other limitations. They often require backward[dathathri_plug_2020]or multiple forward passes[pei_preadd_2023], severely impacting latency and computational requirements at deployment. A further shortcoming of all of these methods is their inherent inability todetecttoxic content.
+
+To remedy these issues, we proposeSparseConditionedAutoencoders (Scar). We built on sparse autoencoders (SAEs) that have shown promising results in producing inspectable and steerable representations of LLM activations[gao_scaling_2024,cunningham_sparse_2023,templeton_scaling_2024].
+However, SAEs do not guarantee that a desired feature—like toxicity—will be included nor disentangled in the latent space. Furthermore, SAEs still require manual labor or additional models to identify semantic features in the first place[rajamanoharan_improving_2024,bricken_towards_2023,rajamanoharan_jumping_2024].Scarcloses this gap by introducing a latent conditioning mechanism that ensures the isolation of desired features in defined latent dimensions.
+
+Specifically, we make the following contributions. 1) We formally defineScarand introduce a novel conditional loss function. 2) Subsequently, we empirically demonstrateScar’s effectiveness and efficiency in producing inspectable representations to detect concepts. 3) Lastly, we provide empirical results forScar’s usability in steering the generation of toxic content with no measurable effect on overall model performance.
+
+SECTION: 2Scar
+
+In this section, we proposeScar–SparseConditionedAutoencoders. We start by describing the architecture and the conditioning method followed by the concept detection and steering. We display an overview ofScarin Fig.1.
+
+Architecture.As shown in Fig.1,Scarinserts an SAE to operate on the activations from theFeed Forwardmodule of a single transformer block.
+There are two parts to consider. First, during training, the SAE is trained to reconstruct the activations, keeping all transformer weights frozen.
+During inference, the SAE reconstructions are passed back to the residual connection of the transformer, while the original Feed Forward signal is dismissed.
+
+More formally,Scarcomprises an SAE with an up- and downscaling layer, along with a sparse activation, as follows:
+
+The SAE’s outputis the reconstruction of the Feed Forward’s outputfor a given token in the respective transformer layer.
+The vectorsandare the up-projected representations of the token.
+To promote feature sparsity and expressiveness, we apply a TopK activation, followed by ReLU[gao_scaling_2024].
+
+Conditioning the SAE.Before introducing the condition loss, we describe the primary training objective ofScar, which is to reconstruct the input activations. The reconstruction error of the SAE,, is calculated using the normalized mean-squared error
+
+withbeing the SAE reconstruction ofas previously described. The normalization in particular scales the loss term to a range that facilitates the integration of the following conditioning loss,.
+
+Next, we address the conditioning. To enforce the localized and isolated representation of a concept in the SAE’s latent space, we introduce latent feature conditioning of a single neuronof the pre-activation feature vectorbased on the ground truth labelof the respective token. To this end, we add a condition loss,, which computes the binary cross entropy (CE) on the output of Sigmoid from the logits:
+
+Here,denotes the concept label. As the SAE is trained tokenwise, we assign each token in a prompt to the same label as the overall prompt.
+During training, the class probabilities of tokens not explicitly related to the concept will naturally average out.
+This way, the condition loss adds a supervised component to the otherwise unsupervised SAE training, ensuring feature availability and accessibility.
+The full training loss can be written as:
+
+Concept detection & steering.For concept detection, we inspect the conditioned feature. A high activation indicates a strong presence of the concept at the current token position, while a low activation suggests the opposite.
+On the other hand, for model steering, we scale the conditioned latent conceptby a choosable factor.
+Furthermore, we skip the activation for this value, to avoid diminishing steerability, e.g. through ReLU.
+The activation vectorcan then be described as:
+
+The scaled latent vector is then decoded and added in exchange for the Feed Forward value of the transformer block, steering the output according to the trained concept and the scaling factor.
+
+SECTION: 3Experiments
+
+With the methodological details ofScarestablished, we now empirically demonstrate that the learned concepts are inspectable and steerable.
+
+Experimental details.For all experiments, we used Meta’s Llama3-8B-base[dubey_llama_2024]and extracted activationsafter the Feed Forward module of the-transformer block.
+After encoding, we set, which results in an approx.sparse representation of thedimensional vector.
+During training, we shuffle the extracted token-activations[bricken_towards_2023,lieberum_gemma_2024].
+More training details and technical ablations can be found in App.AandC.3.
+
+In our experiments, we trainScaron three different concepts using respective datasets.
+First, we considertoxicityand train on theRealToxicityPrompts(RTP)[gehman2020realtoxicityprompts]dataset with toxicity scoresprovided by the Perspective API[noauthor_perspective_nodate].
+For evaluating concept generalizability, we test on an additional toxicity dataset,ToxicChat(TC)[lin2023toxicchat], which is not used for training. This allows us to assess the robustness of the toxicity feature beyond the training data. TC has binary toxicity labels, which we extend, similar to RTP, with continuous toxicity labelsusing scores from the Perspective API.
+Second, we train on theAegisSafetyDataset(ASD)[ghosh2024aegis]to encodesafety.
+Here, we use binary labels based on the majority vote of the five provided labels, withfor safe andfor unsafe.
+Lastly, we evaluate the generalizability ofScarto concepts from different domains on the example ofShakespeareanwriting style.
+For writing style, we rely on theShakespeare(SP) dataset[jhamtani2017shakespearizing]which provides both the original Shakespearean text and its modern translation. In this setting, we setfor the Shakespearean text andfor the modern version.
+During training, we use oversampling to address label imbalances in the datasets.
+
+To compareScarwith current approaches, we also train an unconditioned model (i.e., droppingin Eq.6) for each of the datasets.
+
+SECTION: 3.1Scaris a secret concept detector
+
+We start by examining the inspectability of the conditioned feature, specifically whether it can serve as a detection module for the learned concept. For this, we compareScarwith the unconditioned SAE baseline. To identify the most relevant dimension in the unconditioned SAE for the desired feature, e.g. toxicity, we employ a binary tree classifier.
+The classifier is trained to minimize the Gini metric for classifying the corresponding test dataset. The root node represents the feature and corresponding splitting threshold that, when examined independently, produces the greatest reduction in the Gini metric (cf. App. Fig.4for tree stump examples). Therefore, the root node feature best characterizes the concept when using one feature to classify the input. ForScar, we manually inspect the root nodes to verify that the conditioned featureis indeed most relevant for the intended concept.
+
+The goal of this experiment is to assess the correlation between the feature value and the ground truth labels. With an ideal detector, feature values should increase monotonically asprogresses fromto.
+The results for all datasets are shown in Fig.2(a).
+For the first two datasets (RTP, TC), we have continuous labels, whereas the other two (ASD, SP) only have binary labels.
+Overall,Scar(red) exhibits good detection qualities, demonstrating a high correlation of the conditioned feature with the target concept. In other words, as the concept becomes more present in the input prompt, the feature activation increases consistently across all four datasets.
+In contrast, the unconditioned feature (blue) values changes only slightly, suggesting its lower effectiveness as a detection module. Additionally, theScarfeature trained on RTP generalizes well to the TC dataset, showing a similar correlation, while the unconditioned SAE again performs poorly.
+Lastly, the Shakespearean example (SP) further highlights that concept detection is more challenging with unconditioned SAEs, as the correlation is even inverse to the desired label.
+
+Next, we investigate the disentanglement of the learned concept.
+
+Let us consider a classification task where we want to perform binary classification of texts with respect to a certain concept.
+We use the tree classifiers from above on theScarand unconditioned SAEs for further analysis.
+Fig.2(b)shows the number of tree nodes needed to achieve a minimal F1 score ofusing the identified splitting threshold. Lower node counts correspond to better isolated and more interpretable features.Scarstrongly outperforms the unconditioned SAE across all datasets, requiring up tofewer nodes to achieve the same performance. Even on prompts from a different dataset (cf. TC) theScarfeature represents the concept well and in isolation.
+The reduction in needed nodes shows that ourScarfeature consolidates the information for the desired concept more efficiently.
+The unconditioned SAE needs significantly more nodes to describe the concept equally well.
+The improvement can largely be contributed to the expressiveness and disentanglement of theScarfeature.
+
+SECTION: 3.2Steering LLMs withScar
+
+After examining the detection abilities, we turn to steering an LLM using the learned concept. Specifically, we evaluate whether adjusting the value of the dedicated feature leads to corresponding changes in generated outputs. We use the example of toxicity for this purpose, assessing whether increasing the toxicity feature results in more toxic content and whether decreasing it reduces the toxicity of the output. Here, we compareScarto the Llama3 baseline without steering. ForScar, we apply steering factor(Eq.7) to increase/decrease the value of the conditioned feature in. We empirically set’s range to, as higher values push the generation out of distribution.
+To evaluate the toxicity of the generated continuations, we employ the Perspective API.
+
+In Tab.3(a), we depict some qualitative examples of leveragingScarto mitigate the generation of toxic content. Compared to the baseline Llama model, the steered outputs do not contain toxic language and are even more comprehensible.
+We provide additional empirical evidence of toxicity mitigation in Fig.3(b). We can observe significant increases and decreases in output toxicity, correlating with steering factor.
+While prior methods[turner_activation_2024]reduced toxicity by,Scarsubstantially outperforms those, achieving an average reduction ofand up tofor highly toxic prompts.
+
+Lastly, we want to ensure that the underlying performance of the model is not affected byScar, when detecting () or steering (otherwise).
+To that end, we performed standardized benchmark evaluations for various steering levels using the Eleuther AI evaluation harness[eval-harness].
+The results in Fig.3(c)demonstrate thatScarhas no significant impact on the model’s performance.
+In contrast, attempting to steer the model using the unconditioned SAE resulted in insensible outputs. The results of those evaluations can be found in App.C.2.
+
+SECTION: 4Conclusion
+
+We proposedScar, a conditioned approach offering better inspectability and steerability than current SAEs.
+Our experimental results demonstrate strong improvements over baseline approaches. Thus, eliminating the tedious search for concepts while remaining efficient and flexible.
+We successfully detected and reduced the generation of toxic content in a state-of-the-art LLM, contributing to safer generative AI.
+In a world where access and use of LLMs have become increasingly more common, it is important to further harden models against toxic, unsafe, or otherwise harmful behavior.
+
+We see multiple avenues for future work. AlthoughScarshows promising results for conditioning a single feature, it should be investigated whether multiple features can be simultaneously conditioned. Furthermore, future research should expand beyond the concepts studied in this work to explore the generalizability ofScarto inspect and steer LLMs.
+
+Societal Impact.Safety is a crucial concern in generative AI systems, which are now deeply embedded in our daily lives. WithScar, we introduce a method aimed at promoting the safe use of LLMs, whether by detecting or minimizing harmful output. However, whileScaris designed to reduce toxic language, it also has the potential to be misused, e.g. increase toxicity in LLM-generated content. We urge future research to be mindful of this risk and hope our work contributes to improving overall safety in AI systems.
+
+SECTION: 5Acknowledgements
+
+We acknowledge the research collaboration between TU Darmstadt and Aleph Alpha through Lab1141.
+We thank the hessian.AI Innovation Lab (funded by the Hessian Ministry for Digital Strategy and Innovation), the hessian.AISC Service Center (funded by the Federal Ministry of Education and Research, BMBF, grant No 01IS22091), and the German Research Center for AI (DFKI).
+Further, this work benefited from the ICT-48 Network of AI Research Excellence Center “TAILOR” (EU Horizon 2020, GA No 952215), the Hessian research priority program LOEWE within the project WhiteBox, the HMWK cluster projects “Adaptive Mind” and “Third Wave of AI”, and from the NHR4CES.
+
+SECTION: Appendix ATraining Details
+
+All models are trained forepochs on the entire dataset with a token-batchsize ofand a learning rate of.
+The SAE used for the main experiments consists of an input and output dimension ofand a latent dimension of, i.e., with a factorup-projection.
+The TopK valueused by these models is.
+See App.C.3for ablations on different latent dimension sizes, values for TopK, and block depth.
+
+For training and inference, we extracted the MLP output activations of the-block of Llama3-8B.
+At the beginning of each epoch, all activations for all tokens of the dataset are shuffled.
+
+SECTION: Appendix BFurther analysis ofScar
+
+Fig.4shows two examples of the binary decision trees used to find the toxic feature of unconditioned SAE and also the thresholds used for the classification tasks forScarand unconditioned SAE.
+In Fig.5(a)we can see the tree depths required to achieve an F1 score ofor higher.
+Lower depth is better.
+The extracted thresholds are then used to produce the evaluation results of Fig.5(b).
+Here, a higher score is better.
+
+SECTION: Appendix CFurther analysis of the steering capabilities
+
+SECTION: C.1Steering withScar.
+
+Here, we will look deeper into the steering capabilities ofScar.
+In Fig.6we additionally tested our model on Ethos[mollas2020ethos].
+Displayed are the mean toxicities and the percentages of unsafeness reported by Perspective API and Llama Guard[inan2023llama].
+However, it should be noted that Llama Guard is not a perfect measure because it detects whether the text is safe or unsafe instead of the level of toxicity.
+All three graphs exhibit an upward trend that aligns with the increasing scaling factor.
+Fig.7shows a more detailed view of the toxicity and unsafeness for different levels of prompt toxicity.
+Similarly to the previous graphs, we see an upward trend corresponding to the scaling factor.
+
+SECTION: C.2Steering with unconditioned SAE.
+
+To quantify our results for the steering capabilities ofScarwe performed the same experiments with the unconditioned SAE.
+Although the results in Fig.8(a)might seem promising in terms of toxicity reduction.
+If we take into account the results of the Eleuther AI evaluation harness in Fig.8(b), it is obvious that the quality of text generation experiences a massive drop for the steered versions.
+We performed a manual inspection of the prompt continuations and found that the reduction in toxicity is attributed to repetition of single characters, which are detected as non-toxic by the Perspective API but do not make sense as a continuation of the prompt.
+
+SECTION: C.3AblatingScar
+
+We ablate over three different hyperparameters: latent dimension, TopK, and block depth of the extracted activations.
+To assess how different model configurations perform, we evaluated how well detoxification withworks, seen in Fig.9(a)to9(c).
+Furthermore, we report the perplexity for thewikitext-103-raw-v1test dataset[merity2016pointer]to evaluate how text generation is affected by ablations, as seen in Fig.9(d)to9(f).
+When ablating over the different configurations, the parameters mentioned in App.Aremain fixed except for the ablated parameter.
+
+For the latent dimension sizes, we see that we have a slight decrease in toxicity with larger latent dimension sizes.
+However, the perplexity is the lowest for the smallest latent dimension size.
+The TopK valuesandprovide the largest reduction in toxicity.
+The perplexity decreases with increasing values for.
+The block depth provides a mixed picture in terms of toxicity reduction.
+In the perplexity evaluation, it is evident that SAEs trained on the latter block of the LLM achieve superior performance.
+
+SECTION: C.4Steered Examples

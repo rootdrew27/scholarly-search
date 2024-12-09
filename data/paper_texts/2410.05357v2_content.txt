@@ -1,0 +1,155 @@
+SECTION: Model-GLUE: Democratized LLM Scaling for A Large Model Zoo in the Wild
+
+As Large Language Models (LLMs) excel across tasks and specialized domains, scaling LLMs based on existing models has gained significant attention, which is challenged by potential performance drop when combining disparate models.
+Various techniques have been proposed to aggregate pre-trained LLMs, including model merging, Mixture-of-Experts, and stacking. Despite their merits, a comprehensive comparison and synergistic application of them to a diverse model zoo is yet to be adequately addressed.
+In light of this research gap, this paper introducesModel-GLUE, a holistic LLM scaling guideline.
+First, our work starts with a benchmarking of existing LLM scaling techniques, especially selective merging, and variants of mixture.
+Utilizing the insights from the benchmark results, we formulate a strategy for the selection and aggregation of a heterogeneous model zoo characterizing different architectures and initialization.
+Our methodology involves clustering mergeable models, selecting a merging strategy, and integrating model clusters through model-level mixture. Finally, evidenced by our experiments on a diverse Llama-2-based model zoo,Model-GLUEshows an average performance enhancement of 5.61%, achieved without additional training.
+Codes are available athttps://github.com/Model-GLUE/Model-GLUE.
+
+SECTION: 1Introduction
+
+Large Language Models (LLMs) have demonstrated unparalleled capability in a diverse array of natural language tasks, encompassing commonsense reasoning, question answering, and specialized domains such as mathematics and programmingOpenAI (2023); Rozière et al. (2023); Touvron et al. (2023). The effectiveness of LLMs is based on the scaling law, which posits that proportionally increasing model and training data size leads to enhanced model performanceKaplan et al. (2020). Nevertheless, the computation overhead and data requirement surge as LLM continues to scale. With the widespread of open-sourced general or specialized LLMs, aggregating existing models to construct a more versatile LLM emerges as an economical alternative to training a larger LLM from scratchDing et al. (2024); Goddard et al. (2024); Wan et al. (2024). This not only mitigates the computation cost but also leverages the collective advancements of previous efforts in building LLMs.
+
+Within different methods to combine existing LLMs, a major class is mergingAinsworth et al. (2022); Akiba et al. (2024); Ilharco et al. (2023); Jang et al. (2024); Matena and Raffel (2022); Wortsman et al. (2022); Yadav et al. (2023); Yu et al. (2024). Model merging combines multiple models into a single one of the same size through weight-space transformation.Wortsman et al. (2022)first propose to merge a few fine-tuned models as a training trick for the flat loss-landscape, andIlharco et al. (2023)extends it to multi-task scenario, both of which employ the simple averaging.
+Other works propose more complicated merging methods, leveraging weight sparsityYadav et al. (2023); Yu et al. (2024)and non-uniform coefficientAkiba et al. (2024); Matena and Raffel (2022). However, they assume that all candidate models are “useful” when merging. While this may hold for small-sized designed model collections, it may not be the case in real-world scenarios given a large and divergent model zoo.
+How to ensure the benefits of merging different model zoo sizes and similarities, and exclude “harmful” candidates, remains underexplored.
+
+Since merging is limited to the same model structures and initial weights, another alternative is Mixture-of-Experts (MoE)Goddard et al. (2024). MoE is a conditional computation architecture that activates only a subset of model parameters for each specific input exampleShazeer et al. (2017). MoE LLMs have already demonstrated performance and computational efficiency advantages over their dense counterpartsFedus et al. (2022); Jiang et al. (2024); Lepikhin et al. (2020); Zoph et al. (2022). In particular, we use a broader term “mixture” to denote the aggregation of existing expert LLMs according to the MoE paradigm, which has been successfully implemented in some recent practicesSukhbaatar et al. (2024); Wan et al. (2024); Wang et al. (2023a). However, these implementations neglect the inherent flexibility of MoE to integrate different expert models, especially those groups that do not work with merging. Also, the difference and possible synergy between merging and mixing have not been thoroughly investigated. Based on the above challenges, our primary research question is formulated as:
+
+(Q) Is it feasible to establish a benchmark for selecting and aggregating Large Language Models (LLMs) from an extensive and varied model zoo based on current state-of-the-art model merging and mixture, thereby enhancing the overall competence of the final model?
+
+To address (Q), we presentModel-GLUE, a comprehensive benchmark and set of guidelines for LLM scaling.Model-GLUEis the first work for LLM scaling encompassing a wide range of model group sizes and variability, with a principal emphasis on the merging and mixture methodologies, and also discussion of model stacking. We first delve into merging scheduling, analyzing strategies for identifying potentially detrimental model candidates and various merging techniques. We then explore a variety of model mixtures as an alternative to merging, covering different mixture granularity, routers architecture, routing input inputs,etc.Building upon the insights from model merging and mixture,Model-GLUEintroduces an efficient and robust LLM scaling recipe for a diverse set of models. It starts with model clustering and progressive merging, and then the mixture of all clusters, thereby integrating similar knowledge from the model zoo while highlighting the respective strengths of each cluster. Our contributions are outlined as follows:
+
+We conduct a comprehensive benchmarking analysis of LLM merging strategies, beginning with identifying each model’s contribution and then followed by filtering out detrimental candidates. Our findings are validated on a range of LLMs, from a few to over a dozen.
+
+We assess model mixture for four distinct variants: mixture level, router design, router input, and hybrid mixture. We have derived several principles for model mixture and discussed its utility as a solution for scaling models incompatible with merging.
+
+We introduce a recipe for progressively combining LLM models,Model-GLUE, based on findings on merging and mixture benchmarks. It first conducts selective merging and then model mixture, outperforming the best single model on general reasoning, mathematics, and coding tasks.
+
+Extensive experimental results on Llama-2-based models validate our proposal. For instance,Model-GLUEachieves an average increase ofacross chatting, mathematics, and coding benchmarks compared to the best single LLM.
+
+SECTION: 2Related Works
+
+Merging methods can be divided into zero-shot merging and merge-then-train approaches. Early zero-shot merging methods are weight averaging and Linear Mode ConnectivityNagarajan and Kolter (2021); Wortsman et al. (2022). Later popular methods include Task ArithmeticIlharco et al. (2023)manipulating task vectors, and TIESYadav et al. (2023)addressing parameter interference through trimming and conflict resolution. DAREYu et al. (2024)optimizes parameters selectively to enhance merging without extra training. Others focus on geometric properties of weights for mergingShoemake (1985); Jang et al. (2024). Recent Evolutionary Model MergeAkiba et al. (2024)improves weight configuration and data token pathways during inference.
+For the merge-then-train approach, Fisher mergingMatena and Raffel (2022)uses the Fisher information matrix to weigh model parameters to maximize their joint likelihood. RegMeanJin et al. (2023)adapts the linear merging to each linear layer while averaging embeddings and biases.
+However, both zero-shot and merge-then-train approaches are less effective for models initialized differently.Ainsworth et al. (2022); Imfeld et al. (2023); Verma and Elbayad (2024); Xu et al. (2024)exploit the permutation symmetry inherent in neural networks on small to large models.
+To boost merging efficiency, our focus on merging lies in the zero-shot merging of models with the same architecture and initialization.
+
+Mixture-of-Experts (MoE)Shazeer et al. (2017)scales up neural networks by utilizing router networks to activate different parts of the model for different input tokens. Its integration with Large Language Models (LLMs) has gained notable recognition for its exceptional generative capabilities and unparalleled efficiency. Recently, MixtralJiang et al. (2024)demonstrates that the MoE methodology can achieve the performance of dense LLM counterparts while employing significantly fewer active parameters. Model mixture combines a collection of dense LLM models, irrespective of their sizes, into a MoE model. Some studies discover model fusionWan et al. (2024); Wang et al. (2023a)integrating the outputs of expert models to exploit the unique insights into the data distribution. Recent initiatives include Branch-Train-MiXSukhbaatar et al. (2024), which starts with a seed-dense LLM and then branches out, facilitating the parallel training of expert models. These trained dense models are subsequently incorporated as experts within MoE layers, with other parameters being averaged. However, this approach is limited to dense models that share identical architectures and sizes. Most recently, UltraFuserDing et al. (2024)introduces a token-level soft gating mechanism that blends model outputs, with a two-stage training strategy.
+
+Model stacking concatenates two models along the depth dimension.
+In the era of LLM,Wu et al. (2024)reuses pre-trained LLaMA layers and resets the output projection to zero in stacking.Kim et al. (2023)shows dropping middle layers in stacking yields superior performance.Wang et al. (2023c)prove that stacking could help recover model-parameter scaling laws with insufficient data.Reddi et al. (2023)demonstrated that gradual stacking leads to significant improvements in wall-clock time during the training of few-shot learners. Theoretically,Agarwal et al. (2024)proved that model stacking could be interpreted as Nesterov acceleration in network optimization. However, all the aforementioned stacking methods involve no more than two kinds of models and primarily focus on the benefits of training acceleration.
+In this work, we explore the possibility of stacking two heterogeneous models to combine their capabilities.
+
+There have been several tools for model mixture and merging, and for scaling models using existing LLMs. For example, Mergekit is an open-source library designed to facilitate the application of model merging strategies and the construction of MoEGoddard et al. (2024). As a representative of unified LLM, Beyonder is a set of mixtures of merged and single LLMs for different tasks111https://huggingface.co/mlabonne/Beyonder-4x7B-v3. However, there is still a lack of a comprehensive benchmark of the various mixing and merging techniques and practical guidance on how to unify groups of LLMs at different levels of similarity.
+
+SECTION: 3Methodology
+
+SECTION: 3.1Preliminaries
+
+In this study, we consider a collection ofexisting Large Language Models (LLMs), denoted as, which have been fine-tuned on diverse corpora. Our objective is to outline a systematic approach towards producing one stronger aggregated model across all knowledge domains. Specifically, the unified LLM incorporates single LLMs mainly through merging and mixture.
+
+SECTION: 3.2Model Merging
+
+Model merging is integrating multiple models into one unified model in the weight space, compatible with LLMs of the same initializationGoddard et al. (2024).
+Popular merging methods can be divided into two types: ❶Merging entire model weightsrepresented by Model SoupWortsman et al. (2022)(Linear), SLERPShoemake (1985), and Model StockJang et al. (2024); ❷Task-vector based mergingrepresented by Task ArithmeticIlharco et al. (2023), TIESYadav et al. (2023), and DAREYu et al. (2024).
+The former method directly interpolates model weights, while the latter subtracts the pre-trained model from the fine-tuned model to obtain task vectors and utilizes sparsity and consistency of parameters for refined merging.
+The basic Linear interpolation merging is defined as, whereandare the corresponding model weights and merging coefficient of.
+
+Merging can be easily applied to models with the same architecture, but does not guarantee better results.
+Therefore, before searching for the merging coefficient, we first pre-process the models by clustering all the models using cosine similarity and then searching for the optimal merging coefficient and method within each cluster. Details are explained in AppendixA.5.
+
+The heuristic strategy is for searching and filtering potential harmful models for merging. It is based on greedy search, involving three variants: ❶Heuristic-Averageretain the candidate if there is an improvement on the proxy dataset in each round of merging.
+❷Heuristic-Coefficientbuilds uponHeuristic-Average, by combining the previously merged model with a new candidate using different coefficients in each round. ❸Heuristic-Similarityselects the candidate model with the highest or lowest similarity and conducts a coefficient search to combine it with the previously merged model. Detailed heuristic strategy algorithms can be found in AppendixA.1Heuristic strategies perform pairwise merging of models, while many methods allow for merging multiple models at once. Therefore, we also consider jointly optimizing all model coefficients using theEvolutionary Strategy.
+
+SECTION: 3.3Model Mixture
+
+Model mixture resembles Mixture-of-Experts(MoE). It scales a LLM with multiple pre-trained LLM experts and further extends beyond traditional token-dependent Feed-Forward-Network (FFN) MoE designsShazeer et al. (2017). A mixture model is composed of MoE modules and the rest shared parameters. A MoE module consists of a routerandexpert networks.takes a router inputand generate expert assignment for each token input. Then MoE outputs a weighted sum of experts’ outputs as. We experiment with several variations of Model Mixture, classified as follows:
+
+Traditional Mixture-of-expert models replace the dense FFN layer at each Transformer block with an MoE module, which is only compatible with LLMs that share the same architecture. Besides this ❶FFN level mixture, we also experiment with two coarse-grained mixtures. ❷Block level mixturecreate MoE module by aggregating Transformer blocks with the same index from each LLM as experts and add a block-wise router. Block level mixture is applicable to models with different architecture but the same embedding space, layer amounts, and intermediate dimension. ❸Model level mixturetake each LLM as an expert and use a router at mixture model input. Model level mixture covers any LLM groups not compatible with FFN and block level mixture. In particular, the model level mixture is similar but not identical to the model ensemble, as the former can be sparse and focus more on efficiency and exploit single LLM expertise, while the latter produces general results by averaging or majority voting overall model outputs. Details can be found in AppendixA.3
+
+The router network of many MoE studies adheres to a ❶linear routerShazeer et al. (2017). We experiment with another more complex ❷MLP routerto examine whether this router design leads to better performance. It is implemented by two sequential FFN and a ReLU function in between, inspired byShen et al. (2023); Liang et al. (2022). For the routing method, we employ Top-K selection to all routers, which activates the K experts corresponding to the K largest softmaxed router outputShazeer et al. (2017); Shen et al. (2023).
+
+We adopt two types of router input for different levels of model mixture: ❶ Token input for FFN level mixture, where router input is the same as model input; ❷ Sample input for block and model level mixture, where we calculate the average embedding as the sample input, and route tokens of a sample to the same expert based on sample routing. The sample routing avoids inconsistency in attention operation.
+
+To explore LLM scaling in between model merging and model mixture, we propose the hybrid mixture as an intermediate solution. In a hybrid mixture, the bottom few layers of all single LLMs are merged, and then the rest layers follow any of the mixture level designs.
+
+SECTION: 4Model Merging and Model Mixture for LLMs
+
+SECTION: 4.1Benchmark Datasets and Configs
+
+Table1provides an overview of the Model Zoo.
+For benchmarking model merging and mixture at different sizes of model zoo, we constructgroups of Llama-2-basedB chat LLMs where the number of models. In addition, to examine the difference in combining models from different domains, we introduceWhich4 (chat), consisting of four chat models, as a supplement setting where no single model has a superior advantage in a specific domain.
+
+After comparing the two ways of model scaling, we proposeModel-GLUEcombining selective merging and model mixture, which is tested on the largest model familyWhich16.Which16is developed onmergeable Llama-2-based models inWhich12, which additionally includes four highly performant domain-specific models that cannot be merged: three CodeLlama-based models, two of which are code models and one is a math model, and LLM360/CrystalChat.
+In particular, LLM360/CrystalChat use different architecture, initialization, and training data from Llama-2-based models, while CodeLlama series, initialized from Llama-2, adopt continuous pretraining rather than fine-tuning as models inWhich12.
+
+For merging benchmarks, we experiment with a larger model zoo, namelyWhich4,Which8, andWhich12with models filtered fromWhich16.
+For model mixture with higher computational cost, we experiment withWhich2andWhich4.
+
+We assess all models on three categories of benchmarks: (i) Commonsense reasoning using ARCClark et al. (2018), WinoGrandeSakaguchi et al. (2019), and MMLUHendrycks et al. (2020); (ii) Mathematics ability on GSM8KCobbe et al. (2021); (iii) Coding ability on MBPPAustin et al. (2021)and HumanEvalChen et al. (2021).
+The evaluation scripts are based on lm-eval222https://github.com/EleutherAI/lm-evaluation-harnessfor commonsense and mathematical reasoning and bigcode-eval333https://github.com/bigcode-project/bigcode-evaluation-harnessfor coding datasets. All benchmarks are under the MIT License.
+
+SECTION: 4.2Implementation Details for Merging
+
+Since the performance of merging model is not necessarily positive, we need a proxy dataset to determine whether to reject a particular round of merging in the Heuristic Strategy, or to compute the model fitness in the Evolutionary Strategy.
+(i) For MBPP, we select its validation set. (ii) For HumanEval, due to the unavailability of a validation set and its smaller size, we selectof the JavaScript version of HumanEvalPackMuennighoff et al. (2023). (iii) For other tasks, we chose the small-scale datasets released by tinybenchmarksPolo et al. (2024)under MIT License.
+
+The Merging Bench considersmodel zoos:Which4,Which8, andWhich16. We first cluster the model zoos based on cosine similarity with a threshold of. Due toWhich16contains models that cannot be merged, we choose the mergable family obtained through clustering which is referred to asWhich12.
+
+ForHeuristic Strategy, to reduce the search space, we only evaluated Linear interpolation and the range of coefficient search is. InHeuristic-Similarity, we use the average similarity of all weights as the criterion for selecting models in each round.
+ForEvolutionary Strategy, we refer to the setting of Evolutionary Model MergeAkiba et al. (2024), which utilizes the CMA-ESHansen (2006)algorithm implemented by OptunaAkiba et al. (2019). In contrast, all parameters are randomly initialized, and the fitness values are defined as the accuracy of the proxy dataset. The optimization was conducted for 200 trials in all scenarios.
+
+SECTION: 4.3Model Merging Benchmark Results
+
+We start our discussion by examining the effectiveness of existing approaches in depth. Despite existing merging methods focus on improving the merging techniques, their effectiveness is usually validated basedt on small-scale model zoos. For instance,Ilharco et al. (2023)primarily focuses on the linear interpolation between two fine-tuned models, whileAkiba et al. (2024)explores merging three.
+
+Current model practitioners typically download pre-trained models, fine-tune them on their own data or with unique techniques for specific downstream tasks, and then upload them back to the public. This practice results in a large number of open-source models being available, yet they remain underutilized by current merging methods.
+To this end, instead of solely discussing the merging technique, we explore anorthogonalquestion:Can we scale up the size of model zoo to cover more models, and design an automatic merging technique to benefit from the inclusion?
+
+To begin with, we provide a motivating example to show the failure case of the existing approach. We consider the three models, Llama-2-ChatTouvron et al. (2023), VicunaZheng et al. (2024)and CodeLlamaRozière et al. (2023), all initialized with the same base model, Llama-2Touvron et al. (2023). We merge Vicuna and CodeLlama with Llama-2-Chat, respectively, and report the evaluation results in Table14in AppendixB.2. We evaluaterepresentative merging techniques implemented inmergekitGoddard et al. (2024), including linear interpolationWortsman et al. (2022), SLERPShoemake (1985), Model StockJang et al. (2024), Task ArithmeticIlharco et al. (2023), DAREXu et al. (2024), and TIESYadav et al. (2023). By merging Llama-2-chat and Vicuna, the merged model achieves better performance compared to any single model, while merging Llama-2-chat and CodeLlama fails to outperform all single models and may even lead to a significant drop in performance, which is also mentioned byXu et al. (2024). The results indicate the potential severe performance drop when including un-mergeable new model in merging (e.g. CodeLlama). Even if it is obtained from the same pre-trained checkpoint. Such failure case motivates us to design the strategy to automatically select models for merging, and exclude the models that are unable to merge.
+
+In the following paragraphs, we explore several solutions tailored for large-scale model merging. These variations address different resource and speed requirements.
+The introduction of these methods is organized around answering the following key questions.
+
+In this section, we explore three potential heuristics for model selection and report the results in Figure4(a). We include the performance of the “best single model” (the model participant before merging that achieves the best averaged performance). We additionally validate the performance of heuristic-based merging technique, which are detailed in Section3.2. As indicated by the results, the merging technique based onHeuristic-Coefficientyields consistently superior performance when the model zoo is large.
+ForWhich4,Heuristic-Averageachieved better performance, whileHeuristic-Coefficientperformed poorly. This is primarily because the domain-specific models inWhich4exhibit similar performances and are indispensable.
+
+.
+
+We divide the problem into the following sub-questions:
+(i) Which merging method is most compatible with Evolutionary Strategy?
+(ii) Can finer-grained optimization lead to a better merged model?
+(iii) How to efficiently merge in a large model zoo?
+For (i),A: simpler methods such as Linear and Task Arithmetic are more competitive.We compared four methods: Linear, Task Arithmetic, DARE, and TIES. As shown in Figure4(b), Linear merging consistently achieves great results. However, when the parameters to be optimized are small, Task Arithmetic performs slightly better than Linear. Under a fixed computational budget, due to the doubling of parameters to be optimized, DARE and TIES exhibit slightly lower performance compared to other methods.
+For (ii),A: Yes, but we need a larger computational budget.We group adjacentdecoder layers together, where they share the same coefficients. The group size.
+When, better results were achieved compared to, as shown in Table17. However, as we further decreased the group size, the performance slightly declined. This could be attributed to our relatively small budget.
+For (iii),A: Use Heuristic Strategy to roughly search for coefficients and then fine-tune the coefficients using Evolutionary Strategy.As shown in Table18, the combination of the two strategies resulted in better results with fewer trials. For implementation details, please refer to AppendixA.2.
+
+SECTION: 4.4Implementation Details for Mixture
+
+In Mixture Bench, we experiment withWhich2andWhich4model settings.
+For router design, we mainly adopt a training-free linear layer router initialized from the prompt vector, as previous studies have demonstrated its effectiveness in the zero-shot MoE modelGoddard et al. (2024). For specific prompt settings, we refer to the Beyonder model series444https://huggingface.co/mlabonne/Beyonder-4x7B-v2. For the routing algorithm, we use Top-routing forWhich2andBlock level mixtureandModel-level mixtureforWhich4, and Top-forWhich4FFN level mixture.
+
+ForMLP routerthat are randomly initialized, we fine-tune the model by language modeling on the GPT4All datasetAnand et al. (2023), only updating the router. We use the GPT4AllAnand et al. (2023)dataset for post-mixture router training, which is under Apache 2.0 License. For all the router training experiments, we apply the batch size of, a cosine learning rate scheduler, the learning rate of, and the epochs of.
+
+To simplify the description, we use abbreviations to denote different mixture methods, as in Table2.
+
+SECTION: 4.5Model Mixture Benchmark Results
+
+In this section, we attempt to answer five main research questions about mixture variants: mixture level, router design, router input, and hybrid merging. We also explore the mixing of very different models that cannot be merged as the previous probe in our nextModel-GLUErecipe that combines merging and blending for LLM scaling.
+
+.
+
+A: Model level mixture is consistently better.Our comparative analysis of the {FFN, block, model} level mixture, all employing the linear router and the sample routing strategy as presented in Table3, consistently demonstrates the superiority of theModel level mixtureunderWhich2andWhich4setting. This could be attributed to the design thatModel Level Mixtureroute each sample to one expert model, thereby avoiding the conflicts between different expert models and maximizing the expertise of the most appropriate experts.
+Since the experts are not derived from the same pre-training process, directly merging their inconsistent representation spaces will affect the performance of the mixture model, with more expert parameters leading to worse results.
+This is especially evident forBlock-level Mixture, as the routing is performed at each transformer layer and the representation is fed into different expert blocks in series, causing confusion when switching between different expert knowledge.
+
+.
+
+A: Not necessary, as the linear router outperforms the MLP router.From Table4, the performances of thelinear routerwithout additional training slightly surpassMLP routermodels,i.e., F-L-T over F-M-T, B-L-S over B-M-S.
+Specifically,linear routermodels are better at math and coding datasets, validating prompt vector is effective in assorting samples from different domains, which is otherwise too implicit to learn via direct language modeling.
+
+.

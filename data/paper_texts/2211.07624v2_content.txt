@@ -1,0 +1,231 @@
+SECTION: Semantic Similarity Models for Depression Severity Estimation
+
+Depressive disorders constitute a severe public health issue worldwide. However, public health systems have limited capacity for case detection and diagnosis. In this regard, the widespread use of social media has opened up a way to access public information on a large scale. Computational methods can serve as support tools for rapid screening by exploiting this user-generated social media content. This paper presents an efficient semantic pipeline to study depression severity in individuals based on their social media writings. We select test user sentences for producing semantic rankings over an index of representative training sentences corresponding to depressive symptoms and severity levels. Then, we use the sentences from those results as evidence for predicting symptoms severity. For that, we explore different aggregation methods to answer one of four Beck Depression Inventory (BDI-II) options per symptom. We evaluate our methods on two Reddit-based benchmarks, achieving 30% improvement over state of the art in terms of measuring depression level111Implementation at(restricted for anonymity)..
+
+SECTION: 1Introduction
+
+Around two-thirds of all cases of depression remain undiagnosed according to conservative estimatesEpstein et al. (2010). To help with this problem, governments and agencies have launched programs to raise awareness of mental health in their citizensArango et al. (2018). In this context, detecting and receiving appropriate treatment in the early stages of these diseases is essential to reduce their impact and case escalationPicardi et al. (2016). However, the insufficient resources of the public health systems severely limit their capacity for case detection and diagnosis.
+
+As an alternative to public health systems, social platforms are a promising channel to assess risks in an unobtrusive mannerDe Choudhury et al. (2013), where people tend to consider these platforms as comfortable media to express their feelings and concernsChancellor and De Choudhury (2020). Exploiting this type of user-generated content, NLP techniques have shown promising results in terms of identifying depressive patterns and linguistic markersRíssola et al. (2021). Due to the growing popularity of the mental health detection models, the community also produced diverse datasetsYates et al. (2017); Cohan et al. (2018), with the Early Risk Prediction on the Internet (eRisk)Crestani et al. (2022), and the Computational Linguistics and Clinical Psychology (CLPsych)Zirikly et al. (2022)being the two most popular benchmarks in the field. They produce task definitions, datasets and evaluation methodologies to encourage research in this domain.
+
+Depression identification from social media posts faces challenges considering their integration into clinical settingsWalsh et al. (2020). Previous studies formulated this task as a binary classification problem (i.e., depressed vs control users)Ríssola et al. (2021). Despite achieving remarkable results under this setting, ignoring different levels of depression limits the capacity to prioritize users with higher risksNaseem et al. (2022). Moreover, most existing approaches focused on the use of engineered features, which may be more difficult to interpret than other clinical markers222An observable sign indicative of a depressive tendency., such as the integration of recognized depressive symptomsMowery et al. (2017). Similarly, the black-box nature of deep learning models also limits the ability to understand their decisions, especially by domain experts like clinicians.
+
+In this paper, we perform a fine-grained analysis of depression severity using semantic features to detect the presence of symptom markers. Our methods adhere to accepted clinical protocols by automatically completing the BDI-IIDozois et al. (1998), a questionnaire used to measure depression. The BDI-II includes 21 recognized symptoms, such as sadness, fatigue or sleep issues. Each symptom has four alternative responses scaled in severity from 0 to 3. Using a sentence-based pipeline, we build 21 different symptom-classifiers for estimating the user responses to the symptoms. For this purpose, we employ eRisk collections related to depression levelsLosada et al. (2019,2020); Parapar et al. (2021). In our pipeline, we explore selection algorithms to filter relevant sentences to each BDI-II symptom from training users. Once filtered, we index these training sentences with the user responses as labels (0 - 3) as examples of how people with different severity speak about the symptom. Then, to predict test users responses, we select their relevant sentences, which serve as queries to produce a semantic ranking over the indexed training sentences. Finally, we construct two aggregation methods based on the ranking results to estimate the symptoms severity.
+
+The main contributions of this work are:) We present a semantic retrieval pipeline to perform a fine-grained classification of the severity of depressive symptoms. Following the symptoms covered by the BDI-II, our methods also consider different depression severity levels, distinguishing between lower and higher risks.) We propose a data selection process using a range of unsupervised and semi-supervised selection strategies to filter relevant sentences for the symptoms.) Experiments using different variants of our pipeline achieved remarkable results in two eRisk collections, outperforming state of the art considering depression severity in both datasets.
+
+SECTION: 2Related Work
+
+Extensive research investigated the use of engineered features to identify linguistic markers and patterns related to mental disorders from different social platformsGaur et al. (2021); Coppersmith et al. (2014); Yates et al. (2017). For instance, the LIWC writing analysis toolPennebaker et al. (2003), equipped with psychological categories, revealed remarkable differences in writing style between depression and control groupsDe Choudhury et al. (2013). Other studies used depression and emotional lexicons to determine depression markersCacheda et al. (2019), whereasTrotzek et al. (2018)examined additional distinctive features, leveraging profile metadata (e.g. posting hours or posts length) and social activity to examine the mental state of individuals.
+
+The recent advances in contextualized embeddings significantly impacted many NLP-related tasks, including depression detection in social media. These deep learning models have consistently outperformed engineered features on diverse datasetsJiang et al. (2020); Nguyen et al. (2022). However, they lack the interpretability clinicians require to rely on the results from automated screening methodsAmini and Kosseim (2020). To enhance interpretability, the works proposed to theeRisk depression estimation shared taskbased their efforts on predicting BDI-II symptoms responsesUban and Rosso (2020); Spartalis et al. (2021); Basile et al. (2021). This study is directly related to eRisk, as we work with the eRisk collections and follow the same evaluation methodology. In contrast to these approaches, our methods highlight the user posts that lead to every symptom decision, which may be helpful for further inspection of model predictions.
+
+Besides the works presented to eRisk, two recent studies explored the use of depressive symptoms to screen social media posts.Zhang et al. (2022a)aggregated symptoms from different questionnaires into a BERT-base model to calculate symptom risk at post level.Nguyen et al. (2022)experimented with various methods using symptom markers to detect depression, demonstrating their potential to improve the generalization and interpretability of their approaches. In this case, authors considered the symptoms from the PH9Q questionnaireKroenke et al. (2001)to define manual pattern-based strategies and train symptom-classifiers at post level. Both approaches formulated their methods with a binary classification setting, while our approach considers different severity levels. We also differ in that we pre-compute dense representations of training posts, rather than relying on pre-trained language models, which may be slow for many practical casesReimers and Gurevych (2019). Our approach only needs a few post encodings and cosine similarity calculations, improving the efficiency of our solutions.
+
+SECTION: 3Method
+
+Problem definition:We aim to estimate the depression severity level for users based on the Writing History (WH) of their social media posts. We define depression severity levels following the clinical classification schema of the BDI-II scoreLasa et al. (2000). The score is the sum of the option responses to the 21 symptoms covered by this questionnaire, and it is associated with four depression levels. Table1shows these levels.
+
+Instead of relying on a unique classifier to calculate that score, we build 21 different symptom-classifiers (i.e., one for each symptom). For this purpose, we categorize the symptoms into one of its four response options. Therefore, we formulate each classifier as a multi-class classification problem. Table2provides an example of the option descriptions for the symptomLoss of energy. To estimate the depression level for a user, we aggregate the predicted responses of all the symptom-classifiers.
+
+Our approach relies on two critical components:a semantic retrieval pipeline (section3.1) andsilver sentences selection (section3.2). The symptom-classifiers follow a semantic retrieval pipeline to predict every symptom decision. This pipeline searches for semantic similarities over an index of silver sentences for a specific symptom, denoted as. These silver sentences are considered relevant to, and each one has a label corresponding to the symptom options333Throughout the rest of the paper, we will refer to these severity options as the labels of the symptoms.,. Formally,is the set containing the pairs of the silver sentencesand their corresponding labelfor the symptom, where, and.
+
+I have as much energy as ever
+
+I have less energy than I used to have
+
+I do not have enough energy to do very much
+
+I do not have enough energy to do anything
+
+To the best of our knowledge, there are no datasets in the literature where sentences are relevant to the symptom and labelled by their severity. For this reason, we propose a selection process to create the silver sentences,, where we use as training data the eRisk collections (section3.2). In our experiments, we explore the performance of the semantic pipeline with our generated silver sentences. However, we could apply this pipeline to any similar datasets. In the following subsections, we explain both components in detail.
+
+SECTION: 3.1Semantic Retrieval Pipeline
+
+Using the writing history from a test user as input, our semantic retrieval pipeline classifies its label severity for a specific symptom. From the publications of the test user, we first select the sentences that are relevant to, which will serve as queries. We denote these relevant sentences as the symptom test queries, where, since we select a topof them. In the next subsection, we explain our sentence selection algorithms (section3.2). The topof queries are the input to our semantic pipeline. Figure1illustrates this process, exemplified for one test query,, corresponding to the symptomLoss of energy:
+
+) The first step consists in calculating a semantic ranking for each test query for the symptom, defined as. To calculate that ranking, we encodeand all the silver sentences infor the symptom as embeddings. Then, we use k-Nearest Neighbours (kNN) to compute the semantic similarity of each silver sentence w.r.t the test query. The semantic similarityfor a silver sentence, belonging to, and a test query, is the cosine similarity between their embeddings ():
+
+Computing, we produce a ranking of silver sentences,, for each test query. The silver sentences in the ranking have an associated silver label. For example, the positionof the ranking contains the pair:, with. To select the cut-off of the rankings, we experimented with a varying number of similarity thresholds. To calculate the embeddings, we use a pre-trained model based on RoBERTa444huggingface.co/sentence-transformers/all-roberta-large-v1using sentence-transformers (SBERT).
+
+) In the second step, we apply aggregation methods to accumulate the score of the labels based on the ranking results. After processing all the test queries, the final decision predicted for the symptoms,, is the label with the highest accumulated score. We explore two aggregation methods:
+
+Accumulative Voting:For each ranking, we count the option labels from thepairs that are in the rank:. The label of each silver sentence,, represents a vote for that option. Then, return the sum of all the votes over the rankings. The final decision for the symptomis the label with most votes,, where:
+
+Accumulative Recall:For each ranking, compute the recall for each label. That is, the fraction of silver sentences in the ranking out of all the available silver sentences from that label, denoted as, where. Then, we accumulate the recall over the rankings. The final decision iswith:
+
+SECTION: 3.2Silver Sentences Selection
+
+We design a process to select relevant sentences for each symptom, and the severity labels(previously denoted as), defined as silver sentences. For this purpose, we use the eRisk collections as training data. These collections contain users from the Reddit platform, and have two main elements:) the user responses to the BDI-II symptoms and) their posts from Reddit. We use the option responses from the users as the severity labels for each symptom (). Therefore, the training labels are initially available at user level. Details of eRisk datasets are provided in Section4.1.
+
+Figure2illustrates the sentence selection process for one training user and three symptoms.In the first step, we propagate the user responses as labels for all the sentences from its writing history, resulting in weakly labelled sentences. For example, in the second component of Figure2, the user replied with the optionfor the symptomLoss of energy(first column). Thus, all the sentences from the user have that weak label assigned. However, since users tend to talk about different topics, most of their sentences are not relevant to any symptom. For this reason, the weak labels contain many false positives that introduce noise.To reduce this noise, we propose two distant supervision strategies for sentence selection. These strategies aim to filter out the training sentences that may be non-informative w.r.t the assigned weak label. We implement two different strategies:
+
+Option descriptions as queries:This strategy works in an unsupervised manner, since we consider the option descriptions from the symptoms as queries to select the silver sentences. Table2shows an example of the descriptions for the symptomLoss of energy. We use each option description as one different query. Based on the sentences retrieved from these queries, we select a top of sentences from the eRisk training users who answered the same option used as the query. Following this approach, we perform lexical and semantic retrieval variants. For lexical search, we use BM25Robertson et al. (1995)to retrieve relevant sentences for each training user. In the semantic variant, we calculate the similarity based on a semantic threshold, as described in the semantic ranking (section3.1), using the same RoBERTa model for the semantic search.
+
+Few manually labelled sentences as queries:A drawback in using the option descriptions of the BDI-II symptoms as queries is that they only have subtle differences among one another. Consequently, previous queries struggle to capture their actual distinctions. To alleviate this problem, we hypothesize that using actual sentences from eRisk training users who answered each option may be better to differentiate between such options. In this second strategy, a small set of manually labelled sentences, referred to asgolden sentences, serve as queries to generate an augmented silver set. The use of a larger, higher-quality set of queries allows us to cover more diverse expressions of symptom signals.
+
+We used the eRisk2019 training users to obtain the golden sentences. Following the approach byKarisani and Agichtein (2018), three experts in the field conducted the annotation process. The number of golden sentences was low, averaging 35 per symptom. The data augmentation process consisted of, for every golden sentence belonging to a specific option, following the semantic ranking (section3.1) over the rest of the weakly-labelled sentences from that same option. The final set of relevant sentences combines the golden and the silver sentences that surpass the similarity threshold. Table3shows an example of a golden sentence along with the topaugmented silver sentences. The golden sentence corresponds to the optionfor the symptomPessimism in the future, and the augmented silver sentences correspond to other training users who reported the same option555Information about the dataset construction and the annotation process can be found in AppendixA..
+
+(Option 3)I’m a stupid student with no intelligence/future.
+
+I know I’ll never be like that; I’ll be a stupid failure my entire life.Used to be a stellar student, but I’m scared of opinions now that I received a C in a class.It’s actually starting to irritate me, and I’m starting to feel stupid.
+
+SECTION: 4Experimental Settings
+
+We evaluate the performance of our methods in the eRisk2020 and 2021 collections. In eRisk2020, we use 2019 as training data. In eRisk2021, we use the 2019 and 2020 collections as training. The competing methods used the same collection splits, while some of them also considered external datasets (section4.2). In our experiments, we study the two components of our approach:) the performance of the semantic retrieval pipeline (section3.1) and) the effectiveness of the sentence selection strategies (section3.2). For this reason, our methods consist of combinations of these components.
+We consider three hyperparameters:The valueof the number of test queries,.The semantic threshold to select the cut-off of the rankings,.The number of silver sentences to generate the silver dataset,. The specific hyperparameters and the tuning process are described in AppendixB.
+
+SECTION: 4.1Datasets
+
+The collections selected for experiments correspond to the data delivered for theeRisk depression severity estimation taskin 2019, 2020 and 2021 editionsLosada et al. (2019,2020); Parapar et al. (2021). We rely on these collections as they are adopted as the benchmark for this task and contain real answers from Reddit users to the BDI-II. Table5summarizes the main statistics of these datasets.
+
+SECTION: 4.2Evaluation
+
+Evaluation Metrics. We use the official metrics proposed in the eRisk benchmarkLosada et al. (2019)to keep a fair comparison against the competing methods. These metrics assess the quality of a questionnaire estimated by a system compared to the real one reported by the user. They include two evaluations:At questionnaire level, the Depression Category Hit Rate (DCHR) computes the percentage of depressive levels correctly estimated, and the Difference Between Overall Depression Levels (ADODL) computes the overall estimations of the BDI-II score.On the other hand, The Average Hit Rate (AHR) and Average Closeness Rate (ACR) assess the results at symptom level. Apart from the eRisk evaluation, we include one additional error metric: the Root-Mean-Square Error (RMSE)Chai and Draxler (2014)to compare the models predictions of the BDI-II score. Thus, the lower the value reported by RMSE, the lower the difference between predictions and real scores are.
+
+Competing Methods.We consider the best prior works for each metric for the eRisk2020/2021 collections. We refer the reader to the corresponding shared task surveys for a detailed analysisLosada et al. (2020); Parapar et al. (2021). In eRisk2020, BioInfoTrifan et al. (2020)and RelaiMaupomé et al. (2020)methods obtained their own datasets to perform standard ML classifiers using engineered features as linguistic markers. Other deep learning approaches, such as ILabCastaño et al. (2020)and UPVUban and Rosso (2020), focused their efforts on the use of large language models (LLMs) explicitly trained for depression severity estimation. Finally, a recent work byPérez et al. (2022)(Sense2vec) designed different word embedding models for each of the symptoms and achieved state-of-the-art results in this dataset. In eRisk2021, SymantoBasile et al. (2021)team trained a neural model with additional data annotated by psychologists and combined it with a set of engineered features, whereasWu and Qiu (2021)(CYUT) experimented with different RoBERTa classifiers. Similar to our work,Spartalis et al. (2021)(DUTH) used semantic features with sentence transformers to extract one dense representation per user, which is then fed as input, experimenting with various classifiers. Although insightful, eRisk approaches cannot evidence the sentences that lead to symptom decisions.
+
+SECTION: 5Results and Discussion
+
+Table4compares the results of all the variants of our approach against the competing methods. These variants are the combination of our two aggregation methods (Accum VotingandAccum Recall) and the sentences selection strategies (BM25,SBERTand the augmented dataset,Aug Dataset). The comparison is based on the use of questionnaire and symptom level metrics (section4.2).
+
+Questionnaire level:Our approach achieves the best DCHR, which considers the percentage of times that the system estimates the severity level of the users correctly. Most of our variants outperform all prior work in this metric, with theAccum Recall-Aug Datasetcorrectly estimating at least 50% of the depression levels for both collections. In more detail, it improvesandpoints over the best previous results for eRisk2020 and 2021, respectively. A similar phenomenon occurs in the rest of the questionnaire metrics. In the error metric, RMSE, our results also show less estimation error in the BDI-II score.
+
+Symptom level: Although in eRisk2020, our AHR figures are close to the best baselines, that is not the case in 2021. AHR computes the ratio of option responses estimated correctly. The explanation is that we tuned the model hyperparameters for the DCHR metric since clinicians believe that assessing overall depression levels is more valuable than focusing on specific symptomsRichter et al. (1998). Tuning for AHR may produce worse overall results because the model could be failing to a greater amount in the non-correct answers, resulting in higher overall error. To illustrate that effect, we produced an oracle to obtain the best hyperparameters for each symptom-classifier, maximizing AHR using theAccum Voting-SBERTvariant. With this oracle, we achieved an AHR of 41.77 and 37.32 for eRisk2020 and 2021, which improves all baselines. However, the oracle obtained worse results in DCHR (24.29 and 36.25). This is because tuning each individual symptom-classifier would require much more training data. We may improve the results for some symptoms with enough data but produce predictions with higher errors (e.g., 0 vs 3) for symptoms with few training samples.
+
+Finally, with respect to the sentence selection strategies, we can observe that using the options descriptions as queries (BM25andSBERT) performs worse than the augmented dataset (Aug Dataset). This emphasizes the importance of a precise candidate selection. Moreover, despite the distribution of depression levels varies in both collections (see Table5), our methods show robustness as we keep achieving good performance in DCHR.
+
+SECTION: 5.1Effect of Data Augmentation Strategy
+
+To better understand the performance of the data augmentation, we report the number of augmented silver sentences along with the F1 metric for each depression level. TableLABEL:tab:exp-augmented-sentences-and-f1shows the F1 results of our best variant using the augmented dataset,Accum Recall-Aug Dataset, in eRisk2020 and 2021. Looking at the statistics, we see more presence in golden sentences of high-risk levels (moderate and severe). In addition, the number of silver sentences augmented for each of them is also higher. For example, using eRisk2019 as the training set, an average of three silver sentences were augmented from each golden one in the minimal level (). In contrast, the average of silver sentences augmented from the severe category is 7 (). This suggests that users with higher depressive levels tend to manifest more explicit thoughts related to the symptoms. As a result, our augmentation method finds pieces of evidence in these levels easier.
+
+Sleep problems
+
+My sleep cycle consists of staying awake for 48 hours until I can’t keep my eyes open.Same as you, I usually can’t go back to sleep once I’m awake.I went through a phase where I slept for up to 16 hours (usually partially waking up).
+
+Loss of pleasure
+
+Look, no matter how hard you try, things don’t get any better from here.I don’t even enjoy simple things like food that I used to enjoy; there are just foods that I dislike less.Why am I not supposed to enjoy life?
+
+My\tcboxsleep cycle consists of\tcboxstaying awake for 48 hours until I can’t keep my eyes open.
+
+(Option 2)Always had\tcboxtrouble sleeping, no big deal but it’s gotten worse in the last two months.(Option 2)I have to get up early to get to university, and I’ve recently been getting\tcboxno more than 3-4 hours of sleep.
+
+Look, no matter how hard you try,\tcboxthings dont get any better from here.
+
+(Option 3)Hoping for a "better thing"\tcboxnever makes me feel better unless it comes from this sub because I know people get it.(Option 3)\tcboxThings stop being enjoyable, and everything becomes a chore.
+
+If we observe the F1 results in TableLABEL:tab:exp-augmented-sentences-and-f1, we also see considerable variability among depressive levels. In both collections, we achieve better results for higher risk categories. This seems to be related to the number of golden sentences. Therefore, if we obtain more samples belonging to the lower risk levels, there may be an improvement in these categories. Finally, we examine our results with a binary classification setting. For this purpose, we categorize the four depression levels into only two:)low risk(minimal + mild levels) and)high risk(moderate + severe levels). TableLABEL:tab:exp-f1-as-binary-classificationshows the results for theAccum Recall-Aug Datasetvariant along with the best prior work under this setting. Our results suggest the effectiveness of our method, which distinguishes with fair accuracy between higher and lower risks.
+
+SECTION: 5.2Interpretability - Case Study
+
+The lack of reliable clinical markers is one of the barriers to the practical use of mental health prediction modelsWalsh et al. (2020); Amini and Kosseim (2020). By considering a more refined grain in the symptom presence, we provide valuable information that may be strong clinical markers. Table6showcases how our approach offers interpretability of the symptom decisions, showing three query sentences from an anonymized test user. The symptoms in the Table areSleep problemsandLoss of pleasure, and the user declared the optionandfor them, respectively. We can see that these test queries are robust indicators of symptom concerns. Following this approach, clinicians may inspect sentences as a first step towards further diagnosis or monitoring methods during treatment.
+
+In addition, Table7displays some of the silver sentences retrieved for the same test queries selected from the anonymized user. The silver sentences are related to the content of the query, and clinicians may evaluate the justifications for every symptom decision by reviewing their labels. Moreover, in our method, false positive/negative predictions can still be helpful for future inspection. For example, for the symptomSleep problems, the test user reported the option, but our method retrieved more silver sentences with the option. While the prediction may be incorrect (golden labelpredicted label (2)), the risk may still be present.
+
+SECTION: 6Conclusions
+
+We present an effective semantic pipeline to estimate depression severity in individuals from their social media data. We address this challenge as a multi-class classification task, where we distinguish between depression severity levels. The proposed methods base their decisions on the presence of clinical symptoms collected by the BDI-II questionnaire. With this aim, we introduce two data selection strategies to screen out candidate sentences, both unsupervised and semi-supervised. For the latter, we also propose an annotation schema to obtain relevant training samples. Our approaches achieve state-of-the-art performance in two different Reddit benchmark collections in terms of measuring the depression level of individuals. Additionally, we illustrate how our semantic retrieval pipeline provides strong interpretability of the symptom decisions, highlighting the most relevant sentences by semantic similarities.
+
+SECTION: 7Ethical Statement
+
+The collections used in this work are publicly available following the data usage policies. They were collected in a manner that falls under the exempt status outlined in Title 45 CFR §46.104. Exempt research includes research involving the collection or study of existing data, documents, records, or specimens if these sources are publicly available or if the information is recorded by the investigator in such a manner that subjects cannot be identified. We adhered to the corresponding policies and took measures to ensure that personal information could not be identified from the data. The data is available by filling a user agreement according to the eRisk shared task policies666https://erisk.irlab.org/2021/eRisk2021.html. In this context, all users have an anonymous state. We paraphrased the reproduced writings to preserve their privacy.
+
+In terms of impact in real-world settings, there is still work to be done to produce effective depression screening tools. The development of such technologies should be approached with caution to ensure that their use is ethical and respects patient privacy and autonomy. Our work aims to supplement the efforts of health professionals rather than replace them. We acknowledge the validation gap between mental health detection models and their clinical applicability. Our goal is to develop automated technologies that can complement current online screening approaches. To ensure safe implementation and as future work, we collaborate with clinicians to validate and obtain a more in-depth analysis of the limitations of these systems.
+
+We took several measures to ensure the objectivity and reliability of our annotations, including providing the same guidelines to all annotators and using a majority vote system to resolve any disagreements. While one of the annotators is also an author of this study, we want to emphasize that they were not given any preferential treatment or guidelines that differed from the other annotators. Moreover, the high agreement percentage among the three annotators (as reported in our study) further supports the reliability and objectivity of our process. Overall, our annotation process was conducted objectively and reliably and the potential for bias was minimized to the greatest extent possible.
+
+Despite being experts in the field, we recognize that annotating depressive symptoms may have an impact on annotators. We provided them with the necessary breaks and did not subject them to any time constraints. Annotators did not report any negative effects after their work. In addition, they were not biased in scoring a higher or lower number of positive sentences.
+
+We recognize that the application of NLP models in real-world scenarios requires careful consideration and analysis due to potential risks and limitations. These models should not be immediately deployed as decision support systems without further studies, including participant recruitment, trials, and regulatory approval. To address potential risks, we consulted with clinical experts to validate the possible dual-use risks before conducting this work and involved them in designing annotation guidelines and all stages of the study. One of the main risks associated with such systems is their performance, as they may produce false positive/negative cases. However, it is important to note that diagnostic discrepancies and their risks associated are common in the clinical settingRegier et al. (2013).
+
+Therefore, our system is intended to be used in conjunction with health professionals to obtain a more accurate diagnosis. The final decision must always be supported by the validation of a health professional. Our study highlights the potential of NLP-based approaches in assisting clinicians with diagnosis, but further research and testing are needed before it can be considered for clinical deployment.
+
+SECTION: 8Limitations
+
+We recognize that the performance of our solutions is far from ideal to be integrated directly in clinical settings. Moreover, it lacks external validityErnala et al. (2019), as they were never tested in real clinical scenarios. The dataset used in this study (corresponding to the eRisk collections) has a limited size (170 users in total) and diversity, since it only covers one social platform, Reddit. This is partly due to the protection necessary for securing sensitive data related to mental healthHarrigian et al. (2020). We chose the BDI-II questionnaire for our study because it is the only questionnaire with an available dataset that contains both (1) user responses on each symptom and (2) their writing history on social media (Reddit, in this case). Other questionnaires in clinical practice are also widely used (CES-D, GDS, HADS, and PHQ-9). However, we do not have a dataset containing the respondents’ answers to the symptoms. As future work, we will work on extending this same pipeline to other related questionnaires.
+
+We are also aware that social media platforms provide an imperfect representation of the population, which is a clear limitation that must be accounted for when using these approaches for public health screening. For this reason, our methods are likely to be modified when other data sources (i.e., other social platforms) are considered. Moreover, when processing data from different clinical contexts (e.g., clinical records), the models may generalize inadequatelyHarrigian et al. (2020). Another limitation of our work is the low performance of the symptom evaluation compared with the questionnaire level (related to depression severity levels). As we previously commented, we did not focus our efforts on tuning individual symptom-classifiers but rather to use them as a proxy to estimate depression levels, since we do not have enough training data for most of the symptoms. We also believe that certain errors in these symptom estimations may be due to a lack of awareness of the individual or stigmas associated with the different symptoms.
+
+Despite the gap between mental health prediction models and actual clinical practice, many recent studiesZhang et al. (2022b,a); Yates et al. (2017); Pérez et al. (2022)investigated approaches to identifying and detecting depression using reliable clinical markers. We can also see other studies that adhered to clinical questionnaires to investigate other related features such as personality detectionYang et al. (2021). These studies seek to propose solutions that can be a proxy between health professionals and NLP methods. Our study aims to contribute to this area of research and advance the development of reliable solutions for health professionals.
+
+SECTION: References
+
+SECTION: Appendix AManual Dataset and Annotation Process
+
+This section describes the construction and annotation schema of our manual dataset. The main idea of this dataset is to obtain a few representative samples that indicate the presence of BDI-II depressive symptoms. For this reason, we develop an annotation schema based on the BDI-II questionnaireLasa et al. (2000)to collect a different set of golden sentences belonging to each BDI-II symptom. For each symptom, and the corresponding options, where, we collect a different set of golden sentences, denoted as.
+
+To annotate the golden sentences, we used as data source the training users from the eRisk2019 collection of depression severityLosada et al. (2019). However, the large size of the eRisk collection requires an exhaustive filter for reasonable annotation efforts. For this purpose, we leveraged the data selection strategy of using the option descriptions as queries (section3.2). In particular, we applied the semantic retrieval variant (SBERT). Using this strategy, we selected candidate sentences for annotating each BDI-II symptom. We have considered this strategy following a recent study that has shown great results in identifying diverse expressions of symptoms for candidate retrieval annotationZhang et al. (2022b). Previous studies on symptom annotationZhang et al. (2022b)demonstrated a high variance in the distribution of each symptom. For some of them, it is much easier to find representative sentences than for others. To keep the number of annotations per symptom stable, we fixed a similarity threshold ofto filter out sentences. However, this similarity threshold still produced too many candidate sentences for some symptoms. For this reason, we further restricted the annotator’s work to the firstsentences in the symptoms with too many candidates.
+
+More specifically, 17.15% of the candidate sentences have been labelled positive following the semantic retrieval strategy from the total of 5004 candidates. From the same labelled sentences, using keyword matching with BM25 reduced this percentage to 4%. With a random retrieval strategy, it dropped to 0.01% due to the small number of relevant sentences compared to the size of the entire pool. These findings align with previous research indicating that pattern matching is not effective in retrieving diverse sentences relevant to depressive symptomsMowery et al. (2017). Instead, a semantic similarity-based strategy is better suited to retrieve representative sentences without relying on specific keywords covered in the clinical questionnaires.
+
+Following the above candidate annotation schema, we constructed a small dataset for all the BDI-II symptoms. The annotation task was carried out by two psychologists and two PhD students with knowledge in the field. Before the annotation process, we removed all supplementary metadata to avoid bias in the annotators, such as the severity option label () of the user who wrote the sentence. We followed the same annotation procedure asKarisani and Agichtein (2018)to validate the annotation outcomes. This procedure consisted of two phases:First, an initial annotator answered the following question in a binary setting (Positive/Negative):Does the sentence refer to the symptom, and the user talks about himself/herself (first person)?. This first annotator labelled a total ofpositive sentences from the candidate sentences. We considered all the sentences annotated as positive for each symptom to obtain our final labels corresponding to the option levels (). Subsequently, we label these positive sentences with the severity option reported by the user who wrote them. Therefore, for each optionand symptom, we obtained a different set of golden labels,, where the sentences come from the eRisk users that answered the BDI-II symptoms.
+
+Once we had the previous initial annotated sentences, the rest of the annotators validated them. For this purpose, they were provided with a subset containing a random sample of the 20% of the sentences of each symptom for re-annotation. Since in our pilot experiments, we found much more disagreement with positive labels, the 20% random sample only contained positive ones. The re-annotation process obtained an 82.44% among the three annotators, which is an acceptable number considering the sensitivity of this topicCoppersmith et al. (2018).
+
+Table8and9show the main statistics of our manual dataset. Visualizing these tables, we can extract several findings. We note that, for all the symptoms, the number of sentences associated with the optionis very low. In some symptoms, even none of the sentences corresponded to option 0. This suggests retrieving sentences representing positive feelings towards the symptom is more complicated. We attribute this fact to two main reasons, () the descriptions of BDI-II optionsare not entirely appropriate for the candidate retrieval process (most of them are just negations of a negative feeling), and () users are not as likely to talk about positive as they do with negative feelings. To address this, for the symptoms that lacked sentences with option 0, we manually included between 1 and 3 sentences that provide a positive description of the symptom and labelled them with option 0.
+
+Finally, the statistics also show that, despite our efforts, there is a clear imbalance in the number of sentences for each symptom and their options. Further details on the dataset will be described with its public release. The dataset will be made available under a research data agreement in accordance with eRisk policies.
+
+Sadness
+
+Pessimism
+
+Sense of Failure
+
+Loss of Pleasure
+
+Guilty Feelings
+
+Punishment
+
+Self-dislike
+
+Self-incrimination
+
+Suicidal Ideas
+
+Crying
+
+Agitation
+
+Social withdrawal
+
+Indecision
+
+Worthlesness
+
+Loss of energy
+
+Sleep changes
+
+Irritability
+
+Changes in appetite
+
+Concentration difficulty
+
+Tiredness/Fatigue
+
+Low libido
+
+SECTION: Appendix BDetailed Experimental Settings
+
+We experimented with different hyperparameters to validate the results from our two main components: the semantic retrieval pipeline (section3.1) and the sentence selection process (section3.2). As we do not have a validation set, we performed leave-one-out cross-validation using the training set available to calculate the optimal values of all hyperparameters. The metric maximized wasDCHR. When evaluating our methods in eRisk2020, the training set was the eRisk2019 dataset. When using as test collection the eRisk2021 dataset, the training set was the eRisk2019 and 2020 collections. Table10presents the hyperparameters and the optimal values for each method used in our experiments777We want to note that the tuning of hyperparameters in our method did not result in significant changes to its performance. We thoroughly analysed the impact of hyperparameters on our results and found that the changes were not significant enough to include another section int he article..
+
+Semantic retrieval pipeline (section3.1). In the semantic pipeline, we experimented with two hyperparameters:
+
+The valueof the number of test queries.We explored with selecting a different number of topvalues of the user test queries,. To select these test queries, we used the data selection strategies of using the option descriptions as queries (section3.2). Using BM25, thevalues explored were:. We also experimented with the samevalues using the semantic variant. However, we did not include those results in the paper as they could not improve the use of BM25.
+
+The semantic threshold to select the cut-off of the rankings,. We experimented with different semantic thresholds to select the cut-off of the ranking of silver sentences,.
+This semantic threshold, calculated as the cosine similarity, was explored with the next values:. The higher the cosine similarity, the lower the number of silver sentences retrieved by the semantic ranking obtained by the test queries.
+
+Silver sentences selection (section3.2). Additionally, we also experimented with a filtering hyperparameter for creating more or less restrictive filters when generating the silver dataset, denoted asselection threshold. Depending on the selection strategy (BM25, SBERT or Aug Dataset), we used the next sentence selection hyperparameters:
+
+The number of silver sentences to generate the silver dataset,. Using BM25, we explored with two different topvalues,for retrieving the sentences of each training user. In the case of semantic retrieval (SBERT), we explored with the same semantic similarity thresholds as in the semantic ranking:. Higher cosine similarity implies more restrictions, so the number of silver sentences generated will be lower. Finally, the semantic threshold values explored with the augmented dataset were the same.
+
+With respect to the sentence transformers modelsReimers and Gurevych (2019), we experimented with different pre-trained models:msmarco-bert-base-dot-v5888https://huggingface.co/sentence-transformers/msmarco-bert-base-dot-v5, msmarco-distilbert-cos-v5999https://huggingface.co/sentence-transformers/msmarco-distilbert-cos-v5, all-roberta-large-v1101010https://huggingface.co/sentence-transformers/all-roberta-large-v1and stsb-roberta-large111111https://huggingface.co/cross-encoder/stsb-roberta-largevia the huggingface transformers library. All these models were fine-tuned on diverse semantic similarity datasets. In pilot experiments, the best results were obtained with the modelall-roberta-large-v1. Thus, all our reported results correspond to the use of that model.
+
+HTML conversions sometimes display errors due to content that did not convert correctly from the source. This paper uses the following packages that are not yet supported by the HTML conversion tool. Feedback on these issues are not necessary; they are known and are being worked on.
+
+Authors: achieve the best HTML results from your LaTeX submissions by selecting from this list ofsupported packages.

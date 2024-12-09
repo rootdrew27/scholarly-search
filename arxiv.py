@@ -285,11 +285,10 @@ def process_multiple_search_terms(
 if __name__ == "__main__":
     # Example usage
     search_terms = [
-        'ti:"machine learning"',
-        'ti:"transformers"',
-        'ti:"vision transformers"',
-        'ti:"deep learning"',
-        'ti:"embeddings"'
+        'ti:"Llama"',
+        'ti:"GPT"',
+        'ti:"autoencoder"',
+        'ti:"semantic similarity"',
     ]
     
     results = process_multiple_search_terms(

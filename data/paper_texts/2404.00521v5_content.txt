@@ -1,0 +1,383 @@
+SECTION: CHAIN: Enhancing Generalization in Data-Efficient GANs via lipsCHitz continuity constrAInedNormalization
+
+Generative Adversarial Networks (GANs) significantly advanced image generation but their performance heavily depends on abundant training data. In scenarios with limited data, GANs often struggle with discriminator overfitting and unstable training. Batch Normalization (BN), despite being known for enhancing generalization and training stability, has rarely been used in the discriminator of Data-Efficient GANs. Our work addresses this gap by identifying a critical flaw in BN: the tendency for gradient explosion during the centering and scaling steps. To tackle this issue, we present CHAIN (lipsCHitz continuity constrAIned Normalization), which replaces the conventional centering step with zero-mean regularization and integrates a Lipschitz continuity constraint in the scaling step. CHAIN further enhances GAN training by adaptively interpolating the normalized and unnormalized features, effectively avoiding discriminator overfitting. Our theoretical analyses firmly establishes CHAIN’s effectiveness in reducing gradients in latent features and weights, improving stability and generalization in GAN training. Empirical evidence supports our theory. CHAIN achieves state-of-the-art results in data-limited scenarios on CIFAR-10/100, ImageNet, five low-shot and seven high-resolution few-shot image datasets. Code:https://github.com/MaxwellYaoNi/CHAIN.
+
+SECTION: 1Introduction
+
+The availability of abundant data, exemplified by ImageNet[19], has driven breakthroughs in deep neural networks[52], particularly in generative models. This data richness has fueled innovations such as Generative Adversarial Networks (GANs)[23], popular in academia and industry. GANs, known for their rapid generation speeds[82]and high-fidelity image synthesis[81], have become go-to tools for applications such as text-to-image generation[82,35,94], image-to-image translation[76,45,73,87], video synthesis[103,110,86]and 3D generation[124,92,114].
+
+Despite the advanced capabilities of modern GANs[8,40,41]in creating high-fidelity images, their success largely depends on access to extensive training data. However, in scenarios with limited data, such as medical[43]or art images[42,46], where data acquisition is expensive and privacy concerns are paramount, GANs face issues such as discriminator overfitting and unstable training[39,120,97].
+
+To overcome these obstacles, three main directions stand out. The first leverages massive data augmentation (“MA”), aimed at broadening the available data distribution[33,39,120,29,55,108,113]. The second strategy borrows knowledge from models trained on large datasets[15,122,48,102]. However, these approaches suffer from issues such as the potential leakage of augmentation artifacts[39,113,70,72]and the misuse of pre-training knowledge[50,106,22]. The third direction addresses discriminator overfitting and focuses on discriminator regularization to either reduce the capacity of the discriminator[20,44,25,69,68]or increase the overlap between real and fake data[95,33,97], making it harder for the discriminator to learn. While such methods are effective, their mechanism preventing overfitting is not clearly elucidated.
+
+Aligning with the third direction of regularizing the discriminator, we innovate by reconsidering the integration of Batch Normalization (BN)[31]into the discriminator to improve the generalization. BN has been demonstrated, both theoretically and in practice, to improve neural network generalization. This is achieved via its standardization process, effectively aligning training and test distributions in a common space[83,101,54]. Additionally, BN reduces the sharpness of the loss landscape[80,62,36,7]and stabilizes the training process by mitigating internal covariate shift.
+
+Given these benefits, Batch Normalization appears as a good solution to preventing discriminator overfitting in GANs. However, large-scale experiments[49,105,118,66,65]have shown that incorporating BN into the discriminator actually impairs performance. Thus, BN is often omitted in the discriminator of modern GANs,e.g., BigGAN[8], ProGAN[37], StyleGAN 1-3[38,40,41], with few models using BN in the discriminator,i.e., DCGAN[74].
+
+Addressing the challenges of BN in GAN discriminator design, we have identified that the centering and scaling steps of BN can lead to gradient explosion, a significant barrier in GAN convergence[115,96,44,63]. To circumvent this issue while leveraging the benefits of BN, we propose replacing the centering step with zero mean regularization and enforcing the Lipschitz continuity constraint on the scaling step. This modification resolves gradient issues and also helps the discriminator effectively balance discrimination and generalization[115]through adaptive interpolation of normalized and unnormalized features.
+
+We call our approach lipsCHitz continuity constrAInedNormalization, in short, CHAIN, symbolized as. Such a name and symbol represent the role of our model in bridging the gap between seen and unseen data and reducing the divergence between fake and real distributions. Despite CHAIN’s simplicity, our theoretical analysis confirms its efficacy in reducing the gradient norm of both latent activations and discriminator weights. Experimental evidence shows that CHAIN stabilizes GAN training and enhances generalization.
+CHAIN outperforms existing methods that limit discriminator overfitting, achieving state-of-the-art results on data-limited benchmarks such as CIFAR-10/100, ImageNet, 5 low-shot and 7 high-resolution few-shot image generation tasks. Our contributions are as follows:
+
+We tackle discriminator overfitting by enhancing GAN generalization, deriving a new error bound that emphasizes reducing the gradient of discriminator weights.
+
+We identify that applying BN in the discriminator, both theoretically and empirically, tends to cause gradient explosion due to the centering and scaling steps of BN.
+
+We provide evidence, both theoretical and practical, that CHAIN stabilizes GAN training by moderating the gradient of latent features, and improves generalization by lowering the gradient of the weights.
+
+SECTION: 2Background
+
+Improving GANs.Generative Adversarial Networks[23], effective in image generation[8,40,57], image-to-image translation[45,125,88,89], video synthesis[103,110,86], 3D generation[124,92,114]and text-to-image generation[82,35,94], suffer from unstable training[44,96], mode collapse[77,63], and discriminator overfitting[120,39]. Improving GANs includes architecture modifications[8,38,40,41,53,112], loss function design[3,119,71,123]and regularization design[25,97,44,65,59]. BigGAN[8]scales up GANs for large-scale datasets with increased batch sizes. StyleGANs[38,40,41]revolutionize generator architecture by style integration. OmniGAN[123]modifies the projection loss[64]into a multi-label softmax loss. WGAN-GP[25], SNGAN[65]and SRGAN[59]regularize discriminator using a gradient penalty or spectral norm constraints for stable training. Our novel normalization effectively enhances GANs under limited data scenarios, applicable across various architectures and loss functions.
+
+Image generation under limited data.To address discriminator overfitting in limited data scenarios, where data is scarce or privacy-sensitive, previous methods have employed data augmentation techniques such as DA[120], ADA[39], MaskedGAN[29], FakeCLR[55]and InsGen[108]to expand the data diversity. Approaches[122,48], KDDLGAN[15], and TransferGAN[102], leverage knowledge from models trained on extensive datasets to enhance performance. However, these approaches may risk leaking augmentation artifacts[39,113,72]or misusing pre-trained knowledge[50,106,22]. Alternatives such as LeCam loss[97], GenCo[14]and the gradient norm reduction of DigGAN[20]aim to balance real and fake distributions. Our approach uniquely combines generalization benefits from BN with improved stability in GAN training, offering an effective and distinct solution to regularizing discriminator.
+
+GAN Generalization.Deviating from conventional methods that link the generalization of GANs[115,32]with the Rademacher complexity[6]of neural networks[116], we introduce a new error bound that highlights the need for reducing discrepancies between seen and unseen data for enhanced generalization. This bound is further refined using the so-called non-vacuous PAC-Bayesian theory[10], focusing on discriminator weight gradients for a practical GAN generalization improvement.
+
+Normalization.Batch Normalization (BN)[31]and its variants such as Group Normalization (GN)[104], Layer Normalization (LN)[5], Instance Normalization (IN)[98]have been pivotal in normalizing latent features to improve training. BN, in particular, is renowned for its role in improving generalization across various tasks[80,62,36,7]. However, its application in discriminator design, especially under limited data scenarios where generalization is crucial, remains underexplored. Several BN modifications, such as RMSNorm[111], GraphNorm[9], PowerNorm[85], MBN[107]and EvoNorm[58]have been proposed to address issues such as the gradient explosion in transformers[99]or information loss in graph learning, often by altering or removing the centering step. Our work stands out in GAN discriminator design by linking centering, scaling, and gradient issues in GAN training. Our innovative solution not only mitigates the gradient explosion but also retains the benefits of BN, offering a robust solution for GAN training.
+
+SECTION: 3Method
+
+We begin by linking GAN generalization with the gradient of discriminator weights, motivating the use of BN for generalization and identifying gradient issues in BN. We then introduce CHAIN, a design that tackles these gradient issues while retaining benefits of BN. Lastly, we present a theoretical justification for CHAIN, underscoring its efficacy in improving generalization and training stability.
+
+SECTION: 3.1Generalization Error of GAN
+
+The goal of GAN is to train a generator capable of deceiving a discriminator by minimizing the integral probability metric (IPM)[67], typically with the assumption of infinite real and fake distributions. However, in real-world scenarios, we are usually confined to working with a finite real datasetof size. This limitation restricts the optimization of GAN to the empirical loss as discussed in[115]:
+
+whereandare real and fake samples. Function sets of discriminator and generator,and, are typically parameterized as neural network classesand. Given the varied divergence[115,84]encompassed by the IPM and the variability of discriminator loss functionacross different tasks and architectures, we integrate it with the discriminatorfor simplified analysis[115,3,4], yielding. This integration streamlines the alternating optimization process between the discriminator and the generator:
+
+whererepresents the noise input to the generator and it is assumed thatminimizesto a precision, implying that.
+
+To evaluate how closely the generator distributionapproximates the unknown infinite distribution, we draw on work of Jiet al.[32]who extended Theorem 3.1 in[115]by considering the limited access to both real and fake images.
+
+(Partial results of Theorem 1 in[32].) Assume the discriminator setis even,i.e.,implies, and. Letandbe empirical measures ofandwith size. Denote. The generalization error of GAN, defined as, is bounded as:
+
+Lemma3.1(proof in §B.1) indicates that GAN generalization can be improved by reducing the divergence between real training and unseen data, as well as observed and unobserved fake distributions. Given that the idealaligns with the observed real data, Lemma3.1also emphasizes narrowing the gap between observed fake and real data to lower. This explains why prior efforts[97,33,20,27,12]focusing on diminishing the real-fake distribution divergence help limit overfitting. However, excessive reduction should be avoided, as this makes the discriminator struggle to differentiate real and fake data[115].
+
+While reducingis achievable, loweringremains challenging due to inaccessibility of infinite. Fortunately, neural network parameterization of GANs enables adopting PAC Bayesian theory[10]to further analyze. Integrating the analysis of Theorem 1 in[21], Lemma3.1is further formulated as follows:
+
+Utilizing notations from Lemma3.1, we defineas the generalization error of GAN parameterized as neural network classes. Letandrepresent the gradient and Hessian matrix of discriminatorevaluated atover real training data, andandover observed fake data. Denotingandas the largest eigenvalues ofand, respectively, and for any, the generalization error is bounded as:
+
+where, a term related to discriminator weights norm, is inversely related to the data size.
+
+Prop.3.1(proof in §B.2) suggests several strategies to lower the generalization error of GANs. These include increasing data size (), implementing regularization to decrease weight norm of the discriminator and the largest eigenvalues in Hessian matrices, and crucially, reducing the gradient norm of discriminator weights. Although this proposition is specific to GANs, the concept of regularizing weight gradient norms aligns with findings in other studies[117,100,121,60,93,91], which emphasize that reducing weight gradients can smooth the loss landscape, thereby enhancing generalization of various deep learning tasks.
+
+SECTION: 3.2Motivation and the Batch Normalization Issues
+
+Leveraging Lemma3.1and Prop.3.1insights that reducing real-fake divergence and gradient norms boosts generalization, we propose applying BN in the discriminator to normalize real and fake datain separate batches. As depicted in Figure1, normalizing real and fake data in separate batches via the centering and scaling steps aligns their statistical moments to lower the real-fake divergence per Lemma3.1. Moreover, BN’s ability to reduce sharpness, as indicated by the maximum Hessian eigenvalue[80,62,36], supports the motivation of using BN for better generalization. Yet, incorporating BN risks gradient explosion.
+
+For a specific layer in a network, consideras the feature input, whereis the batch size andis the feature size. For brevity, we exclude bias and focus on layer weights. In line with studies[85,9,61,80], we also omit the affine transformation step for theoretical clarity, as it does not impact the theoretical validity, and does not change our method. The processing of features through the weights and the Batch Normalization contains:
+
+Using these notations, we identify the gradient issues in the centering and scaling steps, as detailed below.
+
+(The issue of the centering step.)
+Consideras i.i.d. samples from a symmetric distribution centered at, where the presence ofimpliesis also included (important in proof). After the centering step,are i.i.d. samples from the centered distribution. The expected cosine similarity between these samples is given by:
+
+Theorem3.1(proof in §B.3) states that after centering by batch normalization, the expected cosine similarity between features drops to zero. This implies that features which are similar in early network layers diverge significantly in the later layers, suggesting that minor perturbations in early layers have the risk to lead to abrupt changes in later layers. Consequently, such an effect implies large gradients.
+
+(The issue of the scaling step.) The scaling step, defined in Eq.7, can be expressed as matrix multiplication. The Lipschitz constant w.r.t.the 2-norm of the scaling step is:
+
+whererepresents the minimum value in.
+
+Theorem3.2(proof in §B.4) establishes that the Lipschitz constant for the scaling step in batch normalization is inversely proportional to. This means ifis less than 1, the Lipschitz constant exceeds 1. Given the emphasis placed by previous studies[65,3,25,56,13]on the importance of lowering the Lipschitz constant in the discriminator, it follows that without a Lipschitz continuity constraint on the scaling step, discriminators employing batch normalization are prone to gradient explosion. See[24]for further insights into the Lipschitz constant of batch normalization concerning the affine transformation step.
+
+SECTION: 3.3CHAIN
+
+To harness the generalization benefits of BN while sidestepping its gradient issue in GAN discriminator, we introduce CHAIN. Our modification involves replacing the centering step (as in Eq.6) with zero-mean regularization, substituting the scaling step (as in Eq.7) with Lipschitz continuity constrained root mean square normalization, and removing the affine transformation step for enhanced performance.
+
+We start by calculating the meanand the root mean squareacross batch and spatial dimensions for featuresin a discriminator layer as follows:
+
+whereis a small constant to avoid division by 0. The termdenotes the-th entry inwhileandrepresent the-th element inand, respectively.
+
+To achieve a soft zero-mean effect akin to the centering step in Eq.6while also avoid its gradient issue, we adopt0-MeanRegularization (0MR) as follows:
+
+whereis a hyperparameter andadaptively controls the regularization strength. The termfor layers applying CHAIN is added to the loss of the discriminator.
+
+The root mean square normalization, constrained by Lipschitz condition, is defined as follows:
+
+whereis the minimum in, severing to constrain the Lipschitz constant of the normalization to 1.
+
+Normalized features are then adaptively interpolated with unnormalized features to balance discrimination and generalization, as emphasized in[115], leading to theAdaptiveRootMeanSquare normalization (ARMS):
+
+whereis the element-wise multiplication after expanding the left-side matrix todimension. The matrix, with values from a Bernoulli distributionwith, controls the interpolation ratio.
+
+To mitigate discriminator overfitting, we allow the factor, controlling both the regularization strength in Eq.12and the interpolation ratio in Eq.14, to be adaptive based on the discriminator output. Specifically, we calculate the expectation of discriminator outputw.r.t.real samplesand assessagainst a predefined threshold. Exceedingsuggests potential overfitting, as indicated by previous studies[39,33]. We then adjustusingwith a small.
+
+To limit the dependency on the minibatch size in high-resolution GAN training across multiple GPUs, we adopt running cumulative forward/backward statistics, inspired by[30,107,85]. We contrast CHAIN, using batch statistics, with CHAIN that applies running cumulative statistics. CHAINis elegantly coded as shown in Figure1, whereas implementation for CHAIN is detailed in §D.1.
+
+As outlined in Figure1, CHAIN is integrated after convolutional layerswithin the discriminator blocksfor. By applying CHAIN separately on real and fake data, Eq.12naturally reduces divergence across seen/unseen and observed real/fake data, consistent with Lemma3.1. Additionally, Eq.14effectively lowers weight gradients of discriminator, aligning with Prop.3.1.
+
+SECTION: 3.4Theoretical analysis for CHAIN
+
+Although CHAIN is straightforward and easy to implement, its importance in GAN training is substantial. We provide analyses of how CHAIN modulates gradients, underlining its critical role in enhancing GAN performance.
+
+(CHAIN reduces the gradient norm of weights/latent features.) Denote the loss of discriminator with CHAIN as, and the resulting batch features as. Letbe-th column of,be the-th column of gradient. Denoteas the-th column of weight gradientandas the largest eigenvalue of pre-layer features. Then we have:
+
+Theorem3.3(proof in §B.5) reveals that CHAIN significantly modulates gradient norms in GAN training. It states that the squared gradient norm of normalized output is rescaled by, minus a non-negative term where. Considering that, CHAIN effectively reduces the gradient norm of latent features. Moreover, given that the eigenvectors ofand pre-layer featuresare less likely to align, using CHAIN with a Lipschitz constant of exactly 1 beforefurther reduces. This dual action not only stabilizes GAN training by reducing latent feature gradients but also improves generalization by lowering the weight gradients.
+
+We additionally present theory and experiments in §Cto justify the decorrelation effect of the stochasticdesign.
+
+SECTION: 4Experiments
+
+We conduct experiments on CIFAR-10/100[47]using BigGAN[8]and OmniGAN[123], as well as on ImageNet[19]using BigGAN for conditional image generation. We evaluate our method on 5 low-shot datasets[120], which include 100-shot Obama/Panda/Grumpy Cat and AnimalFace Dog/Cat[90], using StyleGAN2[40]. Additionally, we assess our method on 7 high-resolution few-shot datasets, including Shells, Skulls, AnimeFace[11], Pokemon, ArtPainting, and two medical datasets BreCaHAD[1], MessidorSet1[18], building upon FastGAN[57]. For comparative purposes, methods involving massive augmentation include DA[120]and ADA[39], termed “MA” in[14], are also included in our evaluation.
+
+Datasets.CIFAR-10 hastraining/testing images in 10 categories atresolution, while CIFAR-100 has 100 classes. ImageNet compreisestraining/validation images across 1K categories. Following[29,15], we center-crop and downscale its images toresolution. The five low-shot datasets include 100-shot Obama/Panda/Grumpy Cat images, along with AnimalFace (160 cats and 389 dogs) images atresolution. The seven few-shot datasets, Shells, Skulls, AnimeFace, Pokemon, Artpainting, BreCaHAD, MessidorSet1, vary from 64 to 1000 images, each at a highresolution. Following[120], we augment all datasets with-flips.
+
+Evaluation metrics.We generate 50K images for CIFAR-10/100 and ImageNet to calculate Inception Score (IS)[79]and Fréchet Inception Distance (FID)[26]. For these datasets, tFID is calculated by comparinggenerated images against all training images. Additionally, we compute vFID for CIFAR-10/100 and ImageNet betweenfake and real testing/validation images. For the five low-shot and seven few-shot datasets, FID is measured betweenfake images and the full dataset. Following[120,55,20], we run five trails for methods employing CHAIN, reporting average results and omitting standard deviations for clarity, as they fall below 1%. Implementation details and generated images are available in §D.2and §G.
+
+SECTION: 4.1Comparison with sate-of-the-art methods
+
+Results on CIFAR-10/100 w/ BigGAN/OmniGAN.Table1demonstrates that our method achieves state-of-the-art results on CIFAR-10/100, surpassing even KDDLGAN[15], which leverages knowledge from CLIP[75].
+
+Results on ImageNet with BigGAN.Maintaining consistency with established benchmarks in[29,15](using 10K generated images for IS and tFID), Table2demonstrates the superiority of CHAIN, outperforming all leading models and underscoring its exceptional performance.
+
+Results on the seven few-shot datasets with FastGAN.FastGAN[57], known for its memory and time efficiency, yields desirable results onresolution within one-day training on a single GPU. To integrate our method, we swapped large FastGAN discriminator with BigGAN and removed the small discriminator due to multidimensional output of FastGAN being unsuitable for adjusting our. This new variant, named FastGAN, is described in Figure9of §D.2. Table3demonstrates the superior performance of CHAIN on sevenlow-shot datasets.
+
+Results on the five low-shot datasets w/ StyleGAN2.Table4presents a comparison of CHAIN with other baselines, clearly demonstrating that CHAIN achieves the best results.
+
+SECTION: 4.2Experimental analysis
+
+Gradient analysis for centering step.Figure2illustrates the mean cosine similarity among pre-activation features in the discriminator and the gradient norm of the feature extractor output w.r.t.input for OmniGAN, OmniGAN+0C (using Eq.6centering), and OmniGAN+A0C (adaptive interpolation of centered and uncentered features). The near-zero mean cosine similarity in OmniGAN+0C and OmniGAN+A0C corroborates Theorem3.1, indicating that centering leads to feature difference in later layers and amplifying the gradient effect, as seen in Figure2(b). This observation supports the decision to modify the centering step.
+
+Gradient analysis for scaling step.Figure3(a)shows gradient norms of the discriminator output w.r.t.the input and effective rank (eRank)[78]for various models. The CHAIN-LCvariant (CHAIN w/o Lipschitz constraint) exhibits gradient explosion, confirming Theorem3.2. While CHAIN+0Cavoids gradient explosion, its centering step causes abrupt feedback changes to the generator, leading to the dimensional collapse[96,63,44,34], evidenced by rank deficiencies in Figure3(b). In contrast, CHAIN maintains smaller gradient than OmniGAN, aligning with the analysis in Theorem3.3w.r.t.reducing gradient in latent features.
+
+Generalization analysis.Figures4(c)and5(c)show that CHAIN achieves smaller gradient norm of discriminator output w.r.t.weight, supporting the assertion of Theorem3.3on reducing weight gradient. This leads to a lower generalization error, as per Prop.3.1and Lemma3.1, evidenced in Figures4(b)and5(b). Here, compared to the baseline, CHAIN maintains a smaller discrepancy in discriminator output between real and test images, as well as discrepancy between real and fake images, indicating the effectiveness of CHAIN in improving GAN generalization.
+
+SECTION: 4.3Ablation studies
+
+Ablation for CHAIN design.Table5provides quantitative evidence supporting the design of our method. The inferior results of CHAINand CHAINhighlight the significance of the 0MR and ARMS modules. Poorer performance of CHAINunderscores the need to omit the centering step. The notably worse outcomes of CHAINemphasize the importance of the Lipschitzness constraint. CHAINunderperforming suggests the advantage of using running cumulative statistics. The suboptimal performance of CHAINvalidate the stochasticdesign (Eq.14), while marginally poorer results of CHAINindicate limited benefits of applying 0MR in generator training.
+
+Ablation of each factor.Figure6explores the impact of applying CHAIN at different points and varying the hyperparameters,. In Figure6(a), optimal performance is achieved by placing CHAIN after all convolutional layers. Figure6(b)demonstrates that employing our approach across all blocks yields the best results. Figure6(c)shows that varyingbetween 2 to 50 does not significantly affect performance, indicating the robustness of CHAIN to. Lastly, Figure6(d)suggests that settingto be 0.5 is preferable.
+
+Comparison with other variants.We compare CHAIN against other normalization techniques such as BN, IN, LN, GN, and BN w/ Lipschitzness constraint (BN), methods preventing discriminator overfitting such as DA, ADA, LeCam, and gradient penalizations for improving generalization. Table6details these comparisons. For GN, we optimized group number () for CIFAR-10 () and CIFAR-100 (). Implementations for AGPand AGPare explained in §D.3. The results in Table6show CHAIN outperforms other methods, with AGPalso yielding competitive results, supporting Prop.3.1about weight gradient reduction enhancing generalization. Furthermore, Figure7indicates that CHAIN benefits from increased network width, unlike other models that deteriorate with wider networks, confirming the superiority of CHAIN.
+
+More analyses.§Ecompares leading methods, analyzes gradients on CIFAR-100 w/ BigGAN, evaluates eRank against AGP, and examines feature norm. CHAIN gains significant improvements with mild extra load (§F).
+
+SECTION: 5Conclusions
+
+Our method, LipsCHitz contuity constrAIned Normalization (CHAIN), harnesses the generalization benefits of BN to counter discriminator overfitting in GAN training. We refine standard BN by implementing the zero-mean regularization and the Lipschitzness constraint, effectively reducing gradient norms in latent features and discriminator weights. This approach not only stabilizes GAN training but also boosts generalization. Proven in theory and practice, CHAIN excels across diverse backbones and datasets, consistently surpassing existing methods and effectively addressing discriminator overfitting in GANs.
+
+Acknowledgements.We thank Moyang Liu, Fei Wu, Melody Ip, and Kanghong Shi for their discussions and encouragement that significantly shaped this work. PK is funded by CSIRO’s Science Digital.
+
+SECTION: References
+
+CHAIN: Enhancing Generalization in Data-Efficient GANs via lipsCHitz continuity constrAInedNormalization(Supplementary Material)
+
+The supplementary material contains notations (§A), theoretical proofs (§B), an explanation for stochasticdesign (§C), implementation guidelines (§D), extra experimental results (§E), training overhead (§F), and examples of generated images (§G).
+
+SECTION: Appendix ANotations
+
+Below, we explain the notations used in this work.
+
+Scalars: Represented by lowercase letters (e.g.,,,).
+
+Vectors: Bold lowercase letters (e.g.,,,).
+
+Matrices: Bold uppercase letters (e.g.,,,).
+
+Functions: Letters followed by brackets (e.g.,,,).
+
+Function sets: Calligraphic uppercase letters are used (e.g.,,,). But notespecifically denotes the Bernoulli distribution.
+
+Probability measures: Denoted by letters,,,and.
+
+Expectation:represents the average or expected value of a random variable.
+
+SECTION: Appendix BProofs
+
+We start with a lemma on the Pac-Bayesian bound, followed by in-depth proofs for the theories outlined in the main paper.
+
+(A variant of the PAC-Bayesian bound adapted from Theorem 4.1 in[2]and from[10].) Letbe a distribution over. Denote the prior and posterior probability measure on a hypothesis setas, where(positive and normalized to) is the set of all probability measures on. Denoteandas the loss. Forand, with probability at leastover the choice of(a subset fromwith size of), we have:
+
+Proof:The Donsker-Varadhan change of measure states that for any measurable functionandon, we have:
+
+Denoting, the above inequality yields:
+
+Applying Markov’s inequality to the random variable, we obtain:
+
+Thus, with probability at leastover the choice of, we obtain:
+
+SECTION: B.1Proof of Lemma3.1
+
+Lemma3.1(Partial results of Theorem 1 in[32].) Assume the discriminator setis even,i.e.,impliesand. Letandbe empirical measures ofandwith size. Denote. The generalization error of GAN, defined as, is bounded as:
+
+Proof:
+
+The three components in the above equation are upper-bounded as follows:
+
+Upper bound1:
+
+Upper bound2: Denote. Then similar to derivation for1, we obtain:
+
+Upper bound3: Here, we consider a practical scenario where the discriminator only has access to finite fake data during optimization. Recall that we denote, thus, leading to the inequality that:
+
+Integrating the three bounds we achieve the final result.
+
+SECTION: B.2Proof of Proposition3.1
+
+Proposition3.1Utilizing notations from Lemma3.1, we defineas the generalization error of GAN parameterized as neural network classes. Letandrepresent the gradient and Hessian matrix of discriminatorevaluated atover real training data, andandover observed fake data. Denotingandas the largest eigenvalues ofand, respectively, and for any, the generalization error is bounded as:
+
+where, a term related to discriminator weights norm, is inversely related to the data size.
+
+Proof:We start by deriving a PAC-Bayesian bound for GAN generalization error on real data. This is followed by an approach similar to Theorem 1 in[21], establishing a connection between this error and the discriminator’s gradient direction. Finally, a Taylor expansion of the discriminator in the gradient direction is applied, paralleled by a similar formulation for fake data, culminating in our final results.
+
+PAC-Bayesian bound for GAN.Denotingand the parameter of the discriminator as, and applying LemmaB.1, we obtain:
+
+We then derive the upper bound foron the discriminator. Letrepresent a realization of the random variable. Given thatstated in Lemma3.1, changing variableto another independent copy, altersby at most. Utilizing Hoeffding’s lemma, we obtain:
+
+By inserting Eq.19into Eq.18, and setting, we arrive at:
+
+Generalization error and the gradient direction of the weight.Continuing, we adopt an analysis parallel to the proof of Theorem 1 in[21]. According to Eq. 12 in their work, ifis a measure onandis a measure onwith the dimension ofbeing, it follows that:
+
+Subsequently, Eq.20transforms into:
+
+By Lemma 1 of[51], for any positive, we have:
+
+Thus, with probability(where), it follows that:
+
+Assuming, as in[21], that perturbations in discriminator weights have negligible impact on performance over an infinite dataset, and integratingback into Eq.21, we deduce:
+
+Taylor expansion in the weight gradient direction.Observe that the maximum ofoccurs whenis chosen as, which is aligned with the gradient ofatover. We perform a second-order Taylor expansion ofaround. Incorporating the remainder and the higher-order terms from the Taylor expansion into, we derive:
+
+Simplifying notations, we useandfor the gradient and Hessian matrix evaluated atover real seen data, and similarandfor observed fake data. Considering the largest eigenvalue ofas, implying, we bound the real data part of the generalization error of a GAN (Lemma3.1) parameterized as network as follows:
+
+Similarly, the fake data part in the generalization error of GAN is:
+
+By integrating the aforementioned two inequalities into the generalization error as detailed in Lemma3.1, we arrive at:
+
+SECTION: B.3Proof of Theorem3.1
+
+Theorem3.1(The issue of the centering step.) Consideras i.i.d. samples from a symmetric distribution centered at, where the presence ofimpliesis also included. After the centering step,are i.i.d. samples from the centered distribution. The expected cosine similarity between these samples is given by:
+
+Proof:Given that the distribution is symmetric and even, and, the mean of thenormalized distribution. Denoting the mean of thenormalized sample as, we can derive the expectation of the cosine similarity as follows:
+
+In the centered distribution withand the symmetric probability, the presence ofimplies the inclusion of. This leads us to the following derivation:
+
+Comparing the above two Equations we obtain the final inequality.
+
+SECTION: B.4Proof of Theorem3.2
+
+Theorem3.2(The issue of the scaling step.) The scaling step, defined in Eq.7, can be expressed as matrix multiplication. The Lipschitz constant w.r.t.the 2-norm of the scaling step is:
+
+whererepresents the minimum value in.
+
+Proof:Consider, a diagonal matrix. We establish that:
+
+From this, it follows that:
+
+SECTION: B.5Proof of Theorem3.3
+
+Theorem3.3(CHAIN reduces the gradient norm of weights/latent features.) Denote the loss of discriminator with CHAIN as, and the resulting batch features as. Letbe-th column of,be the-th column of gradient. Denoteas the-th column of weight gradientandas the largest eigenvalue of pre-layer features. Then we have:
+
+Proof:Aligning with Theorem 4.1 from[80]we derive the gradients of the latent feature and the weight. For convenience, we defineas the resulted interpolated batch features from Eq.14. By applying the expectation over the, replacing it with, and using the chain rule of the backward propagation, we determine the expected gradient for eachwithinas follows:
+
+The squared gradient norm foris calculated as follows:
+
+Using the chain rule, we derive the gradient w.r.t.the weight as follows:
+
+This leads to:
+
+Consideringas the largest eigenvalues of, which suggests, we obtain the following result:
+
+SECTION: Appendix CThe decorrelation effect of the stochastic design
+
+To analyze why the stochastic designoutperforms the deterministic, we examine the correlation coefficient between two random variablesfrom two different channels.
+
+Let,be random variables from the-th and-th channels, respectively, where. Defineas the normalized random variable from channelafter root mean square normalization. Considering an adaptiveunder our control, we distinguish between the deterministic version of CHAIN,i.e.CHAINand our stochastic CHAIN as:
+
+Assuming, achievable through our zero mean regularization in Eq.12, and lettingrepresent the standard deviations of, respectively, we define and relate the correlation coefficients of the two versions as follows:
+
+TheoremC.1reveals that the stochastic CHAIN has a lower correlation coefficient among features from different channels than the deterministic CHAIN, indicating that the stochastic designexhibits a decorrelation effect.
+
+Proof:Given, it follows that. Using the covariance definitionfor any two random variables, we get:
+
+Sinceis stochastic noise independent of, andimplying in, we conclude:
+
+Next, we explore the relationship between the variancesand:
+
+Comparing Eq.26and27, and considering, we establish the following relationship:
+
+Therefore,, and similarly. Coupled with Eq.25, we derive the following conclusion:
+
+Experimental validation.Decorrelation diversifies feature patterns, promoting a higher feature rank. This is demonstrated in Figure8, where CHAIN, employing the stochasticover the deterministic valueused by CHAIN, achieves a higher effective rank (eRank)[78]. This supports TheoremC.1, underscoring the beneficial effect of stochastic design infor decorrelation, and validates the design choice of CHAIN.
+
+SECTION: Appendix DImplementation Details
+
+In this section, we overcome the mini-batch size limitation of CHAIN, which relies solely on current batch data statistics, by developing it to CHAIN, which ultilizes cumulative running forward/backward statistics across training. We also provide detailed implementation for Network and hyper-parameter choices, and methods applied in our ablation studies.
+
+SECTION: D.1Implementation of CHAIN (running cumulative forward/backward statistics across training)
+
+Inspired by[107,85,30], we enhance CHAIN to use running cumulative forward/backward statistics. We simplify our analysis by focusing on the Root Mean Square Normalization (RMSNorm), considering features of a single channel and omitting the channel index. Additionally, we exclude the constant, used to avoid division by zero, as it is unnecessary for this analysis. This refinement enables the representation of the forward process for the root mean square normalization as follows:
+
+Leveraging the chain rule, the gradient calculation can be expressed as follows:
+
+Examining the forward and backward processes reveals that Eq.28and34are dependent on the batch size. To eliminate this dependency, we propose updating the cumulative statistics for these terms as follows:
+
+where, a decay hyperpamameter, is typically set as 0.9. We replacewith their cumulative versions. This forms an effective algorithm for the normalization part of CHAIN, using cumulative forward/backward statistics, as shown in Alg.1
+
+SECTION: D.2Network and hyper-parameters
+
+CIFAR-10/100.We utilize OmniGAN (and) and BigGAN () with a batch size of 32. Following[120], OmniGAN and BigGAN are trained forepochs on full data andepochs on 10%/20% data setting. CHAIN is integrated into the discriminator, after convolutional layersat all blocks, with hyperparameters set as.
+
+ImageNet. We build CHAIN upon BigGAN with 512 batch size. We adopt learning rate of 1e-4 for generator and 2e-4 for discriminator. CHAIN is applied after convolutional layersat all blocks, with hyperparameters.
+
+5 Low-shot images ().We build CHAIN upon StyleGAN2 with a batch size of 64, training until the discriminator has seen 25M real images. CHAIN is applied after convolutionsat blocks. We set.
+
+7 Few-shot images ()We replace the large discriminator in FastGAN with the one from BigGAN while removing the smaller discriminator. This modification yields FastGAN, with the discriminator network architecture illustrated in Figure9. We employ a batch size of 8 and run foriterations. We equip the discriminator with CHAIN after convolutional layersat blocks. We set.
+
+SECTION: D.3Implementation for AGPand AGP
+
+In Table6, we provide a comparison of CHAIN with two gradient penalization methods: AGPand AGP. For AGP, we implementandwhererepresents the feature extractor of discriminator. Regarding AGP, we also implementand. We search the penalization strengthwithin the range [1e-10, 20] for each dataset and variant. For 10% CIFAR-10 w/ OmniGAN (), the optimal settings are: AGPwithand, and AGPwithandset to 1e-6. For 10% CIFAR-100 w/ BigGAN (), the best configurations are: AGPwithand, and AGPwithandset to 2e-6.
+
+SECTION: Appendix EAdditional Experiments
+
+SECTION: E.1Comparison with leading methods
+
+Table7compares CHAIN with Lottery-GAN[12], LCSA[70], AugSelf-GAN[27], and NICE[68], showing the superiority of CHAIN. Unlike AugSelf-GAN, LotteryGAN, and NICE, which need extra forward or backward passes for augmentation, and LCSA, which demands more computation and weights for dictionary learning, CHAIN is more efficient, needing negligible computation for normalization.
+
+SECTION: E.2Gradient analysis on 10% CIFAR-100 using BigGAN ()
+
+In this section, we present experiments conducted on 10% CIFAR-100 using BigGAN (). Figure10provides additional validation of Theorem3.1, illustrating how the centering step leads to feature differences and an associated increase in gradients. Meanwhile, Figure11confirms Theorem3.2, highlighting that the scaling step causes gradient explosions during GAN training and results in rank deficiency.
+
+SECTION: E.3The rank efficiency of CHAIN over AGP
+
+Both CHAIN and AGPcan reduce the discriminator weight gradient to improve generalization, but CHAIN gains a crucial advantage from normalization. The normalization step in CHAIN balances features among channels and orthogonalizes features[17,16]. Figure12clearly illustrates that CHAIN achieves a higher effective rank compared to AGP. Discriminators with higher rank efficiency can fully utilize their width (balanced channels) and depth, resulting in enhanced expressivity and superior representation capability.
+
+SECTION: E.4The stability of feature norm of CHAIN during training
+
+Our work examines modern discriminators with residual blocks, where the main and skip branch features are added at the end of each block (see Figure1). Despite the scaling factorinduced by the Lipschitz constraint (as in Eq.13), feature norms remain stable across layers thanks to the skip connections. Figure13presents feature norms at the end of each block, averaged over early (iteration) and later training stages (iteration). Initially, both methods exhibit similar feature norms, but as training processes, baseline norms increase while CHAIN maintains stable norms across layers due to the adaptive interpolation between normalized and unnormalized features (as in Eq.14).
+
+SECTION: Appendix FTraining overhead
+
+Table8presents the number of parameters, multiply-accumulate (MACs) operations (for both generator and discriminator), the number of GPUs, and the cost in time (seconds per 1000 images, secs/img). Notably, CHAIN introduces only a small fraction of the time cost, ranging from 6.3% to 9.6% across these datasets.
+
+SECTION: Appendix GGenerated Images
+
+Figures14,15,16,17and18provide images generated on CIFAR-10, CIFAR-100, ImageNet, the 5 low-shot image and the 7 few-shot image datasets, with or without CHAIN. The comparison highlights the enhancement in image quality and diversity achieved with the application of CHAIN.
+
+2.5% ImageNet ()
+
+10% ImageNet ()
+
+Obama
+
+Grumpy Cat
+
+Panda
+
+AnimalFace Cat
+
+AnimalFace Dog
+
+Shells
+
+Skulls
+
+Anime Face
+
+BreCaHAD
+
+MessidorSet1
+
+Pokemon
+
+ArtPainting

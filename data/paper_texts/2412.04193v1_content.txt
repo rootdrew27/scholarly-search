@@ -1,0 +1,332 @@
+SECTION: AL-QASIDA: Analyzing LLM Quality and Accuracy Systematically in Dialectal Arabic
+
+Dialectal Arabic (DA) varieties are under-served by language technologies, particularly large language models (LLMs).
+This trend threatens to exacerbate existing social inequalities and limits language modeling applications, yet the research community lacks operationalized LLM performance measurements in DA.
+We present a method that comprehensively evaluates LLM fidelity, understanding, quality, and diglossia in modeling DA.
+We evaluate nine LLMs in eight DA varieties across these four dimensions and provide best practice recommendations.
+Our evaluation suggests that LLMs do not produce DA as well as they understand it, but does not suggest deterioration in quality when they do.
+Further analysis suggests that current post-training can degrade DA capabilities, that few-shot examples can overcome this and other LLM deficiencies, and that otherwise no measurable features of input text correlate well with LLM DA performance.
+
+AL-QASIDA: Analyzing LLM Quality and Accuracy Systematically in Dialectal Arabic
+
+Nathaniel R. Robinson2Shahd Abdelmoneim1Kelly Marchisio1Sebastian Ruder11Cohere,2Johns Hopkins Universitynrobin38@jhu.edu, kelly@cohere.com
+
+SECTION: 1Introduction
+
+Large language models (LLMs) have transformed natural language processing (NLP) for many languagesSingh et al. (2024); Dubey et al. (2024).
+However these technologies often lack support for minority dialects and language varietiesRobinson et al. (2023); Zhu et al. (2024); Arid Hasan et al. (2024); Joshi et al. (2024); Chifu et al. (2024).
+Arabic, the fourth most spoken macro-language in the world with 420M speakers and official status in 26 countriesBergman and Diab (2022); Tepich and Akay (2024), has a diversity of such varieties.
+Despite its prominence, Arabic has been historically set back in NLP due to its script, which lacked digital support until the 1980sParhami (2019).
+
+Many NLP tools support Arabic now, but often only Modern Standard Arabic (MSA); the numerous Dialectal Arabic (DA) varieties are often neglected.
+There are 28 microlanguages designated as Arabic in ISO 639-3,111https://wikipedia.org/wiki/ISO_639_macrolanguageof which MSA is only one.
+In the Arab world, MSA is used only in narrow circumstances, while local DA varieties are predominantBergman and Diab (2022); Ryding (1991).
+MSA has no native speakers according to Ethnologue;222https://www.ethnologue.com/Arabic speakers speak their DA varieties natively (as L1) and later learn MSA as an L2Azzoug (2010).
+Many who lack educational resources are not proficient in MSABergman and Diab (2022).
+Arabic varieties are diverse and differ both phonologically, morphologically, syntactically, semantically, and lexicallyHabash (2010); Keleg et al. (2023). According toBergman and Diab (2022), Moroccan Arabic or Darija (ary) and Egyptian Arabic (arz) are as mutually intelligible as Spanish and Romanian.
+Table1illustrates two simple sentences that display 0% word overlap across three Arabic varieties.Bergman and Diab (2022)have urged researchers to move beyond treating Arabic as a ”monolith,” i.e. aiming only for MSA support.
+
+Many LLMs today are proficient in MSA but reluctant to model DA; users wishing to converse in DA often have to perform extensive prompt acrobatics to coerce the LLM to use the dialect.333For instance, when conversing with ChatGPT in Egyptian Arabic, it took the author 14 turns of conversation before the LLM used the desired dialect (see Table5).Because MSA proficiency correlates with socioeconomic advantage among Arabs, LLMs’ singular MSA aptitude may exacerbate existing inequalities.
+And even when interacting with MSA-proficient users, replying to informal DA inputs with formal MSA sounds unnatural and limits an LLM’s uses.
+
+LLM pre-training data is diverse and likely includes content in many Arabic dialects.
+However, post-training uses existing human-labeled data, which is typically MSA, and newly collected data that commonly adopt an official tone corresponding to a formal MSA register.
+Current LLM behavior suggests that they have the capability to both understand and model DA, but that they default to MSA regardless, a behavior that could be caused by non-language-modeling objectives such as post-training.
+We thus hypothesize:
+
+Current post-training methods make LLMs more reluctant to model DA.
+
+Post-trained LLMs understand DA better than they generate it.
+
+Arabic-speaking communities are aware of LLMs’ DA shortcomings, but lack a standard operationalized definition of LLM DA proficiency.
+To this end, we present an evaluation suite of DA proficiency along different dimensions.
+We contribute:
+
+AL-QASIDA: a method to evaluate LLM DA proficiency along dimensions offidelity,understanding,quality, anddiglossia
+
+Best-practice recommendations, including use of few-shot prompts for DA generation, Llama-3 for monolingual tasks, and GPT-4o for cross-lingual requests of Egyptian or Moroccan varieties
+
+Six key findings from our AL-QASIDA evaluation and analysis
+
+Findings from our central evaluation include:
+
+LLMs do not produce DA as well as they understand it.
+
+When LLMs do produce DA, they do so without perceptible declines in fluency.
+
+LLMs are not diglossic: they generally cannot translate well between MSA and DA.
+
+And further analysis suggests the following:
+
+Current post-training can bias LLMs against DA, but otherwise improves text quality.
+
+Few-shot prompting improves DA proficiency across dialects and genres.
+
+Otherwise, no input text features correlate strongly with LLM DA performance.
+
+SECTION: 2Related Work and Background
+
+There exist notable prior works on benchmarking NLP for DA varieties.
+AraBenchSajjad et al. (2020)is a benchmark for MT between Arabic varieties and English that predates LLMs’ widespread popularity.
+DialectBenchFaisal et al. (2024)is a benchmark of 10 text-based traditional NLP tasks—such as parsing, part-of-speech tagging, and named entity recognition—that covers a large number of dialects and varieties in various languages, including multiple DA varieties.
+ARGENNagoudi et al. (2022)compares mT5Xue et al. (2021)with novel AraT5 de-noising language models across MT, summarization, paraphrasing, and question generation tasks.
+DolphinNagoudi et al. (2023)is a comprehensive Arabic NLP benchmark that evaluates DA, but does not define DA proficiency.
+AraDICEMousi et al. (2024)is an LLM benchmark much like ours that focuses on accuracy and cultural appropriateness in DA.
+Our work differs from these in its purpose: to define LLM DA proficiency.
+To our knowledge, ours is the first evaluation to measure this comprehensively.
+
+SECTION: 2.1Arabic dialect identification
+
+Identifying Arabic varieties, called Nuanced Arabic Dialect Identification (NADI), has been researched for years.
+Until recently, NADI shared tasksBouamor et al. (2019)evaluated models that produce a single country-level or city-level dialect label for each input sentence.
+However, this approach was found insufficient for DA intricacies.
+Arabic varieties have significant overlap, especially in text for geographically proximate varietiesAbdul-Mageed et al. (2024).
+For example, Figure2illustrates a sentence that is valid in multiple Levantine countries.
+If a NADI model labeled such a sentence as Syrian while the ground-truth label were Jordanian, this would be falsely deemed an error.
+In fact,Keleg et al. (2023)found that 66% of a single-label NADI model’s supposed errors were not errors at all.
+Hence the most recent NADI shared taskAbdul-Mageed et al. (2024)focused on multi-label NADI: mapping an input sentence to a multi-hot vector label, as in Table2.
+
+Keleg et al. (2023)marked another change in standard NADI approach.
+Instead of treating MSA as an additional variety alongside DA varietiesSalameh et al. (2018),Keleg et al.framed MSA identification as a separate task: Arabic Language Dialectness (ALDi).
+ALDi models predict where a given utterance falls on the dialectness scale, with aof 0 being fully MSA and 1 being fully DA (regardless which DA variety).
+See Table2.
+
+SECTION: 3Methodology
+
+To be proficient in a DA, an LLM requires different competencies that we define as the following:
+
+Fidelity:Can the LLM identify and produce the correct DA variety when prompted to?
+
+Understanding:Does the LLM understand prompts in the DA variety?
+
+Quality:Is the LLM able to model the DA variety well? (I.e. Does its quality deteriorate compared to MSA or another language?)
+
+Diglossia:Does the LLM understand how to translate between DA and MSA?
+
+Fidelityis crucial as it forms the prerequisite for further assessment.Understandingof DA prompts andQualityof DA responses are both necessary for successful user interactions. Finally,Diglossiameasures whether an LLM is aware of fine-grained differences between DA and MSA.
+
+SECTION: 3.1Operationalizing fidelity
+
+To measure how well the LLM can identify and produce requested DA varieties (fidelity), we evaluate whether the LLM produces the desired DA variety in monolingual (prompting the LLM in a specific DA variety) and cross-lingual (requesting a specific DA variety from the LLM in English) settings, analogous toMarchisio et al. (2024).
+
+Evaluatingfidelityrequires a NADI model to identify the Arabic variety of LLM outputs.
+In step withAbdul-Mageed et al. (2024), we note that single-label NADI classifications can lead to false errors in evaluation, like that seen in Figure2.
+Accordingly, we apply the NADI 2024 shared task baseline model444Originally trained for the single-label task ofAbdul-Mageed et al. (2023)Abdul-Mageed et al. (2024), but we extract the probability of the desired dialect from the output logits rather than a one-hot country-level classification.
+The NADI score () of an LLM is then the probability that its output is in the desired DA variety (denoted by country).
+BecauseKeleg et al. (2023)andAbdul-Mageed et al. (2024)established NADI and ALDi as independent (see §2.1), this NADI model does not distinguish between MSA and DA: only between country-level varieties.
+Hence, since we want output (1) in the requested variety and (2) in DA (as opposed to MSA), our evaluation also requires an ALDi model.
+We define a DA fidelity performance metric based on both these desiderata: Arabic Dialect Identification And DIalectness (ADI2) score.
+Given LLM output,555Because some LLMs, especially base models, tended to repeat DA inputs in monolingual settings, we remove any copies of the prompt from outputbefore ADI2 computation.we define:
+
+Because some DA varieties are close (see §2.1), we also compute an alternative to, which we call the NADI macro-score and define, where, each regionitself representing a set of countries.
+Accordingly, the ADI2 macro-score, given.
+This metric indicates whether the LLM responds with DA varieties from the right general region, and thus allows for NADI confusions between proximate varieties.
+
+SECTION: 3.2Operationalizing other competencies
+
+We use DA-to-English translation to evaluate the LLM’s understanding of DA text.
+As English is the closest language to an LLM’s internal representationEtxaniz et al. (2024), we can assess to what extent the model understood the original DA text based on the quality of its English translation.
+Machine translation (MT) metrics such as BLEUPapineni et al. (2002)or human annotations thus serve as proxies to DA understanding.
+We employ SpBLEUGoyal et al. (2022)and chrFPopović (2015).
+In addition to assessing understanding via MT, we ask human annotators to evaluate understanding directly by determining to what extent the LLM fulfilled requests in monolingual DA prompts during thefidelityevaluation.
+LLM-as-a-judge evaluatorsZheng et al. (2023)are less accurate when rating responses in low-resource varieties such as DA, but our approach could be adapted to use such evaluators in the absence of human annotators.666optionally translating outputs to MSA before annotationAt this stage we also ask annotators for judgments on fluency and dialectness, which we use in the next phase of evaluation.
+
+We next measure the LLM’s fluency and semantic accuracy in DA, first by English-to-DA MT.
+Again treating English as a proxy for the LLM’s semantic knowledge, this measures how well the LLM can express a variety of semantic concepts in DA.
+In this setting, we supplement automatic MT scores with human evaluations of adequacy and fluency of translations, as well as dialectness judgments, detailed in §4.2.777Again in the absence of human annotators, LLM-as-a-judge could be substituted at this stage.We couple this with correlative evaluation to reveal whether the LLM’s output quality deteriorates in DA compared to MSA.
+For this we gather all human (or LLM-as-a-judge) DA fluency annotations previously collected and correlate them with dialectness scores, to determine whether fluency degrades in more dialectal generation.
+
+To measure LLMs’ diglossic proficiency, we evaluate MSADA MT. Table3summarizes details of all four evaluation competencies.
+
+SECTION: 3.3Evaluation corpora
+
+In addition to NADI and ALDi models, we require three specialized corpora for evaluation: (1)Cross-lingualprompts, or English user inputs explicitly requesting specific DA varieties; (2)Monolingualprompts, or user requests in various DA varieties; and (3)Bitextprompts, or aligned bitexts with translations in English, MSA, and DA varieties.
+
+For thecross-lingualcorpus, we adapted a set fromMarchisio et al. (2024)of English LLM prompts with explicit requests for responses in different languages, and substituted the names of DA varieties instead.
+This set originally came from three distinct collections of LLM user prompts: a subset of OkapiLai et al. (2023)inputs to the Alpaca LLMTaori et al. (2023), a collection of ChatGPT inputs scraped from the ShareGPT API, and a corpus of human-curated prompts commissioned byMarchisio et al.(denotedCohere).
+For themonolingualandbitextcorpora, meanwhile, we selected four existing DA data sets based on their style diversity and dialectal coverage.
+
+We used two multi-variety DA bitext corpora, integrating 200 sentence pairs from each in ourbitextcorpus and 100 sentences from the monolingual DA portion of each in ourmonolingualcorpus.
+The first, MADAR-26Bouamor et al. (2018), is a multi-way parallel bitext with English, MSA, and DA from 25 Arab League cities.
+The English source sentences were sourced from the Basic Traveling Expression Corpus (BTEC)Takezawa et al. (2007)and manually translated into the 26 Arabic varieties.888We used sets for Riyadh, Damascus, Jerusalem, Khartoum, Cairo, Algiers, and Fes to render seven countries’ DA.The genre of this corpus is BTEC, i.e. everyday utterances that might be expressed verbally.
+The second set, FLORES-200NLLB Team et al. (2022), is an MT evaluation benchmark
+of 1012 sentences in 204 language varieties.
+The English source texts were sampled from wiki sites and then translated manually.
+We use the sets for Najdi, North Levantine, South Levantine, Egyptian, and Moroccan Arabic to represent KSA, Syria, Palestine, Egypt, and Morocco, respectively.
+
+We then used two multi-variety monotext DA corpora, adding 100 additional sentences per variety from each to ourmonolingualcorpus.
+The first, MADAR-TwitterBouamor et al. (2019), contains 2,980 tweets from 4,375 profiles in 21 Arab countries.
+The tweets were seeded from 25 hashtags representing Arab League states (e.g. #Kuwait, #Egypt) and labeled by country.
+The second corpus, HABIBIEl-Haj (2020), contains  30k song lyrics by artists from 18 Arab countries.999A native speaker of two DA varieties manually cleaned mislabeled sentences from the HABIBI sets we used, since some artists wrote in a DA variety other than their own. This annotator also deliberately selected lyrics for our 100-sentence subsets to highlight distinctions between varieties.We used eight country-level subsets from each of these collections (corresponding to all eight countries in Figure1).
+
+Note that the purpose ofmonolingualevaluation is to measure how well an LLM matches a user’s input DA variety, so it should be composed of the commands instruction fine-tuned LLMs are accustomed to.
+The data sources we used for monolingual sentences provided generic sentences of four genres: BTEC, wiki text, tweets, and song lyrics.
+To transform these diverse generic sentences into instructions, we used eight instruction templates (shown in Table7).
+We surveyed native speakers of the eight DA varieties covered to retrieve translations of the templates.
+Then for each generic sentence, we randomly selected one of the templates in the appropriate variety and inserted the generic sentence, transforming it into a command.
+Also randomly chosen along with the template was the sentence location: i.e. whether it was inserted at the start or end of the template, or in the middle where applicable (see Table7).
+
+SECTION: 4Evaluation and Results
+
+We detail our evaluation of nine LLMs for eight country-level DA varieties:101010listed roughly from east to westKuwait, Saudi Arabia, Syria, Palestine, Sudan, Egypt, Algeria, and Morocco.
+These constitute two varieties from each of four Arabic dialectal regions (see Figure1).
+
+SECTION: 4.1Primary results
+
+Recall from §3that we evaluate DA fidelity (ADI2 score and macro-score), and MT in four directions: DAEnglish and DAMSA.
+We begin with DA fidelity and present scores across eight dialects, four genres, and nine LLMs.
+Six are competitive open-source LLMs Command-R (and base model),111111https://cohere.com/blog/command-rCommand-R+ (and base model),121212https://cohere.com/blog/command-r-plus-microsoft-azureand Llama 3.1 (and base model)Dubey et al. (2024).
+One is a competitive closed LLM, GPT-4o.131313https://openai.com/index/hello-gpt-4o/And two are LLMs recognized for specialty in Arabic: ACEGPTHuang et al. (2024)(selected because of its prominence) and SILMATeam (2024)(selected because it led the Arabic LLM leaderboard141414https://huggingface.co/spaces/OALL/Open-Arabic-LLM-Leaderboard, as of 27-10-2024during our evaluation).
+Results for monolingual and cross-lingual prompts are in Figures3and4, respectively (more detailed results in AppendixA).
+
+The order of model performance is roughly consistent across genres and dialects.
+Inmonolingualsettings, the Command-R+ base model, Llama-3.1, and Llama-3.1 base model performed best,151515impressively, given its 8B parameters (see Table9).followed by Command-R base.
+Command-R, Command-R+, GPT-4o, and ACEGPT typically perform worse, and SILMA worst of all (see Fig.3).
+Almost all ADI2 scores fell below 50%.
+The Command base models’ higher performance supports Hypothesis1that post-training can inhibit DA modeling.
+All LLMs performed poorly on thecross-lingualtask.
+Base models, ACEGPT, and Llama 3.1 were unable to complete the cross-lingual task whatsoever, and the performance of Command-R, Command-R+, and SILMA was low.
+GPT-4o was the only model to surpass 13% ADI2, and only on half of the dialects.
+We summarize results in Figure4.161616See Figure9for fuller results.Note that on the lowest performing DA varieties, no LLMs exceed 20% ADI2 on any genre for either task, and that even on Egyptian and Moroccan, a majority of LLMs still score below this threshold.
+
+A majority of LLM responses fail because they are in MSA rather than DA: ALDi and ADI2 scores are highly correlated withfor cross-lingual andfor monolingual, indicating that if models do not respond in the right dialect, they are typically not responding in DA at all.
+Manual inspection of responses suggests that LLMs output pure MSA (with ALDi=0 or nearly 0) by default, while occasionally responding more dialectally.
+(Figure11illustrates this distribution.)
+We could not find any obvious predictors of the LLMs’ dialectness from manual inspection.
+This led us to hypothesize that DA responses are not triggered by any features other than random sampling:
+
+An LLM’s distribution of correct DA responses does not correlate strongly with any detectable features of input text.
+
+Our MT automatic metric scores for four dialects are in Figure5.
+(See Figure10for the rest.)
+GPT-4o and Command-R+ tended to perform best, with Command-R and SILMA usually lagging behind.
+ACEGPT typically performed worse and Llama 3.1 worse still.
+We forewent base models in this setting since MT is an instruction-oriented task.
+Model differences are more pronounced in directions evaluatingdiglossia(DAMSA) and less so in those evaluatingqualityandunderstanding.
+Note that DAEnglish MT scores are higher than EnglishDA (supporting Hypothesis2that LLM DA understanding beats generation).
+MSADA MT is poor for BTEC.
+Dotted lines indicate zero-translation baseline scores for MSADA (i.e. the SpBLEU score between source and target corpora without translation).
+In many cases the LLMs actually pull the source farther from the target, even when scores may appear high (such as for MSASaudi Arabic FLORES).
+Overall, LLM DAMSA performance is either low, below the zero-translation threshold, or barely above it.
+We conclude thatLLMs are not strongly diglossic.
+
+SECTION: 4.2Human evaluation
+
+We asked two native speakers of Egyptian and one of Syrian Arabic to make judgments of the Command-R+ and GPT-4o DA outputs for both MT and monolingual tasks, as well as Command-R+ base for the monolingual task.
+Annotators judgedAdherenceof monolingual responses, or how well the LLM fulfilled the user’s request, andAdequacyof translations, or how well a translation reflected the meaning of the original sentence.
+For both tasks they made judgments of ArabicFluencyandDialectal Fidelity, the final metric being the only one associated with the LLM’s ability to use the right DA variety.
+We defined the scales and guidelines for each of these measurements as shown in Figure6and Table10.
+We averaged human scores across 50 prompts for each model.
+Annotators received prompts and completions in random order without LLM labels, for unbiased review.
+
+See Figure6for average human eval scores.
+Results indicate that the instruction fine-tuned models excel at (1) producing fluent Arabic text, (2) translating into Arabic with semantic adequacy, and (3) fulfilling DA requests, but that they struggle to do so in the correct DA variety.
+Their highadequacyand lowdialectal fidelityscores (along with low ADI2 scores and high DAEng MT scores in §4.1) indicate LLMs’stronger DA understanding than generation, supporting Hypothesis2.
+Command-R+ base has betterdialectal fidelity, in part due to prompt reduplication, but fulfills user requests poorly with low fluency.
+We thus conclude thatpost-training can harm DA proficiency, but appears needed for other aspects of text quality.
+
+We correlated human fluency scores with dialectal fidelity to ascertain whether LLMs model DA with diminished fluency.
+However not a single one displayed significant negative correlation.
+The only relationship withwas a weakly positive correlation offor the Command-R+ base model in Egyptian.
+We thus conclude thatLLMs can produce DA with no perceptible decline in fluency(when they are able to at all).
+
+SECTION: 5Follow-up Experiments and Analysis
+
+After conducting our primary evaluations, which produced ADI2 scores and both automatic and manual MT scores for each LLM, we analyzed LLM outputs further.
+Our motivation for this was (1) to explore inexpensive remedies to LLMs’ DA deficiencies, and (2) to test Hypothesis3and explore how user input features elicit LLM behaviors.
+We restrict this analysis to Command-R+, GPT-4o, and Llama 3.1 for depth and focus.
+
+We first explored few-shot learning—an inexpensive mitigation approach—to improve DA modeling of the least performative of these LLMs: Command-R+.
+We curated five in-context prompt-completion examples for each of for DA varieties, for both monolingual and cross-lingual tasks, by translating the few shot examples used byMarchisio et al. (2024)in their related experiments.
+Figure7shows thatfew-shot examples improve ADI2 across tasks and genresfor Command-R+.
+
+We then analyzed relationships between prompt attributes and performance.
+We collected features for each prompt and completion of the non-translation tasks: target DA variety; prompt length; prompt template; genre or data source; LLM used; number of few-shot examples; dialectness of input (for monolingual setting); and location of the dialect request (for cross-lingual) or inserted generic utterance (for monolingual) in the prompt.
+We fit decision tree regressors on ADI2 score using these features andmax_depth3, shown in Figure8.
+The predominant dichotomous features are the desired DA variety and LLM used.
+Others include number of few-shot examples and dialectness of input text.
+
+For feature-level correlations with ADI2 score, we performed Spearman’s rank tests for numerical features and ANOVA tests for categorical features to findandcoefficients.
+We display these only for the relationships where, in Table4, for both monolingual and cross-lingual tasks.
+No values in the table exceedAdams and Conway’s (2014) threshold of strong correlation,, and novalues exceed magnitude.
+It seems target DA variety, LLM used, and number of few-shot examples correlate moderately with ADI2; but other features have weak or no correlation.
+In the monolingual task, the dialectness of the prompt also correlates significantly but weakly with both ADI2 and output dialectness (and, respectively).171717High input dialectness can result in a range of output dialectness, but low input dialectness typically precludes high output dialectness. See Fig.12.For a given LLM in a given DA variety, no feature of input text correlates strongly with DA performance.
+
+DAV
+
+PT
+
+LOC
+
+GEN
+
+LLM
+
+LEN
+
+N
+
+SECTION: 6Conclusion
+
+We provide a comprehensive evaluation suite to measure LLM DA proficiency: Analyzing LLM Quality and Accuracy Systematically in Dialectal Arabic, or AL-QASIDA (”the poem” in Arabic).
+We find that LLMs struggle to model DA, not due to faults in understanding or generation quality, but to a preference for MSA generation.
+Though more balanced pre-training data could likely mitigate this, we find that post-training can bias LLMs towards MSA, suggesting balanced post-training data as a lower-cost alternative.
+We also find few-shot examples can mitigate DA pitfalls at even lower cost.
+In the absence of mitigation strategies, we recommend GPT-4o for cross-lingual DA requests of Egyptian or Moroccan, and Llama-3.1 for monolingual DA generation.
+(Base models also do relatively well but have serious fluency liabilities.)
+
+SECTION: Acknowledgments
+
+We thank Arwa Alaya, Noha Shehata, Abdullah Omran, Brenda Malacara, Linda Yanes, Sarah Laouedj, Djillali Boutouili, Asmaa Oirgari, Amir Hussein, Jay Alammar, Amr Keleg, and Nizar Habash for their invaluable contributions to the completion of this work.
+
+SECTION: Limitations
+
+In this work we did not explore all the DA modeling mitigation strategies we had originally intended to.
+(We decided to leave these for future work when the number of our results started to become unmanageably large.)
+Notably, we found promising preliminary indications that strategic preambles can help LLMs model DA better.
+
+Imaginably, we were unable to evaluate all popular LLMs and had to settle for relatively small a subset.
+We acknowledge this and emphasize that our development of this evaluation suite is meant as a technique for others to apply to other and future LLMs going forward.
+We did our best to include a diversity of LLMs so that readers may extrapolate general trends of LLM DA proficiency, but we acknowledge our sample may not be entirely representative.
+
+We also acknowledge that some of these LLMs, particularly the closed-source GPT-4o, are continuously updated and may not remain the same, even though the process of writing and publishing this paper.
+Hence, results drawn for GPT-4o may be slightly different as time passes and may not align perfectly with our findings here.
+
+SECTION: Ethics Statement
+
+DA modeling capabilities have a number of ethical implications.
+As we touched on in §1, LLMs have the potential both to create opportunities for the less advantaged, and to exacerbate existing inequalities.
+If LLMs are primarily proficient in MSA, as they are today, they may afford benefits only to Arabic speakers with enough education and social advantage to communicate comfortably in MSA, while those with less MSA proficiency may be left behind.
+
+The notion to treat Arabic as a monolith without representing its various diverse language varieties is often a result of homogeneity in the research community with a bias towards Western languages and values.
+We hope this work may bring a specific Arabic technological need to the community’s attention as a small way to address this imbalance.
+
+We cover a diversity of eight DA language varieties by our evaluation, however we cannot claim to represent the varieties of all Arabic speakers, even in the eight countries represented.
+We hope our evaluation may be expanded to be more representative in the future.
+
+SECTION: References
+
+SECTION: Appendix ASupplemental Figures and Graphics
+
+Here we present some supplemental visualizations.
+Table5contains a conversation in which the user attempted to converse with GPT-4o in Egyptian DA, while the model repeated insisted on using MSA.
+Cell coloring corresponds to each utterance’s dialectness perKeleg et al. (2023), listed in percentage form in the right column.
+Though the LLM’s response on the sixth turn of conversation was partially DA (64% dialectness overall), it did not satisfy the user because of its composition: the first three words of the utterance were 93% dialectal, after which the LLM abruptly switched back into MSA (9% dialectal) for the rest.
+Not until the fourteenth turn of conversation was the LLM’s response satisfactorily dialectal, at 75%.
+By comparison, the highest average dialectness score that any model achieved in our full evaluation presented here was only 61.4% (reached by Llama-3.1 on Egyptian Arabic tweets in the monolingual task).
+The original Arabic conversation is likewise displayed in Table6.
+
+Table7shows English versions of the templates we used to transform generic DA sentences into DA instructions (i.e. user inputs for an LLM).
+Native Arabic speakers from the eight countries indicated in Figure1translated the templates into their native DA varieties for our evaluation suite.
+Generic monolingual sentences from monotext or bitext corpora were inserted at different positions in the templates stochastically, see Table8.
+
+Supplemental and more complete experimental results can be found in Figures9and10Figure10visualizes MT scores as in Figure5, but for all eight dialects evaluated.
+We will host complete detailed evaluation results on a server upon formal publication of this work.
+
+Input dialectness is plotted against output dialectness in the monolingual task in Figure12.
+The correlation between these variables is positive, with Spearman’s.
+Notice that high input dialectness can result in a diverse range of output dialectness values, but low input dialectness typically precludes high output dialectness.
+In other words, even high input dialectness does not guarantee much about the output dialectness, but low input dialectness more or less destroys any chances of dialectal output.
+
+We show the sizes of LLMs we used, in number of parameters, in Table9.
+It is notable that Llama-3.1 scored best in the monolingual task, since we used only the 8B-parameter model, compared to much larger models Command-R+ and GPT-4o.

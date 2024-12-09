@@ -1,0 +1,420 @@
+SECTION: Knowledge Transfer in Deep Reinforcement Learning via an RL-Specific GAN-Based Correspondence Function
+
+SECTION: Knowledge Transfer in Deep Reinforcement Learning via an RL-Specific GAN-Based Correspondence Function††thanks:This work was supported by the join UTIA-PEF laboratory TALISMAN. The authors would like to acknowledge the contribution of the COST Action CA21169, supported by European Cooperation in Science and Technology.‌
+
+Deep reinforcement learning has demonstrated superhuman performance in complex decision-making tasks, but it struggles with generalization and knowledge reuse—key aspects of true intelligence. This article introduces a novel approach that modifies Cycle Generative Adversarial Networks specifically for reinforcement learning, enabling effective one-to-one knowledge transfer between two tasks. Our method enhances the loss function with two new components: model loss, which captures dynamic relationships between source and target tasks, and Q-loss, which identifies states significantly influencing the target decision policy.
+
+Tested on the 2-D Atari game Pong, our method achieved 100% knowledge transfer in identical tasks and either 100% knowledge transfer or a 30% reduction in training time for a rotated task, depending on the network architecture. In contrast, using standard Generative Adversarial Networks or Cycle Generative Adversarial Networks led to worse performance than training from scratch in the majority of cases. The results demonstrate that the proposed method ensured enhanced knowledge generalization in deep reinforcement learning.
+
+KeywordsDeep learning, Markov decision process, reinforcement learning, transfer learning, knowledge transfer
+
+SECTION: Notation used
+
+SECTION: Acronyms
+
+SECTION: 1Introduction
+
+The inherent ability of\acRL to dynamically learn complex policies through trial and error has shown great potential in solving diverse decision problems. Deep\acRL, which combines the advantages of\acRL with the power to handle high-dimensional data, has recently brought many advances.
+For instance, model-free methods have shown significant results in\acMuJoCo environments[1], real-world robotic applications[2], and have demonstrated an ability to achieve super-human performance in Atari games[3],[4]. Model-based deep\acRL methods such as AlphaZero[5]and\acPlaNET[6]have also made significant progress. However,\acRL remains unsuitable for many real-world tasks, as errors can be extremely costly. One promising way to address this issue is through\acTL[7],[8], where skills and knowledge collected from similar tasks are applied to the current problem.
+Additionally,\acTL plays a crucial role in: developing agents capable of lifelong learning[9], multi-task learning[10], enabling simulation-to-real knowledge transfer in robotics[11,12,13,14,15], and advancing the development of general AI[16],[17].
+
+Despite many advances, the use of transfer learning in\acRL, especially in deep RL, remains limited due to several challenges:
+
+Weak ability of the\acRL agent to generalize to unobserved tasks. For example, the output of a deep convolutional network for image data can be dramatically altered by a-pixel perturbation of the input image,[18]. This issue extends to\acRL, as image data often form the observable states in\acRL tasks. For instance,-pixel perturbations can lead to ineffective policies,[19].\acRL methods frequently fail to reuse previously acquired knowledge even in similar tasks when the original image is rotated or when some colours are changed. It has also been shown that learning from scratch can be more efficient than fine-tuning a previously obtained model[20]. This significantly contrasts with the human ability to generalize and reuse previously acquired knowledge.
+
+Challenging transfer of knowledge and experiencefrom previously solved tasks to unseen ones. A decision policy learnt from similar tasks may not always be effective in solving the current decision task. For example, optimal policies for driving a motorcycle in racing conditions are unsuitable and even dangerous for public roads.
+
+The objective of this paper is to create an efficient method for one-to-one knowledge transfer between different\acRL tasks, with the aim ofimprovingthe agent’s performance on the target task andreducingthe training time required. The primary motivation is that any transferred object (skills or knowledge) is typically task- and policy-specific111The environment dynamics and rewards of\acRL tasks may differ.. To ensure that the transferred skills are relevant and effective, we focus on identifying and transferring the most informative patterns. This approach enhances the\acRL agent’s ability to generalize across tasks, thereby improving performance in the target task.
+
+An additional, but important, reason why\acTL may fail is that the tasks involved can differ significantly in their dynamics and rewards. The proposed method addresses this by considering the matching of the dynamics of the involved\acRL tasks to ensure that appropriate behaviour patterns are transferred.
+
+The proposed solution adopts a cyclic paradigm and is formulated as an\acRL-specific modification of CycleGAN. It introduces two new components to the loss function: model loss and-loss. The model loss captures the essential dynamic relationship between the involved\acRL tasks, while-loss prioritises states that affect learning the policy of the target\acRL task.
+
+SECTION: Main contributions of the paper
+
+Introduction of an efficient method for knowledge transfer.We propose a novel method for knowledge transfer between two different\acRL tasks based on an\acRL-specific modification of\acCycleGAN, designed to enhance generalization and reduce training time across tasks.
+
+Establishment of a correspondence function.We develop a correspondence function that learns and reveals the similarities between source and target\acRL tasks. This function plays a key role in facilitating efficient and accurate knowledge transfer.
+
+Development of a four-component loss function.Our four-component loss function incorporates model loss,-loss, and two additional components to better reflect task dynamics and account for the actual policy being used. This design improves the transfer of relevant knowledge and enhances the learning process.
+
+Generalization of\acGAN and\acCycleGAN methods.By introducing two new components to the loss function, we extend and generalize the\acGAN and\acCycleGAN methods. Our approach demonstrates that these standard techniques are special cases of our proposed framework, providing a broader, more powerful solution for knowledge transfer in\acRL.
+
+Complete knowledge reuse in Pong tasks.We achieve 100% knowledge reuse in experiments transferring between the original Pong and arotatedPong environment, highlighting the method’s ability to fully transfer learned skills without requiring re-training.
+
+Handling of challenging tasks where standard methods fail.Our method successfully handles tasks that are problematic for traditional\acGAN and\acCycleGAN methods, allowing for faster learning and improved performance where the only alternative would be to learn from scratch.
+
+No reliance on paired data: Unlike many transfer learning techniques, our approach does not require paired datasets, making it broadly applicable across various domains and tasks.
+
+Task and domain independence: The method is independent of the nature of the\acRL tasks involved, meaning it can be applied to diverse domains without task-specific manual engineering.
+
+Flexible data formats: It works with different data formats for states (e.g., images, sounds, numerical vectors), ensuring versatility and applicability to a wide range of applications. The method can be adapted to various RL tasks by selecting an appropriate network architecture tailored to the specific data format, not limited to image data alone.
+
+The paper layout is as follows. Section2recalls the necessary background and formulates the considered\acTL problem. Section3constructs the correspondence function and proposes a novel method of its learning. Section4describes the experimental evaluation of the proposed approach and compares it with baseline methods. Section5provides concluding remarks and outlines future research directions.
+
+SECTION: Related works
+
+Survey[8]systematically analyses recent advances in transfer learning for deep\acRL. Our research approach falls within the category of methods that employ mapping functions between the source and target tasks to facilitate knowledge transfer. A notable subset of this research focuses on learning shared features across\acRL tasks that are transferable. As demonstrated in[21], policies trained on intermediate-level features, referred to asmid-level features, exhibit superior generalization compared to policies trained directly on raw image observations. Work[22]leverages general features of two\acRL tasks with different dynamics. However, the method is based on paired image observations which are hard or impossible to obtain in practice. Work[23]achieved success in tasks differing in reward function by maintaining successor features and decoupling environment dynamic and reward function. Approach[24]introduces task similarity criterion and builds\acTL framework based on knowledge shaping, where for similar tasks, efficient transfer is theoretically guaranteed.
+
+The pioneering work that used task correspondence was based on unsupervised image-to-image translation models\acCycleGAN,[25], and\acUNIT,[26]. Approach[20]achieved results on a specific set of tasks by finding correspondence between states of two\acRL tasks. The application potential of the approach is rather limited as problems like mode-collapse are present. Works[13]and[12]improved the approach proposed in[20]by introducing-function or object detection into the learning of the task correspondence. One of the recent approaches,[27], considers an environment model while learning the task correspondence, which is strongly inspired by the video-to-video translation model,[28].
+
+SECTION: 2Background and notation
+
+This section briefly recalls\acRL formalism and introduces the considered problem.
+
+SECTION: 2.1Notation
+
+Throughout the text, sets are denoted by bold capital letters (e.g.X),andare sets of natural and real numbers respectively.is the L1 norm of.is the value ofat discrete time.denotes the expected value ofwith respect to a probability density(if provided). Specific notations are provided at the beginning of the article.
+
+We formalise the transfer problem in a general way by considering
+two\acRL tasks - thesource task,, and thetarget task,, characterised by their respective task domains.and, withSandAdenoting a set of states and a set of actions respectively.
+
+SECTION: 2.2Reinforcement learning
+
+Reinforcement learning (\acRL) considers anagentpurposefully interacting with anenvironmentby selecting actions.\acRL agent models its environment as\acMDP,[29]consisting of discrete sets of observable statesSand actionsA. Setis referred to as thetask domain. At each time, the agent observes environment stateand takes action. Executing actionat state: i) causes a transition of the environment to stateaccording totransition functionthat describes, and ii) provides reward, i. e. the value of reward function. The agent’sgoalis to learn policythat maximises the accumulated reward.
+
+The solution of a\acMDP task is theoptimalpolicy:
+
+withdecision horizonanddiscount factor.
+The\acRL agent learns to act optimally within\acMDP when the transition function and reward function are unknown. A good\acRL modifiesover time to gradually get it closer to an optimal policy.-learning, a model-free\acRL algorithm, is one of the traditional solution approaches. It aims to learn-function (akastate-action-value function) that quantifies the expected value of future discounted reward over the states induced byfor given starting stateand action.
+
+Discount factorexpresses the agent’s preferences towards immediate reward over future ones.
+The estimate of (2),, can be gradually learnt on the stream of data recordsusing for instance, temporal difference learning,[30]:
+
+whereis a parameter calledlearning rateand. The learning starts with an initial estimate of the-function,.
+The learned, approximately optimal, decision rule is then
+
+SECTION: 2.3Deep Q-learning
+
+Whenever the state space is huge, for instance, when the state is given by a video frame, efficient learning of-function calls for numerical approximation. The state-of-the-art in function approximation points to deep neural networks (DNN) as a suitable methodology,[31].
+
+Deep-networks (DQN),[32], use a standard off-policy-learning,[30], and DNN to estimate the-function (2).
+
+DQN approximates-function by a deep neural network with parameters that can be trained similarly to the supervised learning,[3]. However, the supervised learning assumes i. i. d. input data. Moreover, output values are expected to be the same for the same inputs,[33]. Neither of these assumptions is met in\acRL tasks. The consecutive states are usually highly correlated (e. g. video frames) and thus very far from being i. i. d. Output values also contain learned-function that evolves during learning. This makes the learning process unstable.
+To enable data reuse and stabilise the learning, DQN uses anexperience replay techniqueto remove correlations in the observed sequence and employs an additionaltarget network222Note that nametarget networkin DQN generally does not refer totarget task.to stabilise the output values, see[3]for details.
+
+Experience replay techniqueconsiders that the lastdata records (so-calledexperience memory, denoted asM) are stored in a memory buffer. At each learning step, a mini-batch of lengthis randomly sampled from the memory buffer and is used to update the neural network that approximates-function. It brings the learning data closer to being i. i. d.
+
+Target networkis an additional network333that has the same architecture as the original networkserving for stabilising the learning. The idea is as follows. The parameters of theoriginal networkare updated at every learning step, whiletarget networkis used to retrieve output values and stays static, i.e. its parameters do not change. Everysteps, the original and target networks are synchronised.
+Details on the DQN algorithm, see Appendix.
+
+SECTION: 2.4Cycle-Consistent GAN
+
+CycleGAN,[25], is based on\acGAN,[34], and was originally proposed for image-to-image translation. The idea behindcycle consistencyis that data that has been translated to a new domain and then recovered from it, should not change.
+
+CycleGAN operates with two mappingsandcalledgenerators444that translate data between source and target domains
+
+They are learnt as two\acGANs, that is, simultaneously with the corresponding discriminatorsand. Generators learn to map states fromtoand vice-versa, while discriminators learn todistinguisha real state from a state mapped by a generator.
+Mappings,,andare constructed as neural networks with their architecture depending on the data format. For instance if states are images, convolutional layers are often used.
+
+Learning in\acCycleGAN minimises a two-component loss. The first isadversarial loss,comes from\acGAN and is given by
+
+The adversarial training encourages mappingsand(5) to produce outputs indistinguishable from the real ones, i. e. respective setsand. However, minimisingdoes not prevent the network from mapping the same set of input images to any permutation of images in the target domain.
+
+The second component iscycle-consistencyloss,, that has the following form:
+
+Minimisation of cycle-consistency lossensures that every statemust be recoverable after mapping it back to, i.e.. The same requirement applies to every state.
+
+SECTION: 3Transfer learning for\acRL
+
+Humans have a remarkable ability to generalise. They do not learn everything from scratch but rather reuse earlier acquired knowledge to a new task or domain555Developmental psychologists have shown that as early as 18 months old, children can infer intentions and imitate the behaviour of adults,[35]. The imitation is complex as children must infer a match between their observations and internal representations, effectively linking the two diverse domains.. Generally, finding common patterns between different tasks and effectively transferring the concepts learned from one task to another is an essential characteristic of high-level intelligence. Thus, the efficient solution of transfer learning will allow for the creation of intelligent agents that can mimic human thinking and solve problems in a much more explainable way. Moreover, efficient reusing the acquired knowledge may accelerate the learning process and make complex tasks learnable.
+
+This section, we formalises a problem of transfer learning between two\acRL tasks, empirically introduces a correspondence function reflecting the similarity of two\acRL tasks and proposes an\acRL-specific modification of\acCycleGAN algorithm that realises knowledge transfer between two\acRL tasks. The proposed transfer i) considers behaviours, which are most useful for the target task; ii) captures and respects common patterns in transition dynamics of the involved\acRL tasks.
+
+SECTION: 3.1Problem formulation
+
+We consider two\acRL tasks: thesource task,, and thetarget task,with their respective task domainsand. Each of the tasks corresponds to\acMDP with its own environmental dynamics and reward function, see Section2.2. Transition functions of the tasks as well as theirs reward functions may be different.
+
+Intuitively, the success of transfer between two\acRL tasks depends on the degree of similarity between these tasks. If the tasks are dissimilar, the transfer of inappropriate knowledge may significantly worsen the resulting performance in the target task. Therefore, the success of the transfer broadly depends on the existence of some common properties between the source and target tasks. The similarity can be perceived from various perspectives, such as sharing the same environment, obeying similar laws of physics, or involving similar objects for interaction. For instance, when driving a motorcycle, encountering an animal on the road may correspond to pulling the brake levers, just as when driving a car, the sight of a person crossing the road can lead to pressing the brake pedal.
+
+This work uses an abstract notion of similarity, inspired by human learning when tackling related problems. Two tasks are similar if they share some common properties, and the knowledge acquired in one task proves to be beneficial in solving the other. This empirical definition can be more formally introduced as follows.
+
+Consider sourceand targettasks with respective domainsand.
+Acorrespondence function,, is a mapping, which reveals the similarity of the involved\acRL tasks in terms of the dynamics of the tasks’ environments and the associated-functions.
+
+It is clear that functionestablishes the relationship between similar patterns in behaviour of the target and source tasks that are necessary for knowledge transfer. So, ifis the optimal-function for the source task, then-function
+
+gives better performance666Performance is measured by average reward per time.on the target task than a random policy.
+
+Let us assume (for brevity) that the action spaces of the source and the target\acRL task are identical, i.e.. Let mutually corresponding actions be found using identity mapping regardless of the current state777More specifically, all actions of the source and target task have the same labels and meanings (e.g.stands for ”up”). Therefore, no mapping between source and target task action spaces is necessary. Thus, we need to learn a mapping indicating corresponding states, i. e. the correspondence function for states.
+The searched correspondence functionis then obtained as follows:
+
+whereis the generator from (5) mapping states from thetarget taskto states from thesource taskandis an identity mapping.
+
+The correspondence function is unknown to\acRL agent and the next section describes how to learn it.
+
+SECTION: 3.2Learning of correspondence function
+
+The proposed learning is inspired by\acCycleGAN, see Section2.4, where the learning minimises a discriminativeloss function, which makes the similarity metric small for similar patterns and large otherwise.
+Even direct application of\acCycleGAN to the states brought some success in policy transfer, see for instance[20]. However, data records in experience memories comprise richer yet unused information that may be helpful for the transfer of knowledge.
+We propose to include additional components into the loss function minimised in\acCycleGAN learning. They will consider unused information and make the learned correspondence entirely relevant to\acRL.
+The proposed loss will ensure that the learnt functioncaptures all patterns significant for the intended\acTL. In particular, the loss should respect both the dynamics and-function of the source task.
+
+This work proposes adding two new components to the\acCycleGAN losses, (6), (7):
+
+-loss- a loss that reflects how the-function learned from the source task,,
+copes with impreciseness in learned generatorsand.
+
+Model-loss- a loss that reflects the influence of the environment model of the source task.
+
+Let us explain the reasons for introducing the new components and their forms.
+
+The-function,, plays a central role in\acRL as it defines the optimal policy for the source task. When transferring knowledge from a source taskto a target task, it is essential to preserve the-function’s accuracy for states relevant to the\acDM process. This motivates the introduction of-loss,, which ensures that the learned correspondence function,, maintains consistency between the value estimates of corresponding states in both domains.
+
+Thecycle-consistencyloss (7) ensures that the generatorsandmap between the source and target domains in a consistent way. However, cycle-consistency alone does not prioritize the states that are most critical for decision-making in\acRL. The-loss directly incorporates the-function, encouraging the generators to focus on the states that matter most for choosing optimal actions. Mathematically, the-loss is defined as:
+
+This loss minimizes the difference between the-function values of statein the source task and its mapped counterpart after a round-trip through the generators (). In simpler terms, this forces the correspondence functionto retain the critical information from the states in the source domain that is essential for determining the optimal policy, ensuring that this information is preserved after mapping between tasksand.
+
+The rationale behind this is that for effective knowledge transfer in\acRL, it is not enough for the state representations to be similar visually or structurally; they must also be similar in terms of their impact on decision-making, as captured by the-function. By focusing on states that are important for action selection, the-loss makes the correspondence function more suitable for transferring policies between tasks.
+
+In reinforcement learning, tasks are inherently dynamic, meaning that a state’s importance often depends on the actions taken and how the state evolves over time. This dynamic nature introduces a key challenge for transferring knowledge between tasks, as it is not just the individual states that matter but the transitions between them. To address this, we introduce themodel loss,, which ensures that the correspondence function respects the underlying dynamics of the source and target tasks.
+
+While losses like,, andfocus on individual state mappings, they do not ensure that the temporal dynamics of the target task align with those of the source task. In other words, even if individual states match, the transitions between states (due to actions taken) might not be consistent. The model loss addresses this by incorporating the environment modelof the source task. The modelpredicts the next state based on the current state and action:
+
+To ensure that the learned correspondence function,, captures the dynamic relationships between the source and target tasks, we define the model lossas:
+
+This loss ensures that the transitions in the target task are consistent with those in the source task when mapped through the correspondence function. Specifically, if an actiontaken in the target task leads to a state transition fromto, the model loss ensures that this transition corresponds to a valid transition in the source task. In other words, applyingto the mapped stateshould lead to a statethat is predicted by the source task’s environment model.
+
+Intuitively, this means that the correspondence function not only matches individual states between the source and target tasks but also ensures that the way states evolve over time (due to actions) is consistent. This is crucial for transferring knowledge about dynamic tasks, where the sequence of states and actions is key to solving the problem.
+
+In summary, the model loss ensures that the correspondence function respects the temporal dynamics of both the source and target tasks, making it suitable for transferring policies between dynamic\acRL tasks. Together, the-loss and model loss guarantee that the transferred knowledge is useful both for individual states and for the dynamic relationships between them.
+
+The proposed total loss comprises all the components (6), (7), (10) and (12) and, thus, has the following form:
+
+where,andareloss parametersthat define relative influence (weight) of the respective components.
+
+The proposed approach, which minimises-component loss (13), generalises\acGAN,[34], and\acCycleGAN,[25], methods often used for transfer learning. It is easy to see that\acGAN and\acCycleGAN can be obtained by setting some of parameters,,in (13) to zeros as follows:
+
+(for\acGAN),
+
+(for\acCycleGAN).
+
+SECTION: 3.3Transfer learning: Algorithm
+
+The main steps of the proposed algorithm:
+
+The agent first solves taskby the DQN algorithm (see Section2.3). The obtained knowledge,, consists of learned-function,, and collected experience memory.
+
+The agent applies a random decision rule to task, collects experience memory. Further the agent usestogether with knowledge, to solvetarget taskmore efficiently, see Figure1.
+
+The assumed similarity of the tasksandguarantees the existence of correspondence function(see Definition3.1). The agent uses knowledgeand memoryto learn correspondence function. Hence the correspondence function is used to transform state-action pairs from the target task to the source task.
+
+Existence of a correspondence function, allows to express-function of the target task,, via-function of the source task,, and learnt correspondence functionas follows:
+
+Then the agent can use-functionof the source task to choose the optimal actions in the target task.
+
+Similarly to\acGAN, in the considered case of\acTL we have two experience memories withmutually unpairedentries:for the source task andfor the target task. The proposed algorithm learns the correspondence function,, that will match them.
+
+The experience memoryis obtained as a by-product of DQN algorithm used for learning the optimal-function. However, the proposed method does not strictly require usage of DQN. It is important that it can be applied to any algorithm givingand(whereis a differentiable function).
+
+This paper considers using the transfer learning method just once, in the beginning of interaction with the target task. Other ways, however, might be explored such as when partially optimal strategy is found to further improve it.
+
+SECTION: 4Experimental part
+
+To test the efficiency of the proposed approach, two experiments on the Atari game Pong,[36], were conducted. The performance of the approach was evaluated based on an average accumulated reward per game.\acGAN and\acCycleGAN were used as baseline methods.
+
+SECTION: 4.1Domain description
+
+Pong is a two-dimensional game simulating table tennis. There are six available actions (’do nothing’, ’fire’, ’move up’, ’move down’, ’move up fast’, ’move down fast’). The last four observed image frames served as a task state. The agent learned to play the game using the DQN algorithm, Section2.3, and, thus, learned the-function. To test the approach described in Section3.2, the agent also learned environment model.
+
+SECTION: 4.2Experiment description and setup
+
+The proposed\acTL method was tested in two experiments.
+
+Experiment 1: The source and target tasks were the same, i.e. game Pong (screenshot is shown in Figure2). The main aim of this experiment was to verify the ability of the proposed approach to find the identity transformation.
+
+Experiment 2: The source task was the original Pong while the target task was rotated Pong (see screenshot in Figure3). The game remained the same, but all image frames were rotated by 90 degrees.
+
+Each experiment consists of the following steps:
+
+The agent played thesource task(standard Pong), learned the optimal policy by DQN and obtained the optimal-function, environment modeland experience memorycontainingdata entries collected at the end of the game.
+
+The agent played thetarget task(standard Pong in Experiment 1 or rotated Pong in Experiment 2) using random policy and obtained data for experience memorycontainingdata entries.
+
+The agent started learning the correspondence functionusing the method from Section3with the-function, environment modeland experience memoriesand,
+
+For everylearning steps, the agent:
+
+suspends learning of correspondence function,
+
+uses learntand the-function transformed from thesource task, see (14), to play five games of thetarget task, and
+
+computes the average accumulated reward per game.
+
+The agent played thetarget taskwhile using the learned correspondence888the correspondence function that achieved the highest average accumulated reward per game in the previous step was used hereand-functiontransferred from thesourcetask. At the same time the agent uses DQN and fixedto continuously fine-tune-functionof the target task.
+
+Thekey metricto evaluate the success of the knowledge transfer was the average accumulated reward per game.
+
+Baseline methods:The results are compared with two baselines—using\acGAN and\acCycleGAN methods[34],[25], which have recently been applied for knowledge transfer in similar settings[20]. Experiment 2 also includesfine-tuningthe-function from the source task as a baseline, as it is a commonly used transfer learning method.
+
+The following sections provide the key details of the experiments performed and their results.
+
+SECTION: 4.3Experiment 1
+
+This experiment aimed to test transfer learning whensourceandtargettasks are identical.
+
+andgenerators (see Section3.2) were constructed as neural networks with convolutional layers. Their specific architecture was taken from[37]. The discriminatorsandwere also constructed as neural networks with convolutional layers with the architecture as in[38].
+
+The parameters of all of the networks were initialized from Gaussian distribution. The transfer learning with the loss (13) was tested for all the combinations of the parameters:,and.
+
+a)GAN
+
+b)CycleGAN
+
+c) Loss (13) with,,
+
+d) Loss (13) with,,
+
+e) Loss (13) with,,
+
+The results presented in Figure4- Figure6highlight the effectiveness of the proposed method in comparison to baseline models. After every 1000 learning steps, the agent pauses to play five games, and the average reward per game is recorded.
+
+In Figure4, the best results are observed when all loss components (,, and) are included in the total loss function (13) with parameters, as shown in Figure4e. This configuration achieves nearly the maximum reward (21), indicating that the method transfers knowledge effectively and optimizes performance.
+
+The significance of the new components is demonstrated by Figure4c and Figure4d. When only one of the new components (or) is included, the performance drops noticeably. This result emphasizes that both components are critical to achieving successful knowledge transfer. Other parameter combinations did not yield meaningful results and are therefore not presented here.
+
+In contrast, the baseline methods perform poorly. The\acGAN baseline (Figure4a) fails to yield meaningful results, while the\acCycleGAN baseline (Figure4b) shows initial success, but its performance quickly becomes unstable, indicating that it cannot maintain an effective correspondence function over time. The fluctuations observed in the CycleGAN curve in Figure4b stem from the adversarial nature of the training process, and adding the proposed losses appears to help mitigate this instability.
+
+Figure4visually demonstrates the correspondence between the source and target tasks, confirming that the best performance is obtained when all components of the loss function are active. Although the\acCycleGAN baseline shows some visual accuracy, its inconsistency is evident in the unstable reward progression.
+
+Finally, Figure6compares the performance of an agent learning from scratch with one that transfers knowledge using the proposed method. The agent that reuses previously learned knowledge reaches high performance almost immediately, while the agent learning from scratch requires much more time to reach the same level. This highlights the efficiency of our method both in transferring knowledge and reducing training time.
+
+a)GAN,,
+
+b)CycleGAN,
+
+c),,
+
+d),
+
+e),
+
+SECTION: 4.4Experiment 2
+
+In Experiment 2, thetarget taskis the original Pong with image frames rotated bydegrees (see Figure3).
+
+Generatorsand, (see (5) and Section3.2) are constructed as neural networks. Two types of generators were used in the experiment. The architecture of the first one, referred to here as theresnet generator, was taken from[37]and then followed by a rotation layer, see[39]. The second type, referred to as therotation generator, was composed of the mentioned rotation layer only. Discriminatorsandare constructed by neural networks with convolutional layers with the architecture as in[38].
+
+The proposed approach was tested with various values of the loss parameters,, and(from (13)). Figure7- Figure9present the best-achieved performance of our method, compared to baseline methods.
+
+Figure7depicts the average reward per game over five games. Similar to Experiment 1, after every 1000 learning steps, the agent pauses the learning of the correspondence function and plays five games of the target task. The results show that therotationgenerator achieves nearly perfect knowledge transfer, with rewards approaching the maximum score of 21. This indicates that therotationgenerator can establish an effective correspondence between the source and target tasks, enabling high-performance transfer.
+
+In contrast, although theresnetgenerator did not yield perfect results, it still learned a reasonable correspondence function, particularly after 50,000 steps, as shown in Figure8. This partially successful correspondence was then used to fine-tune the-function for the target task. Importantly, this fine-tuning process led to much better results than training the-function from scratch, demonstrating that even an imperfect correspondence can significantly accelerate learning.
+G
+The baseline methods, using standard\acGAN and\acCycleGAN, failed to produce any usable correspondence for knowledge transfer. This is clearly illustrated in Figure7a and Figure7b, where the agent’s poor performance highlights the limitations of these methods for reinforcement learning tasks.
+
+Figure8a illustrates the progression of the correspondence function learned by therotationgenerator, which consistently mapped the source task to the target task correctly. In contrast, Figure8b indicates the slower, but ultimately reasonable, progress made by theresnetgenerator, further emphasizing the benefits of therotationgenerator in establishing task similarity.
+
+Lastly, Figure9compares the performance of the agent in the rotated Pong task under different conditions:
+
+When learning from scratch, performance improves slowly over time.
+
+When using the correspondence function learned by theresnetgenerator, performance improves much faster at the start.
+
+When using therotationgenerator, the agent achieves immediate reuse of prior knowledge and performs at a high level from the beginning.
+
+When fine-tuning the-function from the source task without considering correspondence, performance was worse than learning from scratch, likely due to overfitting to the source task.
+
+This comparison highlights the advantages of the proposed method, which enables seamless knowledge transfer, significantly reduces training time, and improves initial performance. In contrast, fine-tuning the-function (used as one of the baselines) without proper alignment between tasks leads to poor results, underscoring the importance of task-specific correspondence functions.
+
+a)Rotation generatorusingGAN
+
+c)Rotation generatorusingCycleGAN
+
+e)Rotation generatorwith,
+
+b)Resnet generatorusingGAN
+
+d)Resnet generatorusingCycleGAN
+
+f)Resnet generatorwith,
+
+a) Rotation generator usingGAN
+
+b) Rotation generator usingCycleGAN
+
+c) Rotation generator with,,
+
+d) Resnet generator usingGAN
+
+e) Resnet generator usingCycleGAN
+
+f) Resnet generator with,
+
+SECTION: 5Conclusion and Discussion
+
+This paper presented a novel method for efficient one-to-one knowledge transfer between reinforcement learning tasks. Our approach modifies\acCycleGAN specifically for reinforcement learning by incorporating a new loss function that includes the-function and environment model from the source task. Through experiments on the 2-D Atari game Pong, we demonstrated that our method outperforms baseline models such as GAN and CycleGAN, providing faster learning and better performance, particularly in scenarios where task environments differ.
+
+One of the key findings of this work is the importance of the network architecture when learning the correspondence function. While both the rotation-based and convolutional generators achieved reasonable results, the rotation-based generator yielded superior performance. This suggests that convolutional layers, commonly used in image-based tasks, may not be optimal for reinforcement learning transfer learning tasks. Future research should explore other architectures, such as transformers,[40], which may further improve generalisation.
+
+In comparison to other knowledge transfer methods, our approach has the advantage of being applicable to a variety of domains without the need for paired data, allowing it to handle diverse\acRL tasks with varying state formats. However, we acknowledge some limitations. The current method struggles with tasks that have low similarity, and we have not yet explored transferring knowledge from multiple source tasks or automatically selecting the most relevant source task.
+
+Expanding the validation: testing the proposed method on a broader range of RL tasks to assess its generalization ability and robustness.
+
+Knowledge transfer in low-similarity tasks: investigating how to transfer knowledge between tasks with low similarity.
+
+Identifying relevant knowledge: exploring methods to identify and transfer relevant knowledge from multiple source tasks.
+
+Source task selection: developing strategies for selecting the most relevant source tasks for transfer.
+
+Alternative network architectures: researching alternative network architectures, like transformers, to enhance correspondence learning.
+
+In conclusion, our approach represents a significant advancement toward practical and flexible knowledge transfer in reinforcement learning. However, several challenges remain that future work must address to enhance the robustness and adaptability of such systems.
+
+Method implementation: The method implementation in Python is available athttps://github.com/marko-ruman/RL-Correspondence-Learner
+
+Data availability statement: The datasets generated and/or analysed during the current study are available from the corresponding author on reasonable request.
+
+Ethical approval: This article does not contain any studies with human participants performed by any of the authors.
+
+[]
+
+SECTION: DQN algorithm
+
+Algorithm1summarises the DQN algorithm used in the text (see Section2.3for details).denotes parameters of the source network andare parameters of the target network. Both networks have the same architecture.
+
+SECTION: Implementation details
+
+The architectures of generatorsandin Experiment 1 (Section4.3) and the resnet generatorsandin Experiment 2 (Section4.4) were taken from[25]. The 9 residual blocks version was used. Below, we follow
+the naming convention used in[25].
+
+Letc7s1-fdenote aConvolution-BatchNorm-ReLU layer withfilters and stride 1.dfdenotes aConvolution-BatchNorm-ReLU layer withfilters and
+stride 2. Reflection padding was used to reduce artefacts.Rfdenotes a residual block that contains twoconvolutional layers with the same number of filters () on both
+layers.ufdenotes afractional-strided-Convolution-
+BatchNorm-ReLU layer withfilters and stride 2.
+
+The network architecture consisted of:
+
+c7s1-64,d128,d256,R256,R256,R256,R256,
+R256,R256,R256,R256,R256,u128,u64,c7s1-3
+
+Therotationgenerator contained just one rotation layer, see[39].
+
+For discriminator networksandin all the experiments,PatchGAN was used, see[38]. LetCfdenote aConvolution-BatchNorm-LeakyReLU layer withfilters and stride 2. After the last layer, a convolution to produce a 1-dimensional output was used. Leaky ReLUs were used with a slope of 0.2.
+
+The discriminator architecture was:
+
+C64,C128,C256,C512.
+
+-function had architecture taken from[3]. Letc-k-s-fdenote aConvolution-ReLU layer with strideandfilters andf-ois a Fully connected-ReLU layer withoutputs. The-function architecture was:
+
+c-8-1-32,c-4-2-64,c-3-1-64,f-512,f-6.
+
+The environment modelhad the same architecture as the generatorsandwith one difference: the fifth residual block received one-hot encoded actions as an additional input.
+
+The architecture of the environment model was then as follows:
+
+c7s1-64,d128,d256,R256,R256,R256,R256,
+R262,R262,R262,R262,R262,u128,u64,c7s1-3.
+
+SECTION: Training
+
+All the networks are trained from scratch with weights initialized from a Gaussian distribution.
+
+The environment model,, was trained with Adam optimizer,[42], with the learning rate of 0.001, batch size of 16 and it was trained for 50 epochs.
+
+For the training of the-function, RMSprop optimiser,[43], was used. The learning rate was 0.0001, and the batch size was 32. The other parameters of-learning were identical to those in[3].
+
+Generatorsandand discriminatorsandwere jointly trained using Adam optimizer with an initial learning rate of 0.0002 which was linearly decayed to zero. The training took four epochs.
+
+SECTION: References
