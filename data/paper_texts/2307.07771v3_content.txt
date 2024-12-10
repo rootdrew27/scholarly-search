@@ -1,0 +1,240 @@
+SECTION: Enhanced Gradient Boosting for Zero-Inflated Insurance Claims and Comparative Analysis ofCatBoost,XGBoost, andLightGBM
+
+The property and casualty (P&C) insurance industry faces challenges in developing claim predictive models due to the highly right-skewed distribution of positive claims with excess zeros. To address this, actuarial science researchers have employed “zero-inflated” models that combine a traditional count model and a binary model. This paper investigates the use of boosting algorithms to process insurance claim data, including zero-inflated telematics data, to construct claim frequency models. Three popular gradient boosting libraries -XGBoost,LightGBM, andCatBoost- are evaluated and compared to determine the most suitable library for training insurance claim data and fitting actuarial frequency models. Through a comprehensive analysis of two distinct datasets, it is determined thatCatBoostis the best for developing auto claim frequency models based on predictive performance. Furthermore, we propose a new zero-inflated Poisson boosted tree model, with variation in the assumption about the relationship between inflation probabilityand distribution mean, and find that it outperforms others depending on the characteristics of the data. This model enables us to take advantage of particularCatBoosttools, which makes it easier and more convenient to investigate the effects and interactions of various risk features on the frequency model when using telematics data.
+
+Keywords: Auto telematics, Usage-based insurance, Boosted trees, Gradient Boosting, Zero-inflated distribution, Zero-inflated Poisson,CatBoost,LightGBM,XGBoost
+
+SECTION: 1Introduction
+
+In the property and casualty (P&C) insurance industry, typical portfolios often exhibit a highly right-skewed distribution for positive claims, with a probability mass at zero in the event of non-occurring claims. It is well known that given these particular characteristics of insurance data, Poisson or negative binomial Generalized Linear Models (GLMs) are commonly used to construct insurance claim frequency models. However, these traditional models face challenges when dealing with insurance claim data where extra dispersion appears due to the number of observed zeros exceeding the number expected under these traditional distribution assumptions. In response to this, the insurance sector has adopted “zero-inflated” models to handle datasets with excess zero values. Zero-inflated models employ a mixture model strategy that combines two distinct models; a traditional count model, and a binary model, which determines whether a zero is an excess zero (i.e., a zero resulting from a separate process) or a true zero (i.e., a zero resulting from the count model). The examples of this strategy in use in the insurance field include zero-inflated Poisson or negative binomial regression (Yip and Yau, (2005);Mouatassim and Ezzahid, (2012);Chen et al., (2019)). These approaches effectively deal with excess zeros in the claim data, thereby offering a more precise understanding and prediction of the claim patterns.
+
+While the Generalized Linear Model (GLM) has been widely applied in actuarial studies (Ayuso et al., (2019);Lemaire et al., (2016)), its logarithmic mean structure, constrained to a linear form, can be too inflexible for certain applications, particularly when nonlinearity exists in claim data.Boucher et al., (2017),Henckaerts et al., (2018)andVerbelen et al., (2018)have expanded the use of GLMs to Generalized Additive Models (GAMs) to more appropriately capture the nonlinear effects of driving behavior features. GLMs and GAMs are powerful; however, they often struggle to identify complex interactions among numerous, highly overlapping risk features. This shortcoming comes primarily from its linear or additive structure, which may not capture the relationships between variables effectively. Furthermore, these models typically require explicit specification of interaction terms, which can be challenging when dealing with a large number of potential interactions or when the nature of these interactions are not predefined. The advent of telematics car driving data, integral to Usage-Based Insurance (UBI) products, has added a new level of complexity to risk modeling in the insurance industry. Telematics data involve information about driving behaviors such as annualized time one the road, braking and acceleration habits, the intensity of left or right turns, and total annual distance driven. These variables can interact with one another or even with traditional variables. For example, the risk associated with driving long distances could be influenced by the age or braking habits of the vehicle. Therefore, modeling interaction effects becomes even more important when telematics data is used. Consequently, recent research has shifted focus towards the use of machine learning techniques to analyze telematics car driving data since they are well-suited to identify and model complex interactions among a high number of variables.
+
+Machine learning in actuarial research has two primary applications. The first of these applications often involves the use of machine learning classifiers. These are tasked with determining the variables that have a significant effect on insurance risk by analyzing auto claim counts. Several studies have successfully implemented these classifiers, includingPaefgen et al., (2013), which used decision trees and artificial neural networks, andBaecke and Bocca, (2017), which highlighted the importance of telematics data through the application of a random forest classifier. Ensemble learning methods have also proven to be effective in this context, as demonstrated byBian et al., (2018). Other algorithms, such asXGBoost, have been recognized for their potency by researchers such asPesantez-Narvaez et al., (2019), who found them to outperform logistic regression when applied to telematics data. A range of other techniques, including support vector machines, random forests,XGBoost, and artificial neural networks have been compared for their efficacy byHuang and Meng, (2019). Researchers have even explored deep learning methods, such asGao and Wüthrich, (2019), who trained a deep ConvNet to classify individual trips using variables such as speed and changes in angles.So et al., (2020)advanced the field by developing a method, termed SAMM.C2, which combined the SAMME and Ada.C2 algorithms for the analysis of highly imbalanced multiclass telematic data sets.
+
+The second major application of machine learning in actuarial science involves the construction of predictive models for the frequency or severity of insurance claims. This is often accomplished using boosting techniques, which have seen a rise in popularity due to their impressive predictive performance.Guelman, (2012)pioneered the use of gradient boosting trees with squared-error loss for building frequency and severity models. These techniques have since been expanded upon by researchers likeYang et al., (2018), who applied gradient boosting trees to Tweedie compound Poisson models to predict pure premiums. Other researchers, likeLee and Lin, (2018),Lee, (2021), andHenckaerts et al., (2021), continued to innovate and refine these methods, whileHainaut et al., (2022)expanded their application to the response Tweedie loss function for more accurate models. Researchers such asMeng et al., (2022)andZhou et al., (2022)utilized boosting to enhance prediction accuracy under a zero-inflated assumption.
+
+Despite progress, a significant gap still exists: The common approach for zero-inflated models usually requires separate training of the models for the inflation probabilityand the distribution mean. This division presents difficulties for those who want to perform a detailed feature risk analysis using existing boosting libraries. To fill this gap, this paper introduces a new zero-inflated Poisson boosted tree model, which considers the relationship between the inflation probabilityand the distribution mean, to be used with insurance claim data, including telematics data, that has a zero-inflated nature, in order to create a frequency model. We construct two zero-inflated models: one where the inflation probability is a function of the distribution mean and the other with no correlation. These models will be compared with other models, such as Poisson boosted tree, zero-inflated Poisson and Poisson GLM.
+
+Boosting is a fitting process that iteratively combines weak learners into a strong learner to improve the accuracy of predictions. The first practical boosting algorithm, AdaBoost.M1, was developed byFreund and Schapire, (1997)for building precise binary classifiers. To handle regression problems,Friedman, (2001)introduced gradient boosting. Among the gradient boosting libraries that exist today,XGBoost,LightGBM, andCatBoostare the most popular.XGBoost, originally a research project byChen and Guestrin,in 2014, has been recognized due to its successful application of the Gradient Boosting Decision Tree (GBDT) technique. Microsoft, in response toXGBoost’s success, introducedLightGBM(Ke et al., (2017)), an enhancement overXGBoost’s features to speed up the implementation of the GBDT method. Additionally,CatBoost, a library recently developed by Yandex (Prokhorenkova et al., (2018)), has also risen to prominence due to its ability to handle heterogeneous data, such as insurance data. In our research, we aim to contrast these libraries to identify the most suitable one for insurance claim data and to fit suggested actuarial frequency models to the data. While there have been attempts to compare the performance of these three libraries in implementing gradient boosting algorithms in other fields (Al Daoud, (2019);Bentéjac et al., (2021)), related studies are limited in actuarial science.
+
+The structure of the remainder of this paper is as follows: Section 2 reviews the generic gradient boosting algorithm and provides an overview ofXGBoost,LightGBM, andCatBoost. In Section 3, we present the zero-inflated Poisson boosted tree models, which assume a connection between the parameters. Section 4 is devoted to the application of these models to two auto insurance claim datasets. Finally, Section 5 offers brief concluding remarks on the study.
+
+SECTION: 2Gradient Boosting Machine
+
+Boosting machines are believed to be among the most powerful learning algorithms discovered in recent years, quickly gaining popularity among actuaries. Boosting is an iterative fitting procedure that combines weak learners - those slightly better than random - into a strong learner for improved and more accurate predictions. Boosting can also be described as a stage-wise additive model, as one new weak learner is added at a time, and existing weak learners in the model are fixed and left unchanged. The first practical boosting algorithm, referred to asAdaBoost.M1, was introduced byFreund and Schapire, (1997). Initially, boosting was intended for classification problems; however, the idea has since been expanded to include regression problems (Hastie et al., (2009)). Gradient boosting, a boosting-like algorithm for regression, was introduced byFriedman, (2001). Gradient boosting constructs a strong learner through a numerical optimization, where the objective is to minimize the model’s loss by adding weak learners using a gradient descent procedure.
+
+SECTION: 2.1Generic algorithm
+
+Given a training dataset, gradient boosting iteratively constructs a sequence of functions of input variables,, by minimizing the expected value of a given loss function,. Here, the loss function has two input values, the i-th output value, and the t-th functionthat estimates.
+Assuming we have constructed functionwe can improve our estimates ofby finding another functionsuch thatminimizes the expected value of the loss function. That is,
+
+whererepresents the set of candidate decision trees being evaluated, with the goal being to select one to add to the model. Furthermore, given the definition of, it is possible to express the expected value of the loss functionin terms ofand:
+
+According to Equation (2), we wish to minimize the expected value of the loss function,, with respect toand, while also considering an additional factor,. Assumingis continuous and differentiable, the strategy is to adjustin the direction thatdecreases the most, which is associated with the rate of change of. Thus, ifis set in the direction where the gradient ofwith respect tois decreasing fastest, it results in thevalue that approximates the minimum of. Under these assumptions then, we can write a reasonable approximation for:
+
+Therefore, eachcan be seen as a greedy step in a gradient descent optimization for. For that, each model,, is trained on a new datasetwhere working response,, are calculated by
+
+Among the gradient boosting libraries introduced to date, the most popular ones areXGBoost,LightGBM, andCatBoost. They make refinements to the generic algorithm described above. Researchers with a comprehensive understanding of how each library implements the GBDT technique will be better equipped to apply it across various fields. Therefore, we will provide detailed overviews of these libraries, along with a comparative analysis, in the following section.
+
+SECTION: 2.2Comparison betweenXGBoost,LightGBMandCatBoost
+
+XGBoost(eXtreme Gradient Boosting) was originally developed as a research project byChen and Guestrin,in 2014. Its successful implementation of the GBDT technique led to widespread recognition. In response toXGBoost’s success, Microsoft introducedLightGBM(Light Gradient Boosting Machine,Ke et al., (2017)), a tool designed to enhance certain features ofXGBoostin order to speed up the GBDT implementation. In addition,CatBoost(Categorical Boosting), a library developed by Yandex (Prokhorenkova et al., (2018)), has gained recognition. As the name suggests, it offers a gradient boosting framework that excels in learning problems with heterogeneous features, adeptly managing categorical features. Through a detailed examination ofXGBoost,LightGBM, andCatBoost, we will uncover the commonalities and differences betweenXGBoost,LightGBM, andCatBoost.
+
+Commonality.These libraries focus solely on decision trees as weak learners. They provide an array of built-in loss functions, including, but not limited to, Poisson and Tweedie loss. For researchers wishing to use their own loss functions, these libraries facilitate the use of any user-defined loss function that can be implemented by defining a function that outputs both the gradient and the hessian(second-order gradient). To train the set of decision trees in the model while avoiding overfitting, a regularized loss function is employed to control the complexity of the trees:
+
+whereis the regularization term, penalizing the complexity of the tree. At the t-th iteration, a regularized loss function is defined as:
+
+with
+
+As explained in section2.1, we train one decision tree and add it to the existing model at each iteration. Therefore, equation (6) can be written as:
+
+Taking the Taylor expansion of the loss function up to the second order and removing all the constants, the t-th regularized loss function can be simplified as:
+
+whereand.
+One significant advantage of this definition is that the value of the loss function only depends onand. This is the mechanism through which these libraries support user-defined loss functions.
+
+Difference.These libraries are differentiated based on three aspects: the methods of tree splitting, the handling of categorical features, and the tree growth strategies.
+
+Methods of tree splitting: Prior to training, all libraries generate feature-split pairs for all features, examples of which include (credit score700), or (insured age30).XGBoostuses a Histogram-based algorithm to compute the best split,LightGBMemploys Gradient-based One-Side Sampling(GOSS), andCatBoostintroduces a technique known as Minimal Variance Sampling(MVS).
+
+The Histogram-based algorithm splits all values for a feature into discrete bins and uses these bins to identify the split value. In terms of training speed, while it is more efficient than enumerating all possible split points on the pre-sorted feature values, it lags behind both GOSS and MVS.
+
+GOSS is a sampling method which downsamples the observations based on their gradients. Observations with smaller gradients are typically well-trained, and those with larger gradients are undertrained. A straightforward downsampling approach would be to remove observations with small gradients, concentrating exclusively on observations with large gradients; however, this approach could skew the data distribution. As a result, GOSS retains observations with larger gradients while performing random sampling on observations with smaller gradients.
+
+MVS, on the other hand, conducts weighted sampling at the tree level, as opposed to the split level. MVS samples observations such that those with the largest gradient values are selected with certainty, while each other instance is sampled with a probability proportional to its gradient. MVS can be viewed as an enhanced version of GOSS (for more details, seeJohnson and Guestrin, (2018)).
+
+Handling of categorical features: When dealing with categorical features during splitting, it’s important to note that these categories don’t inherently possess an order. Consequently, we need different strategies. Ideally, we aim to group categories within a categorical feature that generate similar leaf values.
+
+LightGBMandXGBoostuse a technique known as optimal partitioning to split categories. The primary concept is to sort the categories according to the loss function at each split and then enumerate these sorted values to identify the best split.
+
+Contrastingly,CatBoostadopts a method referred to as “Ordered Target Statistic” for encoding categorical features. This characteristic distinguishesCatBoostfrom other libraries. As a result, it has proven to be the most effective library for GBDT implementation when dealing with heterogeneous datasets, which contain a mix of numerical and categorical features, such as auto telematics datasets.
+A target statistic, in this context, is a value computed from the response values associated with a specific category of a categorical feature in a dataset. It is typically the expected target, conditioned by the category. An efficient and effective method to process a categorical featureis to substitute the categoryof the-th training observation with the target statistic:
+
+Here,is a parameter, andis the subset of the whole dataset excluding. If we exclude terms involvingand, it merely computes the conditional expectation of the target. The termis included for smoothing, and to prevent target leakage, we compute the target statistic solely using observations from(for more details, refer toProkhorenkova et al., (2018)).
+
+Tree growth strategies:XGBoostgrows trees up to a specified “max_depth” hyperparameter, after which it starts pruning the tree backwards, removing splits that do not contribute to a positive gain. InXGBoost, trees grow level-wise.
+
+In contrast,LightGBMemploys a leaf-wise tree growth strategy. Rather than examining all previous leaves for each new leaf, as depicted in Figure1, it chooses to grow the leaf that minimizes the loss, thus allowing for the growth of an imbalanced tree. Because it does not grow level-wise but leaf-wise, overfitting can occur when dealing with small data sets.
+
+CatBoost, on the other hand, uses oblivious trees (Kohavi, (1994)). These trees apply the same splitting criterion across an entire level of the tree, as shown in Figure1. For each level of such a tree, the feature-split pair that contributes to the lowest loss is chosen and applied to all the level’s nodes. Such trees have balanced structures, are less susceptible to overfitting, and significantly speed up predictions during testing time.
+
+SECTION: 3Zero-Inflated Poisson Boosted Tree
+
+The Poisson distribution is a classical model used to represent claim frequency in the field of actuarial science. Assuming that the claim count is a random variable, denoted by, and follows a Poisson distribution, its probability mass function can be expressed as:
+
+whererepresents the expected value of.
+
+The boosted tree model assumes that the logarithm of the expected value of, given, can be modeled by the prediction score from gradient boosting as follows:
+
+whereis the offset term andis the-th tree in the gradient boosting model. The Poisson boosted tree assumes that the response variablefollows a Poisson distribution. Thus,in the Poisson distribution is equivalent toin equation (12). For traditional GLMs, the prediction score,, corresponds to the linear combination of features.
+
+Libraries such asXGBoost,LightGBM, andCatBoosthave a built-in parameter that trains a Poisson boosted tree by minimizing the negative log-likelihood of the Poisson distribution as a loss function. However, they do not support models with an offset, necessitating a user-defined loss function if an offset term is required to reflect the concept of exposure in insurance.
+
+Although we can readily train a Poisson boosted tree using the built-in parameter, this traditional distribution faces challenges when dealing with insurance claim data, particularly when overdispersion occurs due to the number of observed zeros exceeding the number expected under the distributional assumption. To handle datasets with excess zeros, researchers have employed “zero-inflated” models. The zero-inflated Poisson (ZIP) distribution combines a point mass at zero and a Poisson distribution, improving the ability to estimateusing information from zero-claim observations. Iffollows a ZIP distribution, the probability mass functions are defined as follows:
+
+whereis inflation probability, the degree of inflation. The ZIP distribution has an expected value forof, and a variance of, giving it over-dispersed characteristics.
+
+In ZIP boosted tree, we define:
+
+As suggested byLambert, (1992), the features that can affect the Poisson meanmay be different from those that influence the inflation probability. Even if the influencing features are the same, ifandare independent, a ZIP boosted tree would require twice as many trees as a Poisson boosted tree and the final model would be the combination of two separate models, making it difficult to analyze the interaction effects between features and the effect of each feature on the claim prediction. This observation suggests reducing the number of trees and training one model by treatingas a function of. In the following sections, we will explore the implementation of the ZIP boosted tree, looking into the relation of two parameters.
+
+SECTION: 3.1is a function of
+
+We propose an assumption whereis a function of. Given minimal prior information about the relationship betweenand, we suggest a refinement of the parameterization ofand, originally introduced byLambert, (1992)for GLM:
+
+From this, we can deduce that
+
+According to equation (16), for, the inflation probability decreases asincreases. Conversely, when,increases as excess zeros become more likely, which is inconsistent with claim data. Consequently,is predefined as a pre-training hyper-parameter with a positive value.
+
+In the training of the ZIP boosted tree, we use the negative log-likelihood of the ZIP distribution as our loss function, which is expressed as:
+
+where. The gradient and hessian of the loss function, as defined in Equation (17), with respect to, are:
+
+For a detailed description of the training algorithm, please refer to Algorithm1in Appendix A.
+
+SECTION: 3.2andare unrelated
+
+Assuming that the influencing features are the same and thatandare not functionally related, as suggested by equations (14) and (15), we find it necessary to trainandindependently. Here,indicates the prediction score for the mean parameter, which is converted by an exponential transformation, whilecorresponds to the prediction score for the inflation probability, transformed by a sigmoid function. The loss function is thus defined as:
+
+whereand. The gradients and hessians of the loss function, as defined in Equation (20), with respect toare:
+
+The gradients and the hessians of the loss function, as defined in Equation (20), with respect toare defined as:
+
+where.
+
+To minimize the loss function using two separate models, we adopt the methodology proposed byMeng et al., (2022). This method uses the principle of coordinate descent optimization to enhance the predictive model for a specific parameter, keeping the score of the other parameter fixed. By following alternating cycles, only one direction corresponding to the estimated parameter is used for the Taylor expansion, allowing for the update of the boosted trees as delineated in Section2.1. For a detailed description of the training algorithm, please refer to Algorithm2, Appendix A.
+
+SECTION: 4Experimental results
+
+This section evaluates the model proposed in section3and presents a comprehensive comparative analysis ofXGBoost,LightGBM, andCatBoostmodels. The analysis aims to identify which claim frequency models are best suited for handling excess zero auto claim datasets. The analyses are based on two datasets: the French Motor Third-Party Liability (MTPL) dataset, accessible through the R library CASdatasets, and a synthetic telematics dataset provided bySo et al., (2021). The French Motor Third-Party Liability (MTPL) dataset, consisting of 678,013 policies, exhibits a zero-inflation trait as only 34,060 policies incurred at least one claim. Similarly, the synthetic telematics dataset, which comprises 100,000 policies, shows this zero-inflation trait, with only 2,698 policies incurring at least one claim.
+
+In total, eleven models were trained for this study. Three models per library were investigated, including Poisson boosted tree (PB), ZIP boosted tree with onlymodeled andcalculated as a function of(ZIPB1), and ZIP boosted tree with bothandmodeled (ZIPB2). Poisson GLM (PG) and zero-inflated Poisson GLM (ZIPG) were implemented using the “statsmodels” Python package. While the built-in loss function was used for most models, ZIPB1 and ZIPB2 were implemented with a custom loss function to apply the training methods outlined in Algorithms 1 and 2 as presented in the Appendix A.
+
+The hyperparameters for the boosted trees were set as follows: we determined the number of trained trees (T) to be 500, chose the learning rate from the grid values, and selected the L2 penalty parameter from the grid values. For the ZIPB1 model, an additional hyperparameter,, was introduced. It was likewise determined using grid search from the values. In addition, the maximum number of trees was constrained to 8 forXGBoostandCatBoost.LightGBM, in contrast, uses a leaf-wise tree growth strategy. Therefore, we restricted the maximum number of leaves toinstead of limiting the number of trees. For categorical features, models were trained using each library’s unique treatment approach, as described in Section2.2, with the exception of binary categorical features, for which we used one-hot encoding.
+
+The model comparisons were performed based on prediction accuracy, which in our context refers to the model’s ability to distinguish between policyholders with varying risk levels. The metrics used for measuring prediction accuracy will be described in the following subsection. For these analyses, 20% of the total dataset was reserved as the test set. The optimal hyperparameters were determined using a 3-fold cross-validation method applied to the remaining training dataset.
+
+SECTION: 4.1Performance evaluation
+
+The comparison between Poisson and zero-inflated Poisson models can pose challenges due to their unique assumptions and differing structures. To effectively assess and contrast these models, the paper uses a variety of evaluation metrics. These metrics comprise Deviance / Pseudo R-squared, the Vuong test, and Randomized Quantile Residuals (RQR).
+
+In statistical modeling, Deviance measures the discrepancy in log-likelihood between the evaluated model and the saturated model - a model that perfectly generates the observations, such as.
+
+For zero-inflated Poisson models, the unit deviance for the i-th observation can be computed using the following equation:
+
+The Mean Deviancefor a given model is the average of the unit deviances across all observations. Using this metric, we can compute McFadden’s Pseudo R-squared, a measure that captures the degree of model improvement over the null model (a model without predictors), as follows:
+
+For this calculation, we assume that. A model is generally preferred if it yields lower deviance and higher Pseudo R-squared values. For the Poisson model, these metrics are computed by setting bothandto zero.
+
+The Vuong test, introduced byVuong, (1989), provides a robust method for comparing the zero-inflated Poisson model with other non-nested models for count data, such as the Poisson model. Letrepresent the probability distribution functions for the i-th observation from model. If both models fit the data with equal efficacy, their respective likelihood functions would be almost identical. In contrast, any differences between the likelihood functions can indicate which model provides a better fit. The Vuong test is grounded in this concept.
+We defineas follows:
+
+The Vuong statistic for the null hypothesisis given by:
+
+Under the null hypothesis, the Vuong statistic follows an asymptotic normal distribution. At a 5% significance level, if, the first model is preferred; if, the second model is preferred.
+
+Model goodness-of-fit is often visually assessed using both Pearson and deviance residuals, which are approximately standard normally distributed when the model fits the data adequately. However, as pointed out byFeng et al., (2020), these residuals diverge from normality when dealing with discrete response variables. To address the limitations of traditional residuals,Dunn and Smyth, (1996)introduced the method of Randomized Quantile Residuals (RQRs).Feng et al., (2020)examined the normality of RQRs and compared its performance with traditional residuals in diagnosing count regression models. Through a series of simulation studies, they demonstrated that RQRs can more advantageously detect various forms of model misspecification for count regression models than traditional residuals. Thus, to ascertain the most suitable model for auto claim data in our paper, we will use RQRs.
+
+The RQRs for the Poisson and zero-inflated Poisson models can be formulated as follows:
+
+For the Poisson model:
+
+For the zero-inflated Poisson model:
+
+In these formulations,is a random number drawn from a uniform distribution on the interval (0,1), whileandrepresent the cumulative distribution function (CDF) and the probability mass function (PMF) of the Poisson distribution, respectively.
+
+SECTION: 4.2French Motor Third-Party Liability
+
+The French Motor Third-Party Liability (MTPL) dataset is a publicly available auto insurance portfolio used for claim frequency modeling. This dataset, namedfreMTPL2freq, can be accessed through the R library CASdatasets as referenced inVignette, (2016). It comprises a French Motor Third-Party Liability (MTPL) insurance portfolio, recording claim counts observed over one accounting year. The dataset includes a total of 678,013 policies, of which only 34,060 incurred at least one claim, thus exhibiting a characteristic zero-inflation. We fit the claim frequency models using exposure and nine features, which include information about the driver and vehicle. Among these nine features, four are categorical, each consisting of 6, 11, 2, and 22 categories respectively. This dataset, therefore, features high-cardinality categorical variables, pointing out the need for suitable model selection capable of effectively handling such features for optimal performance and accurate data fitting. A detailed description of the dataset is provided in Table5, Appendix B.
+
+We trained eleven models on the data. The performance of each model, as indicated by Pseudoand mean Deviance, is presented in Table1. Among all, theCatBoostZIPB2 model excelled with the highest Pseudoand the lowest mean Deviance, underlining its superior performance. All ZIPB2 models outperformed ZIPB1 models in terms of Pseudoand Deviance, with theCatBoostmodel showing the best performance. Additionally, all ZIPB1 models had better metrics than PB, ZIPG, and PG models. The PG model had the worst performance, with the lowest Pseudoand highest Deviance.
+
+The Vuong statistics for pairs of the 11 models, with corresponding p-values, are represented in Table2. A significance level for the p-value was set at 0.05. A first model is considered significantly superior to a second model if the Vuong statistic is positively large with a p-value less than 0.05. Based on Table2, the ranking of models’ performance is as follows:CatBoostZIPB2LightGBMZIPB2,XGBoostZIPB2CatBoostZIPB1,LightGBMZIPB1,XGBoostZIPB1CatBoostPB,LightGBMPB,XGBoostPB, ZIPGPG.
+
+Numbers represent Vuong statistics, with p-values shown in parentheses.
+
+Figure2presents a Normal Q-Q plot of Randomized Quantile Residuals for five models:CatBoostZIPB1,CatBoostZIPB2,CatBoostPB, ZIPG, and PG, fitted to the French MTPL. The plot demonstrates significant improvements in the tail of the estimated residuals of ZIPB1, ZIPB2, and ZIPG when compared with PB and PG. Especially, for ZIPB2 and ZIPB1, almost all samples are aligned with the standard normal distribution. This observation emphasizes the superior fit of zero-inflated models over traditional counterparts for this specific dataset. Consequently, the zero-inflated Poisson boosted tree model with independent parameters yields the best results, followed by the zero-inflated Poisson boosted tree model with related parameters, andCatBoostoutperforms other libraries.
+
+SECTION: 4.3Synthetic telematics data
+
+The synthetic telematics dataset, produced bySo et al., (2021), is publicly accessible athttp://www2.math.uconn.edu/~valdez/data.html. As modeled on real data from a Canadian insurer, this dataset was generated using the Synthetic Minority Oversampling Technique (SMOTE) and a feedforward Neural Network (NN). It includes 100,000 data samples, of which only 2,698 policies incurred at least one claim, thereby demonstrating a zero-inflation trait. The dataset consists of 52 features categorized into Traditional data (such as insured age and gender), Telematic data (including total miles driven, harsh acceleration, harsh braking), and Response Data (claim counts and claim amounts). The claim frequency models were fit using exposure and 49 features. Among these 49 features, five are categorical, comprising 2, 2, 4, 2, and 55 categories respectively. Thus, this dataset features a high-cardinality categorical attribute, emphasizing that the selection of models handling such features well is essential for optimal performance and accurate data fitting. A comprehensive description of this dataset is provided in Table6, Appendix B.
+
+Numbers represent Vuong statistics, with p-values shown in parentheses.
+
+Eleven models were trained using the data, and their performance is presented in Table3. Of all the models, theCatBoostZIPB1 model stood out with the highest Pseudoand the lowest mean Deviance. As revealed in Table1,CatBoostmodels outperformedLightGBMandXGBoostin terms of ZIPB2, ZIPB1, and PB. All ZIPB2 models showed excellent performance following theCatBoostZIPB1 model. Considering the Vuong statistics and its associated p-value presented in Table4, the models’ performance is ranked as follows:CatBoostZIPB1CatBoostZIPB2,LightGBMZIPB2XGBoostZIPB2,LightGBMZIPB1,CatBoostPB,LightGBMPBXGBoostZIP1,XGBoostPBZIPGPG.
+
+Similar to the result of Figure2, Figure3presents a Normal Q-Q plot of Randomized Quantile Residuals for five models fitted to the telematics data, demonstrating significant improvements in the tail of the estimated residuals of ZIPB1, ZIPB2, and ZIPG when compared with PB and PG. ZIPB1 and ZIPB2 appear to align samples with the standard normal distribution. This finding is consistent with the results presented in Table3and4. Thus, theCatBoostzero-inflated Poisson boosted tree model, assuming thatis a function of, yields the best outcome, signifying that it is the most appropriate model for fitting and explaining the claim frequency of the synthetic telematics data.
+
+In conclusion, our analysis of the two datasets suggests thatCatBoostis the most suitable library for developing auto claim frequency models. The ZIPB1 and ZIPB2 models have been demonstrated to be especially effective for zero-inflated claim data compared to other models. For the telematics data, theCatBoostZIPB1 model outperforms the others. The French MTPL data indicates a preference for ZIPB2 over ZIPB1, however the latter still exhibits superior performance in comparison to other models. Moreover, theCatBoostZIPB1 model provides a distinct advantage in allowing for the interpretation and analysis of risk features, leveraging various tools within theCatBoostlibrary. Therefore, if the objective of modeling is to understand and interpret risk features, the ZIPB1 model is the most suitable choice.
+
+In summary, based on the analysis conducted using the two datasets, it appears thatCatBoostis more fitting than the other two libraries for developing auto claim frequency models. The ZIPB1 or ZIPB2 models have been found to be more appropriate for claim data relative to other models, relying on the data characteristics. As we mentioned before, when utilizing theCatBoostZIPB1 model, it is advantageous to have the ability to interpret and analyze risk features in the model using various analysis tools within theCatBoostlibrary.
+
+Interpretation.UsingCatBoostfor the construction of an auto insurance frequency model presents numerous advantages. In particular, it includes various model analysis tools to interpret and evaluate the effects and interactions of different risk features on claim frequency. One primary method involves ranking features according to their impact on the change in predictions. This process is effectively visualized through a Feature Importance plot. The calculation of feature importance inCatBoostfollows this formula:
+
+Here,.anddenote the number of observations in the left and right leaves, respectively, whileandrepresent the leaf values in the corresponding leaves. The feature importance values are normalized so that the sum of all feature importances equals 100. Figure4illustrates the Top 10 ranked feature importances for the ZIPB1 model, which was trained using theCatBoostlibrary on synthetic telematics data. The “Annual.pct.driven” feature was ranked highest, followed by “Total.miles.driven”, “Years.noclaims”, and “Brake.09miles”. Of the top 10 features, only three are traditional, emphasizing the significant role telematics features play in determining claim frequency.
+
+Apart from feature importance, which is common across GBDT models,CatBoostalso provides the value of feature interaction strength. Within theCatBoostmodel, feature combinations are used as distinct features when splitting treesDorogush et al., (2018). This allows the model to measure interaction strength between features. All tree splits that include both features are observed to determine interaction. If splits of both features are present in the tree, then we are looking on how much leaf value changes when these splits have combined in the split and they are not combined. The calculation of interaction strength is as follows:
+
+Here, the interaction strength between pairs of featuresandis quantified by the sum of absolute differences between the leaves of a tree that contains thecombination and those that do not. Figure5illustrates the top 10 feature interactions for theCatBoostZIPB1 model on synthetic telematics data. The highest interaction strength was observed between the “Annual.pct.driven” and the “Total.miles.driven”. It is worth noting that these two features rank highly on the Feature Importance Plot, Figure4. Additionally, the next four highest-ranked interactions involve the feature “Annual.pct.driven”, paired with the “Insured.age”, “Pct.drive.rush am”, and “Brake.06miles”.
+
+Like other libraries such asXGBoostandLightGBM,CatBoostis compatible with the SHAP Python library. This compatibility facilitates the use of SHAP values through the various analytic tools available in the SHAP package. SHAP (SHapley Additive exPlanations) is a game theory-based method that evaluates each feature’s contribution towards the final prediction for a given observationLundberg et al., (2020). If a given observation’s SHAP value for a specific feature is positive, it means that that feature’s value contributes to an increase in the prediction value, taking it above the average prediction value. Figure6illustrates the SHAP values for the top 10 features, as outlined in Figure4. The key findings are:
+
+High values of “Total.miles.driven” increase claim frequency, while low values decrease it.
+
+“Annual.pct.driven” shows complex interaction effects, as high values can either increase or decrease claim frequency. This implies that the feature interacts with other features in determining claim frequency.
+
+Generally, a superior credit score leads to a reduction in claim frequency, although a lower credit score can induce either an increase or a decrease in claim frequency.
+
+A higher percentage of driving on Thursdays correlates with increased claim frequency, while a lower percentage shows a reduction. This pattern might be indicative of weekly patterns in driver fatigue.
+
+The percentage of AM rush hour driving demonstrates that higher values correspond to decreased claim frequency, whereas lower values show an increase. This could suggest that drivers exercise more caution during their morning commute to work
+
+The insured age appears to have a complex effect; Middle values typically result in an increased claim frequency, high values tend to decrease it, while low values produce mixed results.
+
+The number of sudden brakes, defined as those exceeding 6 mph/s per 1000 miles, contributes to an increased risk at lower levels, but shows varied outcomes at higher levels.
+
+On the other hand, the number of sudden brakes exceeding 9 mph/s per 1000 miles tends to decrease risk at lower levels, while again showing mixed results at higher levels.
+
+For a deeper examination of the interaction effects between features, we generated scatter plots of the SHAP values for each feature across all observations, with points color-coded by another feature. This is illustrated in Figure7. Depending on the feature interaction strength results shown in Figure5, four plots were constructed, each representing the four most significant interdependencies among the features. The values on the x and y axes correspond to normalized values of each feature.
+
+From left top plot in Figure7, we observed a positive correlation between the total annual miles driven and the annualized percentage of time spent on the road. For the insured age, it appears that low values can either increase or decrease claim frequency, depending on the value of “Annual.Pct.Driven”; higher values increase claim frequency, while lower values decrease it. In the case of the percent of AM rush hour driving, we identified a decreasing trend. That is, an increase in this value tends to reduce claim frequency. However, it was observed that higher “Annual.Pct.Driven” values intensify the risk more than lower values when the percentage of AM rush hour driving is high. The number of sudden brakes with a magnitude of 6 mph/s per 1000 miles, when low, appears to raise claim frequency. Interestingly, it was noted that when the value of ‘Brake.06miles’ is high, high values of ‘Annual.Pct.Driven’ increase claim frequency while a decrease in claim frequency was associated with lower values.
+
+SECTION: 5Concluding remarks
+
+Predicting insurance claim patterns in the property and casualty (P&C) insurance industry is difficult due to the right-skewed distribution of claims, which is characterized by a large number of zero-valued, non-occurring claims. Traditional models, such as Poisson or negative binomial Generalized Linear Models (GLMs), have difficulty dealing with these excess zeros. To address this issue, “zero-inflated” models have been developed, combining a traditional count model with a binary model to effectively manage such data sets.
+Due to their remarkable predictive accuracy, gradient boosting techniques have become increasingly popular for creating auto insurance claim frequency models.
+
+This research adds to the existing literature by introducing and assessing a new boosting algorithm specifically designed for insurance claim data, particularly telematics data with a large number of zeros, to construct frequency models. We compare and evaluate popular gradient boosting libraries,XGBoost,LightGBM, andCatBoost, to determine which is best suited for processing insurance claim data and aligning with the proposed actuarial frequency models. After a thorough examination of two different datasets, we conclude thatCatBoostis the optimal choice for auto claim frequency models, especially when dealing with heterogeneous datasets, as it produces the most accurate predictions. Depending on the data characteristics, zero-inflated Poisson Boosted Tree models — namely, ZIPB1, which assumes the inflation probabilityas a function of the distribution mean, and ZIPB2, which treatsandas independent — demonstrated superior performance relative to other models. An intrinsic advantage of the ZIPB1 model is its compatibility with specialized analytical tools within theCatBoostlibrary, which enables a thorough examination of the effects and interactions of different risk factors on the frequency model, particularly in the context of telematics data. By using theCatBoostZIPB1 model, we were able to identify and explain the interactions between telematics features and determine the influence of each key feature on the prediction of the claim amount.
+
+Given these evident merits of ZIPB1, forthcoming research endeavors might be directed towards identifying the specific data attributes that underpin the pronounced efficacy of the ZIPB1 model over ZIPB2. Additionally, implementing a Negative Binomial Boosted tree for the NB regression model, with the assumptions suggested under both the ZIPB1 and ZIPB2 models, represents a valuable direction for future work. Unquestionably, this study’s insights present a substantial augmentation to actuarial scholarship, more so in the domain of predictive modeling in insurance.
+
+SECTION: Appendix A. Detailed steps of ZIPB1 and ZIPB2 algorithms
+
+SECTION: Appendix B. Descriptive details of datasets
+
+Indicates categorical variable.
+
+Indicates categorical variable.
+
+SECTION: References

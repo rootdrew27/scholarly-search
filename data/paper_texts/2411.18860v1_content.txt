@@ -1,0 +1,240 @@
+SECTION: Improving Batch Normalization with TTA forRobust Object Detection in Self-Driving
+
+In current open real-world autonomous driving scenarios, challenges such as sensor failure and extreme weather conditions hinder the generalization of most autonomous driving perception models to these unseen domain due to the domain shifts between the test and training data. As the parameter scale of autonomous driving perception models grows, traditional test-time adaptation (TTA) methods become unstable and often degrade model performance in most scenarios. To address these challenges, this paper proposes two new robust methods to improve the Batch Normalization with TTA for object detection in autonomous driving: (1) We introduce a LearnableBN layer based on Generalized-search Entropy Minimization (GSEM) method. Specifically, we modify the traditional BN layer by incorporating auxiliary learnable parameters, which enables the BN layer to dynamically update the statistics according to the different input data. (2) We propose a new semantic-consistency based dual-stage-adaptation strategy, which encourages the model to iteratively search for the optimal solution and eliminates unstable samples during the adaptation process. Extensive experiments on the NuScenes-C dataset shows that our method achieves a maximum improvement of about 8% using BEVFormer as the baseline model across six corruption types and three levels of severity. We will make our source code available soon.
+
+SECTION: 1Introduction
+
+Autonomous driving perception models encounter significant challenges when the distribution of test data diverges from that of the training data, particularly in dynamic and open real-world driving scenarios[2]such as extreme weather conditions or sensor failures, leading to severe degradation in the model’s predictive accuracy[31], which is unacceptable for autonomous driving tasks. Traditional methods[25,5,26]for enhancing model robustness typically rely on extensive annotation costs or use data augmentation. However, these methods necessitate prior knowledge of the test data distribution, which is often unknown in real-world driving scenarios.
+To address these practical issues, a more viable approach is to use TTA methods[30]to adjust models promptly when facing unseen domains.
+
+The prevalent TTA paradigm[3]typically addresses the issue of the distribution shifts between test and training data by adjusting the statistics of the Batch Normalization (BN) layers, As shown in Fig1.
+However, this TTA paradigm presenting the following challenges in self-driving[14]:
+
+Firstly, TTA methods that adjust Batch Normalization (BN) parameters exhibit significant instability in autonomous driving perception tasks due to the BN layers employ an exponential moving average (EMA) approach to estimate the data distribution. The EMA method is highly sensitive to batch size, meanwhile the use of EMA for updating BN statistics is significantly affected by the problem of internal covariate shift in the model. If the prediction of the bottom BN layer’s statistic is error, it can lead to the accumulation of errors in subsequent BN layers’ prediction[20]. As model parameters and depth increase in autonomous driving perception tasks, the batch size is constrained, making it difficult for TTA methods to accurately predict the real test data distribution and worsening internal covariate shift.
+
+Furthermore, TTA methods[1]that employ unsupervised method, such as entropy minimization (EM)[22], are also commonly used. These methods presents a potential issue of error accumulation. During model optimization, the absence of ground truth annotations often causes the direction of the gradient in the parameter space to be influenced by the direction of historical gradients, leading to increased model confidence that deviates from the true solution. If the model’s initial state is not ideal, entropy minimization may lead the model to optimize towards a degeneration to a trivial solution.
+
+Additionally, TTA methods[12]typically classify test samples first and then use samples within specific categories to adjust the model. This requires prior knowledge of the distribution types within the test data. In real-world driving scenarios, the diversity of encountered scenes is often unknown, and the presence of noisy samples is prevalent[19].
+
+To address these challenges, we propose to improve the Batch Normalization with TTA for robust object detection in self-driving. Firstly, we introduce a learnable batch normalization layer and generalized search entropy minimization to adjust BN statistics. By introducing auxiliary learnable parameters into BN layers, we can predict the BN statistics of the test domain using these parameters, replacing the EMA method. This approach addresses the limitations of BN layers under mini-batch conditions, mitigates model internal covariate shift issues and addresses the instability arising from adjusting BN statics. Additionally, by guiding the optimizing of auxiliary learnable parameters through entropy minimization, we introduce the generalized searches to mitigating the limitations of entropy minimization. Secondly, to tackle the challenges of TTA in real-world scenarios, we propose a semantic-consistency based dual-stage-adaptation method. By adjusting the variation of learning rates and dividing adaptation into two stages, we use the semantic consistency of sample predictions in different stages as guidance to filter out the uncertain samples, thereby making the training process more stable and prevent the model from converging to a local optimum in the solution space.
+
+Our main contributions can be summarized as follows:
+
+We propose a novel TTA paradigm for robust BEV perception in open real-world driving scenarios, by incorporating a LearnableBN for estimating BN statistics and generalized search entropy minimization (GSEM) loss function that effectively addresses the instability issues inherent to traditional BN layers.
+
+We introduce a semantic-consistency based dual-stage-adaptation method, which is designed to filters out the noisy samples and prevents the model from converging to a local optimum in the solution space.
+
+We conduct extensive experiments on widely-adopted benchmark, nuScenes-C, and results show that our proposed method achieves a maximum improvement of about 8% using BEVFormer as the baseline model across six corruption types and three levels of severity.
+
+SECTION: 2Related Work
+
+Autonomous driving perceptionprimarily focuses on 3D object detection. In monocular 3D object detection[32], some methods use additional pre-trained depth estimation modules to address one of the most challenging problems in Mono 3Det[6], which is depth estimation from a single image. SMOKE[17]proposes treating 3D object detection as a keypoint estimation task. Later, Monoflex[29]improves this approach by providing a flexible definition of object centers, unifying the centers of regular and truncated objects. GrooMeD-NMS[10]introduces a grouped mathematically differentiable Non-Maximum Suppression method for Mono 3Det.
+
+The mainstream approach for BEV(bird eye view) based object detection involves Object query-based algorithms, including: DETR3D[23], which leverages Transformer’s cross-attention mechanism to avoid explicit depth estimation. PETR, which enhances performance by constructing 3D position-aware representations. BEVFormer[13,24], which employs temporal cross-attention and uses polar coordinates for object detection. Sparse4D[16], which uses sparse proposals for feature fusion. To validate the generality of the method. In this paper, we select BEVFormer, Sparse4D, MOnofelx as our baseline models to test the effectiveness of TTA methods in real-world scenarios.
+
+Test-Time-Adaptation (TTA)[21,7,9]aim to fine-tune models on unlabeled test images during the testing phase. In the work by Benz et al.[1]proposes a method that adjusts BN statistics during testing through forward propagation without additional training. Schneider et al[20]propose dynamically calculating the mixture coefficient based on the quantities used to predict the test BN statistics. TENT[22]is an unsupervised learning method that first proposed using entropy minimization as singular loss function to estimate BN statistics and optimizes channel-wise affine transformations. Following the TENT method, Domain adaptor[27]dynamically computes mixture coefficient in EMA method and uses temperature scaling to optimize entropy minimization loss.
+
+SECTION: 3Method
+
+SECTION: 3.1Problem Definition
+
+In this work, we define the test dataset as, whererepresents the different conditions in real-world driving scenarios, andis the severity level of the domain shift between test domain and train domain. We define the model as, where theis origin model’s parameters. We introduce the set of auxiliary learnable parameters in the BN layers, defined aswherecorresponds to the parameters for the-th BN layer. The learning rate of the model is defined as.
+
+SECTION: 3.2Overview
+
+Our TTA method apply two stage adaptation to predict the BN statisticsof test domainin each BN layer. Specifically, we use generalized-search entropy minimization as the loss functionto optimize the learnale mixture coefficientthat we introduced in the BN layer. After each step of optimizing, we perform secondary correction on the BN statisticsusing the optimized. Additionally, we propose a semantic-consistency based dual-stage-adaptation method. The first stage is the stable adaptation stage, which employs a smaller learning ratewith the aim of conservatively estimating the BN statistics. The second stage is the aggressive adaptation stage, using a larger learning rateto help theescape local optima and converge to global optima. To ensure the stability of model adaptation, the predictions from the second stage are compared semantic consistency with the predictions from the first stage. This comparison is used to filter noisy samples from the test domain. The whole framework is illustrated in Fig.2.
+
+SECTION: 3.3LearnableBN
+
+Tent[22]proposes an approach to employ entropy minimization as the singular loss function for test-time-adaptation. Relying solely on entropy minimization loss presents several challenges. During training, the gradients of the entropy minimization tend to amplify as the loss decreases, thereby rendering the model is susceptible to collapsing into trivial solutions.
+Furthermore, in the absence of annotated data in unsupervised training, it becomes difficult to ascertain whether the label with the highest confidence is indeed correct, potentially leading the model to become overly confident in incorrect predictions.
+
+Prevailing strategies address the limitation of entropy minimization by introducing a temperature coefficient to reduce the sharp distribution. These methods does not alter the model’s original semantic information. In real-world scenarios, there is a significant likelihood that the model’s original semantic information may be erroneous.
+Consequently we introduce the generalized-search entropy minimization loss:
+
+Generalized-search entropy minimization loss consists of two parts: the first part is entropy minimization loss, and the second part is a regularization lossused to modify the gradient direction of the entropy minimization loss. The formulas for the two losses are as follows:
+
+whereis the query numbers,is the numbers of classes,is the predicted probability of the different classes of query.
+
+We propose a regularization loss. As shown in Eq.3,is designed to penalize the divergence between the model’s highest probability prediction and its lowest probability prediction for a given query. It aims to mitigate the issue of increasing gradient magnitude as the loss decreases during entropy minimization and balancing the contribution of model’s different class predictions to the loss. This helps prevent the model from converging to trivial solutions.
+
+Additionally, to mitigate the impact of uncertainty in model predictions on model adapting,introduces perturbations to the model’s gradients, allowing optimization process without entirely relying on maximum gradients direction and reduce the impact of historical gradient directions on the current gradient direction of the model. This helps model in escaping local optima during training and explore a broader solution space, thereby enhancing model’s generalization ability.
+
+Simultaneously, Using entropy minimization loss to directly adjust model parameters can amplify the impact of erroneous predictions on model adapting. In LearnableBN method,loss is used to optimize the auxiliary learnable parameters, denoted as, which we introduce. These parameters can indirectly predict the BN statistics.
+
+The inherent instability of the BN layer is mainly attributed to the following factors:
+
+(1) The exponential moving average (EMA) method used to predict statistics in the BN layer is highly dependent on batch size. If the batch size is too small, it might not accurately reflect the full distribution of the test data domain, potentially leading to erroneous shifts in BN statistics.
+
+(2) Within the neural network, deeper layer information is found to exhibit greater transferability, while shallow layers information often requires more frequent updates. Therefore, the update strategy for BN statistics should be different for each layer.
+
+(3) Predictions of BN statistics are highly sensitive to internal covariate shift, where the accuracy of statistical predictions in deep BN layers significantly influences those in shallow BN layers.
+
+Therefore, we propose a novel BN layer method for predicting BN statistics to replace the EMA method:
+
+In-th BN layer the equation in forward propagation:
+
+whereandrepresent the input and outputs of BN layer. (represent the history BN statistics andrepresent the BN statistics calculated from present sample.is the affine parameters of the BN layer.is a small constant added to ensure numerical stability. We introduce a new learnable parameterto each BN layer and apply the leakyrelu function with a hyperparameter of -0.001 afterto avoid negative values. This enables each BN layers to have independent mixture coefficient. At this stage, the BN statisticcalculated from Eq.4and Eq.5are utilized as a temporary variables to influence the model’s predictions.
+
+After optimizing with, we introduce a quadratic correction:
+
+Where therepresent each optimization step in the the training iterations.
+The first correction is necessary because the BN layer dynamically mixes the current sample’s statistics with history statistics during the prediction process, helping to reduce domain shift and enabling the model to predict the mixture coefficient for current sample more accurately.
+
+The second revision is due to the delay in the impact of theon the BN statistics. Theafter optimisation should be the mixing coefficients of the current samples. If we use Eq.4and Eq.5as the BN statistic, it will result in theoptimized by currentto be used in the next sample’s mixing coefficients. Therefore, we made specific adjustments to the model training proces. After optimizingusing Eq.7, we applied Eq.8and Eq.9to correct the statistics of the BN layers.
+
+We propose a method to optimize the BN layer by introducing a auxiliary learnable parametersto replace the EMA method. It mitigates the limitation where the accuracy of BN statistics predicted using the EMA method is highly dependent on batch size, resulting in a more stable process for predicting BN statistics. Applying different BN statistics shift strategies for each BN layers, effectively utilized the transferability of the deep BN layers.
+It is worth noting that, unlike the traditional model parameter,is an auxiliary parameter that will initialized at the start of each domain adaptation, enabling specific adaptation strategies for different domains.
+
+SECTION: 3.4Semantic-Consistency based Dual-Stage-Adaptation
+
+In our LearnableBN method only the auxiliary learnable parametersare optimized. Adapting with a very small learning rate often results in the model converging to a local optimum due to the limited number of trainable parameters. Conversely, the peculiarities ofcan cause the model to converge to a trivial solution if an excessively large learning rate is used. To further enhance the generalization of our method and effectively handle noisy samples encountered in real-world scenarios. We propose a semantic-consistency based dual-stage-adaptation method.
+
+First of all, in the first stage, a small learning rate is used to allow the model to find the local optimum. In the second stage, we use a large learning rate to allow the model to escape from the local optimum.
+In order to guarantee the reliability of the adapting process, we compare the semantic consistency between the first-stage model and the second-stage model by using both models to predict the same sample and then comparing the Kullback-Leibler divergence (KL) between their predictions. We consider a sample to be stable for model adapting if the KL value is in the lowest 10% of historical KL values. More algorithm details are put in Appendix.
+
+The rationale behind the first adapting stage is that the model often exhibits instability when confronted with unseen domains. Therefore, the original model cannot be used directly as a semantic comparison model. The local optimums obtained by the model in the first adapting stage are more transferable. Consequently, we use the predictive power of the local optimums to filter the unstable samples. During the second stage of adapting, the learning rate is increased in order to encourage the model to converge to the global optimum.
+
+Concurrently, a semantic consistency based method is used for sample selection, which considers the hidden layer features of samples. This approach guarantees the adapting stability while minimizing the risk of learning noisy samples during test-time-adaptation.
+
+SECTION: 4Experiments
+
+SECTION: 4.1Experimental Setup
+
+Dataset.To simulate a dynamic and real-world autonomous driving scenarios, the experiments are conducted on the Nuscenes-C dataset and Kitti-C dataset. NuScenes-C adds natural corruption, including exterior environments, interior sensors factors, and temporal factors, based on NuScenes[4]. It includes six types of corruption and three levels of severity: EASY, MID, and HARD.
+The KITTI-C dataset introducing 12 distinct types of data corruptions to the validation set based on KITTI dataset[8].
+Our method compares with TTA methods, without introducing additional source data and without relying on annotations.
+
+Metrics.In the BEV based 3D object detection task, We evaluate the performance of our method with the official nuScenes mertric,nuScenes Detection Score (NDS), which calculating a weighted sum of mAP, mATE, mASE, mAOE, mAVE, and mAAE. For the monocular 3D object detection task, we present our experimental results in terms of Average Precision (AP) for 3D bounding boxes, denoted as. More details please refer to our supplementary materials.
+
+Implementation Details.We implement our model based on Pytorch on a single NVIDIA L20 GPU. The baseline models used are BEVFormer[13], Sparse4D[16]and MonoFlex.
+In Nuscenes-C, to evaluate the stability of TTA methods, the batch size was set to 1. In the semantic-consistency-based dual-stage-adaptation, we set the learning ratesto 2e-8 and 2e-7 and learning ratioset at 0.1. The initial value of auxiliary learnable parametersin BN layers is set to 1e-5. The implementation details of Kitti-C are put in supplementary materials.
+
+SECTION: 4.2Quantitative Results
+
+We compare our method to several test-time adaptation methods as shown in Table1,
+These methods can be classified into two main categories, (1) adjusting model parameters based on unsupervised training (ie,TENT[22]), (2) focuses on modifying the BN statistics (ie, ReviseBN[1], AdaBn[11], ARM[28])
+
+The experimental results demonstrate that the BEV based model is highly sensitive to batch normalization (BN) statistics due to the number of parameters and model depth. ARM and AdaBn have caused the model to collapse. These methods have failed to predict the true distribution of the test domain, particularly when the batch size is minimal.
+In response to this situation, the ReviseBN adjusts the mixture coefficient of the EMA method in accordance with the specific test domains.
+ReviseBN showed significant improvements compared to the baseline in cases where the test domain greatly shifted from the training domain. For example, in the Motion blur corruption type, the average results improved from 0.3330 to 0.3555 compared to the baseline, However when the test domain was similar to the training domain, ReviseBN led to a degradation of the model’s predictive ability. For example, the average results of the low light corruption type decreased from 0.3212 to 0.2631.
+
+TENT method fine-tunes the affine parameters of the BN layer using the EM loss. The TENT method has also caused a degradation in model performance, which is due to unsupervised training leading the model to fall into a local optimum. In severe domain shifts scenarios, TENT method is not as effective as the method of adjusting BN statistics.
+
+Compared to these methods, our approach adaptively learns the mixture coefficients, by adaptively learning the mixture coefficients based on the different corruption scenarios and the varying depths of BN layers, which has overcome the instability issues commonly encountered in adjust BN statistics methods, and has effectively prevented model collapse.
+
+The results of the experiments demonstrated that our method significantly enhanced the model’s capacity for generalization in scenarios with severe domain shifts, including those involving fog, motion blur, and low light. Furthermore, as the degree of corruption increased, the efficacy of our method became increasingly evident. To illustrate, compared to the baseline in the low light corruption scenario, our method showed an improve the average performance from 0.3212 to 0.3469. Notably, in the hard severity, the performance improved significantly from 0.2274 to 0.2753.
+
+At the same time, our method also demonstrated high stability in minimal domain shift scenarios. In the Fog corruption scenarios, our method avoids the performance degradation in model predictions that is commonly observed with common TTA methods. achieved the best average performance in the fog corruption scenarios.
+
+To learn more about how LearnableBN helps models perform, we conducted experiments across ten different categories under snow corruption scenarios. The experimental results indicate that the introduction of the LearnableBN method did not result in a significant performance improvement when the baseline was already performing well. For instance, in the detection task for traffic cones, LearnableBN achieved only about a 14% improvement compare to the baseline.
+However, in the categories where the baseline model performs poorly, the LearnableBN method delivers significant improvements. Specifically, in the truck category, LearnableBN achieved a remarkable improvement of up to 342% over the baseline, and in the pedestrian category, it enhanced performance by 283%. It not only significantly enhances the model’s robustness but also improves the generalization ability of autonomous driving models when faced with different categories of objects. These improvements are crucial for enhancing the reliability and safety of autonomous driving systems.
+
+SECTION: 4.3Generalization Evaluation
+
+Additionally, we substituted the baseline model with the Sparse4D model and compared it with three representative TTA methods in the Motion Blur corruption scenario.
+We selected Motion Blur for comparison because it presents significant domain shifts across the easy, mid and hard severity levels, which helps us assess our method’s performance under both minimal and severe domain shifts.
+As shown in Table3, The experimental results demonstrate that our method exhibits robust performance across all severity levels, with an average improvement in performance from 0.3563 to 0.4035 in comparison to the baseline. Consistent with the experiment results using BEVFormer as the baseline model, our method proves to be more stable than the methods that adjust BN statistics.
+
+On the other hand, to further validate the performance of the LearnableBN method in different real-world scenarios and tasks, we tested various TTA methods (BN adaptation[20], TENT[22], EATA[18], MonoTTA[15]) on the KITTI-C dataset using the monocular 3D object detection task, we compared the experimental results presented in the MonoTTA paper[15]. As shown in Table2, the experimental results show that under real-world corruptions, the pre-trained model suffers from significant performance degradation due to data distribution shifts. The LearnableBN method brings a substantial average performance improvement on MonoFlex and maintains the best performance in detecting pedestrians in the KITTI-C dataset.
+
+These experiments demonstrate that the LearnableBN method is adaptable to a wide range of base models, tasks, and real-world scenarios, highlighting its broad applicability and generalizability.
+
+SECTION: 4.4Ablation Studies
+
+LearnableBN.As shown in Table4, applying LearnableBN to the baseline results in degraded performance.
+This degradation is due to the secondary correction is not in this component resulting in the learned mixture coefficients not being able to adjust the BN statistic in time at each training step, which leads to a degradation of the model’s performance.
+It can be observed that after the LearnableBN method was applied to the baseline, the model’s performance remained at a similar level to that of the baseline, avoiding the instability that is typically caused by adjusting BN statistics.
+
+Generalized-search Entropy Minimization.Compared to LearnableBN component, the GSEM component modifies the EM loss with GSEM loss and introduces a secondary correction step in the training process. As shown in Table4, applying both LearnableBN and GSEM to the baseline significantly improves performance in snow, motion blur and low light corruption scenarios, indicating that GSEM and LearnableBN component have both improved performance.
+However, the experimental result also demonstrates that even with the introduction of the GSEM component, the performance degradation in the brightness corruption scenario remains unresolved (performance declined from 0.4908 to 0.4583). This is due to the challenges of learning from unstable samples.
+
+Semantic-Consistency based Dual-Stage-Adaptation.After introducing the semantic-consistency based dual-stage-adaptation method, compared to the results of only applying LearnableBN and GSEM to the baseline, we resolved the degradation in the brightness and fog corruption scenarios (improving performance from 0.4583 to 0.4835). This improvement is attributed to the dual-stage training, which filtered out unstable samples and further enhanced the stability of the training process. Additionally, performance improvements were also observed in the snow, motion blur, and color quant corruption scenarios. This is attributed to the adjustment of the learning rate during the dual-stage-adaptation, which encourages the model to converge to a globally optimal solution.
+
+SECTION: 4.5Quantitative Results
+
+To verify the effectiveness of our LearnableBN method, we utilized BEVFormer as the baseline and focused on snow scenario for visualization analysis. Fig.4presents the detection results in the BEV perspective, where Fig.4(a)shows results of BEVFormer, while Fig.4(b)shows results of BEVFormer after applying the LearnableBN method. It is clear from the figure that more objects can be detected after applying our proposed LearnableBN method.
+
+Furthermore, Fig.5provides visualization results from six different perspectives, where Fig.5(a)represents the detection results of BEVFormer, and Fig.5(b)illustrates the results of BEVFormer after applying LearnableBN. It can be observed that extreme weather conditions significantly degrade the detection ability of BEVFormer. By applying LearnableBN, not only were more objects detected, but also erroneous predictions were corrected compared to the baseline.
+
+SECTION: 5Conclusion
+
+In this paper, we presented a LearnableBN to improve the robustness of perception models in real-world autonomous driving, which introduced auxiliary learnable parameters to the BN layer, and adopted the GSEM loss function. Additionally, we employed the semantic-consistency based dual-stage-adaptation to enhance generalization. Comprehensive experimental results demonstrated the effectiveness and superiority of our proposed methods.
+
+SECTION: References
+
+Supplementary Material
+
+SECTION: 6More method details
+
+The pseudo-code of Semantic-Consistency based Dual-Stage-Adaptation is summarized in Algorithm1
+
+Inputin, learning rate, auxiliary learnable parameterin BN layers, learning ratio, iterationandOutputStage 1:Stable Adaptation
+
+Stage 2:Aggressive Adaptation
+
+SECTION: 7Data analysis
+
+SECTION: 7.1variation trend of
+
+During training, we plotted the variations of thevalues in the BN layers, using different colors to distinguish the layers based on their depth within the model. As shown in the Fig7(a)and Fig7(b). It can be observed that in the BN layers closer to the bottom of the model, thevalues continuously decrease, while in the BN layers closer to the output, thevalues continuously increase. This phenomenon indicates that the parameters in the bottom layers of the neural network have stronger transferability. Therefore, when fine-tuning BN layers, adopting a uniform transfer strategy across all layers may pose a risk of degrading model performance. It is advisable to minimize adjustments to the deeper layer parameters while increasing adjustments to the shallower layers.
+
+we conducted a comparative analysis under snow and lowlight scenarios, we found that although the domain shift between the snow scenario and the training domain is greater than that in the lowlight scenario, thevalues obtained from training in the snow scenario are actually smaller, while thevalues obtained in the lowlight scenario aretimes greater than those in the snow scenario. This indicates that when rectify BN statistics, one should not rely on the data distribution at the pixel level but rather focus on the data distribution at the feature level. For scenarios with severe domain shifts, fine-tuning the BN statistics by an order of magnitude ofcan significantly enhance model performance. In contrast, for scenarios with smaller domain shifts, even completely disregarding the training domain’s statistics may not degrade model performance.
+
+SECTION: 7.2The correlation between data distribution and loss
+
+Fig6illustrates the distribution of the mean and variance among different samples. The horizontal axis represents the ratio of the test domain variance to the training domain variance, while the vertical axis represents the difference between the mean values of the test and training domains. The color of each point indicates the loss for each sample, with the color gradually lightening as the loss increases. From the Fig6, it is evident that there is no significant relationship between the distribution of the samples and the magnitude of the loss. The shift in statistical metrics does not lead to an increase in the model’s entropy minimization loss. Thus, filtering noisy samples based on entropy minimization loss is not an effective method for estimating the BN statistics in the test domain. Therefore, this paper chooses to use model consistency analysis to filter noisy samples.
+
+SECTION: 8More Experiment details
+
+SECTION: 8.1Severity setting details
+
+The three Severity settings for each corruption are consistent with the severity settings used in Nuscenes-C, as shown in the Table5.
+
+SECTION: 8.2More Metrics details
+
+We evaluate the performance of our method with the official nuScenes mertric: nuScenes Detection Score (NDS), which calculating a weighted sum of mAP, mATE, mASE, mAOE, mAVE, and mAAE. The first step is to convert TP errors into TP scores using the eq.10:
+
+Then, a weight of 5 is assigned to mAP, and a weight of 1 is assigned to each of the TP scores, followed by calculating the normalized sum.
+
+SECTION: 8.3More implementation details
+
+Implementation Details.In Kitti-C, to evaluate the stability of TTA methods, the batch size was set to 8. In the semantic-consistency-based dual-stage-adaptation, we set the learning ratesto 1000 and 100 and learning ratioset at 0.1. The initial value of auxiliary learnable parametersin BN layers is set to 0.1.
+In contrast to BEV-based 3D object detection, monocular object detection task requires setting the initialto a relatively large value. This adjustment is necessary because the MonoFlex model demonstrates a significant loss of predictive capability when processing corrupted data, severely compromising entropy minimization and leading to erroneous optimization of model parameters during training. By appropriately configuring the initial, we aim to restore the model’s predictive capacity in its initial state, thereby ensuring the stability and reliability of the adapting process.
+
+SECTION: 8.4More Nuscenes-C Results
+
+As shown in the table6, we present the results of LearnableBN compared with other TTA methods on three additional types of corruption in the Nuscenes-C dataset.
+
+The experimental results are consistent across the other three types of corruption. It can be observed that previous TTA methods exhibit instability when applied to models with a large number of parameters. For instance, while the ReviseBN method achieves the best average performance across three levels of corruption severity in the snow scenario, it leads to significant performance degradation in the color quant and brightness scenarios. This is because ReviseBN is not well-suited for models with a large number of parameters and is primarily effective in scenarios where corruption causes severe degradation of model performance.
+
+In contrast, our proposed method, LearnableBN, demonstrates the highest robustness across various types of corruption. LearnableBN maintains the model’s performance when detection accuracy is only slightly affected by corruption. For example, in the Color Quant scenario, LearnableBN improves the baseline’s average performance across three severity levels from 41.84% to 41.92%. Additionally, when corruption severely impacts detection performance, LearnableBN significantly restores the model’s predictive ability. For instance, in the snow scenario, it improves the baseline’s average performance across three severity levels from 22.97% to 26.39%.
+
+SECTION: 8.5More Kitti-C
+
+As shown in the table7and table8, We present a comparison of detection results for the Car and Cyclist categories on the Kitti-C dataset between LearnableBN and previous TTA methods. It is worth noting that for the detection results of the Cyclist category, MonoTTA’s results are inconsistent with those shown in the paper. We believe this discrepancy stems from issues with the Cyclist category in the Kitti-C dataset provided by MonoTTA. As a result, for the Cyclist category, we only compare MonoTTA with the baseline and our LearnableBN method.
+
+In the Car category, LearnableBN does not achieve optimal performance, performing worse than TENT, EATA, and MonoTTA, but outperforming BN Adaptation. This discrepancy can be attributed to the fact that TENT, EATA, and MonoTTA are unsupervised training methods that optimize the affine parameters of the BN layer. In contrast, both LearnableBN and BN Adaptation focus on adjusting the BN layer statistics. The advantage of unsupervised methods lies in their ability to improve detection results for categories with high prediction confidence. However, for multi-class scenarios, methods that adjust BN layer statistics demonstrate greater efficacy.
+As shown in Table  and Table , LearnableBN achieves near-optimal results in the Cyclist and Pedestrian categories, indicating its effectiveness in mitigating the long-tail effect and exhibits greater robustness compared to unsupervised test-time adaptation methods, making it particularly advantageous in handling diverse category distributions.
+
+In small-parameter models with relatively shallow architectures, the issue of internal covariate shift is less pronounced. Additionally, in the Kitti-C dataset, model performance degrades significantly under corruption. LearnableBN is designed to address the instability of large-parameter models during test-time adaptation, which explains why it does not exhibit a clear advantage in this specific task.
+
+In models with a small number of parameters, the architecture is relatively shallow, and the issue of internal covariate shift is less severe. Additionally, in the Kitti-C scenarios, the detection performance of models experiences significant degradation. Since LearnableBN is specifically designed to address the instability of large-parameter models during test-time adaptation, it does not demonstrate a notable advantage in this particular task.
+
+SECTION: 8.6More Quantitative Results
+
+As shown in Fig8, We present visualization results for six different types of corruption across three severity levels from the NuScenes-C dataset, As shown in Fig9is the visualization results for twelve types of corruption from the KITTI-C dataset.
+
+As shown in Fig10, we also demonstrate the results obtained using the LearnableBN method in the Gaussian Noise corruption scenario of the KITTI-C dataset. Consistent with the previous experimental results, LearnableBN significantly improves the baseline model’s prediction for the pedestrian category. This indicates that the LearnableBN method enhances the model’s robustness across multiple categories and alleviates the long-tail effect.
+
+Brightness
+
+Color Quant
+
+Fog
+
+Low Light
+
+Snow
+
+Motion Blur

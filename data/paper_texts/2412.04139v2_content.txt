@@ -1,0 +1,270 @@
+SECTION: Monet: Mixture of Monosemantic Experts for Transformers
+Understanding the internal computations of large language models (LLMs) is crucial for aligning them with human values and preventing undesirable behaviors like toxic content generation. However, mechanistic interpretability is hindered bypolysemanticity—where individual neurons respond to multiple, unrelated concepts. While Sparse Autoencoders (SAEs) have attempted to disentangle these featuresreconstruction loss.we introduce() architecture, whichnovel expert decomposition methodto 262,144 per layer while total parameters scale proportionally to the square root of the number of experts. Our analyses demonstrate mutual exclusivity of knowledge across experts and showcase the parametric knowledge encapsulated within individual experts. Moreover,allows knowledge manipulation over domains, languages, and toxicity mitigation without degrading general performance.mechanistic interpretabilitymodel behavior.
+The source code and pretrained checkpoints are available at.
+
+.tocmtchaptermtchapternonemtappendixnone
+
+SECTION: Introduction
+As large language models (LLMs) continue to scale and generalize, understanding their internal computations becomes increasingly imperative. Mechanistic interpretability seeks to unravel how neural networks generate outputs by dissecting their internal processes into human-interpretable components. Such comprehension is crucial not only for aligning LLMs with human valuesbut also for preventing undesirable behaviors such as the generation of toxic content.
+
+However, achieving such level of interpretability in LLMs is particularly challenging due topolysemanticity—the phenomenon where individual neurons respond to multiple, unrelated concepts. This arises from thesuperposition hypothesis, which suggests that neural networks represent more features than there are neurons by encoding them in compressed, high-dimensional spaces.
+To address polysemanticity, observational analyses leveraging sparse representations have been employed. Specifically, techniques like Sparse Autoencoders (SAEs) aim to disentangle these superposed features by learning sparse, overcomplete bases that describe the activation space.
+
+Despite advancements using SAEs, significant limitations persist: (1):
+Functional importance offeatures. (2): While attempts have been made to steer LLMs based on learned dictionary features, discussions on the manipulability of SAEs often overlook their impact on the model’s general performance across other tasks.
+Particularly in open-ended generation
+tasks, the effects of feature control using SAEs remain largely unknown.
+These limitations highlight the necessity for alternative methods that can observe
+
+In light of these challengesintegrating sparse dictionary learning with Mixture-of-Experts (MoE) architectures. However, conventional MoE architectures face several problems: (1): Most sparse LLMs employ a limited number of experts, leading to knowledge hybridity where each expert covers diverse and unrelated concepts, failing to fulfill the superposition hypothesis necessary for monosemanticity. (2): Attempts to scale the number of expertshave been confined to specific layers within the LLM, rendering knowledge distributed in other parts of the networkinaccessible. (3): Recently proposed architectures aiming to scale the number of expertssuffer from linearly increasing total parameters, limiting the scalability of the LLM.
+
+To overcome these limitations, we introducearchitecture, enabling effective specialization of experts to facilitate mechanistic interpretability in LLMs.aims for transparent language modeling by significantly increasing the number of experts to 262K at every layer and integrating sparse dictionary learning within end-to-end Mixture-of-Experts training. Our main contributions are as follows:
+
+: By utilizing a novel expert decomposition method,addresses memory constraints, ensuring that the total number of parameters scales proportionally to the square root of the number of experts.
+
+:facilitates mechanistic interpretability by enabling observations of fine-grained experts’ routing patterns. Our analyses confirm mutual exclusivity of knowledge between groups of experts, while qualitative examples demonstrate individual experts’ parametric knowledge.
+
+:allows for end-to-end training that extends to robust knowledge manipulation during inference. Without degrading performance, it provides effortless control over knowledge domains, languages, and toxicity mitigation.
+
+SECTION: Preliminaries
+SMoE models efficiently scalecapacity by activating only a subset of the experts, thereby reducing computational costs. These models leverage expert embeddings to determine which experts to activate. Given a hidden representation vectorand a set ofexpert networks, each expert is defined as:
+
+whereandare the weight matrices of the-th expert, andis an activation function such as ReLU or GELU.The output of the SMoE layer is then computed as:
+
+wheretop-experts,.
+
+number of expertsthe product key retrievaltop-experts, reducingcomplexity fromto.
+
+PEER uses two independent product keys,expert embeddings,The hiddenissplit into two halves,, and the
+top-are obtained by:
+
+, top-expertsfromover the Cartesian product,
+
+be weights of the expertThe PEER layer is then formulated as:
+
+Although PEERmemory bottleneckwith dimensionand 8 attention heads4.3 billion parameters per layer.an additional 103 billion parameters
+
+SECTION: Monet: Mixture of Monosemantic Experts for Transformers
+memory constraints.
+
+expert networkas:
+
+().layer with horizontal decomposition is defined as:
+
+whereandrouting score.
+
+sparse activations varying by token complicate efficient computation reorganization.dense routingsparse routing scores
+
+Byreordering the summationscan precompute memory-operations before and after therouting phase.providedetails in Algorithm
+
+Letandrepresent theweights for the experts, andanddenote the split biases. For the vertically decomposed experts, the expert network is defined as:
+
+and the expert layer is obtained as:
+
+divide the layer calculation into six termsin Appendix. The overall computational costhorizontal decomposition,the implementation details are provided in Algorithm
+
+To avoid the hardware inefficiency of top-sorting, we use Batch Normalization to estimate expert routing quantiles without performing top-. Inspired by BatchTopK, which enhances reconstruction in SAE, we apply batch-level quantile estimation for more accurate routing. Batch Normalization automatically gathers router logit statistics, which are used during inference. This method reduces training time while maintaining performance.
+
+Load balancing loss is crucial in MoE models to promote uniform expert routing, improving expert utilization and ensuring efficient parallelism when experts are distributed across devices. While sparse routing mechanisms are widely used, some dense MoE models adopt entropy-based lossessince dense routing does not directly track expert selection frequencies. In a similar vein, we introduce an alternative uniformity loss, formulated as the KL divergence between a uniform distribution and the routing probabilities:
+
+Additionally, we introduce an ambiguity loss that measures the degree of expert specialization for each token:
+
+This loss encourages the model to assign each token to a specific expert with high confidence. By minimizing this ambiguity loss, the model promotes expert specialization, resulting in more distinct and interpretable expert roles.Letbe a language modeling loss andbe a hyperparameter. The final training objective is:
+
+SECTION: Experiments
+weparameter sizes ranging from 850 million to 4.1 billion andat 1.4 billion parameters.
+In addition, we train models using thearchitecture for fair comparison. All models are pretrained on large-scale datasets, and we further fine-tune-1.4B for instruction-followingfor automated interpretation framework. For detailed pretraining configurations and instruction tuning methods, refer to Appendix.
+
+evaluationsSAEsin maintaining model stability, where reconstruction errors lead to instability and reduced performance in open-ended tasks, compromising the model’s overall reliability in knowledge control. We evaluate Gemma 2 2Busing Gemma Scope, a collection of SAEs trained on Gemma 2 models.we employ the available SAEs with 65K sparse features–bothMLPandresidual layers–and evaluate their performance on open-ended benchmarks.
+
+The scalability ofis evident across all three parameter scales (850M, 1.4B, and 4.1B). As the number of parameters increases, the model exhibits a consistent upward trend in performance across both 0-shot and 5-shot settings. This confirms that the scaling laws typically observed in dense models still apply to’s sparse architecture, further reinforcing its scalability and practical applicability for large-scale LLM deployments.vertical decomposition (VD)over horizontal decomposition (HD). As shown in Table,-VD consistently outperforms-HD across multiple benchmarks and parameter scales, particularly in the 850M, 1.4B, and 4.1B models.
+
+In this section, we present qualitative analyses demonstrating the monosemantic specialization of individual experts in ourarchitecture.
+In, we visualizeexperts in our language models on the C4and StarCoder subset. We include comprehensive examples illustrating the internal workings of models with varying sizes (-1.4B,-4.1B)a model pretrained on code ().
+
+–-1.4B / Group 5 / Expert 147,040
+
+–-1.4B / Group 2 / Expert 73,329
+
+–-1.4B / Group 4 / Expert 48,936
+
+–-1.4B / Group 4 / Expert 54,136
+
+–-4.1B / Group 5 / Expert 81,396
+
+–-1.4B / Group 4 / Expert 52,338
+
+–/ Group 1 / Expert 232,717
+
+–/ Group 4 / Expert 51
+
+In, feedforward MLPis decomposed intoexperts, a design considered highly granular.specialize in concepts such as chemical(Expert 147,040) or(Expert 73,329).vocabularies associated with similar concepts, like physicists in a field(Expert 81,396).
+
+Our expertsmonosemanticityin concepts presenteddifferent contextslanguages,For instance, both Expert 48,936 and Expert 54,136 in Figurerespond to the term “Bay”, where one relates it to a geographical area (e.g.,“Bay Area”), and the other connects it to a mathematical concept (e.g., “Bayesian”).despite the appearance of the same concept across various programming languages,consistently maps string-related knowledge to Expert 52,338.
+
+SECTION: Analyses
+Leveraging transparent observations, we employ observational methods for knowledge editing. In particular, we explored the effects of knowledge unlearning by selectively removing experts based on theirdomains, programming languages, and toxicity.
+
+Using the MMLU Probenchmark taxonomy, which divides question-answer sets into 14 distinct domains, we investigated the effects of domain-specific knowledge unlearning on MMLU. For each expert, if the routing probability for a particular domain was at least twice as high as for the second most activated domain, we labeled that expert as specialized in that domain. After assigning experts to domains, we selectively deleted the experts and evaluated the impact of knowledge unlearning across all 14 domains. The details of the expert deletion process and its impact across the 14 domains are provided in Appendix.
+
+FigureGemma 2 LLM with Gemma Scope,
+
+performance degradation across
+
+In addition to domain masking, we performed a similar evaluation of programming language masking using1.4B. Again, we utilized the skewness in routingto identify language-specific experts. Tablesummarizes the changes in pass@100 performance metrics after expert purging evaluated on MULTIPL-E benchmark. For the targeted languages, pass@100 scores dropped by as much as -30%p, while average performance for other languages remained relatively stable, with only minor declines ranging from -0.6% to -1.8%p.All metrics were evaluated using a temperature of 0.8 and 200 sample generations,
+
+Toadjust model behavior for safer language generation, we propose a method for purging toxic experts from the model.
+This approach directly
+removes experts associated with toxicity,while preserving the overall performance of the LLM. We evaluate this method on two well-established toxicity benchmarks:and ToxiGen, to assess its impact on toxicity reduction.
+
+For toxicity evaluation, we utilize theAPIforand the ToxiGen RoBERTa model
+for the ToxiGen benchmark, both designed to measure the generation of toxic content. To identify toxic knowledge within the model, we collected expert routingalongside toxicity scores, and computed Pearson correlations. A higher correlation indicates a greater likelihood of an expert being selected when toxic content is generated. Based on predefined thresholds, we removed experts with high toxicity correlations.
+
+As presented in Table, our results show that eliminating up to 4.1% of experts can reduce both the expected maximum toxicity and the probability of generating toxic content without affecting performance in. Similarly, Tabledemonstrates thateffectively lowers toxicity with only minimal performance degradation, consistent with the findings from.
+
+SECTION: Conclusion
+We introduced,architecturemechanistic interpretability
+
+SECTION: Acknowledgement
+This work was supported in part by the National Research Foundation of Korea [NRF-2023R1A2C3004176, RS-2023-00262002], the Ministry of Health & Welfare, Republic of Korea [HR20C002103], the ICT Creative Consilience program through the Institute of Information & Communications Technology Planning & Evaluation (IITP) grant funded by the MSIT [IITP-20242020-0-01819], and Cloud TPUs
+from Google’s TPU Research Cloud (TRC).
+
+SECTION: References
+SECTION: Appendix
+.tocmtappendixmtchapternonemtappendixsubsubsection
+
+SECTION: Method Descriptions
+In this section, we derive the rearrangement of Equationfor the vertical decomposition, aligning it with Equationfrom the horizontal decomposition. We achieve this by splitting the result into six terms to facilitate the computation of actual values.
+
+The vertically decomposed expert layer (MoVDE) is expressed as:
+
+Based on the above equation, we define the:
+
+Using these terms, we can simplify the output of the MoVDE layer as thematrix. Similar to the horizontal decomposition, we can reorder the summations in each term to enhance computational efficiency by precomputing and reusing intermediate results, thereby eliminating redundant expert computations. Specifically, since the MLPs consist of two layers, we consider four combinations of the expert weights:,,, and.
+
+First, we address the computations involving the same index pairs,and, represented byand. These computations can be simplified as follows:
+
+In these terms, the expert computationsandcan be precomputed before aggregating the outputs. Moreover, the multi-head expert routing probabilities are consolidated into single routing coefficientsand, reducing redundant aggregations.
+
+For the cross termsand, the computations involve interactions between different indices. These crossflows betweenandcan be handled similarly to the horizontal decomposition, as mentioned in Equation. We rewrite these terms as:
+
+The expressions suggest that the activationsandare precomputed before aggregating expert outputs. The second-layer weightsandare applied in the final step, allowing efficient summation over routing probabilitiesand.
+
+The bias termsandcan be simplified as:
+
+These terms depend only on the respective expert routing probabilities and bias parameters, and thus can be computed efficiently without involving cross-index combinations.
+
+By applying these simplifications, the vertical decomposition method effectively computes the layer output while avoiding excessive memory consumption. Without such rearrangement, memory usage would increase significantly due to the combined expert routing probabilitiescontainingelements, compared to theelements required forandcombined. The detailed implementations are provided in Algorithmand Algorithm.
+
+SECTION: Training Details
+We pretrain ourmodels with parameter sizes of 850 million (850M), 1.4 billion (1.4B), and 4.1 billion (4.1B) to evaluate performance across scales. For a fair comparison, we also train models with thearchitecture from scratch under the same conditions.. All models are trained on 100 billion tokens sampled from the FineWeb-Edu dataset, which combines high-quality web content with educational materials. Model configurations are in Table
+
+Training is conducted on a TPU-v4-64 Pod Slice, utilizing the AdamW optimizer with a learning rate ofand a batch size of 2 million tokens. We employ Squared ReLUas the activation function. To manage computational resources effectively, we adopt a group routing strategy wherein the routing probabilities are reused every 4 layers. This approach reduces the overhead associated with the expert routing parameters. The weight of the auxiliary lossis set tofor all experiments.
+
+In addition, we train1.4B to evaluate the model’s capability in coding tasks and analyze multilingual specialization.is pretrained on 100 billion tokens sampled from, the primary dataset used to train the StarCoder model.is filtered from The Stack datasetand encompasses approximately 86 programming languages.
+
+To enhance the conversational and instructional capabilities of our models, we perform instruction tuning on the1.4B model following the instruction tuning recipeused by. We use the same fine-tuning dataset as, which combines several high-quality instruction-response pairs from diverse sources. The instruction tuning process is performed on a single NVIDIA A100 GPU. During this phase, we freeze the expert routing embeddings to prevent overfitting and reduce computational demands.
+
+multimodal capabilities,fine-tuning themodel following the LLaVA’s visual instruction tuning, using a single NVIDIA A100 GPU. Instead of the vision encoder used in the original paper, we employ themodel with an image size of 224, resulting in 196 image tokens. Consistent with our instruction tuning strategy, we freeze the expert routing embeddings during vision-language fine-tuning to ensure effective adaptation to the multimodal instruction data.
+
+SECTION: Ablation Studies
+In this section, we investigate the effects of two key hyperparameters: the auxiliary loss weight () and the number of expert routing groups. All experiments are conducted on the1.4B model, and the 5-shot performance is reported on the open-ended benchmarks used in Table.
+
+We employ two auxiliary losses: uniformity and ambiguity. The uniformity loss ensures router activation is evenly distributed across tokens and batches, preventing favoritism toward specific experts. The ambiguity loss encourages the model to assign higher routing probabilities to the primary experts, promoting expert specialization.
+
+Without uniformity loss, the model tends to over-utilize certain experts, leading to imbalanced training. On the other hand, high ambiguity causes the model to route to multiple experts, which inhibits expert specialization. For effective expert routing, the distribution should be uniform across tokens but specialized within each token.
+
+We test, as shown in Table. The results indicate that the model is robust to different loss weights, with larger weights reducing uniformity and ambiguity. We selectedas it showed optimal performance.
+
+Expert routing requires multi-head retrieval embeddings, which involve finding top-experts through product key retrieval. While this reduces computational complexity compared to evaluating all 262,144 combinations, it still demands substantial memory and computational resources. As described in the training details, we reuse the routings every 4 layers.
+
+To assess the effectiveness of grouped routing in reducing computational costs without sacrificing performance, we trained models with full expert routing and compared them in Table. We report parameter size, FLOPs (TFLOPs) for forward computation over 2M tokens, and the 5-shot benchmark performance. The group size of none represents the densemodel. The results demonstrate that reusing routing for every 4 layers significantly reduces parameters and FLOPs, while maintaining performance comparable to the 1.7B model.
+
+SECTION: Evaluation Protocol for Analyses
+In this section, we explain the detailed evaluation protocol of the analyses in Section. To check the knowledge and expert specialization in the, we instead mask the corresponding knowledges and evaluate the model benchmark to check how many the target benchmark is dropped while maintaining the other abilities In particular, we explored the effects of knowledge unlearning by selectively removing experts based on their activations related to specific domains, programming languages, and toxicity.
+
+As outlined in Section, we reorganized the MMLU benchmark, consolidating its 57 subjects into 14 distinct categories, as defined by the MMLU Pro benchmark. The distribution of question-answer pairs across these categories was uneven, with the largest category, “Other,” containing 2,343 pairs, while the smallest, “Engineering,” included only 145 pairs.
+
+For each expert, we labeled it as specialized in a domain if its routing probability for that domain was at least twice that of the second most activated domain. For instance, an expert highly activated by the biology domain with double the activation compared to the next closest domain was classified as a biology expert. Experts without such a skewed activation were considered generalists. After assigning experts to domains, we selectively removed them to evaluate the impact of knowledge unlearning across all 14 categories. Our analysis revealed that domains such as History and Health were allocated the largest number of experts, approximately 10,000 per layer, while domains likeand ”Other” were assigned the fewest. A detailed distribution ofexperts is presented in Table
+
+analysisindomain-specific(e.g., using PubMed for biology or GitHub for programming languages)the distribution of domain
+
+-1.4B / Python / HumanEval-0-1.4B / Python / HumanEval-23-1.4B / Python / HumanEval-162
+
+To conduct the multilingual masking, we utilized the bigcode-evaluation-harnessto assess code generation and unit tests. MULTIPL-E benchmarkconsists of 22 programming languages. For our experiments, we evaluated-1.4B and selected the top 6 languages by performance: Python, C++, Java, JavaScript, Lua, and PHP.
+
+For each of these languages, we generated code completions using a temperature of 0.8 and 200 samples per generation. The code generation process was guided by the problem descriptions provided in the docstrings, along with the corresponding function names. The generated code was then evaluated against the unit tests provided by the benchmark to verify whether the problem was successfully solved. Performance was measured using the pass@100 metric.
+
+In line with our approach for domain masking, we identified language-specific experts (see) by examining the skewness in routing probabilities. Based on this, we masked experts associated with each language and re-evaluated the code generation benchmark to estimate the model’s capability to unlearn programming languages.
+
+To enhance the safety of language generation, we introduce a systematic method for purging toxic experts from our model. This method focuses on identifying and eliminating experts correlated with toxic outputs, which significantly mitigates harmful content while maintaining the overall performance of the language model.
+
+For the evaluation on, we implemented the protocol established by DecodingTrust, utilizing a dataset of 1.2K challenging user prompts. Toxicity scores are obtained from theAPI, focusing on two metrics: expected maximum toxicity and toxicity probability. We generate outputs with a temperature of 1.0 and a top-p value of 0.9, producing 25 samples of 20 new tokens per prompt. The expected maximum toxicity is calculated as the average of the highest scores from these 25 generations for each sample. Meanwhile, the toxicity probability is defined as the ratio of samples in which at least one generation among the 25 exceeds a toxicity score of 0.5, classifying it as toxic content.
+
+In addition to, we assess the model using the ToxiGen dataset, employing the ToxiGen RoBERTa model for toxicity evaluation. The ToxiGen dataset consists of 31K diverse prompts designed to generate new sentences, which are subsequently evaluated for toxicity using the RoBERTa scoring model. We generate outputs with a temperature of 0, producing new sequences of 30 tokens.
+
+Idiot –-1.4B / Group 4 / Expert 3,400
+
+Damn –-1.4B / Group 5 / Expert 183,238
+
+Censorship –-1.4B / Group 2 / Expert 151,489
+
+Disease –-1.4B / Group 2 / Expert 238,952
+
+SECTION: Full Performance
+SECTION: Additional Qualitative Results
+Biology –-1.4B / Group 2 / Expert 234,514
+
+Biology --1.4B / Group 5 / Expert 168,250
+
+Economics –-1.4B / Group 2 / Expert 190,658
+
+Economics –-1.4B / Group 5 / Expert 101,512
+
+Math –-1.4B / Group 2 / Expert 196,851
+
+Math –-1.4B / Group 4 / Expert 283
+
+Psychology –-1.4B / Group 4 / Expert 29,260
+
+Psychology –-1.4B / Group 4 / Expert 110,156
+
+Python –-1.4B / Group 5 / Expert 14,661
+
+Python –-1.4B / Group 5 / Expert 32,766
+
+C++ –-1.4B / Group 5 / Expert 21,294
+
+C++ –-1.4B / Group 5 / Expert 22,829
+
+Java –-1.4B / Group 1 / Expert 21,928
+
+Java –-1.4B / Group 3 / Expert 13,475
+
+JavaScript –-1.4B / Group 1 / Expert 77,636
+
+JavaScript –-1.4B / Group 2 / Expert 40,263
+
+Green –-1.4B / Group 4 / Expert 189,891
+
+Purple –-1.4B / Group 4 / Expert 184,117
+
+Black –-1.4B / Group 4 / Expert 57,497
+
+Sunlight –-1.4B / Group 4 / Expert 133,620
+
+Aviation –-1.4B / Group 4 / Expert 250,250
+
+Body of Water –-1.4B / Group 5 / Expert 49,776
+
+Dogs –-1.4B / Group 4 / Expert 100,768
+
+Bridges –-1.4B / Group 2 / Expert 50,634
+
+Grid –-1.4B / Group 4 / Expert 176,960
+
+Inscriptions –-1.4B / Group 4 / Expert 117,738
+
+Wafer –-1.4B / Group 1 / Expert 214,604
+
+Electronics –-1.4B / Group 1 / Expert 143,910

@@ -1,0 +1,221 @@
+SECTION: Tabular data generation with tensor contraction layers and transformers
+Generative modeling for tabular data has recently gained significant attention in the Deep Learning domain. Its objective is to estimate the underlying distribution of the data. However, estimating the underlying distribution of tabular data has its unique challenges. Specifically, this data modality is composed of mixed types of features, making it a non-trivial task for a model to learn intra-relationships between them. One approach to address mixture is to embed each feature into a continuous matrix via tokenization,
+while a solution to capture intra-relationships between variables is via the transformer architecture. In this work, we empirically investigate the potential of using embedding representations on tabular data generation, utilizing tensor contraction layers and transformers to model the underlying distribution of tabular data within Variational Autoencoders. Specifically, we compare four architectural approaches: a baseline VAE model, two variants that focus on tensor contraction layers and transformers respectively, and a hybrid model that integrates both techniques. Our empirical study, conducted across multiple datasets from the OpenML CC18 suite,
+compares models over density estimation and Machine Learning efficiency metrics. The main takeaway from our results is that leveraging embedding representations with the help of tensor contraction layers improves density estimation metrics, albeit maintaining competitive performance in terms of machine learning efficiency.
+
+SECTION: Introduction
+Deep Learning has been thoroughly investigated over the last decades and has been successfully applied to various learning tasks. Generative modeling is no exception. Generally, this class of models aims to estimate the underlying distribution of the data. Existing generative flavours encompass variational inference, generative adversarial networksand score-based matching.
+
+Despite mostly focusing on data modalities such as imageand text, there has been a recent surge of interest in generative models for tabular data. The interest lies in generating synthetic data to overcome challenges such as data scarcity, missing-value imputation, and individual privacy-preserving (see e.g.,for a thorough review).
+
+Modeling the joint distribution of tabular data has its unique challenges. The main research interest in the generative model is on images, and, usually, the theory behind it assumes a continuous distribution of the data. This is not true for tabular data, which generally presents a mixture of both continuous and discrete variables. Moreover, continuous variables might exhibit several modes and discrete variables may have a considerable number of categories, making it difficult for a given neural network to learn relationships between these two different types of data adequately. This is further supported from a supervised learning perspective, where recent studies showed that tree-based models are still thealgorithms for classification and regression tasks.
+
+A data point of a tabular dataset is usually represented as a heterogeneous vector composed of numerical and discrete features. One possible solution to overcome this heterogeneity is to embed each feature into a matrix via tokenization. In essence, this transformation linearly projects each feature into a continuous vector. Given this unified continuous matrix representation, one cannot apply a conventional linear transformation to it since weights in a linear layer of a neural network are themselves matrices. Thus, we need to consider high-order mathematical objects to handle embeddings, also known as tensors. To propagate embedding representations along a neural network, we propose using Tensor Contraction Layers, where weights and biases of this layer are generalized to have arbitrary dimensions. To the best of our knowledge, these types of layers are under-explored in the tabular domain.
+
+The transformer architecturewas initially proposed for machine translation and later applied to text generation. Given its unprecedented success, adaptations have been made to this architecture in the past few years for images, time series, and, naturally, tabular data. In the tabular domain, the transformer architecture purpose is to capture meaningful relations between feature representations of the data via attention mechanisms.
+
+In this work, we empirically investigate the potential of using embedding representations on tabular data generation, leveraging them using tensor contraction layers and transformers. To deal with the heterogeneity of tabular data, tokenization is used, while intra-relationships between feature representations are captured via transformers. For data generation, the Variational Autoencoders (VAEs) architecture is considered. In addition to its base implementation, we also consider —TensorContracted, a VAE that encodes tabular data into embeddings and handles them via tensor contraction layers;Transformed, a VAE based on transformers adapted from; andTensorConFormer, a VAE that leverages both tensor contraction layers and Transformers. Experiments are conducted using the OpenML CC18 suite.
+
+The key findings of this work are: 1) On average, TensorContracted provided better results than its base implementation over density estimation metrics; 2) TensorConFormer posits a higher ability to synthesize diverse data; 3) Transformed fails to generalize the distribution of the data w.r.t. other variations; 4) Except for Transformed, models still compete regarding Machine Learning efficiency.
+
+We conclude the introduction by pointing out the contributions of this work. They are
+
+The introduction of Tensor Contraction Layers in tabular data modality as a solution to handle embedding representations and learn more complex relationships;
+
+An empirical study that compares VAE architectures enunciated above based on density estimation and machine learning efficiency metrics.
+
+The remainder of this work is structured as follows: In the following Section, we introduce related works. In Section, we state the problem definition and the formulation needed to introduce the considered methods, which are detailed in Section. The experimental setup is described in Section, namely the datasets used throughout this work and the considered evaluation metrics. In Section, we present our findings. Finally, Sectionconcludes this work.
+
+SECTION: Related Work
+Lines of work on tabular data generation using Deep Learning methods often involve adapting established architectures from other data modalities.
+
+A prominent architecture used for this purpose is Generative Adversarial Networks (GANs). In short, GANs consist of a minimax two-player game, where a generator aims at modeling the underlying distribution of the data, while the discriminator discerns if data fed into is real or generated. Given its success in synthesizing high-quality images, several adaptations to this architecture to handle tabular data were proposed over recent years. One of the earliest examples is medGAN, specifically designed for medical records. Another well-known tabular adaptation of GANs is Conditional GAN (CTGAN). Here, the authors propose two methods — one to deal with the non-trivial probability density estimation of continuous variables with multiple modes, based on Gaussian Mixture Models, and another to deal with class imbalance present in categorical ones based on a training-by-sampling procedure. Successors to CTGAN include CTAB-GANand its enhanced version, CTAB-GAN+. CTAB-GAN incorporates additional loss terms to improve the realism of synthetic data, while CTAB-GAN+ refines its predecessor.
+
+Another class of generative models in Deep Learning models is Diffusion Models, inspired by principles from non-equilibrium thermodynamics. These models involve two processes — a forward that gradually adds noise (using a well-defined probability distribution) to data, rendering it indistinguishable from random noise, and a reverse process that gradually recovers data initially sampled from noise. Its first adaptation to the tabular domain was TabDDPM, where the authors propose a mixture of Gaussian and multinomial diffusion to handle numerical and categorical variables, respectively.
+Concurrently, CoDiand StaSy were introduced. While the first handles the diffusion process of numerical and categorical variables independently, but conditioned to each other, the latter is based on Score Matchingwith Self-Paced Learning. More recently, a Latent Score-Based Generative Modelwas successfully applied to tabular data and dubbed TabSyn.
+
+Finally, another class of generative models that stood its ground over the years in the Deep Learning domain are Variational Autoencoders. This class of models aims to estimate the underlying distribution of the data via variational inference. Adaptations of this model include TVAE, introduced alongside CTGAN, and VAEM, which consists of a two-stage training — the first stage independently trains each feature using a VAE, and the second model’s inter-variable dependencies using the latent variables learned from the first stage. Another variation, GOGGLEwas introduced as a generative model that approximates relational structure between variables via Graph Neural Networks, jointly training these relations with a VAE.
+
+SECTION: Formulation
+In the context of tabular data, datasets typically consist of mixed-type variables. In this paper, we focus on datasets that contain numerical and categorical features and those exclusively composed of either type. A formulation of a dataset consisting of a mixture of these features follows.
+
+Letdenote an instance of a datasetwith size. We denote a data pointto be represented as a set of numericaland categorical featuresas the following vector:
+
+with. Categorical variablesare represented by a one-hot encoded vector,, whereanddenotes the number of categories of a given categorical featuresuch that in the end, each data point is represented as
+
+where.
+
+Finally, throughout this work, we consider conditional data generation. Letbe a vector of conditional features. Given a generative model, we aim to generate samples from it, conditioned to, i.e.,. This is accomplished by trainingto estimate the conditional likelihood. In our experiments, we condition the data into the target variable.
+
+SECTION: Embeddings Representation
+As previously mentioned, one of the challenges in tabular data generation is to properly model its distribution due to the mixed-type nature of features. In this work, we tackle this problem by representing each feature as a continuous vector via tokenization.
+
+Letbe the input of a neural network. A feature tokenizer takes as input a data point and projects it into a-dimensional space as:
+
+whereand. In other words, each numerical feature is projected into a vector space where each sample shares the same weights, while for categorical features this tokenization acts as a lookup table, i.e., each category has its own set of learnable weights. In the end,is represented as the embedding matrixby concatenating eachalong the feature dimension,.
+
+Although this type of representation was originally motivated to adapt tabular data into transformers, it may also offer advantages in terms of dimensionality compression. While multiple encoding methods exist for categorical features, one-hot encoding seems to be the most prevalent for generative modeling. However, one-hot encoding high-cardinality features can be cumbersome, as it significantly increases the dimensionality of input data and consequently, the number of parameters in the first layer of a given NN. This tokenization method maintains the feature dimensionality, with an increase ofparameters into the NN.
+
+Given a reconstructed embedding matrix, the reconstructed representationis obtained by projecting each embedding vectorback to the feature space as
+
+with,and.
+In the end, we concatenate every reconstructed feature s.t.
+
+SECTION: Tensor Contraction Layers
+The introduction of Tensor Contraction Layers (TCLs) was initially motivated to replace a fully connected classification head usually designed for image classification in Deep Neural Networks, overcoming the high number of neurons seen after flattening feature maps obtained from convolutional operations, while keeping their multi-linear representations. In this paper, we use TCLs to handle embedding representations of tabular data.
+
+Let a tensor of orderbe defined as. In the tensor formulation, a vectorand a matrixare a first and second-order tensor, respectively. Next, we define the contraction between two tensors. Letand, the contraction betweenandis defined as
+
+given this formulation, in our architectures, weights and biases and fourth and second-order tensors, respectively. A TCL is defined as
+
+withand. An elementof the tensor contraction in Eq. (),, is calculated as, that outputs a scalar. An example of a tensor contraction operation is illustrated in Fig., and an analysis of the number of parameters induced by tensor contraction versus linear layers is in Appendix.
+
+SECTION: Methods
+In this section, we introduce the methods enunciated in Section. We start by motivating and providing a detailed description of TensorConFormer. Following, we present the other variations considered in this work. Tablesummarizes the type of layers present in each architecture. For a review of the theory behind Variational Autoencoders, we recommend the readers to.
+
+SECTION: TensorConFormer
+In Section, we introduced embedding representations as a solution to handle a mixture of types of variables in tabular data. A transformer-based architecture aims to capture relations between variables via attention mechanisms. However, solely relying on this architecture to learn the data distribution might be insufficient as motivated in the toy examples presented in Appendix. Our intuition here is that since the architecture is constrained to the feature dimension of the data, it does not generalize well. To overcome this limitation, we leverage tensor contraction layers to map embeddings into a hidden representation, loosening the constraints imposed by transformers, and allowing the model to learn more fruitful representations by introducing TensorConFormer.
+
+TensorConFormer consists of transformers that act over thelatentandoutputspace to capture feature relationships via the attention mechanism, while tensor contraction layers are responsible for processing embedding representations guaranteeing an effective solution to deal with high-dimensional representations. The architecture is illustrated in Fig.and a detailed description of a forward pass follows. We begin by projectinginto a hidden representation, followed by a projection into the latent representationvia TCLs. Distinct transformers are then used over this representation to learn the statistics of the inference model (or encoder). The following set of operations describes the encoder of TensorConFormer
+
+whereis the activation function. Then, we obtainvia the reparametrization trick,, where. During the generative process (or decoding phase), we aim at learning. Similarly, we concatenatewithalong the feature dimension,and project it into the hidden representation, followed by a projection into a representation that shares the same dimensions as. The reconstructed embeddingsare finally obtained via a transformer head. The following operations summarize the decoder
+
+The reconstructionis obtained via the Detokenization procedure described in Section.
+
+SECTION: Base VAE
+In the base implementation of VAE, we begin by concatenating, wheredenotes the number of categories in the target variable. The encoder part of the architecture is then followed by
+
+After applying the re-parametrization trick, the decoder projectsto the reconstructed outputas.
+
+SECTION: TensorContracted
+The tensor contracted version is essentially the same as its linear counterpart, except that initially, we perform the tokenization described in Section, and linear layers are replaced by tensor contracted ones, i.e.,
+
+while the decoder is given by. The reconstructed embedding is finally detokenized as described in Sectionto obtain.
+
+SECTION: Transformed
+The transformed-based VAE is a straightforward adaptation of the VAE proposed infor conditional learning, where the posterior distribution parameters are learned directly from the input embedding representation. The encoder is given by
+
+Note that in a transformer, the output shares the same dimension as the input, i.e.,. Feedinginto the decoder transformer yields. To conform the output representation withwe add the extra layer.
+
+To conclude this section, and for the sake of completeness, the model is optimized to maximize the variational lower bound
+
+whereis the Kullback-Leilbler divergence. The reconstruction loss (first term in Eq. ()) is determined by the squared error or cross-entropy if the feature type is numerical or categorical, respectively.
+
+SECTION: Experimental Setup
+SECTION: Datasets
+We use the OpenML CC18 suiteas a benchmark to evaluate the methods presented in this paper. It is composed of 72 datasets used for classification tasks. From this benchmark, we select 62 datasets, that encompass samples and feature dimensions in the range betweenand, respectively. For all datasets, the train and test splits provided by the OpenML CC18 suite are used, and finally, we extract 15% of the training set which serves as our validation set.
+
+For all datasets, the following pre-processing is applied: 1) we begin by dropping features that only contain missing values, and numerical or categorical features with 0 variance or only one category, respectively; 2) numerical and categorical columns with missing values are replaced with the mean and mode, respectively; 3) numerical variables are encoded using a quantile transformer with a Gaussian distribution, while categorical variables are encoded using one-hot encoding.
+
+SECTION: Training Details
+We use the Adam optimizer, with a weight decay ofand a cosine decay learning rate schedule, starting at(without warmup). In addition, the following early stopping strategy is applied — if the loss evaluated from the validation set does not improve at least byw.r.t. the loss obtained from the previous iteration, we increment the patience by 1. The training of a given model stops as patience reaches 25. The batch size is determined w.r.t. the validation set following simple rules.
+
+Regarding model hyperparameters, we keep them constant over all datasets and models unless stated otherwise. Each transformer is defined with one head, two layers, a hidden dimension of 128, and without dropout, following. By recommendation, we also use its pre-norm variation. The embedding dimensionis always set to four. Encoders and decoders based on tensor contraction layers have hidden and latent dimensionsand, respectively. In contrast, the encoder and decoder based on linear layers have a hidden and latent dimension ofand.
+
+SECTION: Sampling
+After training, each model samples over the latent and target variables asand, whereis the probability of observing the classin the training set. In our experiments, the number of synthetic samples shares the same size as the training data.
+
+SECTION: Evaluation Metrics
+The synthetic data produced by the generative models under study are evaluated using several metrics found in the literature. We divide the considered metrics into two groups: 1), where statistical and density estimation measurements such as marginals distributions are considered and compared between real and synthetic data; 2), aiming to determine the usefulness of synthetic data in downstream tasks such as classification. Note that all metrics are defined on a domain between [0, 1], where the higher, the better the model performance is.
+
+Under this class of metrics, we consider 1-way marginals, pairwise correlations, and high-density estimation metrics.
+
+The first metric measures how similar the (independent) feature distributions between real and synthetic data are. The Kolmogorov-Smirnov statisticis computed for numerical columns, under the null hypothesis that real and synthetic data are drawn from the same probability distribution, while the Total Variation Distanceis applied for categorical ones. In the end, we average the similarities obtained from each feature.
+
+Pairwise-correlations measure the dependency between two features in a dataset. Given two columnsof both, if they are both numerical, we determine Pearson’s Correlation; if they are both categorical, the Contingency Similarity; finally if they are of different types, the numerical column is partitioned into bins, and afterwards, the Contingency Similarity is applied. The score between the correlationsobtained for each type of data is then determined as
+
+Finally, we average all the scores obtained for each pairwise correlation. For these two first metrics, we use the implementations provided bypython’s package.
+
+These metrics compare the joint distribution of real and synthetic data. We use the work from, which introduces the notion of-Precision and-Recall. Generally speaking,-precision and-recall characterize the fidelity and diversity of the generated data w.r.t. to real one, respectively. While-precision is computed by determining the probability that a generated sample resides in the support of the real-data distribution,-recall is computed by determining the probability that a real sample resides in the support of the synthetic data distribution. These metrics are evaluated over increasing-support levels of the real and synthetic distributions in the quantile space. Here, we use the implementation of these evaluation metrics provided by thepackage.
+
+Regarding Machine Learning-Efficiency (ML-Efficiency), we are interested in both utility and fidelity tasks. The classifier taken into consideration is XGBoost. The evaluation procedure is detailed in Appendix. In the end, a test real set is evaluated over two models — one trained over real data,and another trained over synthetic data,. We denote predictions obtained fromandas,, respectively.
+
+By utility, we ask how well a model performs when trained over a synthetic datasetand evaluated under a holdout set from the real dataset. As such, we adopt the Train on Synthethic, Test on Real (TSTR) (e.g.) methodology. Here, predictions are evaluated using accuracy.
+
+By fidelity, we ask how similar the predictions (,) are. This metric is also measured in terms of accuracy, i.e.
+
+whereis the indicator function.
+
+SECTION: Implementation Details
+Models are implemented with Python’s programming language using JAX ecosystemand trained on a Google Cloud Platform Virtual Machine with 16GB of RAM and an NVIDIA T4. We have released the implementation of the considered models and main experiments, which can be found in GitHub.
+
+SECTION: Results
+Given the considered models, after training them with datasets from the OpenML CC18 suite, we generate new data according to the procedure described in Section. Following, we evaluate the generated data under the considered metrics defined in Section.
+
+We start by analyzing results based on averages and then by looking at each evaluation measure individually and from a model comparison perspective using the Bayes Sign Test. Finally, we analyze how the dimensions of the considered datasets influence the results obtained via ranking.
+
+An initial comparison between models based on averaged results is provided and summarised in Table. Results in bold denote best performers, while results marked withdenote competitors against the best performer when results are not statistically significantly different according to the Wilcoxon’s Sign Rank Test, with a-value of 0.01. Generally speaking, TensorConFormer obtained the highest mean for most of the considered metrics.
+Additionally, although results are not statistically significant compared to the runner-up (except for 1-Way Marginals and-Recall), the runner-up varies (either VAE or TensorContracted), which indicates that TensorConFormer is better overall.
+In terms of diversity and ML-Efficiency, these results indicate that TensorConFormer can generate data that is both diversified and of high fidelity. These results also show that, even though this is not the goal of the method, it does not enrich the data (i.e. it does not lead to models with higher accuracy than the original data).
+One interesting observation is that Transformed is the worst method, indicating that a Transformed-based VAE architecture is not all you need for modeling the distribution of the data.
+
+Following, we assess the results from a model comparison standpoint using the Bayes Sign Test. This test evaluates two models across multiple datasets by assuming that their differences over an evaluation metric are distributed according to a prior probability distribution. Utilizing Bayes Theorem, the test produces a posterior distribution that indicates whether one model is practically superior to the other or equivalent. The latter posterior is called the Region of Practical Equivalence (ROPE), set to 0.03 in our experiments.
+The results from this test for the considered evaluation metrics are illustrated in Fig..
+
+Starting with 1-Way Marginals, the results indicate that all models are practically equivalent, except that TensorConFormer outperforms Transformed with a probability of approximately 0.85. Despite TensorConFormer showing the highest mean performance (see Table), the Bayesian test doesn’t find enough evidence that the difference is significant. For Pairwise Correlations, the base VAE implementation is practically equivalent to both its tensorial counterpart and TensorConFormer. Transformed is the least effective model, as the other variations perform significantly better. Concerning high-order density metrics, the Bayes Sign Test results for-Precision identify TensorContracted as the best performer, being practically superior to VAE, Transformed, and TensorConFormer with probabilities of 0.70, 1, and 0.83, respectively. Conversely, TensorConFormer demonstrates a high probability of being practically better than the other variations in terms of-Recall, except when compared to TensorContracted, where their performances are equivalent with a probability of 0.4. For ML-Efficiency, the conclusions for both Utility and Fidelity metrics are similar — all models, except Transformed, perform equivalently.
+
+To conclude our main experiments, we aim to understand whether a model’s performance depends on the sample or feature size of a given dataset. Conclusions are drawn by average rank, where we bin datasets into groups based on sample and feature sizes, ensuring approximately equal numbers of datasets per group. We provide a visual representation based on radar charts as depicted in Fig.. Note that regarding statistical metrics we only consider high-density metrics for this analysis.
+
+Focusing on-Precision, TensorContracted consistently achieved the lowest average rank, except for datasets of sizesand, where it competes with TensorConFormer and the base implementation of VAE. As a function of feature size, TensorContracted also obtained the lowest average rank overall, except over the mid-size range, where TensorConFormer was the best performer. Concluding high-density metrics, TensorConFormer consistently obtained the lowest rank for-Recall regardless of data or feature size, except for datasets with small feature () and sample () sizes, where it was surpassed by VAE and had a similar rank. As discussed in Section, this is posited by the transformer on the decoder part of the network, responsible for modeling intra-relationships between the reconstructed output. Also, as the sample and feature size increase, the base VAE struggles to model the distribution of the data when compared with TensorContracted, hinting that considering embeddings leveraged by TCLs is beneficial in learning a diverse representation of high-dimensional data.
+
+Regarding utility, TensorConFormer obtained the lowest average rank across most dataset size ranges, specifically over low and high dataset sizes. As a function of the feature size, TensorConFormer has the smallest average rank for low-dimensional datasets and competes with both linear and tensor-based architectures for higher dimensional sizes. Focusing on fidelity, the average rank appears to be model-independent, both as a function of dataset and feature sizes.
+
+To conclude this analysis, the last column of Fig.presents the average rank obtained for all metrics, calculated by averaging the rank obtained by each model over all metrics, for a given partition. In terms of dataset size, TensorConFormer obtained the lowest average rank, although it competes with TensorContracted in the range of, while as a function of the feature size, it competes with TensorContracted.
+
+SECTION: Visualization
+Here, we visually present synthetic data sampled from the considered models. Independent and joint feature distributions are illustrated, and finally, similarities between embedding representations obtained during training are presented.
+
+We compare feature distributions of the original data to those of the data generated by the considered models. The similarity of the distributions is an indication of the quality of the generated data. Fig.presents generated feature distributions from the considered models for three datasets from the CC18 suite (,, and). We consider the distribution over the majority class and compare the distributions obtained by training a given model with all data (top-row), and only with data from the majority class (bottom-row). Visually, synthetic data obtained from models trained with all data provided a more similar distribution to real data than models trained only over the majority class.
+
+To compare the generated data with the original one, we first project it into a 2-dimensional space. If the distribution of the generated data in the projected space is similar to that of the original data, it is an indication of the quality of the corresponding generation method.
+
+The data was projected using a Uniform Manifold Approximation and Projection for Dimension Reduction (UMAPs)(see Fig.).
+The manifold is estimated using real data, and the synthetic data is then mapped onto it based on this estimation. A visual inspection posits that for bothanddatasets, the considered models provide similar coverage of the real data. In contrast, for thedataset, TensorConFormer had better coverage of real data, specifically over the smallest cluster.
+
+Finally, we compare the learned feature representations along training between TensorConFormer and TensorContracted via cosine similarities. Specifically, we look at the outputand latentembedding representations. A detailed description of how these similarities are obtained can be found in Appendix. Fig.posits that the output embedding representations tend to be relatively dissimilar at the feature level. Notably, for thedataset, feature representation ofare highly similar, possibly due to its imbalance over thecategory. Conversely, latent representations are generally identical. This is somewhat expected, as both encoders approximate the respective posterior with(cf. Eq ()).
+
+SECTION: Ablation Study
+To understand the impact of using transformers in the proposed model, we analyze the effect of removing transformers from TensorConFormer encoder and decoder components. Specifically, we consider two ablations. In the first, the parameters ofare estimated using TCLs, by changing the last line of Eq. () into. With the transformer retained in the decoder, we refer to this ablation as. In the second ablation, we remove the transformer head from Eq. (), obtaining the reconstructed embedding representation as. Accordingly, we refer to this ablation as.
+
+Similarly to the previous study, we begin by drawing conclusions based on the average obtained by a given model over the considered metrics (cf. Table). Results show a performance deterioration when the transformer head is removed from TensorConFormer. In fact, the top performer over most of the considered metrics was(although in most cases not statistically significant w.r.t. TensorConFormer), questioning the necessity of considering transformers to model the posterior parameters.
+
+Finally, conclusions are also drawn based on the Bayes Sign Test. Under this test, all models perform equivalently over the considered metrics, except for high-density estimations as shown in Fig.. Specifically, for-Precision,is practically better than its base model and the other ablation with a probability ofand, respectively. Conversely, in terms of diversity, other variations are practically better with a probability of0.7 and0.8, respectively, leading to the conclusion that, retaining transformers in the encoder allow the model to capture a more faithful representation of the data, while removing it and leveraging the output representation with it leads to a diverse representation of the data.
+
+SECTION: Conclusions
+In this work, we explored the use of tensor contraction layers and transformers for handling embedding representations in tabular data generation, addressing the inherent challenges of its mixed structure and intra-variable relationships. Three variations of Variational Autoencoders were considered in addition to its linear-based architecture. Based on our experiments, we found that combining tensor contraction layers with transformers enhances the diversity of the generated data, however, when it comes to machine learning utility, the performance remains comparable to other architectural variations. In addition, a VAE architecture that solely relies on transformers does not generalize well the distribution of tabular data.
+
+We also analyze the considered models regarding the number of parameters, training, and sampling times (see Table). A comparison between transformer-based models shows that while the number of parameters significantly increases (TensorConFormerTransformed), time-wise there’s a relatively low overhead ofmin on average for training. Evaluation-wise, TensorConFormer surpassed Transformed over the considered metrics. Comparing the linear and tensor variation of VAE, we reduced the parameters by.
+
+We conclude this paper by presenting some limitations and possible future work directions. We begin by noting that, although we consider embeddings for handling the inherent mixed nature of tabular data inside the model, the reconstruction term of the loss function in Eq. () is still calculated as a function of the feature type (i.e. if it is continuous or categorical). A possible working direction is to consider pre-trained embeddings (e.g., obtained by training a self-supervised model), that will serve as our training data to the generative model. Another future working direction relates to leveraging embeddings to learn relationships between feature representations other than the ones provided by attention mechanisms, with the help of TCLs.
+
+Acknowledgements
+This work was partially funded by project AISym4Med (101095387) supported by Horizon Europe Cluster 1: Health, ConnectedHealth (n.o 46858), supported by Competitiveness and Internationalisation Operational Programme (POCI) and Lisbon Regional Operational Programme (LISBOA 2020), under the PORTUGAL 2020 Partnership Agreement, through the European Regional Development Fund (ERDF), Agenda “Center for Responsible AI”, nr. C645008882-00000055, investment project nr. 62, financed by the Recovery and Resilience Plan (PRR) and by European Union - NextGeneration EU, and FCT plurianual funding for 2020-2023 of LIACC (UIDB/00027/2020 UIDP/00027/2020). The computational resources of Google Cloud Platform were provided by the project CPCA-IAC/AF/594904/2023.
+
+SECTION: Toydatasets
+As motivation, we consider 2-dimensional toy datasets with handily crafted decision boundaries. Each dataset considered, depicted in Fig., is constructed by generatingdata points uniformly distribution over a given domain,and then by producing decision boundaries accordingly. For example, in thedataset, equations that produce the decision boundaries are
+
+All models are trained over 500 epochs, without early stopping.
+
+A comparison between the synthetic data produced for the considered models is depicted in Fig.. Overall, TensorConFormer provided a more appropriate conditional distribution of the data, positing the advantage of combining transformers and tensor contraction layers to model complex relationships between features. Interestingly, all the models struggled to sample from the model trained over thefunction.
+
+SECTION: Number of Parameters
+Here, we compare the number of parameters induced by tensor contraction and linear layers (excluding biases terms) when the first linearity is applied toas defined in Eq. (). Applying the tokenization described in Eq. () followed by a TCL yieldsparameters. On the other hand, for linear layers, we haveparameters. The number of parameters between tokenization followed by a TCL and a linear layer applied directly tois equal if its hidden dimensionis given by
+
+that scales with. In the limit whereis considerably sparse and the hidden dimension of the TCLis sufficiently high such that,, we have. In the scenario where,. In other words, under a sparse dataset the hidden dimension of a linear layer scales with the embedding dimension, while when the tabular data consists only of numerical features, the hidden dimension of the linear layer scales with the product between the hidden dimension of the tensor contraction layer with the square of the embedding dimension.
+
+As a particular case, we consider thedataset from OpenML CC18, withand. In our experiments, we set,and(cf. Section). Using Eq. () we obtain a smaller. We show in Sectionthat the TensorContracted architecture can obtain a superior, or keep performance on par in terms of density estimation metrics w.r.t. its base implementation while reducing the number of parameters(cf. Table).
+
+SECTION: XGBoost Fine-tuning
+The fine-tuning procedure utilized for each dataset consists of the following steps: 1) we begin by performing Grid-Search over a given hyper-parameter search space described in Table, which is evaluated using 5-fold stratified cross-validation. The accuracy is used to determine the best parameters; 2) Given the best hyper-parameter combination, we re-train the model with the best parameters and evaluate the results in terms of utility and fidelity. These results are always evaluated over a holdout set, which was not used to train a generative model nor the considered ML model. In addition, when this procedure is being performed under, these steps are always performed using the same training set used to train a given generative model.
+
+SECTION: Embeddings similarities
+The cosine similarity between two vectorsis given by
+
+Defining,as the matrices composed of vectors, the similarity vector between them is given by
+
+If we havesamples for each similarity vector, their average is given by
+
+The similarities presented in Fig.are then determined via Eq. (), wheredenotes embeddings representations of two different models (TensorConFormer and TensorContracted), with.
+
+SECTION: Dataset Description
+SECTION: References

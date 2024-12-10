@@ -1,0 +1,140 @@
+SECTION: AeroGen: Enhancing Remote Sensing Object Detection with Diffusion-Driven Data Generation
+
+Remote sensing image object detection (RSIOD) aims to identify and locate specific objects within satellite or aerial imagery. However, there is a scarcity of labeled data in current RSIOD datasets, which significantly limits the performance of current detection algorithms. Although existing techniques, e.g., data augmentation and semi-supervised learning, can mitigate this scarcity issue to some extent, they are heavily dependent on high-quality labeled data and perform worse in rare object classes. To address this issue, this paper proposes a layout-controllable diffusion generative model (i.e. AeroGen) tailored for RSIOD. To our knowledge, AeroGen is the first model to simultaneously support horizontal and rotated bounding box condition generation, thus enabling the generation of high-quality synthetic images that meet specific layout and object category requirements. Additionally, we propose an end-to-end data augmentation framework that integrates a diversity-conditioned generator and a filtering mechanism to enhance both the diversity and quality of generated data. Experimental results demonstrate that the synthetic data produced by our method are of high quality and diversity. Furthermore, the synthetic RSIOD data can significantly improve the detection performance of existing RSIOD models, i.e., the mAP metrics on DIOR, DIOR-R, and HRSC datasets are improved by 3.7%, 4.3%, and 2.43%, respectively. The code is available athttps://github.com/Sonettoo/AeroGen.
+
+SECTION: 1Introduction
+
+Object detection is a key technology for understanding and analyzing remote sensing images. It enables efficient processing of large-scale satellite data to extract and identify critical information, such as land cover changes[40], urban development status[15], and the impacts of natural disasters[43]. Through object detection, researchers can automatically extract terrestrial targets from complex remote sensing images, including buildings, vehicles, roads, bridges, farmlands, and forests. This information can be further applied in environmental monitoring, urban planning, land use analysis, and disaster emergency management.
+
+With the rapid development of deep learning, supervised learning-based object detection algorithms have made significant progress in remote sensing image analysis[47]. Although these algorithms can accurately locate and classify multiple objects in remote sensing images, they are heavily dependent on a large number of labelled training data. However, obtaining sufficient annotated data for remote sensing images is particularly challenging. Due to the presence of numerous and complex targets in remote sensing images, the manual annotation process is not only time-consuming and labour-intensive but also requires annotators to possess specialized knowledge, thus leading to high costs.
+
+Although traditional data augmentation methods[3](e.g., rotation and scaling) and enhancement techniques suitable for object detection (e.g., image mirror[14], object-centric cropping[20], and copy-paste[6]) can increase data diversity to some extent, they do not address the fundamental issue of insufficient data. The emergence of generative models[24,11]provides a new solution to this problem. Currently, in the field of natural images, numerous high-performance generative models[30,26]have been developed, capable of generating high-quality images from text conditions and also achieving significant progress in layout control. For remote sensing images, the application of generative models is usually combined with specific tasks, such as change detection[44], semantic segmentation[33]and road extraction[32]. These studies have been highly successful in utilizing data obtained from generative models to augment real-world datasets, thereby enhancing the performance of target models in downstream tasks. Therefore, utilizing generative diffusion models to fit the distribution of existing datasets and generate new samples to enhance the diversity and richness of remote sensing datasets is a feasible solution.
+
+In this paper, we focus on the remote sensing image object detection (RSIOD) task and construct a layout generation model (i.e., AeroGen) specifically designed for this task. The proposed AeroGen model allows for the specification of layout prior conditions with horizontal and rotated bounding boxes, enabling the generation of high-quality remote sensing images that meet specified conditions, thus filling a gap in the research field of RSIOD. Based on the AeroGen model, we further propose a conditional generation-based end-to-end data augmentation framework. Unlike pipeline-style data augmentation schemes in the natural image domain[41], our proposed pipeline is implemented by directly synthesizing RSIOD data through conditional generative models, thus eliminating the need for additional instance-pasting procedures. By introducing a diversity-conditioned generator and generation quality evaluation, we further enhance the diversity and quality of the generated images, thereby achieving end-to-end data augmentation for downstream object detection tasks. Moreover, we also design a novel filtering mechanism in this data augmentation pipeline to select high-quality synthetic training images, thus further boosting the performance.
+
+In summary, the contributions of our work are threefold:
+
+We propose a layout-controllable diffusion model (i.e., AeroGen) specifically designed for remote sensing images. This model can generate high-quality RSIOD training datasets that conform to specified categories and spatial positions. To our knowledge, AeroGen is the first generative model to support layout conditional control for both horizontal and rotated bounding boxes.
+
+We design a novel end-to-end data augmentation framework that integrates the proposed AeroGen generative model with a layout condition generator as well as an image filter. This framework can produce synthetic RSIOD training datasets with high diversity and quality.
+
+Experimental results show that the synthetic data can improve the performance of current RSIOD models, with improvements in mAP metrics by 3.7%, 4.3%, and 2.43% on the DIOR, DIOR-R, and HRSC datasets, respectively. Notably, the performance in some rare object classes also significantly improves, e.g., achieving improvements of 17.8%, 14.7%, and 12.6% in the GF, DAM, and APO categories, respectively.
+
+SECTION: 2Related Work
+
+SECTION: 2.1Diffusion Models
+
+Diffusion models[11,24,30], known for their stable training process and excellent generative capabilities, are gradually replacing Generative Adversarial Networks (GANs)[29,39]as the dominant model in generative tasks. Text-guided diffusion models can produce realistic images, but the concise nature of text descriptions often makes it challenging to provide precise guidance for image generation, thereby limiting personalized generation capabilities. To address this issue, more researchers have introduced additional control conditions beyond text guidance, significantly expanding the application scope of diffusion models. These applications include layout guidance[16,45,35], style transfer[36,5], image denoising and super-resolution[4], and video generation[12], showcasing the enormous potential of diffusion models in various complex tasks. Among these models, LDM[30]restricts the diffusion process to a low-dimensional latent space, which not only preserves the high quality of the generated images but also significantly reduces computational complexity, serving as the foundation for numerous generative studies.
+
+SECTION: 2.2Task-Oriented Data Generation
+
+The use of generative models to synthesize training data to assist in tasks like object detection[46,17], semantic segmentation[33]and instance segmentation[41]has garnered significant attention from researchers. Generative models not only produce artistic natural images but also quickly adapt to specific industry scenarios such as remote sensing, medical, and industrial fields through techniques like fine-tuning. For instance, A Graikos et al.[8]proposed representation-guided models that can generate embeddings rich in semantic and visual information through self-supervised learning (SSL), which guides the diffusion model to generate images. This approach reduces the difficulty of obtaining high-precision annotated data in specialized fields like histopathology and satellite imagery. In the area of remote sensing image generation, SatSynth[33]uses diffusion models to jointly learn the distribution of remote sensing images and their corresponding semantic segmentation labels. By generating semantically informed remote sensing images through joint sampling, it improves the performance of downstream segmentation tasks. Li Pang et al.[25]proposed a two-stage hyperspectral image (HSI) super-resolution framework that generates large amounts of realistic hyperspectral data for tasks like denoising and super-resolution. Moreover, models, e.g. CRS-Diff[32]and DiffusionSat[13], designed for optical remote sensing image generation, handle multiple types of conditional inputs, applying synthetic data to specific tasks such as road extraction. However, no existing research has specifically explored image generation methods for remote sensing image object detection (RSIOD) tasks. To fill this gap, we first propose a layout-controllable generative model that supports both rotated and horizontal bounding boxes, capable of synthesizing high-precision remote sensing images.
+
+SECTION: 2.3Generative Data Augmentation
+
+To effectively apply synthetic data to downstream tasks, most existing methods directly combine synthetic data with real data for training. However, some studies (e.g., Auto Cherry-Picker[1]) have improved data quality by filtering synthetic data, thus better enhancing the performance of downstream tasks. For example, X-Paste[41]proposed a pipeline method that uses a copy-paste strategy to synthesize images, combined with a CLIP-based filtering mechanism, to further improve instance segmentation performance. A more comprehensive review of this issue can be found in DriverGen[7], which analyzes the application of synthetic data from the perspective of data distribution. It combines a copy-paste strategy to construct a multi-layer pipeline that enhances diversity and achieves significant results on the Lvis dataset[9].
+
+The most closely related approach to our work is ODGEN[46], which employs an object-wise generation strategy to produce consistent data for multi-object scenes, addressing the domain gap and concept bleeding issues in image generation. In contrast, our work focuses on object detection in remote sensing images, utilizing a conditional generative model to directly synthesize data, thereby avoiding the additional instance-pasting process. Furthermore, we introduce a novel diversity-conditioned generator, combined with a filtering mechanism that accounts for both diversity and generation quality, to further enhance the diversity and quality of generated images. Through this approach, we achieve end-to-end data augmentation, significantly improving the performance of downstream tasks.
+
+SECTION: 3AeroGen
+
+In this section, we introduce AeroGen, a layout-conditional diffusion model for enhancing remote sensing image data. The model consists of two key components: (a) a remote sensing image layout generation model inSec.3.1that allows users to generate high-quality RS images based on predefined layout conditions, such as horizontal and rotated boxes; (b) a generation pipeline inSec.3.2that combines a diffusion-model-based diversity-conditional generator, which produces diverse layouts aligned with physical conditions, with a data-filtering mechanism to balance the diversity and quality of synthetic data, improving the utility of the generated dataset.
+
+SECTION: 3.1Layout-conditional Diffusion Model
+
+The model weights, obtained through comprehensive fine-tuning on a remote sensing dataset based on LDM[30,32], are adopted for RS study. In the original text-to-image diffusion model, the conditional position information is combined with the text control condition, and layout-based remote sensing image generation is achieved by establishing a unified position information encoding along with a corresponding dual cross-attention network, as shown inFig.1. Building on the latest research advances, combined with the regional layout mask-attention strategy, control accuracy is improved, particularly for small target regions.
+
+Layout Embedding. As shown inFig.1(a), each object’s bounding box or rotational bounding box is uniformly represented as a list of eight coordinates, i.e.,, ensuring a consistent representation between horizontal and rotated bounding boxes. Building on this, Fourier[23]encoding is employed to convert these positional coordinates into a frequency domain vector representation, similar to GLIGEN[16]. We use a frozen CLIP text encoder[27]to obtain fixed codesfor different categories, which serve as layout condition inputs. The Fourier-encoded coordinates are then fused with the category encodings using an additional linear layer to produce the layout control input:
+
+wheredenotes the concatenation of Fourier-coded coordinates and category codes, andrepresents the linear transformation layer. In this manner, spatial location and category information are effectively combined as layout control tokens.
+
+Layout Mask Attention.
+In addition to traditional token-based control, recent studies indicate that direct semantic embedding based on feature maps is also an effective method for layout guidance. In the denoising process of a diffusion model, the injection of conditional information is gradual, enabling local attribute editing at the noise level. To this end, conditionally encoded noise region steering is employed and combined with a cropping step for improved layout precision. As shown inFig.1(b), each bounding box is first transformed into a 0/1 mask, and category attributes are obtained through CLIP encoding. During each denoising step, the mask attention network provides additional layout guidance. The process is expressed as follows: for each denoised imageand category encoding, the maskis used for attention computation according to the following equation:
+
+whererepresents the corresponding bounding box mask, andderived fromas the attention mask. This method enables precise manipulation of local noise characteristics during the diffusion generation process, offering finer control over the image layout.
+
+AeroGen Architecture.
+In AeroGen, the text prompt serves as a global condition and is integrated with layout control tokens via a dual cross-attention mechanism. The output is computed as:
+
+whererepresents the cross-attention mechanism.andare the keys and values of the global text condition, whileandare the layout control tokens.balances the influence of global and layout conditions.
+
+The overall loss function for AeroGen combines both the global text condition and layout control, defined as:
+
+whererepresents the noisy image at time step,is the global text condition, andis the layout control.
+
+SECTION: 3.2Generative Pipeline
+
+The layout generative pipeline, as illustrated inFig.2, is divided into five stages: label generation, label filter, image generation, image filter, and data augmentation. Each generation step is followed by a corresponding screening step to ensure synthesis quality.
+
+Label Generation.
+Inspired by recent cutting-edge research[33], we adopt a denoising diffusion probabilistic model (DDPM[11]) to learn the conditional distribution and directly sample from it to obtain layout labels, thereby avoiding conflicts in layout conditions that may arise from random synthesis approaches. The specific method is illustrated inFig.2, where a labelling matrixis first constructed. This matrix contains all categories of conditions with dimensions, whereandrepresent the height and width of the images, respectively, anddenotes the number of condition categories. For each condition corresponding to the target frame of the image, the value within the target frame region is set to 1, while the values in the remaining regions are set to -1. This process is formally represented as:
+
+where,, and, withdenoting the target area for the-th category. Next, this conditional distribution is fitted using a DDPM-based generator. The loss function is based on the mean square error (MSE):
+
+whererepresents the original layout matrix,represents the noise matrix at the-th time step, anddenotes the model’s predicted noise at step.
+
+Label Filter and Enhancement.
+The label data sampled from the generator may not always align with real-world intuition or effectively guide image generation. Therefore, we propose a normal distribution-based filtering mechanism to screen the generated bounding box information, ensuring that the data conform to the distribution characteristics of real labels. The label filter assumes that the attributes of the bounding boxes (e.g., area) follow a normal distributionand introduces the following constraint:, wheredetermines the filter’s strictness, thereby ensuring that generated bounding boxes fall within a realistic and feasible range. Synthetic pseudo-labels and genuine a priori labels are filtered to form a comprehensive layout condition pool through additional enhancement strategies, including scaling, panning, rotating, and flipping.
+
+Image Generation.
+The synthetic bounding box labels are obtained based on the pool of layout conditions. The corresponding synthetic images are generated using the layout-guided diffusion model through the image generation process described inSec.3.1. The model uses these bounding box labels to guide the generation, ensuring that the image content matches the generated layout conditions.
+
+Image Filter.
+Since the images generated by the diffusion model do not consistently meet high-quality or predefined layout requirements, a screening mechanism is implemented to evaluate both the quality of the generation and the consistency of the layout. The consistency of the semantic and layout is evaluated using the CLIP model[19]and a ResNet101-based classifier[10]. Synthetic images are then filtered by calculating their CLIP scores and minimum classification accuracies, which are compared against predefined thresholds to select the final filtered images.
+
+Data Augmentation.
+The synthetic data serves as a complementary dataset alongside the real dataset, and both are utilized as training data for downstream target detection model training.
+
+SECTION: 4Experiments
+
+In this section, we conducted extensive experiments to verify the generative capabilities of AeroGen and its auxiliary data augmentation ability to support downstream RSIOD tasks. Specifically, we assessed the performance of our layout generation model AeroGen from both quantitative and qualitative perspectives. Subsequently, we performed data augmentation experiments on three datasets (i.e., DIOR, DIOR-R, and HRSC) to verify the effectiveness of synthetic data generated by our AeroGen model in improving the performance of downstream object detection tasks.
+
+SECTION: 4.1Implementation Details
+
+Data Preparation.An overview of the three datasets is provided inTab.1. Notably, the DIOR and DIOR-R datasets[2]share the same image data but differ in annotation format, with DIOR using bounding boxes and DIOR-R using rotated bounding boxes. HRSC[21]is a Remote Sensing dataset for ship detection, with image sizes ranging from 300 × 300 to 1500 × 900 pixels. It is divided into 436, 181, and 444 frames for training, evaluation, and testing, respectively. The DIOR/DIOR-R dataset is split into training, validation, and testing sets in a 1:1:2 ratio, with generative model training conducted exclusively on the training set.
+
+Training Details.We trained our AeroGen separately on each dataset for 100 epochs. During training, we used the AdamW optimizer[22]with a learning rate of 1e-5. Only the attention layers of UNet and the Layout Mask Attention (LMA) are updated, while the remaining weights are inherited from the fine-tuned LDM in RS data[32].
+
+Evaluation Metrics.For the quantitative analysis of generated images, we used the FID score to evaluate the visual quality of the generated images and employed Classification Score (CAS)[28]and YOLO Score[18]to measure the layout consistency of the generated images. In the data augmentation experiments, we assessed object detection model performance based on mAP50 and mAP50-95 (mAP) metrics to evaluate their overall quality.
+
+SECTION: 4.2Image Quality Results
+
+Quantitative Evaluation.We used a bounding box condition defined by four extreme coordinates and conducted both training and testing on the DIOR dataset. We compared AeroGen with state-of-the-art layout-to-image generation methods, including LostGAN[31], ReCo[38], LayoutDiffusion[42], and GLIGEN[16]. The performance of these methods on three metrics is reported inTab.2. To ensure fairness, we initialized all methods with identical SD weights and trained them on the DIOR dataset for the same number of epochs. Our method outperformed other methods across all the metrics.
+
+Furthermore, we evaluated AeroGen and GLIGEN on the DIOR-R and HRSC datasets with rotated bounding boxes, where AeroGen consistently excelled. Notably, the original GliGen method does not support rotated bounding box conditions; therefore, we modified the layout encoding (as shown inFig.1(a)) and retrained the model.
+
+Qualitative Evaluation.Fig.3compares the results of AeroGen with those of other methods. AeroGen shows superior layout consistency and an enhanced capability for generating small objects. Besides, we present experimental results on natural images in the supplemental material.
+
+SECTION: 4.3Data Augmentation Experiments
+
+We synthesize data on three RSIOD datasets for data augmentation. For the DIOR/DIOR-R datasets, we synthesized 10k, 20k, and 50k samples for the RSIOD task. For the HRSC dataset, we synthesise 2k, 4k, and 10k data in the same ratio. The training was performed using the OBB branch experimental setup of the unified YOLOv8[34]and Oriented R-CNN[37]RSIOD models, and the model performance is verified on the corresponding test sets. The experimental results are shown inTab.3. The addition of synthetic data significantly improves performance on downstream tasks
+
+We visualize the mAP scores for different categories in detail, as shown inFig.4. In most categories, results incorporating enhancements significantly outperform those without them, particularly in rarer categories, achieving improvements of 17.8%, 14.7%, and 12.6% in the GF, DAM, and APO categories, respectively.
+
+SECTION: 4.4Ablation Study
+
+Ablation of Enhanced Methods.We compared synthetic data enhancement methods with traditional approaches, including the basic enhancement techniques of Flip and Copy-Paste[6]for target detection tasks, as shown inTab.4. The target detection model trained on synthetic data performs significantly better than when trained with traditional methods, demonstrating the generative model’s effectiveness for data enhancement.
+
+Ablation of Different Modules.We assessed the impact of different modules on image quality generated by AeroGen inTab.5. The contribution of each module to the enhancement of image quality is evaluated by incorporating additional components into the original SD model. Results show that Layout Mask Attention (LMA) effectively captures global semantic information and preserves layout consistency, while adding Dual Cross Attention (DCA) further enhances performance, particularly in YOLO Score, indicating improved regional target generation. Overall, the model performs best when both LMA and DCA are used.
+
+Synthesis
+
+Filter
+
+Augment
+
+Semantic
+
+Layout
+
+mAP
+
+mAP50
+
+Ablation of Augment Pipeline.We further analyze the filtering strategies and data augmentation techniques in the generation pipeline, including diverse generation strategies, filtering strategies for layout conditions, and filtering strategies for layout and semantic consistency of images. We use the synthetic data generated in various ways as enhancement data and conduct enhancement experiments on the DIOR-R datasets and the experimental results are shown inTab.6. As can be seen, each component in the generation pipeline contributes positively.
+
+SECTION: 5Conclusion
+
+This paper introduces AeroGen, a layout-controllable diffusion model designed to enhance remote sensing image datasets for target detection. The model comprises two primary components: a layout generation model that creates high-quality remote sensing images based on predefined layout conditions, and a data generation pipeline that incorporates a diversity of condition generators for the diffusion model. The pipeline employs a double filtering mechanism to exclude low-quality generation conditions and images, thereby ensuring the semantic and layout consistency of the generated images. By combining synthetic and real images in the training set, AeroGen significantly improves model performance in downstream tasks. This work highlights the potential of generative modeling in enhancing the datasets of remote sensing image processing tasks.
+
+SECTION: References

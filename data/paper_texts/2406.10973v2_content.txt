@@ -1,0 +1,366 @@
+SECTION: ExPLoRA: Parameter-Efficient Extended Pre-Training to Adapt Vision Transformers under Domain Shifts
+Parameter-efficient fine-tuning (PEFT) techniques such as low-rank adaptation (LoRA) can effectively adapt large pre-trained foundation models to downstream tasks using only a small fraction (0.1%-10%) of the original trainable weights.
+An under-explored question of PEFT is in extending the pre-training phase without supervised labels; that is, can we adapt a pre-trained foundation model to a new domain via efficient self-supervised pre-training on this new domain?
+In this work, we introduce ExPLoRA, a
+highly effective technique to improve transfer learning
+of pre-trained vision transformers (ViTs) under domain shifts.
+Initializing a ViT with pre-trained weights on large, natural-image datasets such as from DinoV2 or MAE, ExPLoRA continues the unsupervised pre-training objective on a new domain, unfreezing 1-2 pre-trained ViT blocks and tuning all other layers with LoRA.
+We then fine-tune the resulting model only with LoRA on this new domain for supervised learning.
+Our experiments demonstrate state-of-the-art results on satellite imagery, even outperforming fully pre-training and fine-tuning ViTs.
+Using the DinoV2 training objective, we demonstrate up to 7.5% improvement in linear probing top-1 accuracy on downstream tasks while using <10% of the number of parameters that are used in prior fully-tuned state-of-the art approaches.
+Our ablation studies confirm the efficacy of our approach over other baselines, including PEFT and unfreezing more ViT blocks.
+Code is available on the project website:
+
+SECTION: Introduction
+Pre-training foundation modelsfor natural languageand natural imageshas historically been computationally intensive, often limited to organizations with substantial resources.
+However, recent advancements in parameter-efficient fine-tuning (PEFT) techniques including low-rank adaptation (LoRA) and othershave sparked significant interest.
+These methods aim to adapt foundation models to downstream supervised-learning tasks using a small fraction (0.1%-10%) of the model’s trainable weights, with many based on the hypothesis that the required weight updates to the pre-trained model have a “low intrinsic rank".
+
+In this paper, we focus on visual foundation models (VFMs) such as DinoV2 or MAE, which were trained on large-scale natural-image datasets.
+Despite the large investments in developing such models for natural images, they underperform when applied to other domains with visual data (e.g. medical or satellite images). For example, fine-tuning a model pre-trained on natural images on satellite image classification tasks
+is not as effective as
+fine-tuning one that was pre-trained on satellite images.
+To bridge this gap, prevailing approaches invest similarly large levels of compute to pre-train VFMs on new domains, inspired by techniques developed for natural images.
+
+In this work, we challenge this paradigm (), asking whether pre-training from scratch on each new domain is strictly necessary, since doing so is expensive (in compute and time) and precludes knowledge transfer from natural images.
+Instead, we wish to more efficiently leverage the rich semantic information encoded in natural-image vision foundation models to adapt them to new domains.
+Our proposed solution addresses these concerns using PEFT techniques for domain adaptation via self-supervised learning.
+
+We introduce, which generalizes vision foundation models to new domains by extending the pre-training phase with parameter-efficient techniques.
+We initialize a vision transformer (ViT)with pre-trained weights from natural-image datasets such as MAE or DinoV2.
+Selectively unfreezing 1-2 transformer blocks, we tune remaining weights with LoRA and continue unsupervised pre-training on the new domain.
+Subsequently fine-tuning with linear probing or LoRA on this new domain for supervised learning outperforms prior state-of-the-art (SoTA) approaches while training under 6-10% of the original weights.
+On satellite imagery, for example, we demonstrate an 8% improvement in linear probing top-1 accuracy, and even an improvement over prior SoTA fully pre-trained and fine-tuned techniques.
+We conduct an extensive study on RGB, temporal, and multi-spectral satellite images, either matching or outperforming prior methods that fully pre-train from scratch.
+ExPLoRA also generalizes to different domains such as wildlife, medical, and agricultural imagery on the WILDSbenchmark.
+Our contributions include:
+
+Introducing ExPLoRA, a novel parameter-efficient method that extends unsupervised pre-training on target domains, achieving state-of-the-art supervised-learning performance using a fraction of the original ViT weights ().
+
+Conducting a comprehensive case study on satellite imagery, showcasing improvements in linear probing top-1 accuracy and outperforming existing techniques on datasets like fMoW. We also demonstrate generalization to multiple other domains within WILDS ().
+
+Demonstrating ExPLoRA’s efficacy via ablation studies and by analyzing the differences in local (eg: positional) and global (eg: class) information encoded in the patch representations output by each ViT block ().
+
+SECTION: Related Work
+VFMs such as DinoV2 or masked autoencoders (MAE) that pre-train with self-supervised learning (SSL) have demonstrated remarkable performance across downstream tasks such as classification or semantic segmentation.
+However, there has also been a rise in domain-specific VFMs.
+For instance, SatMAE handles temporal or multi-spectral satellite image inputs.
+Since these models contain hundreds of millions of parameters, efficient adaptation to downstream tasks has become a key research focus.
+
+PEFT methods have gained widespread adoption for efficiently adapting large models to various downstream tasks, mitigating the prohibitive costs of full model tuning by updating only a fraction of the parameters.
+For example, LoRA learns low-rank weight updates to frozen weights, while other methods modify the frequency or number of trainable parameters per layer.introduce LoRA for pre-training via adding multiple low-rank matrices, but require full parameter tuning as a “warm start”.
+Others use multiplicative orthogonal weight updates, effectively retaining pre-training knowledge in frozen weights.
+Another family of PEFT techniques include visual prompt tuning (VPT), which concatenate learnable prompt tokens to the sequence of image patch tokens, trading improved fine-tuning performance with increased inference-time latency and memory usage.
+Our ExPLoRA method aims to supplement existing PEFT methods rather than replace them, and thus can be configured with any existing or future PEFT method intended for fine-tuning ViT backbones.
+
+Domain adaptation approaches have attempted to bridge the train-test data distribution shift from several perspectives.
+Discrepancy-based methods minimize the difference between feature distributions of the source and target domains using discrepancy metricsfor domain loss.
+Adversarial methods are trained to amplify domain confusion while simultaneously distinguishing between different domains.
+Group DRO minimizes the loss in the worst-case domain, specifically addressing subpopulation shift, where data distributions differ but may have some overlap.
+
+SECTION: Background
+The masked-autoencoder (MAE)is an effective SSL technique for ViTs that uses an asymmetric encoder-decoder architecture on images, where patches are masked before being processed by the ViT encoder.
+The masked patches are then reconstructed by a smaller decoder, with both trained jointly using mean-squared error on the reconstructed visible pixels.
+While effective across domains, MAEs typically require full fine-tuning for downstream tasks, which makes them computationally expensive.
+
+DinoV2is a robust SSL method for ViTs. Unlike MAE, DinoV2 features have demonstrated strong zero-shot performance, enabling adaptation to downstream tasks even with a frozen ViT backbone. During pre-training, DinoV2 maintains two copies of a ViT encoder: the student (trainable) and the teacher, which is updated using an exponential-moving average of the student’s parameters. The training objective incorporates a global, image-level loss from Dino, a patch-based loss from iBOT, and regularizers including KoLeoand Sinkhorn-Knopp centering.
+
+Low-rank adaptation (LoRA)assumes that the weight update to change a set of unsupervised pre-trained weights to supervised fine-tuned weights lives in a low-rank subspace,
+
+whereare the final, task-specific fine-tuned weights,are the pre-trained weights,is the weight update required to translate the pre-trained weightsto the fine-tuned weights. The key is thatwhereand. That is,andform a low-rank factorization of, where the rank.
+
+SECTION: Problem Setup
+Consider a set of image domains, where each domainis associated with a data distribution, and imageshave domain-specific channel, height, and width.
+Letrepresent a set of source domains (e.g., internet-scale natural image data) andrepresent target domains (e.g., satellite imagery).
+The data from the source domains follow a distribution, and the target domain data come from.
+For some target domains, the joint distributionsdescribe imageswith associated supervised labelsused for downstream tasks.
+We then assume access to the following:
+
+, pre-trained weights obtained via unsupervised pre-training on images from
+
+, an unlabeled dataset ofimages from new domains
+
+a labeled dataset ofimages from domain
+
+Our objective is to learn optimal weightsfor each supervised-learning datasetin a parameter-efficient manner while leveraging the knowledge stored in.
+
+Traditionally, the approach () has been to begin pre-training from scratch on the new domains of interest in, and then fine-tune for each dataset, representing the following:
+
+whererepresents the weights learned from unsupervised pre-training on, andare the weights learned from supervised fine-tuning on.
+However, this method is computationally expensive: fully pre-trainingfrom scratch for every new domain requires prohibitively large amounts of additional compute.
+
+On the other hand, LoRA addresses this inefficiency in the following way:
+
+The LoRA hypothesis is that the updateresides in a low-rank subspace when adapting pre-trained weightsto fine-tuned weights.
+This hypothesis holds well when pre-training and fine-tuning distributions are similar, or where.
+However, when there is significant domain shift, such as between natural images and multi-spectral satellite data, the low-rank assumption often breaks down (see).
+
+Our goal is to learnin a parameter-efficient manner to bridge the large domain shift towhile leveraging the knowledge encoded in.
+We propose the following factorization of:
+
+whereis an additional update matrix learned from unsupervised pre-training on.
+Crucially,requires only a fraction of theparameters of, making it significantly more efficient than full-rank pre-training. The resulting model,, retains the benefits of unsupervised pre-trained VFMs, including strong feature extraction, effective linear probing, KNN classification, and generalization to downstream tasks.
+
+SECTION: Method
+To learn, we propose ExPLoRA (i.e.tendedre-training with), a method that efficiently adapts pre-trained ViTs for new target domains, described in.
+
+In terms of notation, D-[]-refers to a ViT initialized with DinoV2 weights (denoted by D), where, and LoRA rank 64 is applied to thematrices of attention layers in.
+Thus,comprises of all weights in, LoRA matrices in, and normalization layers.
+For,consists of only 5% of the original ViT parameters.
+As we show in, our extended pre-training approach can match or even outperform full pre-training on new domains from scratch.
+
+We initialize a ViT-L withfrom the DinoV2 ViT-L encoder, without registers.
+Since the DinoV2 pre-trained checkpoints don’t contain the Dino or iBOT linear heads, we initialize a shared Dino-iBOT linear head from scratch.
+This shared head is fully trained during extended pre-training, adding only a minimal number of trainable parameters.
+
+We initialize a ViT-L withfrom the MAE ViT-L encoder.
+Since MAE provides the pre-trained decoder, we use these weights to initialize our MAE decoder.
+During extended pre-training, in addition to the ExPLoRA recipe in, we apply LoRA with rankon thematrices of each attention layer in the frozen decoder.
+Note that the LoRA rankmay differ from the LoRA rankused in the ViT encoder ().
+All other decoder weights, apart from the layer-normalization layers, are kept frozen.
+No block is fully unfrozen in the MAE decoder, as it will be discarded after extended pre-training.
+This helps to minimize the number of additional parameters trained in the decoder.
+
+For the multi-spectral ViT introduced by SatMAE we need to additionally unfreeze the positional encoding and the patch embedding weights for each group of channels.
+These cannot be initialized from, asis trained on RGB inputs, whereas multi-spectral inputs can have more or different channels.
+As part ofin, the positional encodings and patch embeddings for multi-spectral data are adapted during extended pre-training.
+Aside from this, the approach remains unchanged from that of DinoV2 or MAE described earlier.
+
+After running ExPLoRA, we receive a new unsupervised modelfor the target domains.
+Any components that are not part of the ViT encoder (eg: the Dino linear head or the MAE decoder) are discarded.
+Post-ExPLoRA, only, consisting of 1-2 unfrozen ViT blocks, LoRA matrices, and layer-normalization weights, are stored for each.
+Like LoRA and other PEFT methods, ExPLoRA significantly reduces additional storage requirements compared to fully trainingfrom scratch.
+
+After extended pre-training with ExPLoRA, the output weightsbehave as any fully pre-trained model.
+We can now use the ViT for feature extraction, PEFT, or fine-tuning as desired.
+For instance, we could initialize a linear head for classification or a decoder for segmentation, either of which is fully trainable.
+We can then freeze all ViT weights and apply LoRA-on thematrices of the attention layers (or use another PEFT method).
+Lastly, we use supervised fine-tuning on each labeled datasetto train the unfrozen parameters.
+This yields our final model(), which can be used for classification, segmentation, detection etc.
+
+SECTION: Experiments
+Our experimental results consist of a case study on satellite imagery (), with an ablation study inand analysis in. We evaluate on multiple downstream tasks in,and.
+Additional experiments and ablations are provided inand training hyperparameter and compute configurations are mentioned in.
+Our results achieve a new SoTA top 1 accuracy of 79.2% (1.4%) on the competitive fMoW-RGB benchmark, outperforming fully pre-trained and fine-tuned models while using 6% of the ViT encoder parameters. We also achieve a8.2% improvement in linear probing accuracy on the same dataset. Across other satellite datasets, we match fully-pretrained prior state-of-the-art methods, and demonstrate competitive performance on WiLDS benchmark datasets as well.
+
+SECTION: Case Study: Satellite Imagery
+We examine satellite images given their importance towards multiple societal applications () and since they represent a significant domain shift from natural images.
+There is a large and growing body of research on developing foundational models for satellite imagery from scratch, thus presenting a good benchmark for ExPLoRA.
+
+We first consider the functional map of the world (fMoW) dataset of high-resolution satellite images, each paired with one of 62 classification labels. fMoW is used as a benchmark for many satellite-image foundation models.
+
+We compare our results inagainst both prior fully pre-trained SoTA foundation models as well as PEFT techniques applied on ViTs pre-trained with MAE and/or DinoV2 weights.
+Our results demonstrate that D-ExPLoRA--is SoTA in terms of fMoW-RGB average accuracy at 79.15%.
+ExPLoRA outperforms techniques that require fully pre-training ViTs on fMoW while using 6% of the original ViT encoder parameters.
+
+ExPLoRA-initializations with LoRA fine-tuning outperform other unsupervised initializations paired with PEFT techniques by 1-3%, including SoTA matrix-adaptation methods like AdaLoRA, BOFT, and VPT-based approaches such as GVPTand SA2VP.
+Additionally, applying SA2VP to ExPLoRA-initialized ViTs improves performance over a DinoV2 initialization by  1%, showcasing ExPLoRA’s compatibility with other PEFT methods and its versatility as an initialization for new domains.
+
+Using our strongest performing variant (i.e. ExPLoRA with DinoV2), we investigate linear-probing performance on fMoW-RGB compared with prior SoTA methods in. Linear-probing represents freezing the backbone and then training a linear head on the features extracted from the frozen backbone, serving as a desirable metric of the quality of extracted embeddings. Our results demonstrate an improvement of over8.2% in top 1 average accuracy over prior SoTA methods, demonstrating that ExPLoRA learns robust unsupervised representations for its target domain without requiring expensive from-scratch pre-training. Importantly, ExPLoRA outperforms domain-specific prior SoTA solutions (rows 1-4), as well as DinoV2, which suggests successful transfer learning on the target domain by leveraging knowledge from pre-training on natural images.
+
+We perform an ablation study () on linear-probing performance for fMoW-RGB to determine whether our proposed configuration performs optimally.
+A natural question is whether the improvement in performance stems primarily from unfreezing blocks, or from LoRA-tuning the rest of the ViT. We investigate this by unfreezing blocksin row 2 (with no LoRA), and comparing that with ExPLoRA--in row 10. As seen, unfreezing an extra block consumes almost double the number of parameters, but fails to yield the same improvement in performance. Thus, simply increasing the number of unfrozen blocks will likely improve performance, but will not do so as effectively as ExPLoRA, and will also significantly and sharply decrease the parameter-efficiency.
+
+Next, we investigate whether high LoRA ranks used on all ViT layers (i.e. all attention and MLP matrices, not just) is beneficial. Surprisingly, this significantly harms learning (row 4). In fact, it is much less effective than using just LoRA-on thematrices of allblocks (row 3). However, both rows 3 and 4 are much less parameter-efficient than ExPLoRA (rows 5-7, 10-12).
+
+The choice ofmatters as well. As seen in rows 4, 5, 6, and 12, for the DinoV2 objective,orare not as effective asor, ceteris paribus. To understand this result further, see. We also notice a slight drop in accuracy from leaving the normalization layers across the ViT frozen, seen in row 5.
+
+Lastly, we investigate the impact of LoRA rank on ExPLoRA. Changing the rank from 8 to 32 has a small improvement (), but changing from 32 to 64 brings about a much larger improvement (), with only a relatively small increase in trainable parameters.
+This demonstrates that higher ranks are necessary during pre-training for effective learning on the new domain.
+Further ablations on data efficiency (), MAE decoder rank (), and ViT backbone size () are in.
+
+Next, we consider the fMoW-Sentinel dataset, a large dataset of Sentinel-2 images used in. Each image consists of 13 spectral bands and is paired with one of 62 classes.
+
+With fMoW-Sentinel, we evaluate the challenge of transferring from natural images to multi-spectral, low-resolution satellite images– a much harder task than fMoW-RGB due to the absence of sensor data beyond RGB bands in. We use the SatMAE group-channel ViT-L model from, initialized with MAE weights from natural images. Since the patch embedding layers differ, we unfreeze and train them from scratch during, adding minimal parameter overhead.
+
+highlights the difficulty of this domain transfer. Fully fine-tuning from MAE weights leads to a nearly 10% drop in accuracy (row 2), and LoRA tuning from MAE alone performs even worse (row 4). Simply unfreezing four transformer blocks during pre-training (row 6) fails to close the gap.
+However, ExPLoRA, with, yields excellent results, even outperforming full pre-training from scratch for LoRA fine-tuning (row 5 vs. last row).
+This demonstrates ExPLoRA’s effectiveness in bridging large domain gaps while using just a fraction (here, <10%) of the parameters.
+
+We perform extensive experiments on downstream satellite datasets, with further results in.
+
+Each input is a sequence of up to 3 fMoW-RGBimages of the same location, distributed temporally, and paired with one of 62 classes.
+Since the inputs are now temporal sequences,
+we initialize the temporal MAE architecture fromwith MAE weights, and pre-train onwithand LoRA rank 32. ExPLoRA then outperforms temporal SatMAE for PEFT (), demonstrating successful transfer learning at a fraction of the pre-training parameters.
+
+This dataset contains high resolution satellite images, each paired with a segmentation mask for buildings.
+The training and test sets consist of 5000 and 1940 images, respectively.
+For ExPLoRA, we pre-train on the training set.
+However, many images in the dataset contain extensive blacked-out regions, indicating limits of the visible region.
+Considering this limitation and the small dataset size, it is not clear whether additional pre-training is effective.
+We find that, despite this, ExPLoRA remains on par with the LoRA-tuned DinoV2 model and remains competitive with the fully pre-trained and fully fine-tuned domain-specific models ().
+
+The RESISC-45benchmark dataset consists of 31,500 satellite images of varying resolution (0.2m-30m GSD), with 45 classes. The data is split into 25,200 training and 6,300 validation images, as per. In, our D-ExPLoRA pre-trained on only high-resolution fMoW-RGB images achieves SoTA results of 97.32% on multi-resolution RESISC-45 images, with just linear-probing. Since we use the same pre-trained model as in the last row of, we demonstrate successful transfer learning from ExPLoRA pre-training, without requiring any additional modifications for scale-aware representation learning.
+
+SECTION: WiLDS Datasets
+We test ExPLoRA on the WILDSbenchmark, specifically on Camelyon17, iWildcamand GlobalWheatdatasets, representing domain transfers to medical, wildlife, and agricultural imagery, respectively.
+
+The WILDS Camelyon17 dataset consists of images of cancerous and non-cancerous cell tissue organized in labeled and unlabeled splits. We use the “train-unlabeled" split for pre-training ExPLoRA, and either use LoRA fine-tuning or linear probing on the training set of the labeled split.
+We report accuracy on the binary classification problem and compare with entries on the WILDS leaderboard which use unlabeled data. Our results indemonstrate improved performance over domain-specific methods as well as DinoV2, once again successfully bridging the domain gap.
+
+iWildcam classification requires identifying one of 182 animal species given an image.
+We pre-train on the training set, finding that this outperforms pre-training on the extra-unlabeled set. In, we find an improvement over DinoV2 using LoRA-PEFT.
+Surprisingly, the linear probing performance of the ExPLoRA suffers in comparison with DinoV2, suggesting possible loss in knowledge-transfer due to a small domain gap. Likely because natural image datasetssuch as ImageNetused for DinoV2 already contain many images of animals.
+
+The GlobalWheat dataset consists of a wheat head object detection task, where each image of a wheat field is associated with bounding boxes on the visible wheat heads.
+ExPLoRA extends pre-training on the training set, and then we run fine-tuning using Detectron2 code for object-detection with ViTs.
+ExPLoRA outperforms both fully pre-trained baselines from the WILDS leaderboard and strong VFMs DinoV2 and MAE on top 1 accuracy, average precision, and average recall.
+
+SECTION: Analyzing ExPLoRA
+The key design choice of ExPLoRA is to fully train a small subsetof the ViT, while applying low-rank updates to the remaining frozen layers.
+For parameter-efficiency, we aim to keepand make and informed choice of which layers to unfreeze based on their potential to improve learning during extended pre-training.
+
+We conduct an investigation on 5 models using a sample of.
+These models are DinoV2, D-ExPLoRA--, SatMAE, MAE, and M-ExPLoRA--.
+We do the following analyses:
+
+Our analysis reveals that the spectral properties of a block’s feature map () and the ability to retrieve local information from its output patch tokens () are correlated.
+The classification accuracy for position and the mean of the principal eigenvalues peak in the middle-layers of the model, suggesting that the middle blocks capture local properties of patches (e.g., texture, relative position).
+Meanwhile, deeper blocks focus on global semantic understanding, as shown by increased classification accuracy for image class prediction in.
+Combined, these results suggest that unfreezing deeper layers, such as, allows the model to better capture global features without overfitting to local details of images of.
+This is empirically confirmed in, where linear probing accuracy correlates inversely with the mean eigenvalue of each block (i.e., block 23 > block 22 > block 0 > block 9).
+The attention maps infurther support this, showing that the deeper layers focus more clearly on central objects, while earlier layers (e.g., blocks 9, 10) exhibit more diffuse attention patterns spread around the border.
+
+For MAE, we see a similar, but less pronounced trend.
+However, MAE is only trained for reconstruction, and so retains more local information across the ViT’s layers. This is reflected by its lower patch-wise eigenvalues, higher localization accuracy, and lower global accuracies than Dino.
+
+D-ExPLoRA preserves local information in the middle layers but also improves localization accuracy in the last few layers.
+Importantly, it also enhances the global information contained in the patches for deeper model layers.
+This indicates a better understanding of the target domain, as seen in, where ExPLoRA’s attention highlights the central object more clearly.
+
+SECTION: Conclusion and Discussion
+In this paper, we introduce ExPLoRA, a novel pre-training strategy to adapt pre-trained ViT foundation models for natural images to additional visual domains such as satellite imagery or medical data.
+We challenge the common paradigm of expensive pre-training from scratch for each new visual domain by offering a solution to transfer knowledge from foundation models that is both parameter-efficient and effective (even outperforming domain-specific foundation models).
+Our hope is that ExPLoRA enables further use of foundation models on domains other than natural images without requiring vast computational resources for pre-training.
+
+While effective, there are many aspects of ExPLoRA that deserve further study.
+The strategy of fully training a small amount (or budget) of weights combines extremely well with PEFT techniques such as LoRA– we hope that future work investigates the reason behind this in further detail.
+Unresolved questions also include whether other parameter-efficient techniques might work better with ExPLoRA during pre-training.
+Further work to evaluate ExPLoRA for natural language would be valuable, as would an investigation into whether we can do away entirely with unfreezing a transformer block.
+
+SECTION: Broader Impact
+As the scale of models and datasets grows exponentially, access to the computing power necessary to develop and make use of foundation models is increasingly restricted to the hands of a few organizations.
+This leaves many researchers in academia or smaller companies reliant on the resources of such organizations for ML research and applications.
+Techniques such as PEFT can alleviate this dependence and enable those with fewer computational resources to adapt, investigate, and customize models for their own needs.
+We hope that ExPLoRA furthers this goal, allowing ML practitioners to tailor foundation models with minimal compute, thus broadening access to powerful ML tools for critical fields like sustainability and medicine.
+
+For example, automated analysis of satellite imagery can inform social, economic, and environmental policies, but manual curation is expensive, and pre-training models on such data has significant costs, both environmental and otherwise (see).
+ExPLoRA offers a more efficient way to distill knowledge from existing foundation models trained on natural images, sharply reducing costs while aiding researchers and policymakers and enabling flexible applications in downstream tasks.
+
+SECTION: Acknowledgements
+This research is based upon work supported in part by the Office of the Director of National Intelligence (ODNI), Intelligence Advanced Research Projects Activity (IARPA), via 2021-2011000004, NSF(#1651565), ARO (W911NF-21-1-0125), ONR (N00014-23-1-2159), CZ Biohub, HAI. The views and conclusions contained herein are those of the authors and should not be interpreted as necessarily representing the official policies, either expressed or implied, of ODNI, IARPA, or the U.S. Government. The U.S. Government is authorized to reproduce and distribute reprints for governmental purposes not-withstanding any copyright annotation therein.
+
+SECTION: References
+SECTION: Appendix
+We include supplementary material in the following sections.
+
+SECTION: Additional Experimental Results
+We include further experimental results as a continuation of.
+
+SECTION: Results on Additional Downstream Datasets
+We consider a land-cover classification dataset used in, where each of 244,471 training and 55,529 validation images are paired with one of 66 land cover classes obtained by the USDA’s National Agricultural Imagery Program. In, we first demonstrate similar performance between both natural-image backbones (rows 4 and 5), which surprisingly outperform SatMAE, which is pre-trained on fMoW-RGB.
+We use ExPLoRA to pre-train from DinoV2 to the training set of this dataset (without labels). Our results (row 6) demonstrate comparable performance, suggesting that for this dataset, domain-specific knowledge may not be highly relevant to successfully solve the task.
+
+The dataset contains 27,000 13-band satellite images of 10 classes, sourced from Sentinel-2. For ExPLoRA, we don’t pre-train on the training set of this dataset, and instead use LoRA fine-tuning starting with the pre-trained weights learned in row 8 of. We demonstrate improved performance over DinoV2, and match the performance achieved by the domain-specific SatMAE which was fully pre-trained on fMoW-Sentinel, and fully fine-tuned on EuroSAT (). This demonstrates the successful use of our extended pre-trained model on further downstream datasets.
+
+SECTION: Attention Map Visualizations
+To aid our analysis in, we visualize attention scores for different ViT blocks across multiple models, including DinoV2, D--(i.e. the last row of), the second and third rows of, MAE, SatMAE, and M--.
+These visualizations are shown infor 3 different images from the validation set of fMoW-RGB.
+Since our models are trained without registers, we truncate attention scores more than 5 standard deviations away from the mean, thus removing artifact attention scores with unusually high values on background patches.
+
+The visualizations infurther support the analysis in.
+For the Dino models, the attention scores of block 9-10 are diffuse and spread around the central object of the image, with quite a few border pixels highlighted.
+Conversely, the attention scores of the final layers are concentrated more towards the central object.
+These visualizations further suggest that the middle layers focus on capturing local properties of the images such as texture, while the final layers capture global semantic information such as object-ness.
+Interestingly, the initial blocks for the Dino models display sparse attention patterns with spikes on seemingly random patches.
+This might suggest a form of caching to aid the computation of deeper layers that will extract local or global information.
+
+For the MAE models, we see that the original MAE (pre-trained on natural images) seem to highlight more border pixels in the final layers of the ViT. Post extended pre-training with ExPLoRA, the final layers concentrate attention scores on the central object, more closely resembling the patterns of SatMAE (which was fully pre-trained on satellite images).
+ExPLoRA is thus able to successfully transfer knowledge from its initialized source-domain weightsto serve as a foundation modelon the new target domain.
+
+SECTION: Convergence and Data Efficiency
+Another important question is on ExPLoRA’s data efficiency- i.e. can ExPLoRA achieve good representations on the target domain without requiring many training iterations?
+
+In, we plot the linear-probing accuracy against the number of extended pre-training iterations for ExPLoRA (in blue). ExPLoRA improves quickly, requiring between 100-150k extended pre-training iterations to reach optimal performance.
+As discussed in, unfreezing additional transformer blocks (in red) fails to achieve the same level of performance while requiring more parameters.
+
+One hypothesis for the effectiveness of pairing unfreezing blocks with LoRA tuning is that the low-rank updates to the ViT backbone “nudge" the sequence of embedded visual tokens fromto those representing, which then enables the unfrozen ViT block to efficiently compress global information from the new domain.
+
+SECTION: Impact of MAE Decoder Rank
+As outlined in, we initialize the MAE decoderwith pre-trained weightsfrom, keeping all decoder weights (except layer norm) frozen during extended pre-training on. We apply LoRA with rankto theweights of the attention layers in the decoder, while unfreezing 1-2 blocksin the ViT encoderand applying LoRA with rankto the remaining layers().
+
+We evaluate ExPLoRA with M--on fMoW-Sentinel, using a fixed encoder LoRA rank, unfreezing blocks, and varying the decoder rankWe then fine-tune the resulting model with LoRAand measure the highest top 1 accuracy on the validation set of fMoW-Sentinel.
+Results inshow that increasingup to 32 improves fine-tuning performance, but performance declines when, dropping.
+This suggests that balancing the unfrozen parameters between the ViT encoder(used for fine-tuning) and the MAE decoder(discarded post pre-training) is crucial.
+Largermay improve the decoder’s ability without benefiting the learned representations of.
+This issue doesn’t arise in DinoV2, as the Dino-iBOT shared head is fully trained since it isn’t provided by.
+
+SECTION: Impact of ViT backbone size
+We also test the impact of the ViT backbone for ExPLoRA, varying the architecture for DinoV2 from ViT-B (86M,layers, embedding dimension 768), ViT-L (303M parameters,layers, embedding dimension 1024), and ViT-G (1100M parameters,layers, embedding dimension 1280) for extended pre-training on fMoW-RGB.
+The ExPLoRA models we compare against are D--for ViT-B, D--for ViT-L, and D--for ViT-G.
+We unfreeze the 12th, 24th, and 32nd layers for each of ViT-B, ViT-L, and ViT-G, picking these layers by extending the analysis fromto ViT-B and ViT-G.
+We find that the 12th (last layer) for ViT-B and the 32nd (out of 40) layer for ViT-G output representations with low mean eigenvalues compared to other layers, thus presenting good candidates for unfreezing.
+
+In, we see that as expected, ViT-G performs the best, but is onlybetter in top 1 accuracy compared to ViT-L, while using many more parameters.
+On the other hand, we see the highest impact for ExPLoRA on ViT-B, where the top 1 accuracy improves byover the original DinoV2 ViT-B.
+These results further demonstrate the effectiveness and efficiency of ExPLoRA as a powerful technique to create unsupervised foundation models for new visual domains.
+
+SECTION: Training Details
+In this section, we describe hyperparameters and hardware configurations used for our models.
+
+SECTION: Pre-Training
+We use the ViT-Large architecture for all experiments.
+Since raw image sizes vary, the shorter image size is resized towhile preserving aspect ratio, and then a center crop is taken to yield images of size, representing the channels, height, and width.
+All pre-training is done on a single NVIDA-RTX 6000 Ada GPU, or 4 NVIDIA-RTX A4000 GPUs on an academic GPU cluster.
+
+Most of the hyperparameters for D-ExPLoRA follow the defaults set by. That is, local (small) crops are between 5%-32% of the original image and are resized to 98x98 pixels, and global (large) crops are greater than 32% of the image and resized to 224x224 pixels.
+We share the parameters of the Dino-iBOT linear head (3 layers), with a bottleneck dimension of 256, a hidden dimension of 2048, and an output dimension of 65536, initialized from scratch.
+For Dino, we use Sinkhorn-Knoppcentering and Koleoregularization with a weight of 0.1.
+For iBOT, we use masking ratios between 0.1 and 0.5 to mask half of the samples in the batch.
+The teacher model uses an initial EMA rate of 0.994, with a cosine warmup to 1.000 by the end of training. The teacher warmup and final temperatures are 0.04 and 0.07.
+The linear Dino-iBOT head is frozen for the first 3k training iterations.
+We train with the AdamW optimizer (no weight decay), with a base learning rate ofthat is varied with a linear warmup and cosine decay schedule.
+Training is completed within 200,000 iterations, with a batch size of 32 and with 32 gradient accumulation steps (equalling an effective batch size of 1024), and with an epoch length set to 1000.
+
+Most of the hyperparameters we use for M-ExPLoRA pre-training follow those in.
+We use an effective batch size of 1024 (through gradient accumulation), a base learning rate of, no weight decay, and a warmup and decaying cosine scheduler, with a warmup of 1 epoch, and a total training time of 200 epochs.
+We use a masking ratio ofand we use theflag for the MSE loss.
+
+SECTION: PEFT Fine-Tuning
+We fine-tune using 4 NVIDIA-RTX A4000 GPUs.
+We use a base learning rate of, a cosine scheduler with warmup for 1 epoch, and train for 120 epochs.
+We use an effective batch size of 256, making use of gradient accumulation if the GPU cannot fit the full batch size in memory.
+
+For data augmentations, we only use the drop-path augmentationat a rate of 0.2, with no dropout, mixup, or cutmix.
+We note that the original LoRA configuration outperforms other PEFT techniques when paired with the drop-path regularization technique.
+For example, we find that BOFT does not pair well with drop-path, instead performing most effectively with a custom multiplicative dropout technique.
+We include the result with the best hyperparameter configuration for each row in.
+
+SECTION: Linear Probing
+We use a single NVIDIA-RTX A4000 GPU for linear probing.
+We adapt the code provided byfor linear probing, with a batch size of 256 and a collection of different learning rates:.
+We evaluate both probing on average pooled features as well as on thetoken, and also use output features from just the last block, or the last 4 blocks.
+All numbers reported represent the best validation set accuracy from the best performing configuration.
+
+SECTION: Multi-Spectral Images
+We use the group-channel ViT-L architecture introduced in.
+We don’t use DinoV2 since there is no such architecture for DinoV2 pre-training.
+Input images are, representing 13 multi-spectral bands.
+We follow the configuration inof dropping bands B1, B9, B10, and use the same grouping strategy.
+When loading MAE weights to the ViT-L encoder, the patch embeddings do not match and so the patch embedding and group channel encodings are trained from scratch. All other configuration details are the same as for M-ExPLoRA in, except that we use a base learning rate offor pre-training and train for 50 epochs (given the larger dataset size) on 4 NVIDIA RTX A4000 GPUs for 80 hours.
+
+Fine-tuning details are the same as in.
+
+SECTION: Downstream datasets
+Hyperparameter and training configuration details are the same as inif the images are RGB, and the same as inif the images have more channels or are temporal.
+
+SECTION: Dataset Licenses
+The licenses for all datasets are included in the footnotes:
+fMoW, Sentinel-2, EuroSAT, SpaceNet,
+Camelyon17, iWildCam,
+GlobalWheat.
+
+SECTION: Environmental Impact
+Following, we compare the carbon footprint of pre-training using ExPLoRA with domain-specific solutions such as SatMAE. We use the carbon footprint calculator proposed by. Our results are in.
+
+Since we initialize with pre-trained weights on natural image domains, ExPLoRA is much less environmentally impactful while achieving similar or higher levels of performance. We achieve a 4x-8x reduction in total carbon emitted for each of the large pre-training satellite image datasets considered in.

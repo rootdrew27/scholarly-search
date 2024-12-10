@@ -1,0 +1,538 @@
+SECTION: Unsupervised Learning of Effective Quantum Impurity Models
+
+Generalized quantum impurity models – which feature a few localized and strongly-correlated degrees of freedom coupled to itinerant conduction electrons – describe diverse physical systems, from magnetic moments in metals to nanoelectronics quantum devices such as quantum dots or single-molecule transistors. Correlated materials can also be understood as self-consistent impurity models through dynamical mean field theory. Accurate simulation of such models is challenging, especially at low temperatures, due to many-body effects from electronic interactions, resulting in strong renormalization. In particular, the interplay between local impurity complexity and Kondo physics is highly nontrivial. A common approach, which we further develop in this work, is to consider instead a simpler effective impurity model that still captures the low-energy physics of interest. The mapping from bare to effective model is typically done perturbatively, but even this can be difficult for complex systems, and the resulting effective model parameters can anyway be quite inaccurate. Here we develop a non-perturbative, unsupervised machine learning approach to systematically obtain low-energy effective impurity-type models, based on the renormalization group framework. The method is shown to be general and flexible, as well as accurate and systematically improvable. We benchmark the method against exact results for the Anderson impurity model, and provide an outlook for more complex models beyond the reach of existing methods.
+
+In the field of condensed matter physics,
+the microscopic Hamiltonian describing a quantum many-body system (thebare model) is in many cases well known. However, for interacting systems, the complexity of these models grows quickly with the number of quantum degrees of freedom (for example orbitals or spins), such that a brute force solution becomes analytically and/or numerically intractable for many realistic scenarios of interest. The challenge in many-body theory is therefore not in writing down the bare model, but rather in solving it.
+However, in many situations it is not necessary to consider the entire configuration space of the system, because only a (relatively) smallactivesubspace controls the phenomena of interest[1]. Thus,effective modelscan be devised, that faithfully capture the phenomena of interest, while only keeping the active part of the configuration space. Such effective models have a reduced complexity and increased expressiveness. The challenge in many-body theory can therefore be restated as one of finding the bestsolvablemodel that describes approximately but accurately the physics of interest.
+
+As an example, it is often more convenient to analyse an effective lattice model in second quantized form than theab initiotreatment involving an all-orbital description of the constituent atoms[2,3,4].
+Methods such as the constrained random-phase approximation[5,6], coupled cluster downfolding[7], density matrix downfolding[8]or the Pariser-Parr-Pople model for molecules[9,*pariser1953semi2]were devised to systematically eliminate inactive degrees of freedom and account for them with renormalized parameters of a reduced model.
+
+These methods have in common that they require some prior knowledge about the bare model to derive the effective model. This situation shares some similarity with that of theinverse problem[11]encountered in statistical inference or machine learning[12], that seeks to infer a probabilistic model from observed data.
+Recently machine learning techniques have been explored to construct effective Hamiltonians from simulated data[13,14,15,16]or from experimentally measured data[17,18,19].
+Another field where the inference of Hamiltonians has gained considerable relevance, is in the analogue simulation of quantum Hamiltonians on quantum hardware[20,*georgescu2014quantum,22,*hensgens2017quantum,24]. Indeed, machine learning inspired process- and Hamiltonian-tomography methods have been developed to infer the precise Hamiltonian that NISQ devices actually simulate, given hardware imperfections[25,26,27,28,29,30].
+
+A good effective Hamiltonian must not just reproduce desired properties of the bare model, it must also be meaningfully simpler than the bare model. The canonical method to systematically eliminate degrees of freedom and obtain effective models is the renormalization group (RG)[31,32,33]. On the level of the thermal density matrix a single RG transformation acts as the partial trace over the high energy degrees of freedom[34]. In the context of quantum physics, a central concept from information theory is that thermal states encode the corresponding Hamiltonian[35], such that comparing the ensemble of thermal states from two systems is equivalent to comparing the two Hamiltonians. This provides a way to measure the ‘difference’ between a Hamiltonian before and after renormalization. By minimizing the distance in Hamiltonian space, one can therefore in principle optimize a simplified effective model to best approximate some more complicated bare Hamiltonian after renormalization. We rigorously derive such an approach in this paper for a specific class of systems known as ‘quantum impurity’ models[36]. These models involve localized interacting quantum degrees of freedom (the ‘impurity’) coupled (throguh) to one or more continuum baths of noninteracting conduction electrons (), as described generically by:
+
+Generalized quantum impurity models describe semiconductor quantum dot devices[37]and complex single-molecule junctions[38]. They also underpin our understanding of correlated materials through dynamical mean field theory[39]. Developing a strategy for systematically and accurately deriving simple effective models to better understand and simulate complex systems is the ultimate application of this work.
+
+A prerequisite for the design and use of complex quantum nanoelectronics devices with advanced functionality beyond the classical paradigm (for example in quantum metrology[40,41,*mihailescu2023thermometry]), is a fundamental understanding of their low-temperature correlated electron physics and quantum transport properties. However, this is a notoriously difficult theoretical challenge because of the subtle interplay between the orbital and spin complexity of the nanostructure, determined by its structure and chemistry; strong electron interactions due to quantum confinement; and the coupling toconduction electrons in the external circuit. This results in nontrivial quantum phenomena such as Coulomb blockade[43], various forms of Kondo effect[43,44,38], and quantum interference[45,46]– all of which strongly affect low-temperature electronic conductance through the device, and hence its functionality. As with coupled quantum dot devices[47,48,*mitchell2016universality,50], entangled spin and charge degrees of freedom can give rise to new physics in single molecule junctions. It is therefore a formidable task to derive simplified effective models that can still describe this range of physics in these kinds of quantum device.
+
+A basic illustrative example is given in Fig.1. Here we show the temperature-dependence of a physical observable, in this case the entropy, for a bare quantum impurity model (blue), compared with that of a simpler effective model (orange). One can immediately identify that the effective model has lower complexity than the bare one, because in the high-temperature limit it has a lower entropy – signifying that the effective model has a smaller number of active degrees of freedom than the bare model. At high temperatures, physical properties of the two models are distinctly different. But below some low-energy scale, the behavior of the two models becomes essentially indistinguishable. The low-energy physics is perfectly captured by the simpler effective model. We will return to the specific details of this example later.
+
+In the context of molecular electronics, the complex microscopic models describing single-molecule junctions can be mapped to much simpler effective two-channel Kondo models using a perturbative approach, as described in Refs.[38,46]. This method captures simultaneously the effect of quantum interference and Kondo physics – but is inevitably approximate due to the perturbative treatment. Since thermodynamic observables flow under RG and the bare and effective model are defined at different energy scales, it is also nota prioriclear whether such minimal Kondo models are sufficiently general to reproduce local observables of interest in the bare model[51].
+In this paper we show how an RG analysis of effective interaction terms can be used to determine thermodynamic observables that are comparable across different energy scales. This allows us to introduce a novel machine learning (ML) methodology to derive accurate effective models for complex quantum impurity problems, that works by optimizing generalized (minimally constrained) models, and ensuring that local observables are correctly reproduced. We show by way of explicit examples that the low-energy Kondo physics is simultaneously captured.
+The parameters of the effective model are optimized by minimizing the Kullback-Leibler divergence (KLD)[52]that compares its ensemble of thermal states to that of the bare model. Information on the target is extracted from a numerical simulation of the system of interest. However, the full solution of the bare model isnotrequired: minimization of the KLD requires only an estimation of thermal expectation values corresponding to specific local operators at relatively high temperatures. This can be achieved with any suitable quantum impurity solver[53,54,55,56,*stadler2016interleaved]. Furthermore, the KLD can be shown to beconvex under reasonable assumptions (see AppendixA)and its gradient is known analytically in closed form[58], which makes it an ideal optimization problem.We refer to this method as‘unsupervised model learning’(UML). We demonstrate the efficacy of the UML method by application to the Anderson impurity model (AIM)[36]and obtain some new non-perturbative results for this old problem. Finally we give an outlook to the application of this framework to more complex problems, where the development of tractable effective models is essential for the study of nontrivial correlated electron physics at low temperatures.
+
+SECTION: IOverview of the Method
+
+Unsupervised learning is a type of ML with the goal to recreate the probability distribution of some target data. Examples such as the Boltzmann machine[11]achieve this by minimizing the distance between the probabilistic ansatz, at the core of the machine, and the heuristic estimation of the target distribution given by some sample data[12]. The distinguishability between probability distributions can be computed using the aforementioned KLD[52]. The KLD can be generalized for quantum density matricesin form of the von Neumann relative entropy[59,60],
+
+The generalized KLD quantifies how distinguishableis from. The thermal density matrixis fully defined by the system Hamiltonian(and inverse temperature). Hereis the partition function of. Thus, the thermal density matrix can be seen as a proxy for its defining Hamiltonian, and the KLD as a measure of distinguishability between two Hamiltonians. To emphasize this we denote the KLD for two thermal density matricesandas.
+
+Given the target Hamiltonian, we seek to optimize the simpler effective model
+
+by minimizingwith respect to the set of parameterscorresponding to the operators. The minimization yields the vector of optimal couplingsto representwith. In general this is an extremely challenging problem.
+
+Specializing now to quantum impurity models of the type Eq.1, the KLD can be evaluated by representing the reduced thermal density matrix of the impurity after tracing out the bath,, as aclassicalprobability distribution. The fact thatcan be viewed as a classical probability distribution can be seen as follows. Using the hybridization perturbation expansion[61], one can write the partition functionofas a sum over the weightsof all impurity occupation diagrams, denoted. We further subdivide each such diagraminto a sum over all corresponding diagramslabelled in terms of impurity eigenstates,
+
+whereis the weight of a distinct Feynman diagram labelled by the eigenstate diagram,is the antiperiodic hybridization matrix[61],the sequence of impurity operators comprising the diagramwhile being projected onto the eigenbasis ofandis the average value of the impurity Hamiltonian over the diagram. We have also definedas the partition function of the free (decoupled) bath. The details of the derivation and precise definitions of the terms appearing in Eq.6are given in AppendixA.
+
+From Eq.6we extract the distribution
+
+which can be interpreted as a classical probability distribution provided that. This distribution acts as a proxy for the impurity density matrix and hence also for the impurity Hamiltonian. As with the classical Boltzmann machine, the probability distributionis in the form of an energy-based model, with the weightshere distributed according to the impurity Hamiltonian,. We can therefore evaluate the KLD
+
+where we have used the termadmissible() to denote diagrams that involve eigenstates offor whichhas analogues eigenstates. This is important because the dimensionality of the impurity subspace is lower for the effective model than in the bare model, by construction.
+To minimize the distinguishability betweenandwe use gradient descent (GD) methods[12]. For this, we need the analytic gradient of the KLD,
+
+where theadmissibility operatorconnects the effective and bare Fock space, by mapping the effective eigenstates to analogous bare eigenstates (see Sec.II.1for a detailed derivation and discussion). Thus,eliminates all non-admissible states from the bare thermal average such that, whereas on the effective Hilbert space it holds that,
+
+From Eq.10it follows immediately that the minimum is found when the impurity observables match,
+
+for all effective impurity operatorsof the effective model (from now on we simplify the notation). Thus, in the precise sense of Eq.9, the optimal low-energy effective modelfor a given bare modelis the one that matches the thermodynamic expectation values for all effective impurity operatorsin the bare model. We emphasize that the KLD Eq.9does not itself ever have to be evaluated. For the GD optimization, it is sufficient to evaluate the gradient of the KLD, which can be expressed in terms of the physical and readily computable observables in Eq.10. We refer to the process of optimizing an effective model to best represent the low-energy physics of our microscopic bare Hamiltonian by matching these key observables as‘unsupervised model learning’(UML).
+
+A particularly attractive feature of UML for quantum impurity systems is the efficiency of the optimization problem. This follows from the fact that the second-order derivative of the KLD corresponds to the second-order derivative of the effective free energy.
+Therefore, provided all operatorsmutually commute, the KLD is convex – see AppendixA. Thus we have a single, global minimum, which a gradient descent algorithm is guaranteed to find, making this a trivial optimization problem. We note that the gradient obtained from the KLD, Eq.10, is equivalent to the gradient obtained in themaximum entropy principlethat was recently applied to the problem of Hamiltonian tomography in Ref.[25].
+
+The optimization problem is efficient, given the convexity of Eq.9. The computational cost of the optimization is therefore mainly controlled by the method used to compute the observables comprising the gradient in Eq.10. The bottleneck is then the calculation of the observablesin the bare model. However, this needs to be done just once (e.g. with quantum Monte Carlo (QMC) methods[62,53]). On the other hand, although multiple calculations ofare required during the optimization, these are performed on the simplified effective model and are therefore by construction inexpensive (they can be done with e.g. the numerical renormalization group (NRG) method[54,55,56,*stadler2016interleaved]). For the results presented in the following, we have used continuous-time QMC (CT-QMC) and NRG to calculate the observables and the Adagrad or Adam GD methods[63].
+
+SECTION: IIDesigning an effective model
+
+The UML methodology described above makes no assumptions about the form of the bare impurity Hamiltonian (for example it could be anab-initiotype model or in tight-binding form). However, for illustrative purposes, and without loss of generality, we assume here that the bare impurity Hamiltonian is akin to aPariser-Parr-Pople(extended Hubbard) model[64],
+
+where() creates (annihilates) a spin-electron in impurity orbital, whereasandare number operators.
+This form ofis particularly suited to describe molecules in the context of single-molecule transistors. In the following, we use the term ‘molecule’ to describe the impurity degrees of freedom, as this emphasizes the important role of orbital complexity in the bare model. The total thermodynamic average charge on the molecule,,
+can be controlled externally by means of a gate voltage, where.
+
+In practice, the molecule degrees of freedom can be coupled to several non-interacting fermionic baths (metallic leads). For simplicity and concreteness, we now consider one single bath with particle-hole symmetry,. We omit the ‘bare’ label here because the bath will be common to both bare and effective models. Without any loss of generality, we cast this in the form of a 1d tight-binding chain,
+
+where the chain parametersencode the bath density of states. This tridiagonal form can be derived explicitly using the Lanczos method[65]. Onsite potentials are zero here due to particle-hole symmetry, but may be reinstated if needed without affecting the following discussions. For the RG analysis below, we note that theWilson chain[54]takes exactly the same form as Eq.14, but with chain parameters behave asfor large, whereis the bare conduction electron half-bandwidth, andis the logarithmic discretization parameter. In that case we replace.
+
+The impurity degrees of freedom couple to bath at the end of the chain via the hybridization term,
+
+We denote the collection of all bare Hamiltonian couplings using the vector,
+
+By varyingthe ground state of the ‘molecule’ can be tuned to a specific charge sector, which may be spin-degenerate. Of particular interest is the case where the molecule hosts an odd number of electrons and the ground state spin is, although the arguments are general. Withthe energy of the (possibly degenerate) ground state andthe energy of the first excited state,
+the active part of the molecule Fock spaceat low temperaturesis dominated by the Fock space of the ground state manifold. We can then map the full impurity Fock space of our bare model to an effective one spanning only the ground state manifold,
+
+In terms of effective Hamiltonians, the above argument implies that we can map, with the bath Hamiltonian left unchanged. In particular, for a spin-degenerate ground state, the entire molecule can be represented by a single spindegree of freedom, and the molecule-bath hybridization term becomes a spin-exchange interaction. This mapping constitutes an immense reduction in complexity: for a molecule withorbitals, the dimension of the impurity Fock space is reduced fromto. In the following, we discuss the details of how this mapping is achieved in practice, and provide a simple example demonstration.
+
+For some parameterized effective modelwe seek to optimize the coupling constantsso that properties of the bare model are faithfully reproduced at low energies (as in Fig.1). A crucial aspect of the GD optimization of Eq.9is to compare bare and effective physical observables. This must be done with care, since bare and effective models live in different Fock spaces and are defined at different energy scales. In the case of dynamical quantities such as Green’s functions, a meaningful comparison of renormalized correlation functions can be achieved by rescaling procedures[66]. But for static quantities, like the thermodynamic expectation values we are comparing, subtleties arise. In particular, a map between bare and effective eigenstates given by the admissibility operatoris required.
+
+SECTION: II.1Admissibility
+
+Effective model operators are only defined on the effective model Fock spaceand thus, to apply them to a state in the bare Fock space, we must project the states using the admissibility operator. One approach to construct the admissibility operator is to label bare and effective eigenstates with quantum numbers (QNs) corresponding to the symmetries that are common to both models,
+
+wheredenotes a vector of non-abelian QNs andis a vector of abelian QNs.
+The labeldenotes an index which distinguishes multiplets with the same set of QNs.is the number of such multiplets in a given sector, which is in general smaller in the effective model than in the bare model. This is required in order to have a meaningful reduction in complexity.
+
+By labelling our states with these QNs we can identify which bare states areadmissible(“ad” for short) on the level of symmetries. Importantly, we can removeinadmissiblestates in the bare model that have no analogue in the effective model. For example, the full molecule Fock space of the bare model may contain high-lying spinstates, whereas the effective model retains only the ground states with spin. Therefore in this case onlystates of the bare model would be admissible. We regard any state that is labelled with a QN combination that exists in the effective model Fock space as an admissible state of the bare model.
+
+For illustration, we now assume that. Then the admissibility operator can be written as a projector,
+
+where the notation ‘’ indicates that the sum runs only over the quantum numbers that label the eigenstates of. Thus, operatorsof the effective model can be meaningfully computed in the bare Fock space, via,
+
+We provide specific examples of this in action shortly.
+
+There are exceptions where the reference-state quantum numbers differ in the bare and effective models and a little more care has to be taken to make them comparable. In particular, this applies to the definition of the charge quantum number, since the charge depends on the number of (occupied, fermionic) impurity degrees of freedom. But the number of degrees of freedom is smaller in the effective model than the bare one. For example, a molecule withorbitals at half-filling has a ground state charge. But the effective model may replace these degrees of freedom with a single local moment spin, which can be regarded as a fermionic site subject to the constraint that the charge is. Indeed, the bare model may haverepresentations in multiple charge sectors. One practical solution is to take only the charge sectorof the bare model which contains the lowest-energystates. Alternatively, one can sum over all charge sectorsthat containstates. Different spin-multiplets with the samein the bare model can also be summed over.
+
+SECTION: II.2RG analysis
+
+The UML approach yields the best couplingsfor the chosen Hamiltonian operatorsin the effective model, Eq.3, given the target Hamiltonian.
+It may be advantageous to choosein the most general and unbiased way possible, for maximum expressiveness and to facilitate automation of the process. However, we may also utilize physical insights in making this choice, to target the desired physics.
+
+On the other hand, the RG procedure provides a systematic way to identify the structure of certain effective models. We briefly summarize the basics of the RG method below, as it will be useful in framing the following discussion. For a full description, see Ref.[33].
+
+The Wilsonian RG map[31]for a Hamiltonian of the form(Eq.3), with couplingsand associated interaction termsallows one to eliminate correlations between states above and below a running energy scale cutoff, whereis the bare model cutoff and. In the context of impurity models,is the conduction electron half-bandwidth. As the mapis successively applied, we therefore focus on progressively lower and lower energy scales. The RG map produces a new Hamiltonian that is characterized byrenormalizedcouplings,
+
+while leaving the free energy invariant
+
+Within this framework, all termsconsistent with the symmetries and Fock space of the system are allowed to appear in. For simplicity we assume that the set of interactionsis finite and does not change during the RG procedure. The continuous flow of the couplingsis described by the infinitesimal RG-transformation
+
+withbeing the Gell-Mann–Low-function[33].
+
+An important property of RG is the existence of fixed points (FPs), which are characterized by a set of couplingsthat are invariant under the RG transformation,
+
+and we callthe FP Hamiltonian. The RG transformation can be linearised near the FP Hamiltonian,
+
+whereis a perturbation to the fixed point. The FP can be further analysed by finding the eigensystem of the linearized RG transformation,. The eigenvaluetells us whether a given operatordrives the system away from the FP (for) or brings us closer to the FP (for). Physical perturbations to the FP can be decomposed in terms of these operators,. If there are finite contributions tofrom operators withthe perturbation is said to berelevant. Conversely if there are only contributions from operators withthe perturbation isirrelevant.
+
+Within this framework, we can identify a class ofminimaleffective models. As in Ref.[51], we define a minimal effective model here as one that retains only the most RG relevant corrections to the low-energy stable FP. Elaborated effective models can also be formulated by including leading RG irrelevant operators. By contrast,minimally-constrainedeffective models contain all possible operators consistent with the symmetries of the bare model that live in the reduced Fock space. We consider these various scenarios below.
+
+We emphasize that although the RG procedure described above provides useful information on thestructureof FP Hamiltonians and their leading corrections, the RG equations for interacting quantum impurity models cannot be solved analytically exactly. Perturbative RG methods give useful insights[67]but cannot provide quantitatively accurate predictions for effective model parameters in versatile settings. Non-perturbative solutions such as the numerical renormalization group[54]allow exact results to be extracted[68]but are only viable for sufficiently simple bare models, wherecan be diagonalized exactly. In this paper we are interested precisely in the class of bare models that are beyond the reach of a direct solution using NRG, or at low temperatures inaccessible to QMC.
+
+SECTION: II.3Schrieffer-Wolff revisited
+
+A paradigmatic example for the derivation of an effective model is the mapping of the bare symmetric single Anderson impurity model (AIM) to the effective Kondo model. The former features a spinful fermionic interacting orbitalon the impurity, whereas the latter involves only a spin-half impurity operator. The mapping eliminates the impurity charge states with zero or two electrons, and thus reduces the 4-dimensional impurity Fock space of the AIM to the 2-dimensional Fock space of the Kondo impurity spin.
+
+We take the AIM as our bare Hamiltonian,
+
+where. As defined, the model possesses particle-hole symmetry and is hence at half filling (the ground state has impurity charge).
+For, withthe impurity-bath hybridization, local moment formation on the impurity is expected.
+Under these circumstances, second order perturbation theory in the impurity-bath couplingyields the Kondo model,
+
+whereis the conduction electron spin density at the impurity position. This is the famous Schrieffer-Wolff transformation (SWT)[69,36].
+The Kondo model is as such theminimaleffective model for the AIM, in the sense defined in the previous section.
+
+The second-order perturbative calculation yields an estimate for the spin-exchange coupling,, which is naturally a rather crude approximation at finite. Indeed, as discussed in Ref.[51], physical properties such as the thermodynamic entropy and Kondo temperature of the effective model Eq.25computed withdo not match well those of the bare AIM Eq.24unless. In fact, even when the SWT is carried out to infinite order in the impurity-bath hybridization[70], the predicted value ofstill does not give accurate results for low-energy properties[51]. The reason for this is well known: the SWT does not account for the bandwidth renormalization. In the smalllimit, Haldane found a perturbative estimate for this effect[71], with the intuitive result that. This was put on a more concrete footing by Krishnamurthyet alin Ref.[54]using RG arguments. Only recently in Ref.[51]was the precise form determined numerically by non-perturbative methods for alland. The conclusion is that even with this highly simplified minimal effective model, the free energy and hence low-temperature thermodynamics can be faithfully reproduced – provided the correct effective couplingis found.
+
+SECTION: II.4-learning for the Kondo model
+
+Since the AIM and the Kondo model are connected by the RG flow of the AIM, the low-temperature thermodynamics of the AIM, such as the impurity entropy flow, magnetic susceptibility, and the Kondo temperature, can be exactly reproduced in an effective Kondo model with a properly chosen coupling constant, provided. As shown in Ref.[51], this ‘true’can be found numerically exactly by solving the AIM and Kondo models non-perturbatively using e.g. NRG, and matching their free energies
+
+which according to Eq.20also matches their RG flows.
+This should be done at sufficiently low temperatureswhere the RG flows of the two models are expected to coincide. We refer to this model learning technique as-learning. This is a powerful method if one is interested in reproducing the low-temperature thermodynamics or low-frequency dynamical correlation functions of some bare model using a simpler effective model – provided that both bare and effective models can be solved accurately down to a temperature. However, for complex impurity problems, such a direct solution of the bare model might not be feasible. Furthermore, a coinciding free energy in bare and effective models doesnotguarantee that all local thermodynamic observables will agree, as discussed in the next subsection. If such observables are the desired outcome from an effective model,-learning alone is not the best choice.
+
+SECTION: II.5Renormalization of observables
+
+Thermodynamic observables may themselvesflowunder RG, and the full path taken, from high to low energies, affects the result. Since the effective model is defined on an energy scale below some cutoff, it cannot capture renormalization effects in the bare model at energies above this cutoff. The important implication of this is that we cannot expect even a optimal minimal effective model to capture simultaneously low-energy scales such as the Kondo temperature, as well as the behavior of thermal expectation values. The former is controlled by the low-temperature free energy, whereas the latter depends on the entire RG flow.
+
+We demonstrate this point explicitly for the simplest example of the mapping from the AIM to the Kondo model. Using-learning[51]we extracted the effectiveof the Kondo model that reproduces exactly the low-temperature thermodynamics and Kondo temperature, for reference AIM systems with different bare(keepingconstant and setting). For each bare AIM and corresponding-optimized Kondo model, we computed with NRG the zero-temperature expectation value of the spin-spin correlator. The results are shown in the main panel of Fig.2, demonstrating markedly different renormalization of this observable in bare and effective models, especially at small. The ratio of the observables calculated in bare and effective models, shown in the inset, characterizes the different degree of renormalization in the two models along the RG flow. Only fordo the observables agree; this is consistent with the fact that the perturbative SWT becomes asymptotically exact in the largelimit.
+
+One can understand this result using the framework of Wilsonian RG described above.
+It is instructive to interpret the RG procedure as a reparameterization of the free energy,. In this picture, the renormalization is achieved by replacing the original coordinate systemwith a new coordinate systemthat leavesinvariant, as required by Eq.20. Thus we haveand thermodynamic observables can be interpreted as covariant tensors that can be transformed as such
+between coordinate systems[66]. For the effective model Eq.3, we may therefore write,
+
+withbeing the renormalized effective model parameters at the low-energy FP, and whereis the expectation value of the operatorevaluated in the FP Hamiltonian. The matrix of derivativescontains information about the RG flow to the FP, and can in principle be obtained from the-function, Eq.21. With this information we can make a connection between the renormalized value of the observable and its FP value. The desired observable is found to be a linear combination of all possible FP expectation values.
+
+Taking again the example of the AIM to Kondo model mapping, the low-energy stable FP (of both models) is of course the strong coupling (SC) FP[31,54]. In the effective Kondo model, the SC FP Hamiltonian is characterized by.
+Thereforeevaluated at the SC FP takes the value,
+
+which as such embodies the spin-singlet formed between the impurity and bath. However the actual value of the correlator as measured in the Kondo model,, carries information about the RG flow,
+
+It is tempting to use perturbative scaling techniques[72]to evaluate the nontrivial factor, but we find that these yield rather poor approximations to the true value of the correlator obtained by NRG.
+
+To understand the flow of the same observablesin the bare model, we have to addto the bare model as a source term. This is because the effective interactionsdo not typically appear in the original bare model. Thus we may write,
+
+whereare the bare model FP parameters, andorare expectation values evaluated in the FP Hamiltonian of the bare model.
+
+In the low-energy limit, both bare and effective models share the same FP, by construction. Therefore in the bare model we may write the FP parametersas functions of the bare model parameters. From this it follows that
+
+whereare the FP expectation values of the effective model operators. Since the FP is the same, these expectation values are the same in bare and effective models.
+For the AIM to Kondo mapping, we find,
+
+as demonstrated numerically in Fig.2.
+This implies that,
+
+where equality is only approached in the largelimit of the AIM where the RG flow is equivalent to that of the Kondo model.
+
+The above has consequences for automated model learning. When optimizing an effective model with UML using GD, Eq.10, we should match the full set of observablesfor all effective model operators.
+This in turn implies that we enforce,
+
+However, the RG flow to reach the low-energy FP is not the same in bare and effective models since the latter typically has fewer FPs. Therefore enforcing Eq.34will give a solution for which the free energy of the effective model is in general not the same as that of the bare model. The low-temperature thermodynamic entropy, Kondo scales etc, are therefore only in good agreement if the matched observables do not flowstrongly.
+For the Kondo model, we see thatis in general renormalized rather differently compared with the AIM.
+
+Our conclusion is that the KLD Eq.9is only a good measure of Hamiltonian distinguishability if the bare and effective models have similar RG flows. Aminimaleffective model may therefore be poorly suited to this kind of optimization.
+
+The question addressed in the next section is: can more general effective model structures in principle capture the Kondo scale and thermal expectation values simultaneously, at least approximately? If so, can UML be used to automate the optimization while remaining computationally tractable?
+
+SECTION: IIIMinimally-constrainedeffective models
+
+We now go beyond minimal models, like the Kondo model, and introduce a family of minimally constrained (MC) effective models. With a given choice for the reduced Fock space of the effective model, MC models are characterized by a completely general operator structure, constrained only to respect thesymmetriesof the bare model. This allows for the inclusion and parameterization of all possible RG relevant, marginal and irrelevant operators. We show in the following sections that such an e ffective model can much more accurately capture the physics of the bare model. Because its RG flow is more comparable with the bare model, MC models are better able to capture both the behavior of local observables as well as the Kondo temperature and associated universal low-energy Kondo physics. This also means that the UML strategy can be used to find good effective models, when the starting point is an MC model.
+
+To construct an MC model, we first must decide on the reduced Fock space in which the effective model lives. In this regard, we note that by replacing the impurity part of the bare Hamiltonian by operators spanning only the ground state manifold, we also implicitly change the nature of the impurity-bath hybridization term. Consider for example the classic mapping of the AIM to the Kondo model. The impurity degrees of freedomare mapped to a spin-operator, but the impurity-bath tunnelingin Eq.24is also replaced by a spin-spin exchange couplingin Eq.25.
+
+An alternative way to formulate the mapping is to take an extended view on what constitutes the ‘impurity’ to include also the local bath orbitals to which the bare impurity degrees of freedom couple. In so doing, we also redefine our bath to exclude these local orbitals. We thus repartition the bare model aswhere our extended impurity is now given by,
+
+The extended impurity Fock space is thus,
+
+The bath and hybridization terms are correspondingly redefined,
+
+whereindicates the new starting site index of the redefined bath chain.
+This has the advantage that the new bath and hybridization terms are always the same in bare and effective models. We have emphasized this by now removing the ‘bare’ label from these terms.
+
+The MC effective model is similarly structured,
+
+where,and the effective impurity operatorslive in the extended MC effective Fock space,
+
+As before,spans the ground state manifold ofandis the Fock space of the local bath orbital(s).
+
+SECTION: III.1Corrections to the Kondo model
+
+As the simplest example, we again consider the particle-hole symmetric AIM as our bare model, Eq.24. The MC effective model can be found by following the above arguments. With a spin-operatorrepresenting the impurity andfor the local bath orbital, the effective impurity Fock spaceis 8-dimensional. Since we have conserved spin, spin projectionand charge, we may label the basis states of the MC effective impurity Hamiltonian by these quantum numbers,.
+Thenassumes a block diagonal structure, with each quantum number block in this case being simply ascalar. The allowed configurations are,
+
+where we specify the chargewith respect to the 2-electron half-filled state. Due to SU(2) spin symmetry, states with the sameandare degenerate; and due to particle-hole symmetry, states withare degenerate. The most general MC effective Hamiltonian defined in this Fock space, consistent with these symmetries, can therefore be parameterized by just three distinct Hamiltonian matrix elements. Because in this case each quantum number block contains a unique basis state, the Hamiltonian operator can be entirely specified in terms of projectors onto these symmetry spaces,
+
+according to,
+
+These projectors can be written out explicitly as,
+
+wherewithfor the local bath orbital andfor the impurity spin.
+
+The identity operator can also be resolved in this basis,
+
+such that. We can therefore use the identity operator to eliminate one of the projectors in Eq.42. As an example we eliminate theprojector and write,
+
+whereand the (as yet still unknown) parametersandhave been suitably rescaled. This is useful because the identity operator strictly does not flow under RG. Thus, the termcannot change the RG flow of the effective model or affect thermal expectation values of the projectorsevaluated in the effective model. Further, settingcorresponds to a uniform shift of all energy levels and does not affect the dynamics. For the symmetric AIM, the ground state lives in the,sector, so this choice is equivalent to measuring energies relative to the ground state energy. Importantly, the UML optimization, which is based on matching thermal expectation values, is sensitive to this elimination of a projector, as the unassuming operatorbecomes non-trivial in the bare model. The intricacies that arise from this sensitivity are discussed in the detail in Sec.III.2.
+
+In any case we are left with an MC effective model featuring just two tunable parameters. The physical interpretation of Eq.45is manifested by expressing the projectors in second quantized form,
+
+where. Recombining these projectors yields
+a different parameterization of Eq.45(but with the same expressibility). We write it as,
+
+whereand,,. Again, the term involvingcan be neglected and we set. The effective model written in this way is equivalent to a Kondo model with an additional electron-electron interaction term on the local bath orbital.
+
+Eq.45, and equivalently Eq.47, are the most general forms of the effective model that live in the extended Fock space, consistent with SU(2) spin symmetry, U(1) charge conservation, and particle-hole symmetry.
+
+Although the minimal effective model for the AIM is the Kondo model Eq.25, the MC effective model, withparameterized according to Eq.47, is precisely the Kondo modelplus the leading RG-irrelevant perturbationto the local moment fixed point identified by Krishnamurthy, Wilkins and Wilson in Ref.[54]. The extended-impurity approach thus allows us to define more general models that include such RG marginal and irrelevant terms, beyond those obtained by e.g. a Schrieffer-Wolff transformation.
+
+In terms of the interpretability of effective models learned by UML, we note that the symmetry analysis already offers insights into the kinds of coupling terms that can arise in a given extended impurity space. The fact that the physical impurity hosts a local moment is exploited directly to reduce the dimensionality of the active impurity space; this has implications for the interactions appearing in the effective model. By formulating the resulting symmetry projectors in second-quantized form, as per Eq.III.1, we obtain a more physical interpretation of these terms. Indeed, recombining these in the form of Eq.47makes a connection to the RG theory of the low-energy properties of the bare model. However, the numerical values of the optimized coupling constants remain somewhat inscrutable. Only in perturbative limits do these effective parameters take a simple form in terms of the bare model parameters.
+
+When the AIM is the bare model, the extended impurity Fock space dimension is reduced modestly from 16 to 8, but the parametric complexityis the same and we do not appear to have gained much. However, we emphasize that the AIM isnotthe intended application of this method. Rather, we are interested in being able to systematically derive expressive effective models for complex impurity systems. We provide examples of this in the following. The AIM is however still a useful benchmark test case which we continue to explore.
+
+SECTION: III.2UML optimization of the MC effective model
+
+With the form of the MC effective model now at hand, we turn to the problem of optimizing its parameters using the UML method. As explained in Sec.I, this amounts to matching the observablesin bare and effective models, whereare the operators comprising the MC effective model, andis the admissibility operator that projects onto the reduced Fock space of the effective model. The explicit form of these will be discussed below, and an explicit example of the UML optimization given at the level of the AIM.
+
+First, we note that for the MC effective model (in either form, Eq.45or Eq.47), we have two observables to match andtwoparameters to learn when comparing with the bare model. In particular, we emphasize that the identityisnota matchable observable, because the Fock spaces of bare and effective models are different by construction. Therefore althoughin the effective model, we havein the bare model. From this it follows that it is in factimpossibleto demand that,
+
+be satisfied simultaneously for the full set of projectors. Importantly, we conclude that the optimization problem Eq.9isoverdeterminedwhen using these projectors. Therefore at least one projector must be omitted from the UML observable matching process. In Eq.45we eliminated, but other choices can be made.
+
+Another key point is that matching different combinations of observables may yield different results for the optimized effective model parameters. The operator content and scaling dimensions for different observables means they are renormalized differently. Since bare and effective models have different RG flows in the UV, different effective model parameters are in general needed to ensure agreement between for a given set of observables. We return to the systematic selection of optimal observables below; but here we simply note that observables that flow theleastare the best choice.
+
+Although the impurity Hamiltonian terms inin Eq.47are arguably more physically meaningful, the decomposition in terms of symmetry projectors in Eq.45turns out to be most advantageous for UML. This is because (i) the projectors have a direct meaning in the bare model, since bare and effective models have the samesymmetries; (ii) the projectors mutually commute, and so the optimization problem isconvex; (iii) the action of the admissibility operator on the projectors is straightforward.
+
+We first look at the AIM as our bare model. As explained above, we have two observables to match within the UML optimization procedure. Working with the projectors in Eq.45we tune the effective model parametersandvia GD according to Eq.10. Importantly, the KLD loss function itself need not be computed at any stage; the optimization can be done with a knowledge of its gradient, which involves only the observablesandin the effective model, andandin the bare model. The optimal solution is found when both:
+
+Theandquantum numbers have physical meaning in the enlarged Fock spaceof the bare model, and socan be defined in the bare model. The admissibility operator projects onto thestates of the impurity. For the AIM, this means the two local moment impurity states with. Because of the simplicity of the AIM and the symmetry constraints, we can constructand use the definitions of the projectors given already in Eq.III.1.
+
+A key advantage of UML is that the optimization is done via physical quantities that can be obtained using any numerical method able to compute static thermodynamic observables, includingab initiomethods. Indeed, different methods can be used for bare and effective models, if desired. For the AIM considered in this section, we use NRG to compute the observables in both bare and effective models at temperature[55,73]. We consider the role of finite temperature in the next subsection.
+Note that the (relatively expensive) bare model ‘reference’ observables need be computed only once. The (computationally cheap) effective model observables are iteratively calculated during the GD until Eq.49is satisfied. Once the optimized effective model parameters have been found, the effective model can be fully solved to obtain the physical properties of interest.
+
+In Fig.3we show one such example calculation for the AIM to MC model mapping. The temperature dependence of the impurity entropy is shown for the bare AIM (points), compared with that of the optimized MC effective model (lines) for three different values of, keepingfixed. The inset shows a comparison with UML optimization of onlyin the minimal Kondo model Eq.25by matching just(dashed line), as well as UML optimization of bothandin Eq.47by matchingand(dot-dashed line). Also given for reference is the minimal Kondo model withobtained perturbatively from SWT (dotted line).
+
+The numerical results show that UML using the MC effective model Eq.45represents a significant improvement over the other methods, already at relatively high(of the order of the bandwidth) where the RG flows of the bare and effective models only mildly differ. However, we also see that the low-energy physics, characterized by the low-temperature crossover scale, is still not perfectly reproduced by UML for. We show in Sec.IVhow the results can be systematically improved.
+
+As noted above, there is some ambiguity in Eq.42as to which projector to eliminate in the UML observable matching process. In Eq.III.1we somewhat arbitrarily eliminated the projectorby using the identity operator, but in principleorcould have been eliminated. Here we present a method for identifying which projector should be eliminated, and validate this numerically by comparing effective models based on different choices. For the case of the MC effective model it turns out that indeed Eq.III.1is the optimal model. However for the more complicated effective models considered in Sec.IVwhich feature a larger number of observables, one requires a systematic approach
+
+The first step is to define the Frobenius scalar product (FSP) on the operator spaceand the corresponding norm.Here we use the FSP to decompose an operatorfrom the effective model into contributions from the low-energy fixed point Hamiltonian of the bare model, and contributions from RG-irrelevant corrections to the fixed point,.We defineand, noting that. The operatorcan be found by the Gram-Schmidt procedure.
+We now decompose the projector as, which can be used for the substitution,
+
+The coefficientsandin Eq.III.2.2tell us the relative weight of RG relevant and RG irrelevant terms in the decomposition of a given operator. In particular, the largerthe strongerflows under RG. For the example of theminimalKondo model with, we have trivially thatand the operator is entirely RG relevant,. The projectorsin Eq.III.1on the other hand have a non-trivial decomposition. To render the overlap parametercomparable for different projectors, we introduce the normalized quantity,. This provides a means to compare the strength of the renormalization of the effective interactions. Since we wish to compare only the most weakly renormalized observables in bare and effective models, we can use the FSP to eliminate the projector with the largest. For the effective interactions ofandand the fixed point Hamiltonian, the FSP yields,
+
+Based on these calculated values of, the best effective Hamiltonian iswith, since this excludes the term that gets renormalized the strongest. This is precisely Eq.III.1.
+
+We put this hypothesis to the test by performing the UML optimization for all four effective Hamiltonians and comparing the results: Eq.47and Eq.42with each of the three projectors eliminated in turn. Our numerical results are presented in Fig.4.
+
+In the top-left of panel (a), we perform UML optimization on, matching the two effective model operatorsand. Theexpectation values of these operators evaluated in bare and effective models using NRG are plotted as a function of. Both observables can be matched in the effective model for all bare model parameters. In the top-right panel of Fig.4(a) we show instead the UML optimization of(Eq.42) with. Here we matchand, which is also achievable for all. Althoughis not matched during the optimization, we can still compare its calculated expectation value in the optimized effective model with that of the bare model. We find, as expected, that they only agree in the perturbative limit. It is not possible to match all projectors simultaneously in general. The bottom-left and bottom-right panels of Fig.4(a) correspond to optimization of Eq.42withand, respectively – a similar result pertains.
+
+In Fig.4(b) we compare the accuracy of these differently-optimized effective models, by calculating their Kondo temperature, and comparing with that in the bare model. Our figure of merit is the (logarithmic) relative error, defined
+
+Given the exponential dependence of the Kondo temperature on the couplingin the minimal Kondo model[36], Eq.51captures the error in the effective.
+Our numerical results in Fig.4(b) show that including theterm as a correction to the Kondo model as per Eq.47(dotted line) does not appreciably improve on the results of the minimal Kondo model. Furthermore, UML optimization of the MC effective model Eq.III.1, with(dashed) or(dot-dashed), does not produce markedly better results for. We attribute this to the injudicious attempt to match observables that flow strongly under RG. However, when the most RG-relevant operator is eliminated,(orange line) the Kondo temperature is well approximated at all. This shows an enormous improvement over the observable-matching minimal model. We conclude that the FSP is a good way to establish RG-relevance of Hamiltonian terms and to identify ill-fitted interactions for the optimization. Observables with weaker flow are better suited for the KLD distinguishability measure. This analysis provides a guide as to the proper set of observables to match within UML.
+
+Minimization of the KLD loss function during UML involves computing static thermal expectation values, and comparing these in bare and effective models. In principle this can be done at any temperature,. However, one obtains meaningful results only when the temperature is sufficiently low that theactiveFock space of the bare model is comparable to that of the effective model,. For the AIM, this means in practice, since then impurity charge fluctuations are frozen and the description of the impurity as a local moment spin-degree of freedom is applicable.
+
+So far we performed UML by calculating observables at zero temperature using NRG. We note that other methods operating atthat target the ground state can similarly be used, for example quantum chemical methods[4], the density matrix renormalization group (DMRG)[74,75,76], orab initiomethods based on the variational principle[77,78]. However, here we show that that the results of the effective model optimization are rather insensitive to temperature provided. The important consequence of this is that the bare model need not be completely solved down to, or the exact ground state of the many body system determined. Methods based on imaginary time evolution that favour relatively high temperatures[53]can therefore be used for complex bare model calculations. Indeed, imaginary timeab intiomethods can also be used for a first-principles treatment of the bare model[79,80].
+
+In Fig.5we plot the temperature-dependence of the optimized MC effective model parameters(panel a) and the corresponding thermal observables(panel b). For this demonstration, we use the AIM as the bare model and use NRG as our impurity solver. Once the AIM reaches the local moment regime for, the optimized parametersbecome essentially temperature independent. The observables can also be precisely matched in this regime, down to. Demonstrating that the calculated observables can be matched and do not change appreciably with temperature provides an independent check on the convergence of the UML optimization.
+By contrast, it is clear that a good effective model cannot be formulated for.
+
+Finally, we turn to UML optimization of the MC effective model for more complex impurity systems. For a bare model with a unique doublet ground state, Eq.45still constitutes a good effective model and UML involves matching the observables as per Eq.49. With conserved chargeand spinin the bare model, we can again define projectors. However, care must now be taken because (i) a multi-orbital bare model might have a reference chargethat is not the same as in the MC effective model; (ii) in general the bare model will have several multiplets for a given symmetry subspace defined by the quantum numbersand; and (iii) the admissibility operator projects onto the physical impurityspace ofbut the operators are defined in the extended impurity Fock space.
+
+In the following we address these issues by interpreting the operatorsin the bare model as meaning the projector onto the spin-subspace of theenlargedimpurity Fock spacewith spinon the physical impurity Fock space, where the local bath orbitalhas a chargerelative to half-filling. We assume a trace over different charge states and multiplets of the physical impurity space that are compatible with these conditions.
+Thus, we may define,
+
+whereis an operator for the total spin of the physical impurity space anddenotes the thermal expectation value in the full bare model, of an operator defined in the spinblock of the enlarged MC impurity Fock space.
+
+We emphasize that any method that can compute such observables can be used for the UML optimization. This can be done at any temperature where bare and effective models should agree (that is,and includingground state calculations). For example, QMC can be used to compute reference observables in the bare model at relatively high temperatures, and NRG can be used to iteratively refine the MC effective model via GD. With the optimized effective model at hand, one can then solve the effective model down tocheaply with NRG, and calculate real-frequency dynamical correlation functions as might be needed for a DMFT calculation, electrical conductance via the Kubo formula, or the temperature-dependence of thermodynamic quantities such as entropy or magnetic susceptibility.
+
+Ultimately, we envision that UML will be integrated withab initiomethods to tackle problems that are currently out of reach for brute-force calculations. This is beyond the scope of the present work, but we provide a discussion of how few-body approximants to bare-model observables might play a role in UML in AppendixD.
+
+As a nontrivial demonstration of the UML methodology, we now consider its application to a bare model describing a triangular triple quantum dot (TQD) coupled to a metallic lead, in a magnetic field – see Fig.6(a). This system supports a rich range of physics[81,*mitchell2013local,83,84]. The physical impurity Hilbert space has dimension, and SU(2)-spin symmetry as well as particle-hole symmetry is broken. We consider a regime of filling in which the TQD hosts a net spin-moment, delocalized across the three interacting quantum dot sites.
+The bare model Hamiltonian is given by,
+
+whereis the number operator for each quantum dot,is the total TQD number operator, andis the total TQD spin projection.
+
+The UML analysis for the TQD proceeds similarly to that of the AIM. However, with the application of a magnetic field, the spin multiplets previously labelled by the quantum numberare now no longer-fold degenerate (although totalis still conserved). Due to the broken particle-hole symmetry,andsectors are no longer degenerate. The lower symmetry of the bare TQD model therefore implies that we also have spin and charge anisotropies in the MC effective model. As a consequence, UML for the TQD entails matching 8 independent observables, rather than 3 for the symmetric AIM.
+Thermal expectation values of the symmetry projectorsare the observables which we compare in bare and effective models, with,,,,,,. Theblock is a diagonalmatrix. These observables can be defined and computed (here using NRG) in both bare and effective models.
+
+The effective model is then optimized by minimizing the KLD loss function by gradient descent. Since the KLD is still convex and its gradient, Eq.10, is expressed in terms of the computed observables, the optimization remains highly efficient, despite the increase from 3 to 8 in the number of parameters to be tuned. The gradient descent method is easily able to treat optimization problems of this complexity[12]. Indeed, as shown later, systems with a far larger number of parameters in the non-convex case are also readily optimized.
+
+Each step of the optimization process involves solving the MC effective model using the updated coupling constants, and computing the updated set of observables. The compute time simply grows linearly in the number of observables. These are compared with those of the bare model from a one-shot calculation. Even though the effective model has to be solved many times, these calculations are comparatively cheap, since by construction the Hilbert space dimension of the impurity in the effective model is less than that in the bare model. Although the effective model may have a larger number of coupling constants than the original bare model, it is defined in a reduced Hilbert space and therefore is of lower computational complexity to solve.
+
+The iterative solution and refinement of the effective model with UML has essentially fixed computational cost, and is highly efficient. The potential bottleneck is in the one-shot solution of more complex bare models, as noted above. For the TQD however, NRG can still be used to obtain exact benchmark results.
+
+We demonstrate the viability of UML for the TQD, Eq.LABEL:eq:tqd, in Fig.6. Thermodynamic properties of the bare TQD (dot-dashed lines) and the optimized MC effective model (solid lines) are compared, for different temperaturesand field strengths. Panel (b) shows the impurity contribution to the total entropy,, and (c) shows the magnetic susceptibility, both vs. The simplified effective model successfully captures the physics of the TQD for. At higher temperatures, TQD degrees of freedom not included in the effective model contribute to thermodynamic averages.
+
+Asis increased in the bare TQD model, we see a crossover from Kondo-screening of the TQD local moment, to polarization of the local moment by the field. Both the entropy and the magnetic susceptibility are fully quenched asfor any. However, the scale on which this happens depends on the underlying mechanism. For small fields(green line) screening occurs due to the Kondo effect, and the physics is insensitive to. However, at largerthe Kondo effect, which depends on dynamical spin-flip scattering, is destroyed. The TQD local moment is then screened on the scale of. Forwe therefore see scaling collapse in terms of, with polarization of the local moment setting in for(see yellow, blue, red lines). The low-energy behavior of the optimized effective model captures this crossover and the onset of scaling vsaccurately.
+
+We conclude that more complex models, including those with more interacting degrees of freedom and lower symmetries, can be treated efficiently and accurately with UML. Physical properties of the resulting optimized effective models agree quantitatively at low temperatures with bare model benchmark reference results.
+
+SECTION: IVSystematic improvement of extended models
+
+We now put the above discussions on a more general footing, and consider systematic improvements to the MC effective models explored so far.
+
+The expressibility of our effective model to capture different aspects of the physics of the bare model depends on the types of operators that can be included. Going beyond the minimal Kondo model, which includes only the most RG-relevant operator, our MC effective model lives in an extended impurity Fock space Eq.40, which allows for inclusion of more general coupling terms, Eq.45. Our starting point in this section is to note that the quality of the effective model can be systematically improved by further enlarging the effective impurity Fock space:
+
+which now includes bothandbath orbitals. The extended effective model then takes the form,
+
+where the extended effective impurity Hamiltonianlives in the extended impurity Fock spaceand correspondingly the bath and hybridization terms have been redefined according to Eqs.37,38. The bath chain now starts on site index. The impurity part can of course be further extended if required. The MC effective model discussed in Sec.IIIcan be viewed as the first member of a family of such extended models.
+
+When the original bath Eq.14takes the form of a Wilson chain[54], we note that theoperators become progressively less RG relevant as the chain indexincreases (specifically, the most relevant operator of the linearized RG transformation Eq.23involved in the decomposition ofnear the low-energy fixed point has an eigenvaluethat decreases with). Therefore, expanding our effective impurity Hamiltonian to include operators from Wilson orbitals with largerresults in additional terms that are progressively more RG irrelevant. On the one hand, strongly RG irrelevant corrections to our effective model become less important for determining the low-energy physics, but on the other hand, expectation values of these operators flow very weakly under RG and therefore can be accurately matched even at relatively high energy scales with corresponding observables in the bare model during UML optimization.
+
+To proceed with the construction and UML optimization of our generalized effective models, we first note that the
+symmetry representations of U(1) chargeand SU(2) spinonstill commute, and so we can construct a basis on the effective Fock space labelled by quantum numbersfor the non-abelian spin,for the abelian magnetic quantum number of the Cartan subalgebra of, andfor the abelian charge,
+
+whereis themultipletindex that distinguishes different basis states with the same set of quantum numbers. Unlike in the basic MC example, in general the symmetry blocks of the extended impurity Hamiltonian are not simplyscalars.
+Furthermore, such multiplets are not unique since linear combinations of different multiplets with the same set of quantum numbers are also valid multiplets. This introduces a gauge degree of freedom in the choice of the basis that means we cannot unambiguously compare degenerate multiplets between bare and effective models based on symmetry alone. We show below that fixing the gauge by lifting the multiplet degeneracy allows to reestablish a one-to-one correspondence between bare and effective models.
+
+Accounting for the multiplet structure of the symmetry spaces, we construct projectors by generalizing Eq.41,
+
+One can use these projectors as a mutually commuting operator basis to construct the effective impurity Hamiltonian,
+
+The allowed quantum number configurations compatible with Eq.54are,
+
+where the chargeis again specified relative to half-filling,is the number of multiplets with a givenand, and we take the impurity to be a spin-object. We therefore have 15multiplets that span the extended impurity space.
+
+The advantage of formulating the effective model in terms of such symmetry projectors is that equivalent projectors can be identified in the bare model, since the two models share the same symmetries. The projectors so defined also mutually commute, which means the UML optimization problem is convex (AppendixA).
+
+A disadvantage is that severalblocks contain more than one multiplet, which means that the projectors cannot distinguish between multiplets with the same. The effective model Eq.58is thereforenotthe most general extended impurity model one can write down. Interactions in the bare model will in general lift the energy degeneracy of these multiplets, but this effect cannot be captured by a model of the form of Eq.58.
+
+SECTION: IV.1Fixed basis
+
+A partial solution is to fix the basis according to physical intuition of the problem, and add terms to Eq.58that lift the energy degeneracy of multiplets with the sameandquantum numbers. This should be done in such a way that: (i) the new set of operators still all mutually commute, so as to guarantee convexity of the UML optimization problem; and (ii) the added terms have a physical correspondence in the bare model. This approach is still not the most general form of extended MC effective model, because we make a basis choice. We return to the fully general case later.
+
+Since theandbath orbitals are common to both bare and effective models, and there is a physical tunneling matrix element between these orbitals in both cases, we introduce the operator,
+
+The tunneling operatorhas support only on the physical bath Fock space and therefore does not depend on the structure of the impurity in the bare model. However, one might anticipate thatwill depend on details of the bare impurity model. Action of the tunneling operator conserves charge and spin and socommutes withanddefined on the extended impurity space. We can use the eigenvaluesof the tunneling operator to label our basis states, as shown explicitly in AppendixB. With basis stateswe almost fully remove multiplet degeneracies,
+
+Thesubspace still hasmultiplets, but this degeneracy can be lifted by introducing an additional operator (which we take to act only in this subspace),, which measures double-occupancy on the bath sites included in the extended impurity space.has eigenvalues 0 or 1 only in the subspace where the operator acts, so we employ a concise notation in which theeigenvalues are augmented into one label.
+As such, all multiplet degeneracies are lifted when we express
+
+where the spin multipletsare now unique (we drop the multiplet index) and.
+
+Fixing the multiplet basis in such a way allows to address each multiplet individually and make a comparison of their projector expectation values in bare and effective models. This is the best one can do while retaining a fully commuting set of extended impurity Hamiltonian operators, as required for convexity. However, the most general extended effective model would not constrain the basis in this way.
+
+If desired, the projectorscan be formulated in second-quantized form (see AppendixD). New types of coupling term arise in the extended MC effective model, relative to the basic MC model. In particular, we seeassisted hoppingterms, in which an impurity spin-flip is accompanied by electronic tunneling between bath sites. This might be expected from the physical interpretation of the Kondo effect in terms of spin-flip scattering.
+
+SECTION: IV.2Generalized basis
+
+The most general extended effective impurity model must include off-diagonal terms coupling different multiplets. This can be captured by operators of the type
+
+such that our effective model reads,
+
+The model thus features 25 distinct interaction terms.
+Due to the cross terms, the operatorsdo not in general commute, and so the UML optimization problem is no longer convex. This is unavoidable for more complex effective models, but the appearance of local minima in the search landscape can still be dealt with in practice using more sophisticated GD-based routines.
+
+The impact of including the off-diagonal termscan be quantified using the FSP. An optimized representation of any operatorusing the set of operators contained in the model Eq.62can be found by minimizing the normalized FSP[85],
+
+As a demonstration of the expressibility of the model Eq.62, we consider its ability to represent the Kondo Hamiltonian operatorfrom Eq.25. In the limitwhere the perturbative SWT holds, the effective model should reduce to Eq.25, so this is a nontrivial and stringent check that a good effective model should satisfy. By minimizingwith respect tousing standard gradient descent, we find, meaning that Eq.62can perfectly represent this operator. However, if we use a fixed basis (no off-diagonal terms) as with Eq.60, then. The fixed basis therefore substantially reduces the expressibility of the extended model. Therefore, even though the fully general extended model lacks convexity, we argue that this feature should be sacrificed and that Eq.62should be used.
+
+SECTION: IV.3UML optimization of extended models
+
+Extended MC effective models with a general multiplet basis such as Eq.62can represent any Hamiltonian term in the extended Fock space of Eq.54, consistent with SU(2) spin and U(1) charge symmetries.
+
+Within UML, the GD optimization of the effective model is achieved by matching observables in the bare and effective models, Eq.10. As noted in Sec.IIIhowever, one cannot hope to match thefullset of symmetry projectors because the optimization problem is overdetermined. The solution discussed in Sec.III.2.2is to eliminate the observable that flows strongest under RG, as quantified by the FSP Eq.63.
+
+However, even by omitting the observable with the largest, we are still left with 24 observables to compute in the effective model Eq.62. It is not obvious that for generalized effective models one can always simultaneously match all such observables in bare and effective models. Indeed, we find that even in the optimized effective model, a small number of observables are not matched, and the KLD loss function can therefore only be approximately minimized. To quantify this, we introduce a measure of the relative error in a given observable,
+
+When learning a representation for complex bare models (for exampleab initiomodels of a realistic molecular junction), the Kondo temperaturewill not typically be a good figure of merit to assess the quality of the effective model. This is because, for any practical application of UML, the bare model will not itself be solvable down to very low but finite temperatures – hence the need in the first place for a simplified effective model that can be fully solved. Therefore one will not in general have access to the referencefor the bare model, from which to compute the relative error Eq.51. The error in computable observables is thus more practical; the KLD loss function gradient depends on these observables, which are matched during the optimization process. For simple bare model test cases such as the AIM, we can however still compare withand other quantities.
+
+Taking the AIM again as our bare model for demonstration, we perform UML optimization on the extended MC effective model Eq.62. For representative AIM parameters, in Fig.7(a) we plot the relative error of selected (diagonal) observables labelled by the projector quantum numbers, as a function of the optimization step (epoch). We find that most effective model observables converge exponentially quickly towards their reference bare model counterparts, whereas a few are essentially stationary and cannot be matched.Indeed, it is in general not possible to perfectly match multiple observables simultaneously, and the minimum relative error is small but remains finite after convergence. This is because the effective model has good but not unlimited expressibility: minimization of the KLD loss function typically involves a compromise in the optimized solution.However, as Fig.7(b) shows, this does not make much difference to the quality of the optimized effective model, as quantified by the Kondo temperature. Afteror so training steps,for the effective model (red line) converges quite accurately to that of the bare model (blue line).
+
+In Fig.7(c) we show the relative (logarithmic) error inin the fully effective model, as a function of AIM interaction strength, with the red line for the fully general extended MC effective model Eq.62, compared with the fixed-basis model Eq.60as the purple line. We see thatis reproduced rather well by the effective model in both cases, for all values of. As expected from the above arguments, the generalized model does better at large. However, somewhat unexpectedly, the fixed-basis model has a smaller error at small. We attribute this to the fact that optimization of the fixed-basis model requires to match fewer observables, which is easier to achieve in practice. Furthermore, the additional (off-diagonal) observables in Eq.62appear to flow more strongly under RG at smallthan the projectors in Eq.60, meaning that matching them may ironicallyreducethe quality of the optimized effective model. Despite these subtleties of the training process, the extended MC effective models do represent a systematic improvement over simpler effective models.
+
+We compare the different approaches in the following.
+
+SECTION: VComparison of models
+
+In this section we consider the relative performance of the various effective models introduced in this paper.Each is optimized by UML to capture the physics of the AIM, which serves as our benchmark bare model.As we have shown, it is in general not possible to simultaneously capture within a simplified effective model the universal low-temperature thermodynamics (as characterized by the Kondo temperature) as well as the behavior of static thermal expectation values of local operators. Any effective model must therefore strike a compromise in reproducing these features. Different methods may target different aspects of the physics and be better suited to different applications.
+
+The-learning approach[51]requires calculation of the full free energy of bare and effective models within the optimization process. It guarantees to reproduce the low-energy thermodynamics andwithin a minimal Kondo model, but fails to capture local observables except in the perturbative limitwhere the SWT also holds as a good description. However, it might not be possible to accurately calculate the free energy of a complex bare model in practice, so other methods might be preferred.
+
+UML, by contrast, is based on matching certain local observables, and so by construction these observables agree in bare and optimized effective models. However, applied to crude effective models, such as minimal Kondo-type models that only feature the most RG-relevant terms, UML yields solutions that do not capture well the low-energy thermodynamics and Kondo scale. By including minimally constrained models in an expanded effective impurity Fock space, we systematically improve upon results obtained by UML. Such models include RG-marginal and RG-irrelevant corrections, and UML optimization is done using the set of observables that do not flow strongly. Depending on the level of theory employed, one can optimize with UML generalized effective models that do capture local observables while also approximatingwith good accuracy.
+
+These features are illustrated in Fig.8, where we compare the performance of the different effective models.
+
+The UML method is based on minimizing the KLD loss function Eq.9that quantifies the distinguishability between bare and effective model. In general ML applications, the value of the loss function is a useful metric to judge the training progress and ultimately the performance of the model. In the case of Eq.9however, the KLD is essentially impossible to compute in practice. The training progress cannot therefore be established in the standard way. On the other hand, we have shown that to minimize the KLD via GD we only need to know its gradient, Eq.10. This can be done without actually ever evaluating the KLD itself. For a commuting set of local impurity operators (for example the symmetry projectors in MC models), the KLD is convex and so the gradient vanishes only at saddle-points or global minima of the KLD. Thus, the gradient is itself a good replacement for the loss function to determine whether the training of a model has converged. For the cases considered in Fig.8, the KLD gradient can always be made to vanish.
+
+We therefore turn to our other metrics to quantify the relative performance of the models. With our NRG solution of the bare and optimized effective models, we can compute the Kondo temperature directly. This is shown in Fig.8(a) as a function of. The exact result for the bare AIM (points) are compared with the effective models (lines): the-learning and UML result for the minimal Kondo model shown as blue and green lines; the MC and extended MC models shown as the orange and red lines. Panel (b) shows the corresponding relative errorevaluated using Eq.51.
+In panel (c) we plot thevalue of static observablesand, comparing results in bare AIM (points) with those of the optimized effective models (lines). We have normalized the results by their value in thelimit.
+
+First, we note that by construction,-learning perfectly reproduces thevalue for all, blue line in Fig.8(a). However the behavior of, which is not directly optimized by-learning, is poorly captured, see panel (c). On the other hand UML for the minimal Kondo model (green line) directly matches the observablein panel (c) and therefore by construction agrees perfectly with the bare AIM results. Thein this case is not directly matched, and panel (a) shows that UML for the minimal model performs very poorly using that metric, except in the SWT (perturbative) limit.
+
+The behavior of the Kondo temperature and the observables is a stringent nontrivial performance check for the MC and extended MC models, since neithernorare directly matched within UML. We find that UML represents a good compromise on the performance of these models for the two metrics. Good performance is seen for each over all, with a systematic improvement for extended MC over plain MC.
+
+With the optimized effective models at hand, we compute using NRG the full temperature-dependence of the thermodynamic entropy for a representative example of the bare AIM with, comparing the results in Fig.8(d). Within the regime of validity of the effective models (), we see that the MC and extended MC models do accurately capture the physics of interest for the AIM.
+
+SECTION: VIConclusion
+
+In this paper, we focused on developing new ML-inspired methodologies for the automatic derivation of expressive and accurate effective models for quantum impurity systems. To establish the feasibility and performance of our UML method, we studied in detail the AIM as the bare model. This is because the AIM is a very well-known paradigm[36], which we can solve exactly down tousing NRG[55]for benchmarking purposes. The same approach can in principle be used for more complicated bare model systems as described in Sec.III.2.5. However, we recognize that useful applications of UML may require integration withab initiomethods to treat realistic systems[77,78,79,80,76,4]. This is beyond the scope of the current work, but we discuss possible ways to do this as an outlook in AppendixD.
+
+The UML framework that we have introduced is based on unsupervised ML techniques, with the goal to optimize parameters of a variational effective Hamiltonian, to best describe the low-temperature physics of a more complex bare model quantum impurity system. In a well-defined sense, the optimized effective Hamiltonian is the “best fit” description at a given complexity level. We propose a loss function to quantify the distinguishability between bare and effective models, based on a classical distribution of quantum Feynman diagrams within a hybridization expansion of the partition function. The loss function can be minimized using GD by computing certain physical observables. In the standard case we discuss, the resulting optimization problem is convex, resulting in a highly efficient learning process. The optimized effective model is the one in which local static observables match in bare and effective models.
+
+Care must be taken however, since thermodynamic observables are not invariant under RG and so bare an effective models with different RG flows may have different static expectation values. Thus, the naive matching of observables does not imply that low-energy scales, such as the Kondo temperature, are correctly recovered. We confirm this directly, already at the simplest possible example of the Anderson-Kondo model mapping. To mitigate this we identify and construct the best observables to match, based on an analysis of their RG relevance. We show that this can be done while maintaining convexity of the optimization, and that low-energy scales can be recovered.
+The accuracy of our effective models can be systematically improved by increasing the complexity of the effective impurity.Although this clearly offers no advantage at the level of the AIM, UML produces dramatically simplified effective models when applied to more complex systems, consisting of 3 or more interacting active orbitals.
+The accuracy and efficiency of UML may be further improved by formulating bare and effective models in the ‘Natural Orbital’ (NO) basis[86]. Since entanglement between NOs and the rest of the fermionic bath is small by construction, local observables to be matched in UML should flow weakly, which we have showed is a desirable property when formulating effective models.
+
+An important aspect of the UML framework is that it can be performed at relatively high temperatures without compromising precision. This opens the door to applying the algorithm to vastly more complex systems than could be treated by brute-force NRG calculations alone. For example, a one-shot CT-QMC calculation of observables for the bare model could be used as a reference to optimize a simpler effective model treated cheaply within NRG, which can then be solved down to. Integration withab-initiomethods may permit the realistic study of complex strongly correlated systems that are currently out of reach.
+
+SECTION: Appendix AHybridization expansion and convexity of the loss function
+
+For a general Hamiltonian, that can be bi-partitioned, one can compute the partition function as an expansion in powers ofby[71],
+
+whereis the imaginary time. This expansion is discussed extensively in the context of continuous time quantum Monte Carlo (CT-QMC)[87,88,89]. In the case of hybridization expansion CT-QMC[89]describes the hybridization between a non-interacting bathand an interacting quantum impurity. For the following discussion, we therefore consider Hamiltonians of the form,
+
+where we assume that the hybridization tensor is diagonal in the spin quantum number[89]. For this type of Hamiltonian Eq.Abecomes,
+
+Eq.Acan be interpreted as sum over all possible diagrams obtained by allowing electrons to hop between the impurity and the bath. Since the bath is non-interacting it can be integrated out and using Wick’s theorem theantiperiodic hybridization functioncan be obtained,
+
+wheredenotes an impurity diagram in terms of the sequence of impurity operators[71]such that,
+
+Following the approach of Ref.[61], we bring the impurity operators into the eigenbasisofand thus,can be trivially evaluated, with
+
+and instead of occupation diagrams we obtain diagrams involving impurity eigenstates. Thus, Eq.Acan be rewritten in terms of the weights of the sum of the eigenstate diagrams
+
+withdenoting the contribution from impurity operators in the impurity eigenbasis
+
+andthe average impurity energy over a diagram
+
+Having reformulated the expansion of the impurity partition Eq.Aas Eq.71we now look to prove theconvexityof KLD loss function Eq.9.
+
+To show the convexity of Eq.9it does suffice to show that the free energyis convex in the variational parameters. The core assumption of our calculation is that the effective impurity Hamiltonian is constructed as follows:
+
+which is the case for the effective models in the main text.
+For the following proof it is convenient to define aweightfor eigenstate diagrams to reformulate Eq.71,
+
+where we also assume that, such thatacts as a probability distribution upon normalization.
+To show thatis convex we need to show its Hessian is positive semi-definite,
+
+In the following, we use the shorthand notationforfor concision.
+It is straightforward to compute the first order derivative using the fact that the trace is invariant under circular shifts,
+
+However we can also carry out the derivative directly on the diagrammatic expansion of the partition function,
+
+It holds that a given eigenbasisofdepends in the following way on the parameters,
+
+With the assumptions Eq.74in place all operators in the Hamiltonian are mutually commuting, implying that they share a common set of eigenvectors. This property allows us to trivially evaluate these derivatives,
+
+with. With these relationships it is straightforward to show that,
+
+This allows the calculation of the derivative of, which amounts to,
+
+This shows thatis a generating functional of moments of. We therefore write,
+
+Accordingly the second order derivative becomes,
+
+which can be identified as the covariance. Since the covariance is a positive-semidefinite matrix, we have,
+
+making the Hessian ofpositive semi-definite and the same applies to the Hessian of the KLD loss function Eq.9under the aforementioned assumptions Eq.74.
+
+SECTION: Appendix BExtended impurity basis
+
+To construct the projectors of the extended MC Hamiltonian, we require the basison the extended Fock space Eq.54. The first step in the construction is to determine the charge, total spinandeigenstates. For the occupation basis we use the labelling convention:
+
+Thus, the Hilbert space is spanned by the states:
+
+The statesandcan be obtained straightforwardly by replacing allentries with. It is important to note that when using onlyandquantum numbers, thesubspace is two-fold degenerate and thesubspace is threefold degenerate. Therefore, using only the projectors onto theandquantum number subspaces limits the expressibility of our effective model. Full tunability of the model requires that we can address each basis state individually. The next step is thus to lift these degeneracies. We may do this by diagonalizing the hopping operator in the degenerate subspaces,
+
+In theandsub-spaces we can find a common eigenbasisofandthat allows to completely lift the multiplet degeneracy, e.g.
+
+In thesubspace one can show that the hopping has no effect on the quadruplet and the doublet. However thesubspace behaves non-trivially under the hopping:
+
+We can combine these states such that they become eigenstates of:{adjustwidth}-1.5cm-1.5cm
+
+Thefourfolddegenerate multiplet is now almost completely lifted. Only thesubspace is still twofold degenerate. This last degeneracy can be lifted by introducing a further operator,
+
+which has the eigenvalesin thesubspace. Instead of introducing a new label for only this subspace, the eigenvalues forandare added together in thelabel. This gives the states:{adjustwidth}-1.5cm-1.5cm
+
+The dimension of each subspace spanned by these labels has thereby been reduced to, as desired.
+
+SECTION: Appendix CDetails of NRG calculations
+
+All calculations in this work were carried out using Wilson’s NRG method[90,91]using the full density matrix approach[92,73], which allows the precise calculation of the static observables discussed here. The impurity entropy, which is used to estimatevia, was computed using standard thermodynamic NRG[90]. For the simulation of bare and effective models, the number of kept states isand we use a Wilson chain discretization parameter ofat a Wilson chain length of. Total charge and spin projection quantum numbers are exploited.
+
+SECTION: Appendix DIntegration withab initiomethods
+
+At the heart of the UML method is the computation of local observables in bare and effective models. The effective models are simple enough that this can be done accurately at any temperature using e.g. NRG. However, evaluating objects such asin the bare model within anab initiodescription is in general challenging.
+
+For methods that operate in second quantization, we present here a straightforward way to construct the bare projectorsthat project onto the quantum number states. First we introduce the auxiliary operators,
+
+whereis the total spin operator of the extended impurity andthe total charge operator of the extended impurity.
+The operatoreliminates all contributions with chargeto a stateand similarlyeliminates all contributions with total spin.
+Using these operators we can now write the projector onto the multiplet subspace ofandas
+
+where
+
+is a normalization constant. One can similarly construct the admissibility operator. However, these operators are manifestly of high order: Eq.95is an-body operator, whereis the number of particles in the extended bare impurity Hilbert space.
+
+Within anab initioframework, expectation values of such-body operators are typically intractable, because they are usually expressed in terms of reduced density matrices (RDM)[93]. For a given basis of molecular orbitalsone can express the spinless single particle RDM (1-RDM) as
+
+whereis the 1-RDM which encodes a single particle wave-function as,
+
+The 1-RDM, is not a many body object, although it is related to the 2-RDMas[93]
+
+whereis a cumulant that encodes the relations between multiple determinants. The tensorencodes two-body correlations. The construction of the-RDM is therefore possible for an arbitrary number for particles, but it becomes prohibitively expensive rather quickly.
+
+Instead of attempting to compute Eq.95exactly within this framework, we instead sketch a method for reducing the projectorsto a simplified but approximate form that might be compatible withab initiomethods using 1- or 2-body RDMs.
+
+We wish to find the best variational approximate representation to Eq.95using at most 2-body operators. We can do this using the FSP, Eq.63. We therefore construct a full basis of operators for the bare Hilbert space,
+
+Now retaining only the 1- and 2-body terms, we have a basisfor the approximate representation of. For a complete basis, the decompositionis unique and can be achieved like a regular spectral decomposition of a vector using the FSP, viz:
+
+However, we note that the basis Eq.100is generally over-complete and therefore any representation ofaccording to Eq.63is not necessarily unique. Constructing a complete operator basis on the bare Hilbert space can be challenging. On the other hand, the variational approach can find optimal representations of any operator even for an over-complete basis, and the value of the optimized loss function can serve as an error estimation for the decomposition. We argue that this is a controlled approach to obtain 2-body approximations of the UML operators. We leave development and implementation of these methods for future work.
+
+SECTION: References

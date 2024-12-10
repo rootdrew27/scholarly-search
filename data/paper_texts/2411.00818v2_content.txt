@@ -1,0 +1,313 @@
+SECTION: On the Black-box Explainability of Object Detection Models forSafe and Trustworthy Industrial Applications111This paper has been accepted for publication inResults in Engineering, DOI:https://doi.org/10.1016/j.rineng.2024.103498.
+
+In the realm of human-machine interaction, artificial intelligence has become a powerful tool for accelerating data modeling tasks. Object detection methods have achieved outstanding results and are widely used in critical domains like autonomous driving and video surveillance. However, their adoption in high-risk applications, where errors may cause severe consequences, remains limited. Explainable Artificial Intelligence methods aim to address this issue, but many existing techniques are model-specific and designed for classification tasks, making them less effective for object detection and difficult for non-specialists to interpret. In this work we focus onmodel-agnosticexplainability methods for object detection models and propose D-MFPP, an extension of the Morphological Fragmental Perturbation Pyramid (MFPP) technique
+based on segmentation-based masks to generate explanations.
+Additionally, we introduce D-Deletion, a novel metric combining faithfulness and localization, adapted specifically to meet the unique demands of object detectors. We evaluate these methods on real-world industrial and robotic datasets, examining the influence of parameters such as the number of masks, model size, and image resolution on the quality of explanations. Our experiments use single-stage object detection models applied to two safety-critical robotic environments: i) a shared human-robot workspace where safety is of paramount importance, and ii) an assembly area of battery kits, where safety is critical due to the potential for damage among high-risk components. Our findings evince that D-Deletion effectively gauges the performance of explanations when multiple elements of the same class appear in
+a scene, while D-MFPP provides a promising alternative to D-RISE when fewer masks are used.
+
+[tecnalia]organization=TECNALIA, Basque Research and Technology Alliance (BRTA),addressline=Mikeletegi Pasealekua 2,
+city=Donostia-San Sebastian,
+postcode=20009,
+country=Spain
+
+[deusto]
+organization=University of Deusto,
+postcode=20012,
+city=Donostia-San Sebastián,
+country=Spain
+
+[upv]organization=University of the Basque Country (UPV/EHU),city=Bilbao,
+postcode=48013,
+country=Spain
+
+SECTION: 1Introduction
+
+In recent years, Artificial Intelligence (AI) has emerged as a transformative force across various domains, especially in human-machine interaction, where it has enabled significant advancements in data-driven decision-making processes. Among these advances, object detection has become a key component, finding application in critical areas such as autonomous driving, security surveillance, industrial automation, and roboticsZou et al. (2023); Muhammad et al. (2020). State-of-the-art object detection models, including Faster-RCNNRen et al. (2017), DETRCarion et al. (2020), and the YOLO seriesTerven et al. (2023), have demonstrated impressive performance in identifying and localizing objects within images. Despite their success, the adoption of these models in highly sensitive environments remains limited, particularly in domains where errors could result in serious consequences such as injury, equipment damage, or operational failures. One of the primary reasons for this hesitancy is the black-box nature of object detectors implemented as Deep Learning models, which to date amount to the majority of proposals in the literature. The internal activations of these are not inherently interpretable, making it challenging for end-users to trust the predictions issued by object detectors, especially in high-risk environments operating in open-world environments such as autonomous vehicles and industrial robotics.
+
+In this context, the field of Explainable AI (XAI)Barredo Arrieta et al. (2020)aims to enhance the interpretability of AI systems by theiraudienceand ultimately, to enhance the user’s trust in the output of AI-based systems. Leaving aside the category of transparent AI models (which are inherently interpretable and do not require any explanations for a user to understand how they work), explainability methods in XAI can be broadly categorized intowhite-boxandblack-boxapproaches.White-box XAI methodsrequire access to the internal workings of the model, such as weights, activations, or gradients
+(e.g., Grad-CAMSelvaraju et al. (2017)). While these methods can provide powerful insights, they are often limited by their dependence on specific model architectures, making them difficult to generalize across different models and less accessible to users unfamiliar with AI research/tools. In contrast,black-box XAI methodstreat the model as an opaque entity, providing explanations based solely on the model’s input-output behavior without requiring any access to its internal components. However, most black-box XAI methods are designed for classification tasks rather than for object detectionRibeiro et al. (2016); Lundberg and Lee (2017); Petsiuk (2018); Ali et al. (2023).
+
+While classification models produce a single label per image, object detection models must identify and localize multiple objects within an image. Therefore, they need to explain not only the class prediction for each detected object –whatthey detect– but also the spatial reasoning behind the bounding boxes that define the object’s location –wherethe object is positioned within the image. Balancing these dual aspects complicates the explanation process and requires more sophisticated techniques than those used for classification tasks.
+
+In this paper, we address the gap in XAI methods for object detection by focusing onmodel-agnostic,black-boxXAI techniques. We propose and evaluate novel black-box XAI methods and XAI metrics that are specifically tailored for object detection models, without requiring access to internal model details. Our proposed methods are generalizable to object detection frameworks beyond those utilized in our experiments. Specifically, the contributions of this work can be summarized as follows:
+
+We formally define a quantitative evaluation metric,D-Deletion, which extends the existing Deletion metricBach et al. (2015); Petsiuk (2018)proposed for classification tasks. This metric is adapted to handle the unique challenges of object detection, including localization (as seen in Figure4), which is of utmost importance when multiple instances of the same object appear in the same scene.
+
+By using the similarity score of D-RISEPetsiuk et al. (2021), we analyze multiple mask generation methods’ performance and introduceD-MFPP, an extension of MFPPYang et al. (2020)originally developed for classification tasks. D-MFPP utilizes segmentation-based mask generation to improve explanations for object detection models.
+
+We analyze the impact of key parameters, such as image dimensions and the model sizes within the YOLOv8 architecture utilized in our experiments, which can significantly influence the quality of the resulting explanations.
+
+Last but not least, we facilitate the broader adoption of the developed techniques for object detection in real-world use cases by releasing the code publicly in a repository:https://github.com/aklein1995/drise_dmfpp_ddeletion.
+
+The remainder of this paper is structured as follows: in Section2, we first review literature related to XAI for object detection.
+In Section3, we provide the necessary background on object detection and XAI to familiarize the reader with the key concepts used in the definitions of D-RISE and Deletion. Next, Section4presents the experimental setup, including datasets, object detection training configuration, employed XAI methods, and evaluation metrics. In this section we also introduce our proposed D-MFPP method and D-Deletion metric.
+We discuss our results in Section5. Finally, Section6concludes the paper with a summary of our key findings and directions for future research.
+
+SECTION: 2Related Work
+
+Before proceeding with the materials and novel methods introduced in this work, we first pause briefly at XAI methods, focusing on those used for object detection tasks and put to practice in industrial applications:
+
+As stated in the introduction, XAI offers insights into the procedure followed by an AI-based system to elicit their outputs, enabling end-users to understand and eventually trust the decisions output by the AI-based system grounded on objective dataAli et al. (2023). To date, the majority of XAI methods are designed for models learned to address classification tasks. For instance, CAM-based methods like GradCAMSelvaraju et al. (2017), GradCAM++Chattopadhay et al. (2018)and Integrated GradientsSundararajan et al. (2017)quantify and attribute the pixel-wise importance of a given input according to the gradients with respect a target class. Moreover, making use of backpropagation, LRPMontavon et al. (2019)calculates the contribution that a neuron has with neurons in consecutive layers to get relevance scores. In contrast, perturbation-based techniques work by occluding certain parts of the input and analyzing its impact in the predictions. Within this type of techniques, LIMERibeiro et al. (2016), approximates a NN with an interpretable model; SHAPLundberg and Lee (2017)assigns importance values to each input feature based on Shapley values; RISEPetsiuk (2018)generates saliency maps by probing the model with randomly masked versions of the input image; and MFPPYang et al. (2020)generates masks by dividing the input image into multi-scale superpixels.
+Nonetheless, none of them have been explicitly extended for object detection tasks –with the exception of RISE, which has been adapted for this purpose– although techniques like SHAP can also be utilized for regression problems.
+
+In recent times, a scarcity of XAI approaches has been proposed to support the interpretability of complex object detection models. SODExSejr et al. (2021)is a method capable of explaining any object detection algorithm using classification explainers, demonstrating how LIME can be integrated within YOLOv4, a variant of the YOLO family of single-stage object detectors. Similarly, D-RISEPetsiuk et al. (2021)extends RISE’s mask generation technique by introducing a new similarity score that assesses both the localization and classification aspects of object detection models.
+More recently, D-CLOSETruong et al. (2024)enhances D-RISE by producing less noisy explanations. Along with other methodological improvements, D-CLOSE uses multiple levels of segmentation in the mask generation phase. Other approaches focusing on hierarchical masking have been proposed. Concretely, GSM-NHYan et al. (2022)evaluates the saliency maps at multiple levels based on the information of previous less fine-grained saliency maps, whereas BODEMMoradi et al. (2024)further extends this idea but focuses on an extreme black-box scenario where only object coordinates are available.
+
+Although XAI is increasingly important in industrial settings to ensure safety, reliability and compliance, the adoption of XAI for object detection methods in industrial use cases has been limited to dateLe et al. (2023); Kotriwala et al. (2021); Chen (2023).
+The vast majority of the works focus either on image classification, likeChen and Lee (2020)that utilizes Grad-CAM to interpret vibration signal images in the classification of bearing faults; time-series data, e.g.Serradilla et al. (2020)that presents the implementation and explanations of a remaining life estimator model;
+or tabular data, as inRyo (2022)where SHAP is used to interpret and study the influence of soil and climate features on crop recommendations. Regarding XAI and object detection for industrial applications, we can find a few exemplary studies that expose the shortage of real-world use cases currently noted in this technological crossroads.
+InNaddaf-Sh et al. (2022), various object detection models are evaluated for their effectiveness in detecting weld characteristics in radiography images, with an emphasis on explainability and deployment on edge devices to assist workers. In the same sense,Sahatova and Balabaeva (2022)provides a comprehensive review and analysis of various XAI techniques applied to object detection tasks in computerized tomography imaging for medical purposes. Finally,Kirchknopf et al. (2022)demonstrates how to integrate Grad-CAM into the YOLO architecture and performs experiments in both public and private datasets of vehicle front collision and rear-view cameras.
+
+SECTION: 3Background
+
+We now proceed by elaborating on key concepts needed to properly understand the details of the proposed D-MFPP technique and the D-Deletion metric that lie at the core of this work. Concretely, we provide fundamentals for object detection models (Section3.1)
+and XAI, with a focus on model-agnostic black-box methods to explain the predictions of object detection models (Section3.2).
+
+SECTION: 3.1Object Detectors
+
+Object detectors are crucial components in computer vision tasks, capable of identifying and localizing objects within an image. They can be broadly categorized into single-stage and two-stage detectors.
+
+They directly predict bounding boxes and class probabilities from input images in a single pass.
+Popular single-stage detectors, such as YOLOTerven et al. (2023), SSDLiu et al. (2016)and RetinaNetRoss and Dollár (2017),
+treat object detection as a simple regression problem, straight from image pixels to bounding box coordinates and class probabilities. To this end, they produce a dense grid of bounding box proposals and class probabilities in one step. Specifically, YOLOTerven et al. (2023)divides the input image into a grid and predicts bounding boxes and class probabilities for each grid cell.
+Although this efficiency is beneficial for real-time applications, it often comes at the cost of accuracy when compared to two-stage detectors
+
+These models, among which Faster R-CNNRen et al. (2017)can be considered to be the most representative one, follow a more complex approach that divides the detection process into two stages. In the first stage, a Region Proposal Network (RPN) generates a set of candidate object proposals (bounding boxes) from the input image.
+In the second stage, these proposals are refined and classified into different object categories by a second network. This second stage typically involves a more complex network, such as a convolutional neural network (CNN), which performs classification and further refinement of the bounding box coordinates.
+This two-step process boosts accuracy by allowing for a more refined feature analysis, though it also slows down processing, making two-stage detectors less suited for applications that require high-speed performance.
+
+Most detector networks, including Faster R-CNN and YOLO, produce a large number of bounding box proposals which are subsequently refined using confidence thresholding and Non-Maximum Suppression (NMS) to produce a set of finally detected objects in the image.
+Each bounding box proposalcan be defined as follows:
+
+wheredefines the bounding box cornersand;refers to the probability that bounding boxcontains an object of any class; andis a vector of probabilitiesrepresenting the probability that regionbelongs to each ofclasses.
+Unlike traditional classifiers, which assign a single class label to an entire image, object detectors must handle both classification and localization simultaneously. This dual task, predicting the class and precise location of each object, increases the complexity of making these models interpretable.
+
+SECTION: 3.2Explainable Artificial Intelligence (XAI)
+
+Despite the great performance exhibited by object detectors in manifold applications, their adoption in risk-sensitive scenarios is often hindered by a lack of trust and transparency by the user making decisions based on the detections issued by these models. As introduced previously, research on XAI produce techniques and methods that make the behavior and predictions of AI models understandable to humans without sacrificing performanceGunning et al. (2019). To this end, multiple XAI techniques have been proposed, which can be classified into four broad categoriesAli et al. (2023):
+
+Scoop-based techniquesfocus on the extent of the explanation, providing either local explanations for specific predictions or global explanations for the overall model behavior.
+
+Complexity-based methodsconsider the complexity of the model, with simpler, interpretable models offering intrinsic interpretability and more complex models requiring post-hoc explanations.
+
+Model-based approachesdistinguish between XAI methods that are specific to particular types of models, and those that are model-agnostic, capable of being applied to any model disregarding the specifics of their internals.
+
+Methodology-based techniquesare categorized by their methodological approach, such as backpropagation-based methods that trace input influences, or perturbation-based methods that alter inputs to observe changes in the output of the model.
+
+Given that object detectors are typically complex neural networks, they fall under thecomplexity-basedcategory, thereby requiring post-hoc explainability methods to explain their decisions. Among the variousmethodology-basedtechniques,attribution methodsare commonly used to estimate the relevance of each pixel in an image for the detection task. Attribution methods are particularly important for object detection, where both localization and classification need to be explained.
+
+Traditional attribution methods have been primarily developed for image classifiersAbhishek and Kamath (2022), which produce a single categorical output, making them less suited for object detectors. Object detectors, unlike classifiers, generate multiple detection vectors that encode not only class probabilities, but also localization information and additional metrics, such as objectness scores (see Section3.1). Furthermore, techniques like NMS and confidence threshold filtering, which are used to refine bounding box proposals, add complexities that require a deeper understanding of the model’s internal workings, complicating the use of certain XAI methods, such as gradient-based approaches. Therefore, we focus onmodel-agnostic black-box XAIapproaches, which are designed to be architecture-independent, and do not depend at all on the specifics of the model under target.
+
+Among model-agnostic XAI methods,perturbation-basedapproaches are commonly used due to their simplicity and effectiveness in revealing which parts of the input are most influential for the model’s predictions. Perturbation-based techniques offer a direct way to assess how changes to the input image affect the model’s output. By systematically altering or masking parts of the input image (using masks to generate perturbed samples), these methods allow inferring the importance of different regions based on the model’s input-output behavior.
+
+The typical pipeline for perturbation-based XAI methods can be divided into three stages:(1) Data Preparation, (2) Model Assessment, and (3) Importance Computation. In the Data Preparation stage, masks are generated and applied to the image to create perturbed samples. The Model Assessment stage involves passing these perturbed images through the model to observe the changes in output. Finally, in the Importance Computation stage, the importance of each pixel is calculated by comparing the model’s outputs for the original and perturbed images. While the Model Assessment stage remains consistent across methods, with each perturbed image passed through the model, the Importance Computation varies depending on the XAI approach used. This can range from simple techniques like retraining a model (e.g., LIME) to more complex approaches. Since the effectiveness of these methods largely depends on how the perturbed images are generated, three mask generation algorithms are next described (Figure1):
+
+Sliding Window: This method, which is similar to the Occlusion technique proposed inZeiler and Fergus (2014), systematically moves a window of fixed size across the image and sets the region within the window to a constant value (e.g., zero) to occlude that part of the image. By iteratively sliding the window across the entire image, we can assess the impact of each occluded region on the model’s output. The method requires specifying the window size, which determines the area of the image being occluded at each step, and the stride, which sets how much the window moves between iterations.
+
+RISE: Randomized Input Sampling for Explanation (RISE)Petsiuk (2018)involves samplingbinary masks of size, which are smaller than the original image size. Each element in the mask is independently set to 1 with probabilityand to 0 with the remaining probability. These masks are then upsampled to sizeusing bilinear interpolation, where. The upsampled masks are cropped to the original image sizewith uniformly random offsets ranging fromto. This method creates a diverse set of masks that cover different parts of the image, allowing for a comprehensive evaluation of the importance of various regions.
+
+MFPP: The so-called Morphological Fragmental Perturbation Pyramid (MFPP)Yang et al. (2020)method divides the input image into multi-scale fragments and perturbs them randomly. In this sense, it is similar to RISE, but instead of perturbing elements of the generated masks with dimension, MFPP defines regions according to segmentations at different scales. Depending on the number of defined fragments, the regions would be more fine-grained yet more time-consuming. The segments are dependent on each image, requiring the creation of new masks for every image.
+
+SECTION: 4Materials and Methods
+
+This section describes the industrial robotics use cases in what refers to the datasets (Section4.1), object detection model (Section4.2), XAI methods (Section4.3) and the explanation quality metrics (Section4.4) considered in our work. The novel XAI technique and quality metrics proposed in this manuscript are also described in Section4.3.
+
+SECTION: 4.1Industrial Robotics Datasets under Consideration
+
+The datasets used in this manuscript have been collected during the course of the ULTIMATE project,https://ultimate-project.eu/, which features two distinct real robotics use casesKozik et al. (2024). The first dataset, from PIAPhttps://piap.lukasiewicz.gov.pl/), involves a collaborative workspace where a human and a robotic arm work together. The second dataset, provided by Robotnikhttps://robotnik.eu/, focuses on a battery assembly area, where a robotic arm assembles components for a battery kit222While the datasets contain a relatively small number of images, this data shortage is typically encountered in real-world industrial scenarios subject to data availability constraints. Nevertheless, in the use cases under considerations the contextual and scene variability is minimal, yielding short-tailed distributions of the objects to be detected. Therefore, the small datasets described in the paper sufficiently capture the relevant features for the specific object detection tasks addressed by the models..
+
+This dataset consists of 96 images captured from three different cameras, as exemplified in Figure2, with 32 images taken from each camera. The dataset includes two object classes:humanandgripper. Importantly, each image in this dataset contains only a single object of each class, meaning a maximum of one human and onegripperper image. To ensure a diverse and representative sample, we applied feature extraction using ResNetHe et al. (2015)to obtain embeddings for the entire dataset. The dimensionality of these embeddings was reduced using Principal Component Analysis (PCA), followed by K-means clustering (withclusters). From each cluster, four images were randomly selected, resulting in a final subset. The data were split into three sets: 72 images for training (75%), 6 for validation (6.25%), and 18 for testing (18.75%). To maintain consistency, we applied the same partitioning to the data from each camera. This resulted in 24 images for training, 2 for validation, and 6 for testing from each camera.
+
+This dataset consists of 7 images, all captured from a bird’s-eye (top-down) view, showing a robotic arm assembling a battery kit, as shown in Figure3. The dataset includes five distinct object types:individual battery,bms_a,bms_b,battery holder, andunknown object. In contrast to the Human-Robot Dataset, each image in the Battery Assembly Dataset may contain multiple objects of the same class, such as several individual batteries in a single scene.
+
+It is worth noting that XAI techniques can be applied to any type of data. When applied to training data, they help reveal what the model has learned to focus on during training. When applied to test data, they provide insight into how well the model generalizes to new, unseen examples. For the Human-Robot Dataset, XAI explanations were applied exclusively to the test images, allowing us to assess the model’s behavior on unseen data. However, for the Battery Assembly Dataset, given the limited number of images (only 7), XAI explanations were applied to the entire dataset.
+
+SECTION: 4.2Object Detection Model: YOLOv8
+
+Among the possible object detector models, we selected one of the state-of-the-art options, YOLOv8, due to its numerous advancements over previous versions and its robust performance in object detection tasksTerven et al. (2023).
+YOLOv8Reis et al. (2024)integrates a novel combination of Feature Pyramid Network (FPN) and Path Aggregation Network (PAN) architectures, enhancing its ability to detect objects at various scales and resolutions. The FPN gradually reduces the spatial resolution of the input image while increasing feature channels, facilitating multi-scale object detection. The PAN architecture further aggregates features from different levels through skip connections, improving the detection of objects with diverse sizes and shapes. Additionally, YOLOv8 introduces an anchor-free detection mechanism that directly predicts the center of an object (instead of the offset from a known anchor box), reducing the number of box proposals and speeding-up the post-processing. Furthermore, it was trained with larger and more diverse datasets including the popular COCO dataset, improving its performance across a wider range of images.
+
+YOLOv8 was developed and released by Ultralytics, and although the model and its weights are open-source, most users are expected to utilize the Ultralytics framework for its enhanced usability. However, unlike previous YOLO releases where the probability for each class per predicted box was accessible, in YOLOv8, the Ultralytics API outputs only the probability for the class with the highest confidence in each box333https://github.com/ultralytics/ultralytics/issues/2863https://github.com/ultralytics/ultralytics/issues/4908. Consequently, by default, YOLOv8 outputs:
+
+whererepresents the coordinates of the bounding box,denotes the objectness score, andcorresponds to the predicted class label for the object within the bounding box, which differs with respect to the outputs shown in Expression (1).
+
+SECTION: 4.3Explainability Methods
+
+We evaluate four popular methods for generating visual explanations of black-box models: LIME, RISE, D-RISE, and D-MFPP. The first two methods, LIME and RISE444These XAI methods have been chosen due to their perturbation-based nature, which aligns closely with the methodology followed by the XAI methods D-RISE and D-MFPP proposed in this work. Both D-RISE and D-MFPP generate explanations through perturbations., were originally developed for image classifiers but can be adapted to object detectors, However, they primarily focus on explaining classification aspects and are not capable of addressing localization characteristics. In contrast, D-RISE is one of the first XAI methods specifically designed for object detectors, providing explanations that encompass both classification and localization. Additionally, we extend the existing MFPP method (originally tailored for classifiers) into a version suitable for object detection, which we refer to as D-MFPP. In what follows we briefly describe them, flowing into a description of the proposed D-MFPP approach:
+
+LIMEwas originally designed to explain the predictions of any classifier by approximating it locally with an interpretable model. To explain the prediction for an input image, LIME fits an interpretable model(e.g., a linear model) to approximate the behavior of the black-box modellocally around. The similarity between the original image and the perturbed samples is measured using a kernel function. When image explanations are targeted, LIME groups contiguous pixels into superpixels based on similar features they represent. This approach allows LIME to measure the importance of regions in the image rather than individual pixels, making the explanations more interpretable.
+
+As introduced in the previous section,RISEPetsiuk (2018)was originally designed for deep neural networks that take images as input and output a class probability (e.g., a classifier like ResNet-50). It generates saliency maps that indicate the importance of each pixel by applying randomly generated binary masksto the input imageand observing the changes in the model’s output. In RISE,binary masksare generated (as explained in Section3.2). These masks are then applied to the input imageto generate masked images, wheredenotes element-wise multiplication. The model is evaluated on each masked imageto obtain the outputs. The importance score for each pixelis then calculated as the weighted sum of the outputs:
+
+where the weightsrepresent the value of maskat pixel. The intuition behind RISE is thatwould be high when pixels preserved by maskare important. Although this is true when having infinite diverse masks, in practice RISE calculates each pixel’s importance empirically by Monte Carlo sampling. Therefore, RISE largely depends on the number of masks () and how they are generated (i.e., is sensitive to the selected probabilityand resolution).
+
+Unlike the other two approaches originally designed for classifiers that measure solely classification aspects,D-RISE(Detector Randomized Input Sampling for Explanation)Petsiuk et al. (2021)was designed to explain both the classification and localization of a detection.
+In this sense, D-RISE extends RISE by producing saliency maps specifically for object detectors. As previously seen in Section3.1, the output given by an object detector differs from the probability vector given by a classifier, obtaining localization information, an objectness scoreand the probability of classifying each bounding box to any of the considered classes. As a consequence, Expression (3) used by RISE is replaced in D-RISE with a new similarity score, given by:
+
+where,, and. In this formulation,represents the spatial proximity of the bounding boxes encoded by the target detectionand the proposal, measured using the Intersection over Union (IoU); the termevaluates the similarity between the class probabilities of the target detection and the proposal using cosine similarity; andincorporates the objectness score of the proposal.
+It is important to note that for a detection targetthere would potentially be more than one detection proposals.
+Therefore, we would have multiple. As explained in D-RISE, the explanations consider only the detection with maximal score for each mask:
+
+Given the YOLOv8 outputs explained in Section4.2, which do not provide the class probability vectorwithout modifying its architecture (an approach we want to avoid within the scope of this paper), we must adapt the similarity score to only considerand. Consequently, the modified similarity score can be expressed as:
+
+This adjustment allows still utilizing D-RISE effectively for generating saliency maps with the default YOLOv8 model, focusing on the spatial and objectness aspects of detections, while maintaining the integrity of the model’s original architecture.
+
+Similarly, we can adopt this similarity score but apply it with a different mask generation process. The MFPP method introduced in Section3.2, originally designed for classification tasks, can be extended by applying Equation (6), resulting inD-MFPP. To the best of our knowledge, no previous work has proposed this variant of MFPP for object detection tasks.
+
+SECTION: 4.4Metrics
+
+Evaluating the performance of attribution-based explainability methods for image data involves assessing how well the generated relevance heatmaps highlight important regions of the input image that contribute to the model’s decision. Generally, according toHedström et al. (2023), explanation quality metrics can be grouped into six categories based on their logical similarity: faithfulness, robustness, localization, complexity, randomization, and axiomatic metrics. In this study, we focus on two of these categories that are particularly relevant to object detection: localization (Section4.4.1) and faithfulness (Section4.4.2).
+
+Localization metrics evaluate whether the explainable evidence is centered around a region of interest (RoI) defined by a bounding box, segmentation mask, or a cell within a grid. These metrics aim to verify if the saliency maps correctly highlight the areas in the image that contain the object of interest. Among them, our experiments will consider:
+
+Pointing Game(PG), which is a human evaluation metric introduced inZhang et al. (2018). If the highest saliency point lies inside the human-annotated bounding box of an object, it is counted as a hit. The PG accuracy is given by:
+
+which is averaged over all categories in the dataset.
+
+Energy-based Pointing Game(EBPG)Wang et al. (2020), which measures the proportion of activations within the given bounding box relative to the whole activation in the image. It assesses how much of the model’s activation energy is concentrated within the predefined region of interest. Formally:
+
+whererepresent the saliency score at pixel,represents the sum of activation values within the bounding box, andrepresents the sum of activation values outside the bounding box.
+
+Metrics accounting for faithfulness quantify to what extent explanations follow the predictive behavior of the model, asserting that more important features play a larger role in model outcomes. These metrics focus on understanding the causal relationship between input features and the model’s output by systematically altering the features and observing the changes in predictions. Among them:
+
+Deletion: Inspired by the work byBach et al. (2015), the Deletion metric was proposed in RISEPetsiuk (2018). This metric measures a decrease in the probability of the predicted class as more and more important pixels are removed, where the importance is obtained from the saliency map. A sharp drop, and thus a low Area Under the probability Curve (AUC, as a function of the fraction of removed pixels), indicates a good explanation. Given the importance score for each pixel calculated by any XAI method,, we can formulate the Deletion metric as:
+
+whereis the original image,represent a mask with the the-th most important pixels removed sorted by,represents the probability of modelpredicting that the bounding box belongs to class, and AUC() computes the area under the curve for thepredictions.
+
+Minimum Subset: It follows the same logic asDeletion, but instead of determining the AUC, it considers the required number of pixels that make the prediction to changeGevaert et al. (2024). Given the importance score for each pixel (),Min-Subsetis defined as the smallest subset of pixels that needs to be removed to change the model’s prediction. Mathematically:
+
+whererepresents the class label assigned by the modelafter passing the imagewith the topmost important pixels removed, andis the class label predicted for the original image.
+
+Originally, Deletion was designed for classifiers. However, with object detectors, multiple detections in a single image can occur. Although D-RISE stated the necessity to adapt this metric for object detectorsPetsiuk et al. (2021), no formal definition can be found in the literature.
+Therefore, considering the importance of this issue in real use cases, we formally re-define Equation (9) in two manners:
+
+Deletion. Measures the explanation given the target class label(regardless if there is more than one element for a class) and iteratively removes the topmost important pixels:
+
+The modeltakes as input the masked imageand outputs a set of bounding box proposals. The indicator functionequals 1 if the predicted classmatches the target class, and 0 otherwise. The termselects the maximum objectness scorefor the bounding boxes where the predicted class matches the target class. The AUC is then computed over the set of prediction scores for thesteps, where at each step the most important pixels are progressively removed.
+
+D-Deletion.
+While the standard Deletion metric evaluates the impact of pixel removal on a class prediction, it lacks the ability to account for spatial localization, which is essential in object detection tasks where multiple instances of the same class can appear. D-Deletion addresses this limitation by focusing on a specific target bounding box, considering both the class information,, and IoU between the target and other detected proposals,. This ensures that the metric not only measures faithfulness but also takes localization into account, providing more precise explanations in situations where different objects of the same class coexist. Mathematically is expressed as:
+
+whereis a threshold. As a consequence, when multiple elements of the same class are in an image,D-Deletionwill only consider those proposalspredicted by the model that have a predefined IoU with the target bounding box.
+
+The difference between Deletion and D-Deletion is illustrated in Figure4. This figure highlights how D-Deletion distinguishes between different objects of the same class by incorporating localization information, leading to more refined and accurate explanations (AUC in the Figure’s last row) when multiple objects of the same class are detected in an image. For the sake of clarity, we provide the pseudocode of Deletion in Algorithm1, where the main difference with respect to D-Deletion are lines10to12.
+
+Lastly, akin to howMin-Subsetis related toDeletion,D-Min-Subsetis associated withD-Deletion. Consequently,D-Min-Subsetconsiders both the class type and the IoU to determine the number of pixels required to make the prediction to change:
+
+whererepresents the predicted class label for detectionwhen passing the masked imagethrough the model, withbeing the set of detections after removing the topmost important pixels. In this context,D-Min-Subsetdepends on two conditions: (1) the class probability labelsfor the predicted bounding boxmust no longer match the target class, or (2) the IoU between the target bounding boxand the predicted bounding boxfalls below the threshold. The minimumis identified as the step where either of these conditions is first met.
+
+SECTION: 5Experiments and Results
+
+Contrarily to most studies in the XAI literature that primarily focus on benchmark datasets, our research work focuses on assessing the explainability of object detectors in real-world industrial data. In this context, to evaluate the effectiveness of explanations, we formulate four key research questions to answer them with empirical evidence:
+
+RQ1:Which XAI method provides the most reliable and insightful explanations for object detection models?
+
+RQ2:Does the D-Deletion metric enhance the trustworthiness of XAI outputs when multiple objects of the same class are present in the image?
+
+RQ3:How does the mask generation process influence the quality of explanations, particularly when using similarity scores for object detection? How does D-MFPP behave?
+
+RQ4:Do different image dimensions impact the explanations generated by XAI methods? Do models of varying sizes (large, medium, small, nano) focus on different regions of the image in their explanations?
+
+Next, we outline the hyperparameters used across our experiments to ensure consistency in training and evaluation. For both datasets, models were trained using the YOLOv8 architecture for a total of 100 epochs. The image size (imgsize) was set to the largest dimension of the input image (e.g.,), and data augmentation techniques such as random horizontal flipping and color jitter were applied. For consistency, the default Ultralytics settings were used wherever applicable. In the case of LIME, we use the baseline implementation ofRibeiro et al. (2016), where we adopt the SLIC segmentation algorithmAchanta et al. (2010)(with 100 segments) and generated 1000 samples to assess the quality of the produced explanations. For RISE and D-RISE, we employed 5000 masks with a probability of 0.25 and a resolution ofto produce the saliency maps. Lastly, for all object detection predictions, a confidence threshold of 0.7 was set to determine the validity of each detection.
+
+In what follows we present and discuss on the results obtained to answer each of the RQ formulated above:
+
+SECTION: RQ1: Comparison between XAI methods
+
+In the Human-Robot dataset, the comparison between LIME, RISE, and D-RISE, as shown in Table1, reveals distinct strengths across different metrics (Section4.4).
+LIME performs good in terms of localization, with higher PG and EBPG scores (100% and 18.60%, respectively) compared to D-RISE (93.75% and 10.74%). This indicates that LIME generates more localized saliency maps, focusing closely on the bounding boxes of detected objects.
+However, this superior performance is partly due to the size of the object being analyzed. LIME’s superpixel generation is better suited for larger objects (e.g.,human), as larger regions of the image can be grouped effectively into meaningful segments, leading to higher localization scores. This advantage also applies to classification, where larger objects allow LIME to better preserve relevant features for detection. Conversely, for smaller objects (e.g.,gripper), LIME struggles when compared to the other methods, as reflected by its worse performance metrics in those cases.
+
+In contrast, RISE and D-RISE are less sensitive to object size, making them more robust across different object scales, which is evident in their better performance on smaller objects like thegripper. They achieve Deletion scores ofand, respectively, compared to LIME’s. When considering the overall performance across classes, RISE, with a Deletion score ofand D-Deletion of, shows improvement over LIME in classification-related tasks but still lags behind D-RISE, which achieves the lowest Deletion () and D-Deletion () scores. Although D-RISE offers the best balance between classification and localization, the difference between RISE and D-RISE is minimal in this dataset, where each image contains only a single object per class.
+As a result, as shown in Figure5, their heatmaps are very similar to each other, both highlighting the human head. However, D-RISE eliminates less relevant areas more effectively.
+
+In the results obtained over the Battery Assembly dataset (Table2), a similar pattern can be noticed.
+LIME excels at localization with an average EBPG of 16.03%, while RISE and D-RISE perform better in retaining key classification features. Since this dataset includes multiple objects of the same class (e.g., multiple batteries), both LIME and RISE, which are not designed to handle multiple detections of the same class, expose severe limitations. RISE, with a D-Deletion score of, preserves key features better than LIME, but is outperformed by D-RISE, which achieves a score of. D-RISE also shows the highest PG score (97%), performing significantly better than LIME (76.85%) and RISE (66.95%).
+
+Overall, when dealing with datasets containing only one object per class, the differences between LIME, RISE, and D-RISE are relatively small in quantitative terms. However, when multiple objects of the same class appear in a given input image, D-RISE clearly dominates over the rest of techniques. As illustrated in Figure7, D-RISE generates coherent heatmaps for each detected object in the Battery Assembly dataset, whereas LIME and RISE provide a global saliency map for the entire class. By combining the individual saliency maps from D-RISE, a more accurate and object-specific explanation can be produced. This also highlights the limitations of LIME and RISE when applied to multiple objects, as their global saliency maps do not differentiate between individual instances.
+
+SECTION: RQ2: D-Deletion metric for scenes with multiple objects of the same class
+
+As a secondary observation in the experiments of RQ1, the D-Deletion metric is specifically designed to overcome the limitations of traditional deletion metrics, particularly when multiple objects of the same class are present in an image.
+
+In the Battery Assembly dataset, where several instances of the same class (e.g.,indiv batt) appear, D-Deletion demonstrates clear advantages. By inspecting Table2, RISE, while performing reasonably well with an average Deletion score of, it still obtains a relatively high D-Deletion score of 0.1474, suggesting that it struggles to differentiate between the contributions of individual objects. In contrast, D-RISE, which obtains an average Deletion score of 0.2448, outperforms RISE with a D-Deletion score of 0.03444. This highlights D-RISE’s ability to isolate and preserve key features for each object, providing more trustworthy, object-specific explanations rather than broad, class-level insights.
+
+The Min-Subset and D-Min-Subset metrics, which measure the minimal proportion of pixels needed to disrupt a detection, reinforce these findings. In the Human-Robot dataset, Table1, where only one object per class appears, the differences between Deletion and D-Deletion scores are minor, and the Min- Subset and D-Min-Subset values are close to each other. However, in the Battery Assembly dataset, where the differences between Deletion and D-Deletion are more substantial and multiple objects of the same class co-occur in the same image, the Min-Subset () and D-Min-Subset () values also diverge significantly.
+
+D-RISE
+
+D-MFPP
+
+D-RISE
+
+D-MFPP
+
+D-RISE
+
+D-MFPP
+
+D-RISE
+
+D-MFPP
+
+SECTION: RQ3: Influence of the Mask Generation Strategy
+
+When comparing XAI approaches for object detection tasks configured with different mask generation techniques, the results in Tables3and4initially suggest that D-Sliding Window performs the best in almost all metrics. However, as noted in the captions, this is only in cases where explanations were provided. For the Human-Robot dataset (Table3), regardless of the window size and stride, D-Sliding Window failed to provide explanations for larger objects, such ashumans, and only provided meaningful explanations for smaller objects likegripperinstances. Similarly, in the Battery Assembly dataset (Table4), D-Sliding Window struggled with large objects when using a smaller window size (w=32), which led to higher scores in classification metrics. Even with an increased window size (w=64), some objects were still not detected, making it difficult to fairly compare with D-RISE and D-MFPP, both of which provided explanations for all detection proposals.
+
+In contrast, D-RISE consistently performs best across all detection proposals when explanations are provided, particularly in terms of the D-Deletion metric, with D-MFPP as a close second. D-MFPP manages to better distinguish important regions by de-emphasizing less relevant areas, as reflected in the PG and EBPG localization scores. Yet, due to the superpixel segmentation approach used by D-MFPP, some relevant features are grouped with less important ones (see Figure8), causing a slight drop in classification metrics. As a result, D-MFPP trades off classification precision for improved localization and focus. D-Sliding Window, as previously noted, performs well on smaller objects but struggles to generate reliable explanations for larger objects. This limitation can be mitigated by using larger window sizes, which occlude larger portions of the image, thereby increasing the likelihood of capturing explanations for bigger objects, while smaller strides help produce more finely detailed explanations, as seen in Figure6.
+
+This secondary analysis within RQ3 confirms that the number of masks in use has a clear impact on the performance of the XAI method. Generally, more masks result in better outcomes. Interestingly, D-MFPP initially outperforms D-RISE in some metrics when using fewer masks (500 or 1,000), achieving a perfect PG score of 100% in the Human-Robot dataset and a D-Deletion score of 0.0505 with just 500 masks. However, as the number of masks increases, D-RISE slightly surpasses D-MFPP in classification-related metrics. This trend can be also noted in Figure8, where (1) increasing the number of masks improves the quality of the saliency maps, and (2) D-MFPP provides cleaner maps with a lower number of masks.
+
+SECTION: RQ4: Image dimension variation and YOLOv8 complexity
+
+We further analyze the importance of image dimensions in the quality of explanations. For this purpose, we interpolate the image dimensions and train a new object detector for those image dimensions. As reported in Table5, larger image dimensions () yield better results in terms of faithfulness metrics, degrading their value when decreasing the image resolution toand. Nonetheless, PG and EBPG remain relatively stable across resolutions, suggesting that localization is less affected by image size than classification accuracy.
+
+Additionally, Table5shows the effect of applying D-RISE with masks generated at varying resolutions. While no clear trend emerges in the classification metrics (with some instances of Deletion increasing while D-Deletion decreases), the localization metrics generally improve with lower mask resolutions. This result is expected, as lower-resolution masks produce less fine-grained explanations but tend to highlight a larger area around the target object. This pattern is clearly visualized in Figure9.
+
+Lastly, we investigate whether the use of different levels of parametric complexity of the YOLOv8 object detector affect the expected outcomes. When examining the results in Table6, no clear insights can be drawn, as the best results were reported by the Medium and Nano models. Nonetheless, it is important to highlight the performance of the Nano model, which despite requiring half the inference time and an order of magnitude less memory for deployment, achieves competitive results with respect to the rest of counterparts in the table.
+
+Human
+
+Gripper
+
+Human
+
+Gripper
+
+Human
+
+Gripper
+
+SECTION: 6Conclusion
+
+This work has explored the performance of various XAI methods for object detection models, focusing on perturbation-based black-box explanation techniques like LIME, RISE, D-RISE applied to YOLOv8 in real-world object detection tasks in industrial setups. Our contribution is twofold: i) we have introduced D-MFPP, a method tailored for object detection that generates masks based on multi-level superpixels; and ii) we have proposed D-Deletion, a new quantitative metric that accounts for both class probability and localization when evaluating explanations.
+
+Our results have demonstrated that D-RISE consistently outperforms LIME and RISE, particularly with the D-Deletion metric, which improves trustworthiness by delivering more focused, object-specific explanations. The mask generation process has been proven to play a key role in the quality of explanations, with more masks producing better explanations. The proposed D-MFPP technique has shown competitive performance with fewer masks, proving to be an efficient option in resource-constrained deployments. We have also found out that larger image dimensions improve classification metrics, while localization metrics remained stable across resolutions, suggesting that image size mainly affects classification. No clear patterns have emerged regarding model complexity; nevertheless, thenanoYOLOv8 model, with its low computational and memory demands, showed promise for real-time industrial applications.
+
+While this study provides valuable insights into the explainability of object detectors in real-world scenarios, several limitations must be acknowledged:
+
+Limited data: The real-world datasets considered in the study, particularly the Battery Assembly use case, are limited in size (only 7 data instances). This may restrict the generalization of our findings. Future studies with larger datasets embracing the methodology herein followed could provide more robust conclusions.
+
+Generalization of the object detector: Although the methods presented here are model-agnostic, the study primarily focuses on YOLOv8 (i.e., one stage detector). Extending this work to consider other object detector architectures, such as Faster R-CNN (i.e., two stage detector) or Detection Transformers (DETR, RT-DETR) could ease a broader understanding of XAI methods across different neural architectures for this modeling task.
+
+Computation time: The computation time required to generate explanations can be significant, especially when using perturbation-based methods. Approaches that reduce the number of masks used, or optimize mask generation, could help mitigate this limitation and improve efficiency.
+
+We plan to explore hierarchical masking approachesYan et al. (2022,2024); Moradi et al. (2024)and feature fusion techniquesTruong et al. (2024)that further refine pixel saliency across multiple levels, reducing masking efforts and enhancing the quality of the saliency maps. Moreover, we will explore techniques to reduce the computation time while maintaining performance and explanation qualityNguyen et al. (2024), which can be crucial in real-world critical applications wherein explanations have to be furnished fastly and presented to the human for its supervision and validation.
+
+SECTION: Acknowledgments
+
+A. Andres, I. Laña and J. Del Ser receive support from the ULTIMATE project (ref. 101070162) funded by the European Commission under the HORIZON-CL4-DIS program (HORIZON-CL4-2021-HUMAN-01). J. Del Ser and I. Laña also acknowledge funding from the Basque Government (MATHMODE, IT1456-22).
+
+SECTION: Author Contributions
+
+Alain Andres: Conceptualization, Data curation, Formal analysis, Investigation, Methodology, Software, Writing (Original draft preparation).Aitor Martinez-Seras: Validation, Writing (Original draft preparation).Ibai Laña: Supervision, Project administration, Writing (Review and Editing).Javier Del Ser: Conceptualization, Supervision, Validation, Writing (Reviewing and Editing).
+
+SECTION: Declaration of competing interest
+
+The authors declare that they have no conflicts of interest regarding this work. However, views and opinions expressed are those of the author(s) only and do not necessarily reflect those of the European Union. The European Union can not be held responsible for them.
+
+SECTION: Declaration of Generative AI and AI-assisted technologies in the writing process
+
+During the preparation of this work the author(s) used OpenAI’s ChatGPT4 in order to enhance the clarity of the writing, improve the readability of the manuscript, and check for possible English language mistakes. After using this tool/service, the authors reviewed and edited the content as needed, and take full responsibility for the content of the publication.
+
+SECTION: References

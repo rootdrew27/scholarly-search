@@ -1,0 +1,753 @@
+SECTION: Learning to (Learn at Test Time):RNNs with Expressive Hidden States
+
+Self-attention performs well in long context but has quadratic complexity.
+Existing RNN layers have linear complexity, but their performance in long context is limited by the expressive power of their hidden state.
+We propose a new class of sequence modeling layers with linear complexity and an expressive hidden state.
+The key idea is to make the hidden state a machine learning model itself, and the update rule a step of self-supervised learning.
+Since the hidden state is updated by training even on test sequences, our layers are calledTest-Time Training (TTT) layers.
+We consider two instantiations: TTT-Linear and TTT-MLP, whose hidden state is a linear model and a two-layer MLP respectively.
+We evaluate our instantiations at the scale of 125M to 1.3B parameters, comparing with a strong Transformer and Mamba, a modern RNN.
+Both TTT-Linear and TTT-MLP match or exceed the baselines.
+Similar to Transformer, they can
+keep reducing perplexity by conditioning on more tokens, while Mamba cannot after 16k context.
+With preliminary systems optimization, TTT-Linear is already faster than Transformer at 8k context and matches Mamba in wall-clock time.
+TTT-MLP still faces challenges in memory I/O, but shows larger potential in long context, pointing to a promising direction for future research.
+
+SECTION: 1Introduction
+
+In 2020, the OpenAI scaling law paper (Kaplan et. al[40]) showed that LSTMs (a type of RNN) could not scale similarly to Transformers or effectively use long context.
+Now, with modern RNNs and best practices, we re-evaluate these findings in Figure2.
+
+On the left, we observe that Mamba[26]– one of the most popular RNNs today – scales similarly to a strong Transformer, showing great progress since the LSTMs in 2020.
+However, on the right, we observe the same issue with Mamba as Kaplan et al. did with LSTMs.
+Tokens later in a sequence should be easier to predict on average, since they condition on more information.
+This is indeed the case for Transformer, whose average perplexity at each token index decreases throughout its 32k context.
+In contrast, the same metric plateaus for Mamba after 16k.
+
+This result represents an awkward reality for existing RNNs.
+On one hand, the main advantage of RNNs (vs. Transformers) is their linear (vs. quadratic) complexity. This asymptotic advantage is only realized in practice for long context, which according to Figure3is after 8k.
+On the other hand, once context is long enough, existing RNNs such as Mamba struggle to actually take advantage of the extra information being conditioned on.
+
+The difficulty with long context is inherent to the very nature of RNN layers:
+Unlike self-attention, RNN layers have to compress context into a hidden state of fixed size.
+As a compression heuristic, the update rule needs to discover the underlying structures and relationships among thousands or potentially millions of tokens.
+In this paper, we begin with the observation that self-supervised learning can compress a massive training set into the weights of a model such as an LLM, which often exhibits deep understanding about the semantic connections among its training data – exactly what we need from a compression heuristic.
+
+Motivated by this observation, we design a new class of sequence modeling layers where the hidden state is a model, and the update rule is a step of self-supervised learning.
+Because the process of updating the hidden state on a test sequence is equivalent to training a model at test time, this new class of layers is calledTest-Time Training (TTT) layers.
+We introduce two simple instantiations within this class: TTT-Linear and TTT-MLP, where the hidden state is a linear model and a two-layer MLP, respectively.
+TTT layers can be integrated into any network architecture and optimized end-to-end, similar to RNNs layers and self-attention.
+
+While the TTT layer is already efficient in FLOPs, we propose two practical innovations to make it efficient in wall-clock time. First, similar to the standard practice of taking gradient steps on mini-batches of sequences during regular training for better parallelism, we use mini-batches of tokens during TTT.
+Second, we develop a dual form for operations inside each TTT mini-batch, to better take advantage of modern GPUs and TPUs.
+The dual form is equivalent in output to the naive implementation, but trains more thanfaster. As shown in Figure3, TTT-Linear is faster than Transformer at 8k context and matches Mamba.
+
+While we have highlighted some results for TTT-Linear at the beginning of the paper, Section3presents more comprehensive evaluations for both TTT-Linear and TTT-MLP, and open problems exposed by our evaluations.
+For example, our evaluations following the Chinchilla recipe[34]do not cleanly fit a linear scaling trend even for the Transformer baseline.
+Constrained by our academic resources, we encourage the community to join us in exploring solutions to these problems.
+
+We propose TTT layers, a new class of sequence modeling layers where the hidden state is a model, and the update rule is self-supervised learning.
+Our perspective that the forward pass of a layer contains a training loop itself opens up a new direction for future research.
+
+TTT-Linear, one simple instantiation of TTT layers, outperforms Transformers and Mamba in our evaluations ranging from 125M to 1.3B parameters.
+
+We improve the hardware efficiency of TTT layers through mini-batch TTT and the dual form, making TTT-Linear already a practical building block for LLMs.
+
+SECTION: 2Method
+
+All sequence modeling layers can be viewed from the perspective of storing historic context into a hidden state, as shown in Figure4.111We define a sequence modeling layer as an autoregressive mapping from one sequence to another.For example, RNN layers – such as LSTM[33], RWKV[56]and Mamba[26]layers – compress context into a state of fixed size across time.
+This compression has two consequences.
+On one hand, mapping an input tokento output tokenis efficient, because both the update rule and output rule take constant time per token.
+On the other hand, the performance of RNN layers in long context is limited by the expressive power of its hidden state.
+
+Self-attention can also be viewed from the perspective above, except that its hidden state, commonly known as the Key-Value (KV) cache, is a list that grows linearly with.
+Its update rule simply appends the current KV tuple to this list, and the output rule scans over all tuples up toto form the attention matrix.
+The hidden state explicitly stores all historic context without compression, making self-attention more expressive than RNN layers for long context.
+However, scanning this linearly growing hidden state also takes linearly growing time per token.
+
+To remain both efficient and expressive in long context, we need a better compression heuristic.
+Specifically, we need to compress thousands or potentially millions of tokens into a hidden state that can effectively capture their underlying structures and relationships.
+This might sound like a tall order, but all of us are actually already familiar with such a heuristic.
+
+SECTION: 2.1TTT as updating a hidden state
+
+The process of parametric learning can be viewed as compressing a massive training set into the weights of a model.
+Specifically, we know that models trained with self-supervision can capture the underlying structures and relationships behind their training data[48]– exactly what we need from a compression heuristic.
+
+LLMs themselves are great examples. Trained with the self-supervised task of next-token prediction, their weights can be viewed as a compressed form of storage for existing knowledge on the internet.
+By querying LLMs, we can extract knowledge from their weights.
+More importantly, LLMs often exhibit a deep understanding of the semantic connections among existing knowledge to express new pieces of reasoning[1].
+
+Our key idea is to use self-supervised learning to compress the historic contextinto a hidden state, by making the context an unlabeled dataset and the state a model.
+Concretely, the hidden stateis now equivalent to, the weights of a model, which can be a linear model, a small neural network, or anything else.
+The output rule is simply:
+
+Intuitively, the output token is just the prediction on, made bywith the updated weights.
+The update rule is a step of gradient descent on some self-supervised loss:
+
+with learning rate.222For now, consider. We will discuss more sophisticated techniques for initializingin Subsection2.7.From the compression point of view, every heuristic needs to decide which input to remember or forget. Ourremembers inputs that produce large gradients – intuitively, inputs that makelearn a lot.
+
+One choice ofis reconstructingitself.
+To make the learning problem nontrivial, we first processinto a corrupted input(details in Subsection2.3), then optimize:
+
+Similar to denoising autoencoders[75],needs to discover the correlations between dimensions ofin order to reconstruct it from partial information.333In past experiments, we have also tried adding another model(decoder) after(encoder), such that the reconstruction is produced byinstead of onlyitself.
+While this heftier design did slightly improve results, it made overall training less stable and added significant computational cost.
+Therefore we focus on the encoder-only design.As shown in Figure5, gradient descent is able to reduce, but cannot reduce it to zero.
+We discuss more sophisticated formulations of the self-supervised task in Subsection2.3.
+
+As with other RNN layers and self-attention, our algorithm that maps an input sequenceto output sequencecan be programmed into the forward pass of a sequence modeling layer, using the hidden state, update rule, and output rule above.
+Even at test time, our new layer still trains a different sequence of weightsfor every input sequence. Therefore, we call it theTest-Time Training (TTT) layer.
+
+SECTION: 2.2Training a network with TTT layers
+
+The forward pass of a TTT layer also has a corresponding backward pass.Our forward pass onlyconsists of standard differentiable operators except the gradient operator.
+However,just maps one function to another, in this caseto, andis also composed of differentiable operators.
+Conceptually, calling backward onmeans taking gradients of gradients – a well explored technique in meta-learning[51].
+
+TTT layers have the same interface as RNN layers and self-attention, therefore can be replaced in any larger network architecture, which usually contains many of these sequence modeling layers.
+Training a network with TTT layers also works the same way as training any other language model, such as a Transformer.
+The same data, recipe, and objective such as next-token prediction can be used to optimize parameters of the rest of the network.
+
+We refer to training the larger network as theouter loop, and trainingwithin each TTT layer as theinner loop.
+An important difference between the two nested learning problems is that the inner-loop gradientis taken w.r.t., the parameters of, while the outer-loop gradient is taken w.r.t the parameters of the rest of the network, which we will denote by.
+Throughout this paper, outer-loop parameters are always denoted bywith various subscripts.
+
+So far, the TTT layer has no outer-loop parameters, in contrast to other RNN layers and self-attention.
+In Subsection2.3, we add outer-loop parameters to the TTT layer to improve its self-supervised task.
+Then in Subsection2.4and2.5, we discuss two ways to improve the wall-clock time of TTT layers.
+
+SECTION: 2.3Learning a self-supervised task for TTT
+
+Arguably the most important part of TTT is the self-supervised task, because it determines the kind of features thatwill learn from the test sequence.
+So how should we design this task?
+The final goal of TTT is forto perform well on language modeling.
+Instead of handcrafting a self-supervised task from human priors, we take a more end-to-end approach – directly optimizing the self-supervised task for the final goal of next-token prediction.
+
+Concretely, we learn the self-supervised task as part of the outer loop.
+Starting from the naive reconstruction task in Equation3, we add some outer-loop parameters to make this task learnable.
+In Subsection2.1, we did not specify the corruption that producesfrom. One design is to make it a low-rank projection, whereis a learnable matrix.444The subscripthints at a connection to self-attention, as we will establish in Subsection2.6.Following the terminology of multi-view reconstruction,is called atraining view[14].
+
+Moreover, perhaps not all the information inis worth remembering, so the reconstruction label can be another low-rank projectioninstead of.
+Hereis called thelabel view, whereis also learnable.
+In summary, our new self-supervised loss is:
+
+Since bothand variouss appear together in Equation4, we emphasize again their difference in nature.
+In the inner loop, onlyis optimized, therefore written as an argument of; thes are "hyper-parameters" of this loss function.
+In the outer loop,are optimized alongside, andis merely a hidden state, not a parameter.
+Figure6illustrates this difference with code, whereandare implemented as parameters of the TTT layer,
+analogous to the Key and Value parameters of self-attention.
+
+Lastly, the training viewhas fewer dimensions than, so we can no longer use the output rule in Equation1.
+The simplest solution is to create atest view, and change our output rule to:
+
+This solution has an additional benefit.
+The training and label views specify the information inthat is compressed intoand propagated forward through time.
+The test view specifies potentially different information that is mapped to the current output tokenand propagated forward through network layers, therefore adds more flexibility to the self-supervised task.
+
+Altogether, the set of all possible choices forinduces a family of multi-view reconstruction tasks, and the outer loop can be interpreted as selecting a task from this family.
+Here we have designed all views as linear projections for simplicity.
+Future work might experiment with more flexible transformations, or bigger and different families of self-supervised tasks.
+
+SECTION: 2.4Parallelization with mini-batch TTT
+
+The naive TTT layer developed so far is already efficient in the number of floating point operations (FLOPs).
+However, its update rulecannot be parallelized,
+becausedepends onin two places: before the minus sign and inside.
+Sincecontains the bulk of the computation, we focus on making this second part parallel.
+
+We approach this systems challenge through concepts in the TTT framework. There are many variants of gradient descent (GD).
+The general update rule of GD can be expressed as:
+
+whereis the descent direction.
+Note that once we have calculatedfor, we can then obtain all thes through acumsumby the second half of Equation6.
+Our naive update rule, known asonline gradient descent,
+uses.
+
+To parallelizefor, we can take all of them w.r.t..
+This variant withis known asbatch gradient descent, sinceis the same as the gradient w.r.t.overas a batch.
+However, in batch GD,is effectively only one gradient step away from, in contrast to online GD, whereissteps away from.
+Therefore, batch GD has a smaller effective search space, which ends up hurting performance for language modeling.
+
+Our proposed solution –mini-batch gradient descent– is shown in Figure7.
+Denote the TTT batch size by. We use, wheremodis the last timestep of the previous mini-batch (or 0 for the first mini-batch), so we can parallelizegradient computations at a time.
+Empirically,controls a trade-off between speed and quality, as shown in FigureLABEL:fig:batch-size.
+We chosefor all experiments in this paper.
+
+In summary, there are two potential channels to propagate information fromtowhere:cumsumand the gradient operator. Thecumsumis always active, but the gradient channel is only active whenis from a previous mini-batch.
+Different variants of gradient descent only affect the gradient channel,i.e., the descent direction, specifically w.r.t. whichthe gradient is taken.
+However, the descent stepalways starts from, due to the autoregressive nature of the update rule, which is orthogonal to the choice of.
+
+SECTION: 2.5Dual form
+
+The parallelization introduced above is necessary but not sufficient for efficiency in wall-clock time.
+Modern accelerators specialize in matrix-matrix multiplications, known asmatmuls.
+For example, the NVIDIA A100 GPU contains highly optimized units called TensorCores that can only perform a single operation – multiplying two matrices each of size.
+Without enough of thesematmuls, the TensorCores are idle, and most of the potential for the A100 is unrealized.
+
+Unfortunately, the TTT layer developed so far even with mini-batch still has very fewmatmuls.
+Consider the simplest case of, where, for only the first TTT mini-batch of size.
+In addition, consideras a linear model.
+Copying Equation3,
+our loss at timeis:
+
+As discussed in Subsection2.4, we can parallelize the computation of:
+
+for.
+However, we cannot compute allof thes through a singlematmul.
+Instead, we needouter products to compute them one by one.
+To make matters worse, for each,is, which incurs much heavier memory footprint and I/O cost thanfor large.
+
+To solve these two problems, we make a simple observation: We do not actually need to materializeas long as we can computeat the end of the mini-batch, and the output tokens(see Figure7).
+Now we demonstrate these computations with the simplified TTT-Linear case above.
+Denote, then:
+
+Socan be conveniently computed with amatmul.
+To compute, we know that:
+
+Denoteand the matrix.
+We can derive that:
+
+wheremaskis the upper triangular mask with zeros (similar to the attention mask, but with zeros instead of infinities), and the termcan be reused from the computation of.
+Nowis also conveniently computed withmatmuls.
+Pluggingback into Equation7, we obtain.
+
+We call this procedure thedual form, in contrast to theprimal formbefore this subsection, where thes ands are explicitly materialized.
+As discussed, the two forms are equivalent in output.
+The terminology of primal and dual follows prior work that has explored similar mathematical formulations outside of TTT[36,8,59].
+In AppendixA, we show that the dual form still works whenis a neural network with nonlinear layers, except with more complicated notation.
+
+Time complexity of the primal form within a TTT mini-batch is.
+Time complexity of the dual form isfor computingalone, then an additionalfor computing.
+Compared to the primal, the dual form sacrifices theoretical complexity for hardware utilization.
+In practice,is typically a few hundred andis chosen to be only 16. As a consequence, wall-clock time for computingis relatively small, as observed in the right panel of FigureLABEL:fig:batch-size.
+In our JAX implementation, training with the dual form is more thanfaster than with primal.
+
+SECTION: 2.6Theoretical equivalences
+
+In Subsection2.1, we mentioned thatcan be a linear model or a neural network.
+In Subsection2.4, we also discussed three variants of the update rule: online GD, batch GD, and mini-batch GD.
+Each of thesecombinations induces a different instantiation of the TTT layer, as illustrated in Figure9.
+We now show that among these induced instantiations, the TTT layer with a linear model and batch GD is equivalent to linear attention[41], a widely known RNN layer.777In a nutshell, linear attention[41]is simply self-attention without the softmax.
+Recall the definition of self-attention:.
+Withoutsoftmax, this becomes, which is the simplest formulation of linear attention.
+Similar to other RNN layers, it can be written in a recurrent form, whereis the hidden state.
+Sincecan be computed in acumsumfor every, linear attention also has linear complexity w.r.t..
+
+Consider the TTT layer withas the inner-loop model, batch gradient descent withas the update rule, and. Then, given the same input sequence, the output rule defined in Equation5produces the same output sequenceas linear attention.
+
+By definition ofin Equation4,.
+By definition of batch GD in Equation6:
+
+Plugginginto the output rule in Equation5, we obtain the output token:
+
+which is the definition of linear attention.
+∎
+
+In Table1, we first empirically verify the equivalence above with an improved implementation of linear attention.888The original formulation of linear attention in[41]contains a normalizer and a feature expansion on, which can still be included in an equivalent TTT layer.
+However, prior work has found that these two additions can hurt performance[58], which we have verified in our own experiment (first vs. second row of Table1).
+Therefore, we only construct a TTT layer equivalent to the simplest formulation of linear attention without the two additions.Then, to illustrate the contribution of each of our components (including some that will be introduced in the next subsection), we add them row by row to the TTT layer that is equivalent to linear attention, and ultimately obtain our proposed instantiation calledTTT-Linear.
+The change from batch GD to mini-batch GD contributes the most improvement by a large margin.
+
+While the space of modelsoptimizers in Figure9is already large,
+machine learning is much richer than optimizing the parametersof a model.
+There are also nonparametric learners, such as nearest neighbors, support vector machines (SVMs), and kernel ridge regression.
+By definition, nonparametric learners do not have parameters, and instead directly uses training data.
+Hence we use the notation.
+We now show that for a particular nonparametric learner, the induced TTT layer is equivalent to self-attention.
+
+Consider the TTT layer with the Nadaraya-Watson estimator[7,12], defined as:
+
+whereis the label view discussed in Subsection2.3, and
+
+is a kernel with bandwidth hyper-parametersand.
+Then given the same input sequence, the output rule defined in Equation5produces the same output sequenceas self-attention.
+
+Pluggingandabove into Equation9gives us the definition of self-attention.
+∎
+
+AppendixBcontains a detailed explanation of the Nadaraya-Watson estimator and kernelabove.
+In contrast to Theorem1, Theorem2does not produce a different implementation from attention.
+
+For the TTT layer above, the hidden state isor a similar list of processed training data, the update rule addsto the list, and the output rule scans the list with.
+In previous subsections, our hidden state has been defined as, the update rule a gradient step, and the output rule a call to.
+To unify these two constructions, we define a new abstraction called a learner, which uniquely induces a TTT layer.
+
+Similar to its definition in standard machine learning packages[54], all learners need to implement two methods:train and predict.Now we redefine the hidden state of the induced TTT layer as the internal storage of the learner, and the update and output rules as the train and predict methods.
+Under this new definition of TTT layers, both parametric learners such as that in Theorem1and nonparametric learners such as that in Theorem2can be included.
+Figure10summarizes this general definition of TTT layers in the broader scope of all sequence modeling layers.
+
+This general definition has an additional benefit for parametric learners:
+There can be more objects other thanin the internal storage of parametric learners, such as the optimizer state, which will also be included in the hidden state of the induced TTT layer.
+This extension allows TTT layers to use more sophisticated optimizers such as Adam[42]in future work.
+
+SECTION: 2.7Implementation details
+
+We propose two variants of TTT layers – TTT-Linear and TTT-MLP, differing only in their instantiations of.
+For TTT-Linear,, whereis square.
+For TTT-MLP,has two layers similar to the MLPs in Transformers.
+Specifically, the hidden dimension isthe input dimension, followed by a GELU activation[31].
+For better stability during TTT,always contains a Layer Normalization (LN) and residual connection. That is,wherecan beor.
+
+The TTT initializationis shared between all sequences, even though subsequent weightsare different for each input sequence.
+Instead of setting, we can learn it as part of the outer loop.
+Since outer-loop parameters are always denoted bys instead ofs, we assign an alias.
+In practice,adds a negligible amount of parameters comparing to the reconstruction views, because both its input and output are low dimensional.
+Empirically, we observe that learningsignificantly improves training stability.
+
+The learning rate is usually the most important hyper-parameter for gradient descent, so we experiment with learning the inner-loop learning ratein Equation6as part of the outer loop.
+We makea function of the input token (therefore different across time) for additional flexibility.
+Concretely, we design, where the learnable vectoris an outer-loop parameter,is the sigmoid function, and the scalaris the base learning rate, set to 1 for TTT-Linear and 0.1 for TTT-MLP.
+Alternatively,can also be interpreted as a gate for.
+
+The cleanest way to integrate any RNN layer into a larger architecture would be to directly replace self-attention in a Transformer, known in this context as a backbone.
+However, existing RNNs such as Mamba[26]and Griffin[18]all use a different backbone from Transformers.
+Most notably, their backbone contains temporal convolutions before the RNN layers, which might help collect local information across time.
+After experimenting with the Mamba backbone, we find that it also improves perplexity for TTT layers, so we incorporate it into our proposed method.
+See Figure16(in Appendix) for details.
+
+SECTION: 3Experiments
+
+We evaluate TTT-Linear and TTT-MLP by comparing with two baselines
+– Transformer and Mamba, a modern RNN.
+Our main codebase is based on EasyLM[25], an open-source project for training and serving LLMs in JAX.
+All experiments can be reproduced using the publicly available code and datasets provided at the bottom of the first page.
+
+Following the Mamba paper[26], we perform standard experiments with 2k and 8k context lengths on the Pile[24], a popular dataset of documents for training open-source LLMs[9].
+However, the Pile contains few sequences of length greater than 8k[19].
+To evaluate capabilities in long context, we also experiment with context lengths ranging from 1k to 32k inincrements, on a subset of the Pile called Books3, which has been widely used to train LLMs in long context[49,3].
+
+As discussed in Subsection2.7, Transformer and Mamba use different backbones, and TTT-Linear and TTT-MLP always use the Mamba backbone unless noted otherwise.
+As an ablation study, Figure11and Figure12contain TTT layers within the Transformer backbone.
+When a figure contains both the Transformer backbone and Mamba backbone, we denote them by(T)and(M), respectively.
+
+To ensure fairness to our baselines, we strictly follow the evaluation protocols in the Mamba paper when possible:
+
+For each evaluation setting (e.g., dataset, context length, and method), we experiment with four model sizes: 125M, 350M, 760M, and 1.3B parameters. For Mamba, the corresponding sizes are 130M, 370M, 790M, and 1.4B, as Mamba does not follow the Transformer configurations.
+
+All models are trained with the Chinchilla recipe999The Chinchilla paper is another highly influential study of empirical scaling laws[34].
+From large-scale experiments with many hyper-parameters, they observe that the compute-optimal models follow a particular training recipe.
+We only follow the Chinchilla recipe used in the Mamba paper, which may be slightly different from the original recipe in[34].described in the Mamba paper and reproduced in our AppendixC.
+Our Transformer baseline, based on the Llama architecture[73], also follows the baseline in the Mamba paper.
+As verification, our baselines can reproduce the numbers reported in the Mamba paper in their evaluation settings.101010The only difference between our protocol and that in the Mamba paper is the tokenizer.
+The Mamba paper uses two different tokenizers – GPT-2 and GPT-NeoX – for various experiments.
+For consistency, we adhere to a single tokenizer throughout this paper and choose the Llama tokenizer[73], which is the modern state-of-the-art.
+
+We do not experiment with hybrid architectures (e.g. Griffin[18]), because our baselines are not hybrid.
+While hybrid architectures that use both self-attention and TTT layers may improve performance, they would reduce the clarity of our academic evaluation.
+
+SECTION: 3.1Short context: the Pile
+
+From Figure11, we make a few observations:
+
+At 2k context, TTT-Linear (M), Mamba, and Transformer have comparable performance, as the lines mostly overlap.
+TTT-MLP (M) performs slightly worse under large FLOP budgets.
+Even though TTT-MLP has better perplexity than TTT-Linear at every model size, the extra cost in FLOPs offsets the advantage.
+
+At 8k context, both TTT-Linear (M) and TTT-MLP (M) perform significantly better than Mamba, in contrast to the observation at 2k. Even TTT-MLP (T) with the Transformer backbone performs slightly better than Mamba around 1.3B.
+A robust phenomenon we observe throughout this paper is that as context length grows longer, the advantage of TTT layers over Mamba widens.
+
+At 8k context, Transformer still has good (if not the best) perplexity at every model size, but its line is not competitive because of the cost in FLOPs.
+
+Switching the TTT layers from Mamba backbone into Transformer backbone has two effects.
+First, TTT layers with Mamba backbone perform better in our evaluations so far.
+Second, with Mamba backbone, TTT-MLP at best is only comparable to TTT-Linear; but with Transformer backbone, TTT-MLP is clearly better.
+We hypothesize that the temporal convolutions in the Mamba backbone help more when the sequence modeling layer has a less expressive hidden state.
+The linear model is less expressive than the MLP, therefore benefits more from the convolutions.We will revisit this hypothesis in the next subsection.
+
+The Chinchilla paper empirically observed that the compute-optimal models following their recipe fall onto a line in the log-log plot of FLOPs vs. perplexity, as is often the case for scaling law experiments[34].
+However, we do not observe a clean linear fit in Figure11or Figure12(the analogous experiments in Books), not even for Transformers.
+This is not surprising given the differences in dataset, context length, tokenizer, and architecture.
+Following the Mamba paper, we connect the points instead of fitting them with linear regression due to the large error.111111Ideally, we would have rerun all the hyper-parameters and derived a potentially new recipe for each method based on our evaluation setting, following the process in the Chinchilla paper.
+If the new compute-optimal models do fall onto a line, we could then predict performance beyond the current FLOPs regime[40,34]. However, this empirical study would require orders of magnitude more resources than ours.
+
+SECTION: 3.2Long context: Books
+
+To evaluate capabilities in long context, we experiment with context lengths ranging from 1k to 32k inincrements, using a popular subset of the Pile called Books3.
+The training recipe here is the same as for the Pile, and all experiments for the TTT layers areperformed in one training run.121212Following the Mamba paper, we always use 0.5M tokens per training batch regardless of context length. That means for context lengthwe havesequences per batch (assume divisible).From the subset of results in Figure12, we make a few observations:
+
+At 2k context on Books, all the observations from Pile 2k still hold, except that Mamba now performs slightly better than TTT-Linear (whereas their lines roughly overlapped for Pile 2k).
+
+At 32k context, both TTT-Linear (M) and TTT-MLP (M) perform better than Mamba, similar to the observation from Pile 8k. Even TTT-MLP (T) with the Transformer backbone performs slightly better than Mamba at 32k context.
+
+TTT-MLP (T) is only slightly worse than TTT-MLP (M) at 1.3B scale.
+As discussed, it is hard to derive an empirical scaling law due to the lack of a clean linear fit. However, the strong trend for TTT-MLP (T) suggests that the Transformer backbone might be more suitable for larger models and longer context beyond our evaluations.
+
+We only ablate the backbones for 2k and 32k due to the cost of training LLMs. For future work, we believe that given TTT layers with even more expressive hidden states, the Mamba backbone with temporal convolutions will become unnecessary.
+
+While we have been training Transformers from scratch following the Mamba paper, in practice this approach is rarely used for long context.
+The standard practice is to train a Transformer in short context, then finetune in long context.
+To reflect this practice, we add another baseline,TF finetune, for context lengths 4k and above.
+This baseline starts from the model trained (according to the Chinchilla recipe) on Books 2k, then uses 20% more tokens to finetune at the designated context length, following the Llama Long paper[78].
+See details of the TF finetune recipe in AppendixC.
+
+Our complete results for context lengths 1k, 2k, 4k, 8k, 16k, 32k, including TF finetune, are in Figure18(in Appendix).
+
+While the length of the input sequence is determined by the user, the context length at which the language model processes the input is determined by the engineer as a design choice.
+Therefore, context length is a hyper-parameter that can be selected just as other ones.131313To be precise, there are two hyper-parameters: the context length at which the LLM is trained, and one at which the LLM is evaluated.
+Both of them can be different from the sequence length, which is determined by the user.
+Transformers tend to perform poorly when the evaluation context is longer than the training context[18].
+Therefore, we always evaluate at the training context length, making the two hyper-parameters the same.For LLMs with linear complexity, we select the argmin in perplexity, since every context length has the same FLOPs.
+For Transformers, longer context costs more FLOPs, so we form a convex hull of all the points in the log-log plot and connect those on the boundary.
+
+From Figure13, we make a few observations:
+
+The lines of TTT-Linear and TTT-MLP, the best-performing methods, almost completely overlap.
+The lines of Mamba and TF finetune also mostly overlap afterFLOPs.
+
+TF finetune performs significantly better than TF pretrain, as it benefits from long context without incurring extremely large cost in training FLOPs.
+Note that the inference FLOPs of TF finetune and pretrain are equally poor, which is not reflected in this plot.
+
+For all methods trained from scratch (including TF pretrain), perplexity becomes worse once the context length becomes too large.
+This trend is highlighted in Figure19(in Appendix).
+We leave further investigation of this trend to future work.
+
+The left panel of Figure2is a zoomed-in view of Figure13.
+For clarity, we leave TF pretrain out of Figure2and only show TF finetune (labeled asTransformer) since it is the stronger baseline.
+Figure14reproduces the right panel of Figure2, now with TTT-MLP and additional discussion.
+
+SECTION: 3.3Wall-clock time
+
+LLM training and inference can be decomposed into forward, backward, and generate.
+Prompt processing during inference, also known as prefill, is the same operation as forward during training, except that the intermediate activations do not need to be stored for backward.
+Since both forward (during training and inference) and backward can be parallelized, we use the dual form.
+Generating new tokens, also known as decode, is inherently sequential, so we use the primal form.
+
+Due to resource constraints, our experiments are written in JAX and run on TPUs.
+On a v5e-256 TPU pod, the Transformer baseline takes 0.30s per iteration of training at context 2k, while TTT-Linear takes 0.27s per iteration, already 10% faster without any systems optimization.
+However, Mamba (implemented in PyTorch, Triton, and CUDA) can only run on GPUs, so for fair comparison, we also rewrite our method with preliminary systems optimization to run on GPUs.
+
+Specifically, we write a GPU kernel for forward in ThunderKittens[66].
+Historically, RNNs have been inefficient during forward and backward due to poor use of parallelism andmatmuls.
+Our goal with the forward kernel is to demonstrate the effectiveness of mini-batch TTT and the dual form for these problems.
+A kernel for backward should have the same properties in efficiency as forward, but requires more complex logic for manual differentiation, therefore is left for future work.
+
+The left panel of Figure15shows the latency for batch size 16 of our forward kernel.
+All models are 1.3B (1.4B for Mamba).
+Time per token grows linearly for Transformer as context length increases, but stays roughly constant for the other methods.141414We observe that forward latency of the network increases slightly for TTT-Linear, TTT-MLP, and Mamba, even though latency of each sequence modeling layer alone stays constant.
+Consider the operation, whereisandis.
+Its latency (normalized over) is expected to be constant, but in practice grows slightly with.
+One possible cause of this phenomenon is the GPU throttling aftergets very large[30].Note that our Transformer baseline is significantly faster that in the Mamba paper, because we use vLLM[46], a state-of-the-art serving system, instead of the HuggingFace Transformer[77].
+
+In addition, we write another GPU kernel for generate in Triton[72], and benchmark its speed in the right panel of Figure15for batch size 512.
+Another popular metric for wall-clock time is throughput, which takes into account the potential benefit of being able to use a larger batch size.151515To calculate throughput for each method, we increase its batch size inincrements until GPU runs out of memory, measure the tokens per second for every batch size, and select the highest.For completeness, we report the throughput for forward and generate in Figure20(in Appendix). All the observations and ordering between methods above still hold for throughput.
+
+SECTION: 4Related Work
+
+SECTION: 4.1Modern RNNs
+
+Mamba is one of the many Structured State-Space Models[27,21,57,18]. The hidden state in these models is a vector, similar to in LSTMs.
+For TTT-Linear or TTT-MLP, the hidden state is a matrix or two matrices, therefore larger.
+In Figure14, we find that TTT layers can take advantage of their larger hidden states to compress more information in long context, where TTT-MLP outperforms TTT-Linear, which in turn outperforms Mamba.
+
+Similar to TTT-Linear, RWKV[55,56], xLSTM[5], and Gated Linear Attention (GLA)[79]also have matrix hidden states, which are inherited from linear attention[41].
+Modern RNNs such as GLA use chunk-wise parallelism to improve hardware efficiency, so tokens inside a chunk can be processed withmatmuls instead of acumsum.
+However, chunk-wise parallelism does not change the expressiveness of the model, since all temporal dependencies are still equivalent to acumsum.
+
+In contrast, mini-batch TTT allows more complex temporal dependencies across mini-batches. Each hidden statedepends on previouss within its mini-batch still through acumsum, but depends ons in previous mini-batches also through the gradient operator.
+As illustrated FigureLABEL:fig:batch-size, mini-batch TTT enables a trade-off between expressiveness and hardware efficiency, since a smaller batch sizeleads to better perplexity at the cost of higher latency.
+This trade-off is a unique and important feature of TTT. As shown in Table1, the intermediate batch sizesignificantly outperformswhich is fullycumsum.
+
+SECTION: 4.2Learning at Test Time
+
+The idea of learning at test time has a long history in machine learning.
+One of the earliest versions of this idea is called local learning (Bottou and Vapnik[10]):
+For each test input, train on its neighbors before making a prediction.
+This procedure has been effectively applied to models ranging from SVMs[81]to modern LLMs[29].
+
+Another early version of learning at test time is calledtransductive learning[22].
+The principle of transduction, as stated by Vladimir Vapnik[74], is to
+"… get the answer that you really need, but not a more general one."
+Practical implementations of transductive learning use test data to add constraints to the margin of SVMs[39,17].
+However, transductive learning usually needs multiple test instances to be empirically effective, unlike many instantiations of test-time training, which only need a test single instance (image, video, or natural language sequence) at a time.
+
+In computer vision, the idea of learning at test time has been applied for decades to applications such as face detection[38], object detection[53], image super-resolution[65], and 3D reconstruction[50].
+More recently, the same idea has also been applied to natural language processing, where it is called dynamic evaluation[44,45].
+The basic approach is to directly finetune a language model on the test sequence, which often comes in the form of a prompt.
+
+Next, we discuss two relevant lines of work in detail: test-time training and fast weights.
+
+The core idea ofTest-Time Training(TTT) is that each test instance defines its own learning problem, where this test instance alone is the target of generalization[69].
+Concretely, for each test instance, the conventional practice is to predict, using a predictorthat is optimized for all training instances on average.
+TTT first formulates a learning problem defined by, then trains a modelon(often withas initialization), and predicts.
+
+Since the test instance comes without its label, the learning problem can only be formulated with a self-supervised task. Prior work has shown that TTT with reconstruction significantly improves performance especially on outliers[23].
+Improvements become even more pronounced when testing on video frames that arrive in a stream and TTT is autoregressive[76], asis trained on past frames.
+The autoregressive connection makes[76]most relevant to our paper.
+
+Conceptually, the biggest difference between our paper and prior work is that our reconstruction task is learned in an outer loop, instead of handcrafted with human priors.
+Follow-up work to TTT has explored applications such as
+robot manipulation[28]and locomotion[68],
+among others, that often require different designs for the self-supervised task.
+
+The general idea offast weightsis to update the parameters of a “fast” model on only the most relevant data, as opposed to the conventional practice of updating a “slow” model on all data[71].
+This idea has existed since the 1980s[32].
+The most relevant data can be the test instance itself, therefore TTT can be viewed as a special case of fast weights.
+
+Prior work in fast weights usually avoids forming an explicit learning problem that optimizes some objective on data.
+For example, the update rule of Hebbian learning and Hopfield networks[35]simply adds(or some variant thereof)[4]to the fast weights given each input.
+In contrast, TTT embraces the idea of formulating an explicit learning problem, where the test instance is the target of generalization.
+Our update rule is also an explicit step of optimization.
+
+The idea offast weight programmers(FWPs) is to update the fast weights with a “slow” model[62].
+Our inner-loop weightscan be viewed as “fast” and outer-loop weightsas “slow”.
+Therefore, networks containing TTT layers can be viewed as a special case of FWPs[43], similar to how TTT can be viewed as a special case of fast weights.
+The FWP with the Hebbian update rule above is equivalent to linear attention[60], therefore also to naive TTT-Linear with batch gradient descent.
+
+The definition of FWPs is very broad.
+In fact, all networks with some gating mechanism, such as Transformers with SwiGLU blocks[63], can also be viewed as a special case of FWPs161616Consider a simple gate, whereis the input,is the output,andare learnable weight matrices,is element-wise multiplication, andis the sigmoid function.
+A well known interpretation is to viewas the fast weights controlled by slow weights, then equivalently,is simply a two-layer MLP with fast weights[26]..
+Recent work has been experimenting with FWPs for language modeling: Irie et al.[37]design “fast” networks with weights produced as output of a “slow” networks.
+Clark et al.[16]give a Transformer a final layer of fast weights, whose initialization is trained as slow weights.
+Our contribution relative to existing work on FWPs, again, is formulating an explicit learning problem for the update, which enables us to borrow tools from learning such as mini-batch and LN.
+
+SECTION: 4.3Learning to Learn
+
+For decades, researchers have been arguing that learning to learn, also known as meta-learning or bi-level optimization, should be a critical component of intelligence[61,6,70,47].
+In prior work such as[2],[20]and[52], the inner loop learns from an entire dataset at a time instead of a sequence, so the outer loop needs a collection of datasets or tasks.
+In short, the outer loop is “one level above” regular training.
+Since it is hard to collect millions of datasets, this outer loop is hard to scale.
+
+In contrast, for TTT, each sequence itself is a dataset and defines its own generalization problem. The inner loop is “one level below” regular training, so our outer loop is only another solution to the canonical problem of supervised learning,
+instead of a new problem setting like generalization across datasets.
+As illustrated in Table2, our outer loop is “at the same level” as regular training.
+This makes our outer loop easier to scale.
+
+SECTION: 5Discussion
+
+We have reformulated the canonical problem of supervised learning as learning to (learn at test time).
+Our formulation produces an alternative conceptual framework for building what is traditionally known as network architectures.
+We summarize our current instantiation in Table2.
+
+The search space for effective instantiations inside this framework is huge, and our paper has only taken a baby step.
+Fortunately, if our perspective holds, then heuristics from regular training can transfer to test-time training, and search can be efficient.
+Next we outline some especially promising directions for future work.
+
+Outer-loop parameterization.There are many other ways to parameterize a family of multi-view reconstruction tasks, or perhaps a more general family of self-supervised tasks. It would be a big coincidence if the first one we have tried turns out to be the best.
+
+Systems optimization.Our systems optimization in Subsection3.3has been preliminary at best, and there are many ways to improve it.
+In addition, pipeline parallelism through time might allow us to process long sequences of millions of tokens on multiple devices together.
+
+Longer context and larger models.Constrained by our academic resources, we have not trained with millions or billions in context length, which would also require larger models according to Figure19.
+The advantage of TTT layers should become more pronounced in longer context.
+
+More ambitious instantiations of.When context length becomes longer,would also need to be larger.
+For video tasks and embodied agents, whose context length can easily scale up to millions or billions,could be a convolutional neural network.
+
+Multi-level learning to learn.Ifitself is a self-attention layer, then by Theorem2it can be interpreted as yet another inner loop nested inside the existing one. In this fashion, we can potentially build many levels of nested learning problems.
+
+Why do we study TTT? First a more basic question: Why study AI? For some of us, AI is a playground to probe about the nature of human intelligence.
+Prior work often tries to model human learning with machine learning, where training is on a shuffled dataset with i.i.d. instances, and inference is on a separate test set.
+However, humans do not naturally learn with i.i.d. instances or have a train-test split.
+We believe that human learning has a more promising connection with TTT, our inner loop, whose data is a potentially very long sequence with strong temporal dependencies, and any piece of data can be used for both training and testing. This is why we study TTT.
+
+SECTION: Author Contributions
+
+Yu Sunstarted this project with Xinhao Li in November 2022, and has been working on it full-time since June 2023.
+Yu proposed the conceptual framework of the project, designed mini-batch TTT and the dual form, wrote the paper with help from others, and led the daily operations of the team.
+
+Xinhao Listarted this project with Yu Sun in November 2022, and has been working on it full-time since then.
+Xinhao and Karan co-led the development of our current codebase.
+Before March 2024, Xinhao was the primary contributor to our earlier codebases that shaped this project.
+Xinhao made significant contributions to the project direction in discussions.
+
+Karan Dalaljoined this project full-time in June 2023.
+In collaboration with Xinhao, he co-led the development of our current codebase.
+Karan managed the experiments in Section3, helped write the paper, and made significant contributions to the project direction in discussions.
+
+Jiarui Xujoined this project in March 2024. He led our architectural development since he joined, and made significant contributions to the project direction in discussions.
+
+Arjun Vikramjoined this project in September 2023. He made significant contributions to our systems optimization, as well as current and earlier codebases.
+
+Genghan Zhangjoined this project in January 2024. He provided critical insights and made significant improvements to our systems optimization.
+
+Yann Duboisjoined this project in February 2024. He proposed our current instantiation of, and made significant contributions to the project direction in discussions.
+
+Xinlei Chen and Xiaolong Wanghave been supporting this project since November 2022, and the direction of test-time training for many years. Without their support in compute and organization, this project could not have survived its early stage.
+They gave invaluable advice to our experiments.
+
+Sanmi Koyejo, Tatsunori Hashimoto, and Carlos Guestrinhave been supporting this project since May 2023. They gave invaluable advice to our experiments and presentation.
+For example, Sanmi suggested us to focus on TTT-Linear,
+Tatsu suggested the experiments in Figure2(left), and Carlos outlined Section2.
+
+SECTION: Acknowledgements
+
+Part of the compute for this project is generously supported by the Google TPU Research Cloud program and Hyperbolic Labs.
+XW is supported, in part, by the Amazon Research Award, the Cisco Faculty Award and the Qualcomm Innovation Fellowship.
+SK acknowledges support by NSF 2046795 and 2205329, NIFA award 2020-67021-32799, the Alfred P. Sloan Foundation, and Google Inc.
+TH is supported by a Sony Faculty Innovation Award and a gift from Panasonic.
+CG acknowledges support by the Air Force Office of Scientific Research (AFOSR), FA9550-20-1-0427, Stanford Human-Centered Artificial Intelligence (HAI) Institute, and gifts from Google and IBM.
+
+We would like to thank Rohan Taori, Xuechen Li, Allan Zhou, Ke Chen, and Guandao Yang for many helpful discussions,
+Menghao Guo for help with code release,
+Xinyang Geng for help with EasyLM,
+Hao Liu for help with the LWM codebase,
+David Hall for help with Levanter,
+Yossi Gandelsman and Yutong Bai for help at an early stage of the project,
+Mert Yuksekgonul for help with figures in the paper,
+Horace He, Ben Spector, and Azalia Mirhoseini for help with systems,
+Sharad Vikram and Roy Frostig for answering our questions about JAX and Pallas,
+Albert Gu and Tri Dao for helping us reproduce experiments in the Mamba paper,
+and Kilian Weinberger and Percy Liang for advice on presentation.
+Yu Sun is grateful to his PhD advisors,
+Alexei A. Efros and Moritz Hardt, for their many insights from years ago that eventually became part of this paper.
+
+SECTION: References
+
+SECTION: Appendix ADual Form
+
+The goal of this section is to derive the dual form for general MLPs of arbitrary depth, with nonlinear activations.
+
+Without loss of generality, considerfor convenience, and consider only the first mini-batch, where.
+Denote:
+
+Also denote,
+andandanalogously.
+In general, uppercase letters denote matrices whose columns are vectors denoted by the corresponding lowercase letter.
+
+For a network withlayers, denote the initial parameters in layerby.
+Our convention is to use superscripts for the layer and subscripts for time.
+
+SECTION: A.1Forward pass
+
+During the initial forward pass of TTT,
+we denote the input to layerby, with.
+Now we write the forward pass of TTT using these notations.
+
+For:
+
+whereforcan be any element-wise operation () with derivative.
+
+Given, we compute the loss:
+
+whereis the same as defined in Equation4, except scaled byfor convenience.
+
+All the operations above (except) arematmuls andsums, therefore are hardware efficient.
+Both the primal form and the dual form share these initial operations.
+
+SECTION: A.2Primal form
+
+The primal form first computesfor, then updates.
+Finally, given, the primal form repeats the forward pass with the updateds.
+
+For:
+
+, for
+
+, for
+
+wherecontains the output tokens.
+
+Note that a standard backward pass only computes the sum of the gradients:
+
+so the computation of the individual terms in the sumforcannot be batched together intomatmuls.
+Similarly, the forward pass in primal form uses a differentfor each, therefore also cannot be batched in the same way as a standard forward pass.
+These non-standard passes have poor hardware efficiency.
+
+SECTION: A.3Dual form
+
+As discussed in Subsection2.5, the goal of the dual form is to computeandwith onlymatmuls and light-weight operations such assums,, and.
+To achieve this goal, we avoid explicitly computing the intermediate variables:andfor.
+
+The dual form first computes, then takes a standard backward pass.
+
+For:
+
+Now we can already compute.
+To compute the output tokens, we do another forward pass.
+
+For:
+
+By the end of the forward pass, we have computed.
+
+While this forward pass is non-standard, it only containsmatmuls,sums,, andmask, therefore is efficient like the standard forward pass.
+
+SECTION: A.4Derivation
+
+To derive the dual form, we show that:
+
+is the same as what would be computed in the primal form.
+Specifically, we show that each columnofin the forward pass of the dual equals toin the forward pass of the primal.
+We invoke a simple fact.
+
+Define matrices,, and.171717Our matrixwould usually be denoted byin another context.
+We useto avoid confusion with the layer number.Define, and, then.
+
+Now plug,,, andinto the fact above, we have shown the desired equality.
+
+Note that theandused above can be extended to arbitrary functions that are not necessarily element-wise operations, including normalization layers.
+This extension can be achieved through, for example,vjp(vector-Jacobian product) in standard libraries for automatic differentiation such as JAX and PyTorch.
+However, the dual form cannot accelerate operations insideor itsvjp.
+
+SECTION: Appendix BNadaraya-Watson estimator
+
+Throughout this section, we useto denote the input tokenas a random variable.
+Our desired output is the corresponding output token, another random variable.
+This is formulated as estimating the conditional expectation of:
+
+Since the true probability distributionsandare unknown, we replace them with their kernel density estimations.
+Specifically, the kernel density estimation foris:
+
+where eachis a piece of training data in general.
+(Recall that for our paper,is specifically training data for the inner loop,i.e.a token, which matches our notation in the main text.)
+
+For estimating, we use the product kernel:
+
+At first sight, it seems absurd to factor the joint probability into two seemingly independent kernels.
+But in this case,can actually be anydependent on, since it will be integrated out. So the two kernels do not need to be independent.
+
+Plugging in those estimations, we obtain the Nadaraya-Watson estimator:
+
+In modern days, people think of kernels as positive semi-definite, which might not be guaranteed forunless.
+However, people working on kernels decades ago, around the time when the Nadaraya-Watson estimator was popular, have been very lenient with the choice of kernels, and asymmetric kernels such as ourin Equation10have enjoyed a long tradition:
+When a kernel estimator uses, it is known as a balloon estimator[15].
+Papers such as Breiman et al.[11]have even usedas a function of, known as sample-adaptive smoothing.
+
+SECTION: Appendix CExperiment details
+
+Our Transformer strictly follows the construction in the Mamba paper, whereTransformeris calledTransformer++.
+Specifically, the Transformer architecture is based on Llama[73], with rotary positional encodings (RoPE)[67], SwiGLU MLP blocks[63], and RMSNorm[80]instead of LayerNorm.
+Our Mamba baseline uses the public code provided by the authors.
+We have verified that our baselines can reproduce the numbers reported in[26].
+
+Our training configurations are in Table3, which simply reproduces Table 12 in the Mamba paper.
+As discussed in Footnote12, all models are trained with a batch size of 0.5M tokens regardless of context length.
+All of our optimization hyper-parameters follow the “improved recipe" in Appendix E.2 of the Mamba paper, reproduced below:
+
+AdamW optimizer:
+
+Cosine schedule: decay to end learning rate
+
+Linear learning rate warmup over 10% of the training steps
+
+Weight decay: 0.1
+
+Gradient clipping: 1.0
+
+No Dropout
+
+Mixed Precision
+
+As discussed in Footnote10, all models are trained using the Llama tokenizer[73].
+For experiments on the Pile, this is the only difference with the recipe in the Mamba paper, which uses two other tokenizers.
+For experiments on Books, we find that the original angle of the RoPE encoding[67]is sub-optimal for our Transformer baseline in long context.
+Starting at context length 4k, we tryfollowing the Llama Long paper[78], and use the better perplexity for Transformer (both pretrain and finetune).
+
+Finetuning starts a new cosine schedule with the same optimization hyper-parameter as training from scratch, except the peak learning rate.
+We try three peak learning rates for finetuning: 1e-5, 1e-4, and 1e-3, and select for the best perplexity.
+We observe that 1e-4 works the best for the 125M models, while 1e-5 works the best for 350M and larger.
+This observation is reasonable considering that the end learning rate for the Chinchilla recipe is 1e-5.
+
+As mentioned in Subsection2.7, the inner-loop base learning rateis set to 1 for TTT-Linear and 0.1 for TTT-MLP.
+Our heuristic for settingis similar to how people set the outer-loop learning rate for regular training: We triedand used the largest value that does not cause instabilities.
+For TTT-MLP, we use linear warmup forover 10% of the training steps, similar to regular training.
+The number of training steps in the inner loop is(assume divisible).
+For TTT-Linear, we tried linear warmup in the inner loop but did not observe a difference.
+
+To ensure fairness to Mamba, all methods in these experiments have matched training FLOPs and are trained with the same recipe (last row of Table3) as Mamba 1.4B.
+To match FLOPs with Mamba, Transformer has 19 blocks instead of 24.
+For TTT-Linear and TTT-MLP, their FLOPs are already close to those of Mamba, so we change the hidden dimension of the MLP blocks from 5504 to 5808 (TTT-Linear) and 5248 (TTT-MLP).
+
+By default, libraries such as JAX and PyTorch save the intermediate activations during a forward pass so they can be reused during the backward pass.
+However, for a TTT layer withas hidden state, this default saves, which uses too much memory.
+With TTT mini-batch and the dual form, we still need to save (assume divisible)s at the end of the mini-batches.
+A standard technique to save memory in this scenario is gradient checkpointing[13], which is usually applied through layers, but we apply it through time.

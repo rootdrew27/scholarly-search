@@ -1,0 +1,1001 @@
+SECTION: Functional Bilevel Optimization for Machine Learning
+In this paper, we introduce a new functional point of view on bilevel optimization problems for machine learning, where the inner objective is minimized over a function space. These types of problems are most often solved by using methods developed in the parametric setting, where the inner objective is strongly convex with respect to the parameters of the prediction function. The functional point of view does not rely on this assumption and notably allows using over-parameterized neural networks as the inner prediction function. We propose scalable and efficient algorithms for the functional bilevel optimization problem and illustrate the benefits of our approach on instrumental regression and reinforcement learning tasks.
+
+SECTION: Introduction
+Bilevel optimization methods solve problems with hierarchical structures, optimizing two interdependent objectives: aninner-levelobjective and anouter-levelone. Initially used in machine learning for model selectionand sparse feature learning, these methods gained popularity as efficient alternatives to grid search for hyper-parameter tuning. Applications of bilevel optimization include meta-learning,
+auxiliary task learning,
+reinforcement learning, inverse problemsand invariant risk minimization.
+
+Bilevel problems are challenging to solve, even in thewell-defined bilevelsetting with a unique inner-level solution. This difficulty stems from approximating both the inner-level solution and its sensitivity to theouter-levelvariable during gradient-based optimization. Methods like Iterative Differentiation (ITD,) and Approximate Implicit Differentiation (AID,) were designed to address these challenges in the well-defined setting, resulting in scalable algorithms with strong convergence guarantees. These guarantees usually require theinner-levelobjective to be strongly convex. However, when the inner-level variables are neural network parameters, the lower-level problem becomes non-convex and may have multiple solutions due to over-parameterization. While non-convexity is considered "benign" in this setting,
+multiplicity of inner-level solutions makes their dependence on the outer-level variable ambiguous, posing a major challenge in bilevel optimization for modern machine learning applications.
+
+We identify a commonfunctional structurein bilevel machine learning problems to address the ambiguity challenge that arises with flexible models like neural networks. Specifically, we consider aprediction functionoptimized by the inner-level problem over a Hilbert space.
+This space consists of functions defined over an input spaceand taking values in a finite dimensional vector space. The optimalprediction functionis then evaluated in the outer-level to optimize an outer-level parameterin a finite dimensional space, resulting in afunctionalbilevel problem:
+
+In contrast to classical bilevel formulations involving neural networks, where the inner objective is non-convex with respect to the network parameters, the inner objective in () defines an optimization problem over a prediction functionin a functional vector space.
+
+A crucial consequence of adopting this new viewpoint is that it renders the strong convexity of the inner objective with respect toa mild assumption, which ensures the uniqueness of the solutionfor any outer parameter value. Strong convexity with respect to theprediction functionis indeed much weaker than strong convexity with respect to model parameters and often holds in practice. For instance, a supervised prediction task with pairs of features/labelsdrawn from some training data distribution is formulated as a regularized empirical minimization problem:
+
+whereis thespace of square integrable functions w.r.t. the distribution of, andcontrols the amount of regularization.
+The inner objective is strongly convex in, even though the optimal prediction functioncan be highly nonlinear in. The functionmay then be approximated,e.g., by an overparameterized deep neural network, used here as a function approximation tool.
+
+Although appealing, the () formulation necessitates the development of corresponding theory and algorithms, which is the aim of our paper. To the best of our knowledge, this is the first work to propose a functional bilevel point of view that can leverage deep networks for function approximation. The closest works are either restricted to kernel methodsand thus cannot be used for deep learning models, or propose abstract algorithms that can only be implemented for finite Hilbert spaces.
+
+We introduce in Sectiona theoretical framework for functional implicit differentiation in an abstract Hilbert spacethat allows computing thetotal gradientusing a functional version of theimplicit function theoremand theadjoint sensitivity method.
+This involves solving a well-conditioned functional linear system, equivalently formulated as a regression problem in, to find an adjoint functionused for computing thetotal gradient.
+We then specialize this framework to the common scenario whereis anspace and objectives are expectations of point-wise losses. This setting covers many machine learning problems (see Sections,, and).
+In Section, we propose an efficient algorithm where the prediction and adjoint functions can be approximated using parametric models, like neural networks, learned with standard stochastic optimization tools. We further study its convergence using analysis for biased stochastic gradient descent.
+
+The proposed method, calledfunctional implicit differentiation(FuncID), adopts a novel "differentiate implicitly, then parameterize" approach (left): functional strong convexity is first exploited to derive animplicit gradient in function space using a well-defined adjoint function. Then, both the lower-level solution and adjoint function are approximated using neural networks.
+This contrasts with traditional AID/ITD approaches (right), which parameterize the inner-level solution as a neural network, leading to a non-convex ‘parametric’ bilevel problem in the network’s parameters. Animplicit gradient is then computed by approximately solving an unstable or ill-posed linear system.
+Consequently,FuncIDaddresses the ambiguity challenge by exploiting the functional perspective and results in a stable algorithm with reduced time and memory costs.
+In, we demonstrate the benefits of our approach in instrumental regression and reinforcement learning tasks, which admit a natural functional bilevel structure.
+
+In principle, considering amended versions of the bilevel problem can resolve the ambiguity arising from non-convex inner objectives. This is the case of optimistic/pessimistic versions of the problem, often considered in the literature on mathematical optimization, where the outer-level objective is optimized over both outer and inner variables, under the optimality constraint of the inner-level variable.
+While tractable methods were recently proposed to solve them, it is unclear how well the resulting solutions behave on unseen data in the context of machine learning. For instance, when using over-parameterized models for the inner-level problem, their parameters must be further optimized for the outer-level objective, possibly resulting in over-fitting.
+More recently,proposed a game formulation involving aselection mapto deal with multiple inner-level solutions. Such a formulation justifies the use of ITD/AID outside the well-defined bilevel setting, by viewing those methods as approximating the Jacobian of the selection map. However, the justification only hold under rather strong geometric assumptions.
+Additional related work is discussed in Appendixon bilevel optimization with strongly-convex inner objectives, the adjoint sensitivity method that is often used in the context of ordinary differential equations, and amortization techniquesthat have been also exploited for approximately solving bilevel optimization problems.
+
+SECTION: A Theoretical Framework for Functional Bilevel Optimization
+The functional bilevel problem () involves an optimal prediction functionfor each value of the outer-level parameter. Solving () by using a first-order method then requires characterizing the implicit dependence ofon the outer-level parameterto evaluate the total gradientin. Indeed, assuming thatandare Fréchet differentiable (this assumption will be discussed later), the gradientmay be obtained by an application of the chain rule:
+
+The Fréchet derivativeis a linear operator acting on functions inand measures the sensitivity of the optimal solution on the outer variable. We will refer to this quantity as the “Jacobian” in the rest of the paper. While the expression of the gradient inmight seem intractable in general, we will see ina class of practical algorithms to estimate it.
+
+SECTION: Functional implicit differentiation
+Our starting point is to characterize the dependence ofon the outer variable. To this end, we rely on the following implicit differentiation theorem (proven in) which can be seen as a functional version of the one used in AID, albeit, under a much weakerstrong convexity assumptionthat holds in most practical cases of interest.
+
+The strong convexity assumption on the inner-level objective ensures the existence and uniqueness of the solution, while differentiability assumptions onandensure Fréchet differentiability of the map. Though the implicit function theorem for Banach spacescould yield similar conclusions, it demands the stronger assumption thatis continuously Fréchet differentiable, which is quite restrictive in our setting of interest:
+for instance, whenis an-space andis an integral functional of the form, withdefined onand satisfying mild smoothness and growth assumptions on, thencannot be Fréchet differentiable with uniformly continuous differential on bounded sets, unlessis a polynomial of degree at most(seeand discussions in).
+Instead,employs the weaker notion of Hadamard differentiability for, widely used in statistics, particularly for deriving thedelta-method. Consequently,allows us to cover a broader class of functional bilevel problems, as we see in.
+
+Similarly to AID, only a Jacobian-vector product is needed when computing the total gradient.
+The result inbelow, relies on theadjoint sensitivity methodto provide a more convenient expression forand is proven in.
+
+indicates that computing the total gradient requires optimizing the quadratic objective () to find the adjoint function.
+The strong convexity of the adjoint objectiveensures the existence of a unique minimizer, and stems from the positive definiteness of its Hessian operatordue to the inner-objective’s strong convexity.
+Both adjoint and inner-level problems occur in the same function spaceand are equivalent in terms of conditioning, as the adjoint Hessian operator equals the inner-level Hessian at optimum.
+Thestrong convexity inof the adjoint objective guarantees well-defined solutions and holds in many practical cases, as opposed to classical parametric bilevel formulations which require the more restrictivestrong convexity condition in the model’s parameters, and without which instabilities may arise due to ill-conditioned linear systems (see Appendix).
+
+SECTION: Functional bilevel optimization inspaces
+Specializing the abstract results fromto a common scenario in machine learning, we consider both inner and outer level objectives of () as expectations of point-wise functions over observed data. Specifically, we have two data distributionsanddefined over a product space, and denote bythe Hilbert space of functions, where. Given an outer parameter space, we address the following functional bilevel problem:
+
+where,are point-wise loss functions defined on.
+This setting encompasses various deep learning problems discussed in Sectionsand, and in, representing a specific instance of. The Hilbert spaceof square-integrable functions not only models a broad range of prediction functions but also facilitates obtaining concrete expressions for the total gradient, enabling the derivation of practical algorithms in.
+
+The following proposition, proved in, makes mild technical assumptions on probability distributions,and the point-wise losses,. It gives an expression for the total gradient in the form of expectations underand.
+
+andonandensure finite second moments and bounded Radon-Nikodym derivatives, maintaining square integrability under both distributions in.,,,,,,,,andonandprimarily involve integrability, differentiability, Lipschitz continuity, and strong convexity ofin its second argument, typically satisfied by objectives like mean squared error or cross entropy (seein). Next, by leveraging, we derive practical algorithms for solvingusing function approximation tools like neural networks.
+
+SECTION: Methods for Functional Bilevel Optimization inSpaces
+We proposeFunctional Implicit Differentiation (FuncID), a flexible class of algorithms for solving the functional bilevel problem inspaces described inwhen samples from distributionsandare available.
+
+FuncIDrelies on three main components detailed in the next subsections:
+
+These approximate the objectives,andas empirical expectations over samples from inner and outer datasetsand.
+
+The search space for both the prediction and adjoint functions is restricted to parametric spaces with finite-dimensional parametersand. Approximate solutionsandto the optimal functionsandare obtained by minimizing the empirical objectives.
+
+FuncIDestimates the total gradientusing the empirical objectives, and the approximationsandof the prediction and adjoint functions.
+
+provides an outlines ofFuncIDwhich has a nested structure similar to AID: (1) inner-level optimizations (InnerOptandAdjointOpt) to update the prediction and adjoint models using scalable algorithms such as stochastic gradient descent, and (2) an outer-level optimization to update the parameterusing a total gradient approximationTotalGrad.
+An optionalwarm-startallows initializing the parameters of both the prediction and adjoint models for the current outer-level iteration with those obtained from the previous one.
+
+SECTION: From population losses to empirical objectives
+We assume access to two datasetsand, comprising i.i.d. samples fromand, respectively. This assumption can be relaxed, such as when using samples from a Markov chain or a Markov Decision Process to approximate population objectives. For scalability, we operate in a mini-batch setting, where batchesare sub-sampled from datasets. Approximating both inner and outer level objectives in () can be achieved using empirical versions:
+
+Using the expression offrom, we derive a finite-sample approximation of the adjoint loss by replacing the population expectations by their empirical counterparts.
+More precisely, assuming we have access to an approximationto the inner-level prediction function, we consider the following empirical version of the adjoint objective:
+
+The adjoint objective inrequires computing a Hessian-vector product with respect to the outputinof the prediction function, which is typically of reasonably small dimension, unlike traditional AID methods that necessitate a Hessian-vector product with respect to some model parameters. Importantly, compared to AID,FuncIDdoes not requires differentiating twice w.r.t the model’s parameterswhich results in memory and time savings as discussed in.
+
+SECTION: Approximate prediction and adjoint functions
+To find approximate solutions to the prediction and adjoint functions we rely on three steps: 1) specifying parametric search spaces for both functions, 2) introducing optional regularization to prevent overfitting and, 3) defining a gradient-based optimization procedure on the empirical objectives.
+
+We approximate both prediction and adjoint functions using parametric search spaces. A parametric family of functions defined by a mapover parametersconstrains the prediction functionas. We only requireto be continuous and differentiable almost everywhere such that back-propagation can be applied. Notably, unlike AID, we do not needto be twice differentiable, as functional implicit differentiation computes the Hessian w.r.t. the output of, not w.r.t. its parameters. For flexibility, we can consider a different parameterized modelfor approximating the adjoint function, defined over parameters, constraining the adjoint similarly to. In practice, we often use the same parameterization, typically a neural network, for both the inner-level and the adjoint models.
+
+With empirical objectives and parametric search spaces, we can directly optimize parameters of both the inner-level modeland the adjoint model. However, to address finite sample issues, regularization may be introduced to these empirical objectives for better generalization. The method allows flexibility in regularization choice, accommodating functionsand, such as ridge penalty or other commonly used regularization techniques
+
+The function(defined in) optimizes inner model parameters for a given, initialization, and data, usinggradient updates. It returns optimized parametersand the corresponding inner model, approximating the inner-level solution. Similarly,(defined in) optimizes adjoint model parameters withgradient updates, producing the approximate adjoint function.
+Other optimization procedures may also be used, especially when closed-form solutions are available, as exploited in some experiments in.
+Operations requiring differentiation can be implemented using standard optimization procedures with automatic differentiation packages like PyTorchor Jax.
+
+SECTION: Total gradient estimation
+We exploitto derive, which allows us to approximate the total gradientafter computing the approximate solutionsand.
+There, we decompose the gradient into two terms:, an empirical approximation ofinrepresenting the explicit dependence ofon the outer variable, and, an approximation to the implicit gradient termin. Both terms are obtained by replacing the expectations by empirical averages batchesand, and using the approximationsandinstead of the exact solutions.
+
+SECTION: Convergence Guarantees
+Convergence ofto stationary points ofdepends on approximation errors, which result from sub-optimal inner and adjoint solutions, as shown by the convergence result below.
+
+is proven inand relies on the general convergence result infor stochastic biased gradient methods. The key idea is to control both bias and variance of the gradient estimator in terms of generalization errorsandwhen approximating the inner and adjoint solutions. These generalization errors can, in turn, be made smaller in the case of over-parameterized networks, by increasing network capacity, number of steps and sample size.
+
+SECTION: Applications
+We consider two applications of the functional bilevel optimization problem: Two-stage least squares regression (2SLS) and Model-based reinforcement learning. To illustrate its effectiveness we compare it with other bilevel optimization approaches like AID or ITD, as well as state-of-the-art methods for each application. We provide a versatile implementation ofFuncID() in PyTorch, compatible with standard optimizers (e.g., Adam), and supports common regularization techniques. For the reinforcement learning application, we extend an existing JAXimplementation of model-based RL fromto applyFuncID. To ensure fairness, experiments are conducted with comparable computational budgets for hyperparameter tuning using the MLXP experiment management tool. Additionally, we maintain consistency by employing identical neural network architectures across all methods and repeating experiments multiple times with different random seeds.
+
+SECTION: Two-stage least squares regression (2SLS)
+Two-stage least squares regression (2SLS) is commonly used in causal representation learning, including instrumental regression or proxy causal learning. Recent studies have applied bilevel optimization approaches to address 2SLS, yielding promising results. We particularly focus on 2SLS for Instrumental Variable (IV) regression, a widely-used statistical framework for mitigating endogeneity in econometrics, medical economics, sociology, and more recently, for handling confounders in off-line reinforcement learning.
+
+In an IV problem, the objective is to modelthat approximates the structural functionusing independent samplesfrom a data distribution, whereis an instrumental variable. The structural functiondelineates the true effect of a treatmenton an outcome. A significant challenge in IV is the presence of an unobserved confounder, which influences bothandadditively, rendering standard regression ineffective for recovering. However, if the instrumental variablesolely impacts the outcomethrough the treatmentand is independent from the confounder, it can be employed to elucidate the direct relationship between the treatmentand the outcomeusing the 2SLS framework, under mild assumptions on the confounder. This adaptation replaces the regression problem with a variant that averages the effect of the treatmentconditionally on
+
+Directly estimating the conditional expectationis hard in general. Instead, it is easier to express it, equivalently, as the solution of another regression problem predictingfrom:
+
+Both equations result in the bilevel formulation inwith,and the point-wise lossesandgiven byand. It is, therefore, possible to directly applyto learnas we illustrate below.
+
+We study the IV problem using thedataset, comprising synthetic images representing single objects generated from five latent parameters:, andpositions on image coordinates. Here, the treatment variableis the images, the hidden confounderis thecoordinate, and the other four latent variables form the instrumental variable. The outcomeis an unknown structural functionof, contaminated by confounderas detailed in. We follow the setup of the Deep Feature Instrumental Variable Regression (DFIV)experiment by, which achieves state-of-the-art performance. In this setup, neural networks serve as the prediction function and structural model, optimized to solve the bilevel problem inand. We explore two versions of our method:FuncID, which optimizes all adjoint network parameters, and, which learns only the last layer in closed-form while inheriting hidden layer parameters from the inner prediction function. We compare our method with DFIV, AID, ITD, and Penalty-based methods: gradient penalty (GD penal.) and value function penalty (Val penal.), using identical network architectures and computational budgets for hyperparameter selection. Full details on network architectures, hyperparameters, and training settings are provided in.
+
+compares structural models learned by different methods using 5K training samples (refer toinfor 10K sample results). The left subplot illustrates out-of-sample mean squared error of learned structural models compared to ground truth outcomes (uncontaminated by noise), while the middle and right subplots show the evolution of outer and inner objectives over iterations. For the 5K dataset,FuncIDoutperforms DFIV (=0.003, one-sided paired t-test), while showing comparable performance on the 10K dataset (). AID and ITD perform notably worse, indicating their parametric approach fails to fully leverage the functional structure.FuncIDoutperforms the gradient penalty method and performs either better or comparably to the value function penalty method, though the latter shows higher variance with some particularly bad outliers.
+While all methods achieve similar outer losses, this criterion alone is only reliable as an indicator of convergence when evaluated near the ‘exact’ inner-level solution corresponding to the lowest inner-loss values. Interestingly, FuncID obtains the lowest inner-loss values, suggesting its outer-loss is a more reliable indicator of convergence.
+
+SECTION: Model-based reinforcement learning
+Model-based reinforcement learning (RL) naturally yields bilevel optimization formulations, since several components of an RL agent need to be learned using different objectives. Recently,showed that casting model-based RL as a bilevel problem can result in better tolerance to model-misspecification. Our experiments show that the functional bilevel framework yields improved results even when the model is well-specified, suggesting a broader use of the bilevel formulation.
+
+In model-based RL, the Markov Decision Process (MDP) is approximated by a probabilistic modelwith parametersthat can predict the next stateand reward, given a pairwhereis the current environment state andis the action of an agent.
+A second modelcan be used to approximate the action-value functionthat computes the expected cumulative reward given the current state-action pair. Traditionally, the action-value function is learned using the current MDP model, while the latter is learned independently from the action-value function using Maximum Likelihood Estimation (MLE).
+
+In the bilevel formulation of model-based RL by, the inner-level problem involves learning the optimal action-value functionwith the current MDP modeland minimizing the Bellman error. The inner-level objective can be expressed as an expectation of a point-wise losswith samples, derived from the agent-environment interaction:
+
+Here, the future state and rewardare replaced by the MDP model predictionsand. In practice, samples fromare obtained using a replay buffer. The buffer accumulates data over several episodes of interactions with the environment, and can therefore be considered independent of the agent’s policy.
+The point-wise loss functionrepresents the error between the action-value function prediction and the expected cumulative reward given the current state-action pair:
+
+witha lagged version of(exponentially averaged network) anda discount factor. The MDP model is learned implicitly using the optimal function, by minimizing the Bellman error w.r.t.:
+
+anddefine a bilevel problem as in, where,, and the point-wise lossesandare given by:and.
+Therefore, we can directly applyto learn both the MDP modeland the optimal action-value function.
+
+We applyFuncIDto thecontrol problem, a classic benchmark in reinforcement learning. The goal is to balance a pole attached to a cart by moving the cart horizontally. Following, we use a model-based approach and consider two scenarios: one with a well-specified network accurately representing the MDP, and another with a misspecified model having fewer hidden layer units, limiting its capacity. Using the bilevel formulation inand, we compareFuncIDwith the Optimal Model Design (OMD) algorithm, a variant of AID. Additionally, we compare against a standard single-level model-based RL formulation using Maximum Likelihood Estimation (MLE). For the adjoint function inFuncID, we derive a simple closed-form expression based on the structure of the adjoint objective (see). We follow the experimental setup of, providing full details and hyperparameters in.
+
+Figureillustrates the training reward evolution forFuncID, OMD, and MLE in both well-specified and misspecified scenarios.FuncIDconsistently performs well across settings. In the well-specified case, where OMD achieves a reward of,FuncIDreaches the maximum reward of, matching MLE (left). In the misspecified scenario,FuncIDperforms comparably to OMD and significantly outperforms MLE (right). Moreover,FuncIDtends to converge faster than MLE (seein) and yields consistently better prediction error than OMD (seein). These findings align with, suggesting that MLE may prioritize minimizing prediction errors, potentially leading to overfitting irrelevant features. In contrast, OMD andFuncIDfocus on maximizing expected returns, especially in the presence of model misspecification. Our results highlight the effectiveness of () even in well-specified settings, suggesting, for future work, further investigations for more general RL tasks.
+
+SECTION: Discussion and concluding remarks
+This paper introduced a functional paradigm for bilevel optimization in machine learning, shifting focus from parameter space to function space.
+The proposed approach specifically addresses the ambiguity challenge arising from using deep networks in bilevel optimization.
+The paper establishes the validity of the functional framework by developing
+a theory of functional implicit differentiation, proving convergence for the proposedFuncIDmethod, and numerically comparing it with other bilevel optimization methods.
+
+The theoretical foundations of our work rely on several key assumptions worth examining. While our convergence guarantees assume both inner and adjoint optimization problems are solved to some optimality, this assumption is supported by recent results on global convergence in over-parameterized networks. However, quantifying these optimality errors more precisely and understanding their relationship to optimization procedures remains an open challenge. Additionally, like other bilevel methods, our approach requires careful hyperparameter selection, which can impact practical implementation.
+
+Several promising directions emerge for future research. While we focus onspaces, exploring alternative function spaces (such as Reproducing Kernel Hilbert Spaces or Sobolev spaces) could reveal additional advantages for specific applications. Furthermore, extending our framework to non-smooth objectives or constrained optimization problems, potentially building on existing work in non-smooth implicit differentiation, would broaden its applicability.
+
+SECTION: Acknowledgments
+This work was supported by the ERC grant number 101087696 (APHELAIA project) and by ANR 3IA MIAI@Grenoble Alpes (ANR-19-P3IA-0003) and the ANR project BONSAI (grant ANR-23-CE23-0012-01). We thank Edouard Pauwels and Samuel Vaiter for their insightful discussions.
+
+SECTION: References
+SECTION: Examples offormulations
+The functional bilevel setting applies to various practical bilevel problems where objectives depend solely on model predictions, not their parameterization. Below, we discuss a few examples.
+
+As in, consider amainprediction task with featuresand labels, equipped with a loss function.
+The goal of auxiliary task learning is to learn how a set of auxiliary tasks represented by a vectorcould help solve the main task. This problem is formulated byas a bilevel problem, which can be written as () with
+
+where the loss is evaluated over a validation dataset, and
+
+where an independent training datasetis used, andis a function that combines the auxiliary losses into a scalar value.
+
+Considering now a regression problem with featuresand labels, the goal of task-driven metric learning formulated byis to learn a metric parameterized byfor the regression task such that the corresponding predictorperforms well on a downstream task. This can be formulated as () withand
+
+whereis the squared Mahalanobis norm with parametersandis a data-dependent metric that allows emphasizing features that are more important for the downstream task.
+
+SECTION: Additional Related Work
+Two families of bilevel methods are prevalent in machine learning due to their scalability: iterative (or ’unrolled’) differentiation (ITD,) and Approximate Implicit Differentiation (AID,). ITD approximates the optimal inner-level solution using an ’unrolled’ function from a sequence of differentiable optimization steps, optimizing the outer variable via back-propagation. The gradient approximation error decreases linearly with the number of steps when the inner-level is strongly convex, though at increased computational and memory costs. ITD is popular for its simplicity and availability in major deep learning libraries, but can be unstable, especially with non-convex inner objectives.
+AID uses the Implicit Function Theorem (IFT) to derive the Jacobian of the inner-level solution with respect to the outer variable, solving a finite-dimensional linear system for an adjoint vector representing optimality constraints. AID offers strong convergence guarantees for smooth, strongly convex inner objectives. However, without strong convexity, the linear system can become ill-posed due to a degenerate Hessian, leading to instabilities, especially with overparameterized deep neural networks. Our proposed approach avoids this issue, even when using deep networks for function approximation.
+
+The adjoint sensitivity methodefficiently differentiates a controlled variable with respect to a control parameter. In bilevel optimization, AID applies a finite-dimensional version of this method. Infinite-dimensional versions have differentiated solutions of ordinary differential equations (ODEs) with respect to defining parameters, and have been used in machine learning to optimize parameters of a vector field describing an ODE. Here, the ODE’s vector field, parameterized by a neural network, is optimized to match observations. The adjoint sensitivity method offers an efficient alternative to the unstable process of back-propagation through ODE solvers, requiring only the solution of an adjoint ODE to compute gradient updates, improving performance. This method has been adapted to meta-learning, viewing the inner optimization as an ODE evolution with gradients obtained via the adjoint ODE.
+Recently,employ the adjoint sensitivity method for optimizing diffusion models, where an adjoint SDE is solved to compute the total gradient. Unlike these works, which use the adjoint method for ODE/SDE solutions as functions of time, our work applies an infinite-dimensional version of the adjoint sensitivity method to general learning problems, where solutions are functions of input data.
+
+Recently, several methods have used amortization to approximately solve bilevel problems. These methods employ a parametric model called ahypernetwork, optimized to directly predict the inner-level solution given the outer-level parameter. Amortized methods treat the two levels as independent optimization problems: (1) learning the hypernetwork for a range of, and (2) performing first-order descent onusing the hypernetwork as a proxy for the inner-level solution. Unlike ITD, AID, or our functional implicit differentiation method, amortized methods do not fully exploit the implicit dependence between the two levels. They are similar to amortized variational inference, where a parametric model produces approximate samples from a posterior distribution. Amortization methods perform well when the inner solution’s dependence onis simple but may fail otherwise. In contrast, our functional implicit differentiation framework adapts to complex implicit dependencies between the inner solution and.
+
+SECTION: Theory for Functional Implicit Differentiation
+SECTION: Preliminary results
+We recall the definition of Hadamard differentiability and provide ina general property for Hadamard differentiable maps that we will exploit to provein.
+
+Letandbe two separable Banach spaces.
+A functionis said to beHadamard differentiableif for any, there exist a continuous linear mapso that for any sequenceinconverging to an element, and any real valued and non-vanishing sequenceconverging to, it holds that:
+
+Consider a sequenceinso thatconverges towithfor alland define the first order erroras follows:
+
+The goal is to show thatconverges to.
+We can writeaswithand, so that:
+
+Ifwere unbounded, then, by contradiction, there must exist a subsequenceconverging to, withincreasing and. Moreover, sinceis bounded, one can further choose the subsequenceso thatconverges to some element.
+We can use the following upper-bound:
+
+where we used thatis bounded. Sinceis Hadamard differentiable,converges to. Moreover,also converges to. Hence,converges towhich contradicts. Therefore,is bounded.
+
+Consider now any convergent subsequence of. Then, it can be written aswithincreasing and. We then haveby construction. Sinceis bounded, one can further choose the subsequenceso thatconverges to some element. Using againand the fact thatis Hadamard differentiable, we deduce thatmust converge to, and by definition of, thatconverges to. Therefore, it follows that, so that. We then have shown thatis a bounded sequence and every subsequence of it converges to. Therefore,must converge to, which concludes the proof. ∎
+
+SECTION: Proof of the Functional implicit differentiation theorem
+The proof strategy consists in establishing the existence and uniqueness of the solution map, deriving a candidate Jacobian for it, then proving thatis differentiable.
+
+Letinbe fixed. The mapis lower semi-continuous since it is Fréchet differentiable by assumption. It is also strongly convex. Therefore, it admits a unique minimizer. We then conclude that the mapis well-defined on.
+
+We provide two inequalities that will be used for proving differentiability of the map. The mapis Fréchet differentiable onand-strongly convex (withpositive by assumption). Hence, for allinthe following quadratic lower-bound holds:
+
+From the inequality above, we can also deduce thatis a-strongly monotone operator:
+
+Finally, note that, sinceis Fréchet differentiable, its gradient must vanish at the optimum, i.e :
+
+Letbe in. Usingwithandfor some, and a non-zeros real numberwe get:
+
+By assumption,is Hadamard differentiable and, a fortiori, directionally differentiable. Thus, by taking the limit when, it follows that:
+
+Hence,defines a coercive quadratic form. By definition of Hadamard differentiability, it is also bounded. Therefore, it follows from Lax-Milgram’s theorem, thatis invertible with a bounded inverse. Moreover, recalling thatis a bounded operator, its adjointis also a bounded operator fromto. Therefore, we can definewhich is a bounded linear map fromtoand will be our candidate Jacobian.
+
+By the strong convexity assumption (locally in), there exists an open ballcentered at the originthat is small enough so that we can ensure the existence offor whichis-strongly convex for all. For a given, we use the-strong monotonicity of() at pointsandto get:
+
+where the second line follows from optimality of(), and the last line uses Cauchy-Schwarz’s inequality. The above inequality allows us to deduce that:
+
+Moreover, sinceis Hadamard differentiable, byit follows that:
+
+where the first term vanishes as a consequence of, sinceis a minimizer of.
+Additionally, note that the differentialacts on elementsas follows:
+
+whereandare bounded operators anddenotes the adjoint of.
+By definition of, and using, it follows that:
+
+Therefore, combiningwith the above equality yields:
+
+Finally, combiningwith the above equality directly shows that. We have shown thatis differentiable with a Jacobian mapgiven by.
+∎
+
+SECTION: Proof of the functional adjoint sensitivity in
+We use the assumptions and definitions fromand express the gradientusing the chain rule:
+
+The Jacobianis the solution of a linear system obtained by applying:
+
+We noteand. It follows that the gradientcan be expressed as:
+
+In other words, the implicit gradientcan be expressed using the adjoint function, which is an element ofand can be defined as the solution of the following functional regression problem:
+
+∎
+
+SECTION: Functional Adjoint Sensitivity Results inSpaces
+In this section we provides full proofs of. We start by stating the assumptions needed on the data distributions and the point-wise losses in, then provide some differentiation results inand conclude with the main proofs in.
+
+SECTION: Assumptions
+andadmit finite second moments.
+
+The marginal ofw.r.t.admits a Radon-Nikodym derivativew.r.t. the marginal ofw.r.t., i.e.. Additionally,is upper-bounded by a positive constant.
+
+For any, there exists a positive constantand a neighborhoodoffor whichis-strongly convex in its second argument for all.
+
+For any,.
+
+is continuously differentiable for all.
+
+For any fixed, there exists a constantand a neighborhoodofs.t.is-smooth for all.
+
+is continuously differentiable onfor all,
+
+For any, there exists a positive constantand a neighborhoodofs.t. for all:
+
+For any, there exists a positive constantand a neighborhoodofs.t. for allwe have:
+
+For any,.
+
+is jointly continuously differentiable onfor all.
+
+For any, there exits a neighborhoodofand a positive constants.t. for allwe have:
+
+Here we consider the squared error between two vectorsin. Given a mapdefined overand taking values in, we define the following point-wise objective:
+
+We assume that for any, there exists a constantsuch that for allin a neighborhood ofand all, the following growth assumption holds:
+
+This growth assumption is weak in the context of neural networks with smooth activations as discussed by.
+
+We show that each of the assumptions are satisfied by the classical squared error objective.
+
+: the squared error is-strongly convex in, since. Hence, the strong convexity assumption holds with.
+
+: For any, we have
+
+which holds by the growth assumption on, andhaving finite second moments.
+
+: With a perturbationwe have:
+
+with. The mappingis continuous, thus the assumption holds.
+
+: For any two pointsusing the expression ofwithwe have:
+
+We see thatis-smooth withand the assumption holds.
+
+: By the differentiation assumption on, with a perturbationwe can write:
+
+With a perturbationand substitutingwith the expression above we have:
+
+which allows us to conclude thatis continuously differentiable onfor alland the assumption holds.
+
+: With a perturbationusing the expression ofwe can write:
+
+by continuously differentiable, we have that the assumption holds.
+
+and: From the expression of:
+
+then using the expression above and the growth assumption onwe have that the two assumptions hold.
+
+: For anywe have:
+
+by the growth assumption on, andhaving finite second moments, thus the assumption is verified.
+
+: Using the growth assumption on, we have the following inequalities:
+
+combining the above with-smoothness ofwe can conclude that the assumption holds.
+
+∎
+
+SECTION: Differentiability results
+The next lemmas show differentiability of,andand will be used to prove.
+
+We decompose the proof into three parts: verifying thatis well-defined, identifying a bounded map as candidate for the differential and showing that it is the Fréchet differential of.
+
+Considerin. To show thatis well-defined, we need to prove thatis integrable under. We use the following inequalities to control:
+
+where the first line follows by triangular inequality, the second follows by application of the fundamental theorem of calculus sinceis differentiable by. The third uses Cauchy-Schwarz inequality along with a triangular inequality. Finally, the last line follows using thatis-smooth in its second argument, locally inand uniformly inandby.
+Taking the expectation underyields:
+
+whereis finite sinceand expectations underofandare finite by. This shows thatis well defined on.
+
+Fixinand consider the following linear formin:
+
+We need to show that it is a bounded form. To this end, we will show thatis a scalar product with some vectorin. The following equalities hold:
+
+where the second line follows by the “tower” property for conditional expectations and where we definein the last line.is a the candidate representation ofin.
+We simply need to check thatis an element of.
+To see this, we use the following upper-bounds:
+
+The first inequality is an application of Jensen’s inequality by convexity of the squared norm. The second line follows by the “tower” property for conditional probability distributions while the third follows by triangular inequality and Jensen’s inequality applied to the square function.
+The last line uses thatis-smooth in its second argument, locally inand uniformly inby.
+Sinceis square integrable underby construction andis also square integrable by, we deduce from the above upper-bounds thatmust also be square integrable and thus an element of.
+Therefore, we have shown thatis a continuous linear form admitting the following representation:
+
+To prove differentiability, we simply control the first order errordefined as:
+
+For a given, the following inequalities hold:
+
+where the first inequality follows by application of the fundamental theorem of calculus sinceis differentiable in its second argument by. The second line follows by Jensen’s inequality while the last line uses thatis-Lipschitz locally inand uniformly inandby.
+Therefore, we have shown thatwhich precisely means thatis differentiable with differential. Moreover,is the partial gradient ofin the second variable:
+
+∎
+
+We follow a similar procedure as in, where we decompose the proof into three steps: verifying that the objectiveis well-defined, identifying a candidate for the differential and proving that it is the differential of.
+
+Letbe in. First, note that by, we have that
+
+The next inequalities control the growth of:
+
+The first line is due to the triangular inequality while the second line follows by differentiability ofin its second argument (). The third line follows by Cauchy-Scwharz inequality wile the fourth line uses thathas at most a linear growth in its last three arguments by. Using the above inequalities, we get the following upper-bound on:
+
+In the above upper-bound,is finite by. Additionally,is finite sincehas finite second moments bywhileis also finite by. Therefore,is well defined over.
+
+Fixinand define the following linear form:
+
+Defineto be:
+
+By an argument similar to the one in, we see that. We now need to show thatandare well defined elements ofand.
+
+We use the following upper-bounds:
+
+The first inequality is an application of Jensen’s inequality by convexity of the norm, while the second one is an application of Cauchy-Schwarz inequality.
+The third line uses thatis upper-bounded by a constantby, and the fourth line follows from the “tower” property for conditional probability distributions. Finally, the last line follows bywhich ensures thathas at most a linear growth in its last three arguments.
+By, we have that. Moreover, sincehas finite second order moment by, we also have that. We therefore conclude thatis finite which ensure thatbelongs to.
+
+To show thatis well defined, we need to prove thatis integrable under. By, we know thathas at most a quadratic growth in it last three arguments so that the following inequality holds.
+
+We can directly conclude by taking the expectation underin the above inequality and recalling thatis finite by, and thathas finite second-order moments by.
+
+Since differentiability is a local notion, we may assume without loss of generality that. Introduce the functionsanddefined overas follows:
+
+We consider the first-order errorwhich admits the following upper-bounds:
+
+The second line uses differentiability of(). The third uses the triangular inequality, while the fourth line uses Cauchy-Schwarz inequality. Finally, the last line uses.
+
+We simply need to show that each of the termsandconverge toasandconverge to. We treat each term separately.
+
+Forsmall enough so thatholds, the following upper-bounds onandhold:
+
+For, we used thathas is Lipschitz continuous in its second argument for anyand locally inby. The second upper-bound onuses.
+For, we used the locally Lipschitz property offrom, followed by Cauchy-Schwarz inequality and. For the last line, we also used thatby assumption. The above upper-bounds onandensure that these quantities converge toasandapproach.
+
+To show thatandconverge to, we will use the dominated convergence theorem. It is easy to see thatandconverge point-wise towhenandconverge tosinceandare continuous by. It remains to dominate these functions. Forsmall enough so thatholds, we have that:
+
+Both upper-bounds are integrable undersincebyandhas finite second-order moment by. Therefore, by the dominated convergence theorem, we deduce thatandconverge toasandapproach.
+
+Finally, we have shown thatwhich allows to conclude thatis differentiable with the partial derivatives given by.
+∎
+
+Letbe in. To show thatis Hadamard differentiable, we proceed in two steps: we first identify a candidate differential and show that it is a bounded operator, then we prove Hadamard differentiability.
+
+For a given, we consider the following linear operatorsand:
+
+where the expectations are overconditionally on. Next, we show thatandare well-defined and bounded.
+
+The first step is to show that the imageof any elementbyis also an element in. To this end, we simply need to find a finite upper-bound onfor a given:
+
+The second line follows using the operator norm inequality,
+the third line follows by Jensen’s inequality applied to the norm, while the fourth uses the “tower” property for conditional distributions.
+Finally, the last line uses thatis upper-bounded uniformly inandby. Therefore, we conclude thatbelongs to. Moreover, the inequalityalso establishes the continuity of the operator.
+
+We first show that the imageis bounded.
+For a givenin, we write:
+
+In the above expression, the second line is due to Jensen’s inequality applied to the norm function, the third line follows from the operator norm inequality, while the fourth follows by Cauchy-Schwarz. The fifth line is due to the triangular inequality. Finally, the sixth line relies on two facts: 1) thatis Lipschitz uniformly inandand locally inby, and, 2) thathas at most a linear growth inandlocally inby.
+Sincehas finite second order moments byand bothandare square integrable, we conclude that the constantis finite. Moreover, the last inequality establishes thatis a continuous linear operator fromto. One can then see that the adjoint ofadmits a representation of the form:
+
+Therefore, we can consider the following candidate operatorfor the differential of:
+
+We will show thatis jointly Hadamard differentiable atwith differential operator given by:
+
+To this end, we consider a sequenceconverging intowards an elementand a non-vanishing real valued sequenceconverging to. Define the first-order erroras follows:
+
+Introduce the functionsanddefined overas follows:
+
+By joint differentiability of(), we use the fundamental theorem of calculus to expressin terms ofand:
+
+The second line uses Jensen’s inequality applied to the squared norm, the fourth line results from the “tower” property of conditional distributions. The fifth line uses Jensen’s inequality for the square function followed by the operator norm inequality. It remains to show thatandconverge toand thatis bounded.
+
+We will use the dominated convergence theorem.ensures the existence of a positive constantand a neighborhoodofso thatis bounded byfor any.
+Since, then there exists someso that, for any, we can ensure that. This allows us to deduce that:
+
+for anyand any, withbeing integrable under.
+
+Moreover, we also have the following point-wise convergence for-almost all:
+
+follows by noting thatand thatfor-almost all, sinceconverges to,converges toandconverges toin(a fortiori converges point-wise for-almost all). Additionally, the mapis continuous by, which allows to establish. Fromandwe can apply the dominated convergence theorem which allows to deduce that.
+
+By a similar argument as forand using, we know that there existsso that for any:
+
+Therefore, we directly get that:
+
+where we used thatby construction.
+
+We will show thatis upper-bounded by a square integrable function under. Byand, there exists a neighborhoodand a positive constantsuch that, for all:
+
+By a similar argument as for, there existsso that for any, the above inequalities hold when choosing.
+Using this fact, we obtain the following upper-bound onfor:
+
+Therefore, by taking expectations and integrating over, it follows:
+
+By constructionand is therefore a bounded sequence. Moreover,is finite sincebelongs to. Finally,by. Therefore, we have shown thatis bounded.
+
+By a similar argument as forand using againand, there existsso that for any:
+
+where we usedto get an upper-bound on the first terms. By squaring the above inequality and taking the expectation underwe get:
+
+We only need to show thatconverges tosince the first termalready converges toby construction ofand. To achieve this, we will use the dominated convergence theorem. It is easy to see thatconverges topoint-wise by continuity of(). Therefore, we only need to show thatis dominated by an integrable function. Provided that, we can useandto get the following upper-bounds:
+
+The l.h.s. of the last line is an integrable function that is independent of, sinceis square integrable by definition andare integrable by. Therefore, by application of the dominated convergence theorem, it follows that, we have shown that.
+
+To conclude, we have shown that the first-order errorconverges towhich means thatis jointly differentiable on, with differential given byand.
+
+∎
+
+SECTION: Proof of
+The strategy is to show that the conditions onandstated inhold.
+By, for any, there exists a positive constantand a neighborhoodofon which the functionis-strongly convex infor any. Therefore, by integration, we directly deduce thatisstrongly convex infor any. Byand,is differentiable onfor allandis Hadamard differentiable on. Additionally,is jointly differentiable inandby. Therefore, the conditions onandfor applyinghold.
+Using the notations from,
+we have that the total gradientcan be expressed as:
+
+where,and whereis the minimizer of the adjoint objective:
+
+withand. Recalling the expressions of the first and second order differential operators fromand, we deduce the expression of the adjoint objective as a sum of two expectations underandgiven the optimal prediction function
+
+Furthermore, the vectorsandappearing incan also be expressed as expectations:
+
+∎
+
+SECTION: Convergence Analysis
+We provide a convergence result ofto stationary points of.
+Our analysis uses the framework of biased stochastic gradient descent (Biased SGD)where the bias arises from suboptimality errors when solving the inner-level and adjoint problems.
+
+SECTION: Setup and assumptions
+Recall that the total gradientadmits the following expression under,,,,,,,,,,and:
+
+We denote bythe gradient estimator, i.e., the mappingcomputed byand which admits the following expression:
+
+whereandare samples fromandindependent fromandand independent from each other (i.e.).
+Here, there are three independent sources of randomness when computing: estimation ofandinand, as well as random batchesand.
+We denote bythe expectation with respect to all random variables appearing in the expression of, and byandthe conditional expectations knowingonly and bothand.is a biased estimator of(i.e.,is not equal to), as the bias is due to using sub-optimal solutionsandinstead ofandin the expression of. Furthermore, we defineto be the conditional expectation ofatgiven estimatesandofand. By independence ofandfromand,admits the following expression:
+
+where the expectation is taken w.r.t..
+
+We introduce the approximate adjoint objectivewhereis replaced by:
+
+By independence of the estimatorand the samplesused for computingit is easy to see that.
+Hence, it is natural to think ofas an approximation to the minimizerofin.
+
+The following assumption quantifies the sub-optimality errors made byand.
+
+For some positive constantsandand for all,andsatisfy:
+
+is-strongly convex in.
+
+is-Lipschitz on.
+
+is differentiable and-Lipschitz and bounded by.
+
+is bounded by a positive constant.
+
+is-Lipschitz for all.
+
+is differentiable and-Lipschitz for all.
+
+has a variance bounded byfor all.
+
+Functionis-smooth for all, and bounded from below by.
+
+reflects the generalization errors made when optimizingandusingand. In the case of over-parameterized networks, these errors can be made smaller by increasing network capacity, number of steps and the number of samples.
+
+,,,,,andare similar in spirit to those used for analyzing bi-level optimization algorithms (ex:).
+In particular,is even weaker thanwhereneeds to be bounded for allin.
+For instance,trivially holds whenis a linear transformation of, as is the case for min-max problems.
+Thereso thatis bounded, whilemight not be bounded in general.
+
+SECTION: Proof of the main result
+The general strategy of the proof is to first show that the conditions for applying the general convergence result for biased SGD ofhold. We start withwhich shows that the biased gradient estimatesatisfies the conditions of.
+
+We prove each bound separately.
+
+Fist note that. Hence, by direct calculation, we have that:
+
+where we useto get the last lower-bound.
+
+where the first line uses thatand the last line usesand.
+
+∎
+
+We can now directly useandonto prove theusing the biased SGD convergence result in.
+
+The proof is a direct application ofgiven that the variance and bias conditions on the estimatorare satisfied byand thatis-smooth and has a finite lower-boundby.
+∎
+
+SECTION: Bias-variance decomposition.
+We have the following:
+
+The first inequality holds sinceis-Lipschitz byandadmits a density w.r.tbounded by a positive constantby.
+The second inequality holds sinceis-Lipschitz byandis upper-bounded byas a consequence of. Finally, the inequality onholds sinceis bounded by a constantby.
+Therefore, it holds that the difference betweenandsatisfies:
+
+Taking the expectation overandand using the bounds inyields:
+
+Finally, the upper bound on the bias holds withanddefined as:
+
+∎
+
+By definition ofandwe have that:
+
+Where the first line is a direct consequence of the independence ofand. Moreover, we can boundandas follows:
+
+For, we used thatis-Lipschitz uniformly in,andby, and thathas a variance uniformly bounded byas a consequence of. For, we usewhere we have thatis uniformly bounded by a constantand apply the bounds onandfrom.
+∎
+
+We show each of the upper bounds separately.We use the strong-convexityandto show the first bound:
+
+The second bound can be proven in the same way as the first, using that, by definition,is continuous andstrongly convex intogether with.
+
+We exploit the closed form expressions ofand:
+
+By standard linear algebra, the differencecan be expressed as:
+
+By taking thenorm of the above and using the upper-bounds from, we can write:
+
+The first line we used the triangular inequality, the second line follows fromfrom. The third line appliesfromto the first term and uses thatby Cauchy-Schwarz inequality. The fourth line uses thatfor the first term sincebyand usesfromfor the second term. The final bound is obtained usingto upper-boundby. By taking the expectation w.r.t.and using, we get:
+
+We use the closed-form expression of:
+
+where the first line uses thatby, the second line follows by triangular inequality while the last line usesfromfor the first term andfor the second terms. By squaring the above bound and taking expectation w.r.t., we get:
+
+where the last line uses.
+
+Using the closed-form expression of, it holds that:
+
+where we used thatbyand thatby.
+∎
+
+We show each of the upper bounds separately.Using strong convexity, we have the following inequality for the Hessian operatoracting on a function:
+
+by positive-definiteness of, we takefor some:
+
+By the same arguments, the above bound applies to.
+
+We can express the operatoracting on someas follows:
+
+Usingwe upper-bound thenorm of the above quantity as follows:
+
+where we used Cauchy-Schwarz inequality to get the last inequality.
+
+Usingto get an expression ofand, we obtain the following upper-bound:
+
+where we used that the densityis upper-bounded by a positive constantbyand thatisLipschitz in its second argument by.
+∎
+
+SECTION: Connection with Parametric Implicit Differentiation
+SECTION: Parametric approximation of the functional bilevel problem
+In this section, we approximate the functional problem inwith a parametric bilevel problem where inner-level functions are parametrized aswith parameters. Here, the inner-level variable isinstead of the function. Standard bilevel optimization algorithms like AID can be applied, which involve differentiating twice with respect to the parametric model. However, for models like deep neural networks, the inner objective may not be strongly convex in, leading to a non-positive or degenerate Hessian (). This can cause numerical instabilities and divergence from the gradient in(), especially when using AID, which relies on solving a quadratic problem defined by the Hessian.
+
+If the model has multiple solutions, the Hessian may be degenerate, making the implicit function theorem inapplicable. In contrast, functional implicit differentiation requires solving a positive definite quadratic problem into find an adjoint function, ensuring a solution even whenis sub-optimal, due to the strong convexity of. This stability with sub-optimal solutions is crucial for practical algorithms like the one in, where the optimal prediction function is approximated within a parametric family, such as neural networks.
+
+Formally, to establish a connection with parametric implicit differentiation, let us considerto be a map from a finite dimensional set of parametersto the functional Hilbert spaceand define a parametric version of the outer and inner objectives inrestricted to functions in:
+
+The mapcan typically be a neural network parameterization and allows to obtain a “more tractable” approximation to the abstract solutioninwhere the function spaceis often too large to perform optimization. This is typically the case whenis an-space of functions as we discuss in more details in.
+Whenis a Reproducing Kernel Hilbert Space (RKHS),may also correspond to the Nyström approximation, which performs the optimization on a finite-dimensional subspace of an RKHS spanned by a few data points.
+
+The corresponding parametric version of the problem () is then formally defined as:
+
+The resulting bilevel problem inoften arises in machine learning but is generally ambiguously defined without further assumptions on the mapas the inner-level problem might admit multiple solutions.
+Under the assumption thatis twice continuously differentiable and the rather strong assumption that the parametric Hessianis invertible for a given, the expression for the total gradientfollows by direct application of the parametric implicit function theorem:
+
+whereis the adjoint vector in. Without further assumptions, the expression of the gradient inis generally different from the one obtained inusing the functional point of view. Nevertheless, a precise connection between the functional and parametric implicit gradients can be obtained under expressiveness assumptions on the parameterization, as discussed in the next two propositions.
+
+follows by direct application of the chain rule, noting that the distortion term on the right of ()
+vanishes whensinceby optimality of.
+A consequence is that, for an optimal parameter, the parametric Hessian is necessarily symmetric positive semi-definite. However, for an arbitrary parameter, the distortion does not vanish in general, making the Hessian possibly non-positive. This can result in numerical instability when using algorithms such as AID for which an adjoint vector is obtained by solving a quadratic problem defined by the Hessian matrixevaluated on approximate minimizers of the inner-level problem. Moreover, if the model admits multiple solutions, the Hessian is likely to be degenerate making the implicit function theorem inapplicable and the bilevel problem inambiguously defined. On the other hand, the functional implicit differentiation requires finding an adjoint functionby solving a positive definite quadratic problem inwhich is always guaranteed to have a solution even when the inner-level prediction function is only approximately optimal.
+
+, which is proven below, shows that, even when the parametric family is expressive enough to recover the optimal prediction functionat a single value, the expression of the total gradient inusing parametric implicit differentiation might generally differ from the one obtained using its functional counterpart. Indeed the projector, which has a rank equal to, biases the adjoint function by projecting it into a finite dimensional space before applying the cross derivative operator.
+Only under a much stronger assumption on, requiring it to recover the optimal prediction functionin a neighborhood of the outer-level variable, both parametric and functional implicit differentiation recover the same expression for the total gradient.
+In this case, the projector operator aligns with the cross-derivative operator so that. Finally, note that the expressiveness assumptions onmade inandare only used here to discuss the connection with the parametric implicit gradient and are not required by the method we introduce in.
+
+Here we want to show the connection between theparametricgradient of the outer variableusually used in approximate differentiation methods and thefunctionalgradient of the outer variablederived from the functional bilevel problem definition in.
+Recall the definition of theparametricinner objective.
+According to, we have the following relation
+
+By assumption,has a full rank which matches the dimension of the parameter space. Recall from the assumptions ofthat the Hessian operatoris positive definite by the strong convexity of the inner-objectivein the second argument. We deduce thatmust be invertible, since, by construction, the dimension ofis smaller than that of the Hilbert spacewhich has possibly infinite dimension. Recall from,and the assumption that. We apply the parametric implicit function theorem to get the following expression of the Jacobian:
+
+Hence, differentiating the total objectiveand applying the chain rule directly results in the following expression:
+
+with previously definedand.
+
+We now introduce the operator. The operatoris a projector as it satisfies. Hence, using the fact that the Hessian operator is invertible, and recalling that the adjoint function is given by, we directly get formthat:
+
+If we further assume thatholds for allin a neighborhood of, then differentiating with respect toresults in the following identity:
+
+Using the expression offrom, we have the following identity:
+
+In other words,is of the formfor some finite dimensional matrixof size. Recalling the expression of the total gradient, we can deduce the equality betweenparametricandfunctionalgradients:
+
+The first equality follows from the general expression of the total gradient. In the second line we use the expression ofwhich then allows to simplify the expression in the third line. Then, recalling that the Hessian operatoris invertible, we get the fourth line. Finally, the result follows by using again the expression ofand recalling the definition of the adjoint function.
+∎
+
+SECTION: Computational Cost and Scalability
+The optimization of the prediction functionin the inner-level optimization loop is similar to AID, although the total gradient computation differs significantly. Unlike AID,does not require differentiating through the parameters of the prediction model when estimating the total gradient. This property results in an improved cost in time and memory in most practical cases as shown inand. More precisely, AID requires computing Hessian-vector products of size, which corresponds to the number of hidden layer weights of the neural network. WhileFuncIDonly requires Hessian-vector products of size, i.e. the output dimension of. In many practical cases, the network’s parameter dimensionis much larger than its output size, which results in considerable benefits in terms of memory when usingFuncIDrather than AID, as shown in(left). Furthermore, unlike AID, the overhead of evaluating Hessian-vector products inFuncIDis not affected by the time cost for evaluating the prediction network. Whenis a deep network, such an overhead increases significantly with the network size, making AID significantly slower ((right)).
+
+SECTION: Additional Details about 2SLS Experiments
+We closely follow the experimental setting of the state-of-the-art method DFIV. The goal of this experiment is to learn a modelapproximating the structural functionthat accurately describes the effect of the treatmenton the outcomewith the help of an instrument, as illustrated in Figure.
+
+SECTION: Dsprites data.
+We follow the exact same data generation procedure as in. From thedspritesdataset, we generate the treatmentand outcomeas follows:
+
+Uniformly sample latent parametersfromdsprites.
+
+Generate treatment variableas
+
+Generate outcome variableas
+
+Here, functionreturns the corresponding image to the latent parameters, andare noise variables generated fromand. Each element of the matrixis generated from Unifand fixed throughout the experiment. From the data generation process, we can see thatandare confounded by. We use the instrumental variable, and figures with random noise as treatment variable. The variableis not revealed to the model, and there is no observable confounder. The structural function for this setting is
+
+Test data points are generated from grid points of latent variables. The grid consist of 7 evenly spaced values for, 3 evenly spaced values for, and 4 evenly spaced values for.
+
+SECTION: Experimental details
+All results are reported over an average of 20 runs with different seeds onGPUs.
+
+As in the DFIV setting, we approximate the true structural functionwithwhereis a feature map of the treatment,is a vector in, andis parameterized by. To solve the inner-problem of the bilevel formulation in, the inner prediction functionis optimized over functions of the formwhere we denotethe feature map of the instrumentandis a matrix in. The feature mapsandare neural networks () that are optimized using empirical objectives fromand syntheticdspritesdata, the linear weightsandare fitted exactly at each iteration.
+
+In theexperiment, we callthe functional implicit diff. method with a linear choice of the adjoint function.LinearFuncIDuses an adjoint function of the formwith. In other words, to find, the featuresare fixed and only the optimal linear weightis computed in closed-form. In themethod, the adjoint function lives in the same function space as. This is achieved by approximatingwith a separate neural network with the same architecture as.
+
+As in the setup of DFIV, for training all methods, we use 100 outer iterations (in), and 20 inner iterations (in) per outer iteration with full-batch. We select the hyper-parameters based on the best validation loss, which we obtain using a validation set with instances of all three variables. Because of the number of linear solvers, the grid search performed for AID is very large, so we only run it with one seed. For other methods, we run the grid search on 4 different seeds and take the ones with the highest average validation loss. Additionally, for the hyper-parameters that are not tuned, we take the ones reported in.
+
+All DFIV hyper-parameters are set based on the best ones reported in.
+
+: We perform a grid search over 5 linear solvers (two variants of gradient descent, two variants of conjugate gradient and an identity heuristic solver), linear solver learning ratewith, linear solver number of iterations, inner optimizer learning ratewith, inner optimizer weight decaywithand outer optimizer learning ratewith.
+
+: We perform a grid search over number of “unrolled” inner iterations(this is chosen because of memory constraints since “unrolling” an iteration is memory-heavy), number of warm-start inner iterations, inner optimizer learning ratewith, inner optimizer weight decaywithand outer optimizer learning ratewith.
+
+: The method is based on Eq. 5.1 in, for this single-level method we perform a grid search on the learning ratewith, weight decaywith, and the penalty weightwith. Since the method has only a single optimization loop, we increase the number of total iterations to 2000 compared to the other methods (100 outer-iterations and 20 inner iterations).
+
+: The method is based on Eq. 3.2 in, for this method we perform the same grid search as for the Gradient Penalty method. However, since this method has an inner loop, we perform 100 outer iterations and perform a grid search on the number of inner iterations withand.
+
+FuncID: We perform a grid search over the number of iterations for learning the adjoint network, adjoint optimizer learning ratewithand adjoint optimizer weight decaywith. The rest of the parameters are the same as for DFIV since the inner and outer models are almost equivalent to the treatment and instrumental networks used in their experiments.
+
+SECTION: Additional results
+We run an additional experiment withtraining points using the same setting described above to illustrate the effect of the sample size on the methods.shows that a similar conclusion can be drawn when increasing the training sample size fromto, thus illustrating the robustness of the obtained results.
+
+SECTION: Additional Details about Model-Based RL Experiments
+SECTION: Closed-form expression for the adjoint function
+For theFuncIDmethod, we exploit the structure of the adjoint objective to obtain a closed-form expression of the adjoint function. In the model-based RL setting, the unregularized adjoint objective has a simple expression of the form:
+
+The key observation here is that the same batches of data are used for both the inner and outer problems, i.e.. Therefore, we only need to evaluate the functionon a finite set of pointswhere. Without restricting the solution set ofor adding regularization to, the optimal solutionsimply matcheson the set of pointss.t.. Our implementation directly exploits this observation and uses the following expression for the total gradient estimation:
+
+SECTION: Experimental details
+As in the experiments of, we use theenvironment with 2 actions, 4-dimensional continuous state space, and optimal returns of 500. For evaluation, we use a separate copy of the environment. The reported return is an average of 10 runs with different seeds.
+
+We us the same neural network architectures that are used in theexperiment of. All networks have two hidden layers andactivations. Both hidden layers in all networks have dimension 32. In the misspecified setting with the limited model class capacity, we set the hidden layer dimension to 3 for the dynamics and reward networks.
+
+We perform 200000 environment steps (outer-level steps) and set the number of inner-level iterations tofor both OMD andFuncID. for MLE, we perform a single update to the state-value function for each update to the model. For training, we use a replay buffer with a batch size of 256, and set the discount factorto. When sampling actions, we use a temperature parameteras in. The learning rate for outer parametersis set to. For the learning rate of the inner neural network and the moving average coefficient, we perform a grid search overandas in.
+
+SECTION: Additional results
+shows the average reward on the evaluation environment as a function of training time in seconds. We observe that our model is the fastest to reach best performance both in the well-specified and misspecified settings.
+
+shows the average prediction error of different methods during training. The differences in average prediction error between the bilevel approaches (OMD,FuncID) and MLE reflect their distinct optimization objectives and trade-offs. OMD andFuncIDfocus on maximizing performance in the task environment, while MLE emphasizes accurate representation of all aspects of the environment, which can lead to smaller prediction errors but may not necessarily correlate with superior evaluation performance. We also observe thatFuncIDhas a stable prediction error in both settings meanwhile OMD and MLE exhibit some instability.
+
+SECTION: NeurIPS Paper Checklist
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope?
+
+Answer:
+
+Justification: All the claims made in the paper are either rigorously proven, shown experimentally or describe well-established facts in the literature.
+
+Guidelines:
+
+The answer NA means that the abstract and introduction do not include the claims made in the paper.
+
+The abstract and/or introduction should clearly state the claims made, including the contributions made in the paper and important assumptions and limitations. A No or NA answer to this question will not be perceived well by the reviewers.
+
+The claims made should match theoretical and experimental results, and reflect how much the results can be expected to generalize to other settings.
+
+It is fine to include aspirational goals as motivation as long as it is clear that these goals are not attained by the paper.
+
+Question: Does the paper discuss the limitations of the work performed by the authors?
+
+Answer:
+
+Justification: All strong assumptions used in the theoretical results are clearly stated, discussed, and put into perspective with other published work.
+
+Guidelines:
+
+The answer NA means that the paper has no limitation while the answer No means that the paper has limitations, but those are not discussed in the paper.
+
+The authors are encouraged to create a separate "Limitations" section in their paper.
+
+The paper should point out any strong assumptions and how robust the results are to violations of these assumptions (e.g., independence assumptions, noiseless settings, model well-specification, asymptotic approximations only holding locally). The authors should reflect on how these assumptions might be violated in practice and what the implications would be.
+
+The authors should reflect on the scope of the claims made, e.g., if the approach was only tested on a few datasets or with a few runs. In general, empirical results often depend on implicit assumptions, which should be articulated.
+
+The authors should reflect on the factors that influence the performance of the approach. For example, a facial recognition algorithm may perform poorly when image resolution is low or images are taken in low lighting. Or a speech-to-text system might not be used reliably to provide closed captions for online lectures because it fails to handle technical jargon.
+
+The authors should discuss the computational efficiency of the proposed algorithms and how they scale with dataset size.
+
+If applicable, the authors should discuss possible limitations of their approach to address problems of privacy and fairness.
+
+While the authors might fear that complete honesty about limitations might be used by reviewers as grounds for rejection, a worse outcome might be that reviewers discover limitations that aren’t acknowledged in the paper. The authors should use their best judgment and recognize that individual actions in favor of transparency play an important role in developing norms that preserve the integrity of the community. Reviewers will be specifically instructed to not penalize honesty concerning limitations.
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof?
+
+Answer:
+
+Justification: All theoretical claims are rigorously proven. We provide a structured list of all assumptions used before the statement of a result and refer to a specific assumption whenever it is employed in the proof.
+
+Guidelines:
+
+The answer NA means that the paper does not include theoretical results.
+
+All the theorems, formulas, and proofs in the paper should be numbered and cross-referenced.
+
+All assumptions should be clearly stated or referenced in the statement of any theorems.
+
+The proofs can either appear in the main paper or the supplemental material, but if they appear in the supplemental material, the authors are encouraged to provide a short proof sketch to provide intuition.
+
+Inversely, any informal proof provided in the core of the paper should be complemented by formal proofs provided in appendix or supplemental material.
+
+Theorems and Lemmas that the proof relies upon should be properly referenced.
+
+Question: Does the paper fully disclose all the information needed to reproduce the main experimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)?
+
+Answer:
+
+Justification: We provide the code to reproduce our experiments, which includes afile with instructions. We also include the information about tuning, datasets and other experimental detail in the appendix.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+If the paper includes experiments, a No answer to this question will not be perceived well by the reviewers: Making the paper reproducible is important, regardless of whether the code and data are provided or not.
+
+If the contribution is a dataset and/or model, the authors should describe the steps taken to make their results reproducible or verifiable.
+
+Depending on the contribution, reproducibility can be accomplished in various ways. For example, if the contribution is a novel architecture, describing the architecture fully might suffice, or if the contribution is a specific model and empirical evaluation, it may be necessary to either make it possible for others to replicate the model with the same dataset, or provide access to the model. In general. releasing code and data is often one good way to accomplish this, but reproducibility can also be provided via detailed instructions for how to replicate the results, access to a hosted model (e.g., in the case of a large language model), releasing of a model checkpoint, or other means that are appropriate to the research performed.
+
+While NeurIPS does not require releasing code, the conference does require all submissions to provide some reasonable avenue for reproducibility, which may depend on the nature of the contribution. For example
+
+If the contribution is primarily a new algorithm, the paper should make it clear how to reproduce that algorithm.
+
+If the contribution is primarily a new model architecture, the paper should describe the architecture clearly and fully.
+
+If the contribution is a new model (e.g., a large language model), then there should either be a way to access this model for reproducing the results or a way to reproduce the model (e.g., with an open-source dataset or instructions for how to construct the dataset).
+
+We recognize that reproducibility may be tricky in some cases, in which case authors are welcome to describe the particular way they provide for reproducibility. In the case of closed-source models, it may be that access to the model is limited in some way (e.g., to registered users), but it should be possible for other researchers to have some path to reproducing or verifying the results.
+
+Question: Does the paper provide open access to the data and code, with sufficient instructions to faithfully reproduce the main experimental results, as described in supplemental material?
+
+Answer:
+
+Justification: We provide an anonymized repository with extensively commented code and instructions on how to reproduce our main experiment.
+
+Guidelines:
+
+The answer NA means that paper does not include experiments requiring code.
+
+Please see the NeurIPS code and data submission guidelines () for more details.
+
+While we encourage the release of code and data, we understand that this might not be possible, so “No” is an acceptable answer. Papers cannot be rejected simply for not including code, unless this is central to the contribution (e.g., for a new open-source benchmark).
+
+The instructions should contain the exact command and environment needed to run to reproduce the results. See the NeurIPS code and data submission guidelines () for more details.
+
+The authors should provide instructions on data access and preparation, including how to access the raw data, preprocessed data, intermediate data, and generated data, etc.
+
+The authors should provide scripts to reproduce all experimental results for the new proposed method and baselines. If only a subset of experiments are reproducible, they should state which ones are omitted from the script and why.
+
+At submission time, to preserve anonymity, the authors should release anonymized versions (if applicable).
+
+Providing as much information as possible in supplemental material (appended to the paper) is recommended, but including URLs to data and code is permitted.
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperparameters, how they were chosen, type of optimizer, etc.) necessary to understand the results?
+
+Answer:
+
+Justification: Yes, we specify and discuss all experimental details in the appendix.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The experimental setting should be presented in the core of the paper to a level of detail that is necessary to appreciate the results and make sense of them.
+
+The full details can be provided either with the code, in appendix, or as supplemental material.
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments?
+
+Answer:
+
+Justification: In all of our experiments we run multiple times and report the error bars.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The authors should answer "Yes" if the results are accompanied by error bars, confidence intervals, or statistical significance tests, at least for the experiments that support the main claims of the paper.
+
+The factors of variability that the error bars are capturing should be clearly stated (for example, train/test split, initialization, random drawing of some parameter, or overall run with given experimental conditions).
+
+The method for calculating the error bars should be explained (closed form formula, call to a library function, bootstrap, etc.)
+
+The assumptions made should be given (e.g., Normally distributed errors).
+
+It should be clear whether the error bar is the standard deviation or the standard error of the mean.
+
+It is OK to report 1-sigma error bars, but one should state it. The authors should preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis of Normality of errors is not verified.
+
+For asymmetric distributions, the authors should be careful not to show in tables or figures symmetric error bars that would yield results that are out of range (e.g. negative error rates).
+
+If error bars are reported in tables or plots, The authors should explain in the text how they were calculated and reference the corresponding figures or tables in the text.
+
+Question: For each experiment, does the paper provide sufficient information on the computer resources (type of compute workers, memory, time of execution) needed to reproduce the experiments?
+
+Answer:
+
+Justification: We report which GPUs we use for larger experiments and show how our method compares to similar methods in the section about computational cost.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The paper should indicate the type of compute workers CPU or GPU, internal cluster, or cloud provider, including relevant memory and storage.
+
+The paper should provide the amount of compute required for each of the individual experimental runs as well as estimate the total compute.
+
+The paper should disclose whether the full research project required more compute than the experiments reported in the paper (e.g., preliminary or failed experiments that didn’t make it into the paper).
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics?
+
+Answer:
+
+Justification: We reviewed the NeurIPS Code of Ethics and attest that our work conforms with it.
+
+Guidelines:
+
+The answer NA means that the authors have not reviewed the NeurIPS Code of Ethics.
+
+If the authors answer No, they should explain the special circumstances that require a deviation from the Code of Ethics.
+
+The authors should make sure to preserve anonymity (e.g., if there is a special consideration due to laws or regulations in their jurisdiction).
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed?
+
+Answer:
+
+Justification: We present a new bilevel optimization method, which does not have any immediate societal impacts.
+
+Guidelines:
+
+The answer NA means that there is no societal impact of the work performed.
+
+If the authors answer NA or No, they should explain why their work has no societal impact or why the paper does not address societal impact.
+
+Examples of negative societal impacts include potential malicious or unintended uses (e.g., disinformation, generating fake profiles, surveillance), fairness considerations (e.g., deployment of technologies that could make decisions that unfairly impact specific groups), privacy considerations, and security considerations.
+
+The conference expects that many papers will be foundational research and not tied to particular applications, let alone deployments. However, if there is a direct path to any negative applications, the authors should point it out. For example, it is legitimate to point out that an improvement in the quality of generative models could be used to generate deepfakes for disinformation. On the other hand, it is not needed to point out that a generic algorithm for optimizing neural networks could enable people to train models that generate Deepfakes faster.
+
+The authors should consider possible harms that could arise when the technology is being used as intended and functioning correctly, harms that could arise when the technology is being used as intended but gives incorrect results, and harms following from (intentional or unintentional) misuse of the technology.
+
+If there are negative societal impacts, the authors could also discuss possible mitigation strategies (e.g., gated release of models, providing defenses in addition to attacks, mechanisms for monitoring misuse, mechanisms to monitor how a system learns from feedback over time, improving the efficiency and accessibility of ML).
+
+Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pretrained language models, image generators, or scraped datasets)?
+
+Answer:
+
+Justification: Our new optimization method does not have an identifiable risk for misuse.
+
+Guidelines:
+
+The answer NA means that the paper poses no such risks.
+
+Released models that have a high risk for misuse or dual-use should be released with necessary safeguards to allow for controlled use of the model, for example by requiring that users adhere to usage guidelines or restrictions to access the model or implementing safety filters.
+
+Datasets that have been scraped from the Internet could pose safety risks. The authors should describe how they avoided releasing unsafe images.
+
+We recognize that providing effective safeguards is challenging, and many papers do not require this, but we encourage authors to take this into account and make a best faith effort.
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected?
+
+Answer:
+
+Justification: Our code includes an open access licence in thefile.
+
+Guidelines:
+
+The answer NA means that the paper does not use existing assets.
+
+The authors should cite the original paper that produced the code package or dataset.
+
+The authors should state which version of the asset is used and, if possible, include a URL.
+
+The name of the license (e.g., CC-BY 4.0) should be included for each asset.
+
+For scraped data from a particular source (e.g., website), the copyright and terms of service of that source should be provided.
+
+If assets are released, the license, copyright information, and terms of use in the package should be provided. For popular datasets,has curated licenses for some datasets. Their licensing guide can help determine the license of a dataset.
+
+For existing datasets that are re-packaged, both the original license and the license of the derived asset (if it has changed) should be provided.
+
+If this information is not available online, the authors are encouraged to reach out to the asset’s creators.
+
+Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets?
+
+Answer:
+
+Justification: We do not present new assets in this work.
+
+Guidelines:
+
+The answer NA means that the paper does not release new assets.
+
+Researchers should communicate the details of the dataset/code/model as part of their submissions via structured templates. This includes details about training, license, limitations, etc.
+
+The paper should discuss whether and how consent was obtained from people whose asset is used.
+
+At submission time, remember to anonymize your assets (if applicable). You can either create an anonymized URL or include an anonymized zip file.
+
+Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)?
+
+Answer:
+
+Justification: We do not have crowdsourcing nor human subjects in our work.
+
+Guidelines:
+
+The answer NA means that the paper does not involve crowdsourcing nor research with human subjects.
+
+Including this information in the supplemental material is fine, but if the main contribution of the paper involves human subjects, then as much detail as possible should be included in the main paper.
+
+According to the NeurIPS Code of Ethics, workers involved in data collection, curation, or other labor should be paid at least the minimum wage in the country of the data collector.
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained?
+
+Answer:
+
+Justification: We do not have human subjects in our work.
+
+Guidelines:
+
+The answer NA means that the paper does not involve crowdsourcing nor research with human subjects.
+
+Depending on the country in which research is conducted, IRB approval (or equivalent) may be required for any human subjects research. If you obtained IRB approval, you should clearly state this in the paper.
+
+We recognize that the procedures for this may vary significantly between institutions and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the guidelines for their institution.
+
+For initial submissions, do not include any information that would break anonymity (if applicable), such as the institution conducting the review.

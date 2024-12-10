@@ -1,0 +1,707 @@
+SECTION: Test Time Learning for Time Series Forecasting
+
+Time-series forecasting has seen significant advancements with the introduction of token prediction mechanisms such as multi-head attention. However, these methods often struggle to achieve the same performance as in language modeling, primarily due to the quadratic computational cost and the complexity of capturing long-range dependencies in time-series data. State-space models (SSMs), such as Mamba, have shown promise in addressing these challenges by offering efficient solutions with linear RNNs capable of modeling long sequences with larger context windows. However, there remains room for improvement in accuracy and scalability.
+
+We propose the use of Test-Time Training (TTT) modules in a parallel architecture to enhance performance in long-term time series forecasting. Through extensive experiments on standard benchmark datasets, we demonstrate that TTT modules consistently outperform state-of-the-art models, including the Mamba-based TimeMachine, particularly in scenarios involving extended sequence and prediction lengths. Our results show significant improvements in Mean Squared Error (MSE) and Mean Absolute Error (MAE), especially on larger datasets such as Electricity, Traffic, and Weather, underscoring the effectiveness of TTT in capturing long-range dependencies. Additionally, we explore various convolutional architectures within the TTT framework, showing that even simple configurations like 1D convolution with small filters can achieve competitive results. This work sets a new benchmark for time-series forecasting and lays the groundwork for future research in scalable, high-performance forecasting models.
+
+KeywordsTime Series ForecastingTest-Time TrainingMambaExpressive Hidden States
+
+SECTION: 1Introduction
+
+Long Time Series Forecasting (LTSF) is a crucial task in various fields, including energy[9], industry[10], defense[4], and atmospheric sciences[22]. LTSF uses a historical sequence of observations, known as the look-back window, to predict future values through a learned or mathematically induced model. However, the stochastic nature of real-world events makes LTSF challenging.
+Deep learning models, including time series forecasting, have been widely adopted in engineering and scientific fields. Early approaches employed Recurrent Neural Networks (RNNs) to capture long-range dependencies in sequential data like time series. However, recurrent architectures like RNNs have limited memory retention, are difficult to parallelize, and have constrained expressive capacity. Transformers[34], with ability to efficiently process sequential data in parallel and capture contextual information, have significantly improved performance on time series prediction task[36,24,28,7]. Yet, due to the quadratic complexity of attention mechanisms with respect to the context window (or look-back window in LTSF), Transformers are limited in their ability to capture very long dependencies.
+
+In recent years, State Space Models (SSMs) such as Mamba[13], a gated linear RNN variant, have revitalized the use of RNNs for LTSF. These models efficiently capture much longer dependencies while reducing computational costs and enhancing expressive power and memory retention. A new class of Linear RNNs, known as Test Time Training (TTT) modules[32], has emerged. These modules use expressive hidden states and provide theoretical guarantees for capturing long-range dependencies, positioning them as one of the most promising architectures for LTSF and due to their weight adaptation during test time are very effective on non-stationary data. We provide more motivation on TTT for non-stationary data in AppendixA.
+
+SECTION: Key Insights and Results
+
+Through our experiments, several key insights emerged regarding the performance of TTT modules when compared to existing SOTA models:
+
+Superior Performance with Longer Sequence and Prediction Lengths:TTT modules consistently outperformed the SOTA TimeMachine model, particularly as sequence and prediction lengths increased. Architectures such as Conv Stack 5 demonstrated their ability to capture long-range dependencies more effectively than Mamba-based models, resulting in noticeable improvements in Mean Squared Error (MSE) and Mean Absolute Error (MAE) across various benchmark datasets.
+
+Strong Improvement on Larger Datasets:On larger datasets, such as Electricity, Traffic, and Weather, the TTT-based models excelled, showing superior performance compared to both Transformer- and Mamba-based models. These results underscore the ability of TTT to handle larger temporal windows and more complex data, making it especially effective in high-dimensional, multivariate datasets.
+
+Hidden Layer Architectures:The ablation studies revealed that while convolutional architectures added to the TTT modules provided some improvements, Conv Stack 5 consistently delivered the best results among the convolutional variants. However, simpler architectures like Conv 3 often performed comparably, showing that increased architectural complexity did not always lead to significantly better performance. Very complex architectures like the modern convolutional block from[11]showed competitive performance when used as TTT hidden layer architectures compared to the simpler single architectures proposed, hinting on the potential of more complex architectures in capturing more long term dependencies.
+
+Adaptability to Long-Term Predictions:The TTT-based models excelled in long-term prediction tasks, especially for really high prediction lengths like 2880. TTT-based models also excelled on increased sequence lengths as high as 5760 which is the maximum sequence length allowed by the benchmark datasets. This verified the theoretically expected superiority of TTT based models relative to the mamba/transformer based SOTA models.
+
+SECTION: Motivation and Contributions
+
+In this work, we explore the potential of TTT modules in Long-Term Series Forecasting (LTSF) by integrating them into novel model configurations to surpass the current state-of-the-art (SOTA) models. Our key contributions are as follows:
+
+We propose a new model architecture utilizing quadruple TTT modules, inspired by the TimeMachine model[1], which currently holds SOTA performance. By replacing the Mamba modules with TTT modules, our model effectively captures longer dependencies and predicts larger sequences.
+
+We evaluate the model on benchmark datasets, exploring the original look-back window and prediction lengths to identify the limitations of the SOTA architecture. We demonstrate that the SOTA model achieves its performance primarily by constraining look-back windows and prediction lengths, thereby not fully leveraging the potential of LTSF.
+
+We extend our evaluations to significantly larger sequence and prediction lengths, showing that our TTT-based model consistently outperforms the SOTA model using Mamba modules, particularly in scenarios involving extended look-back windows and long-range predictions.
+
+We conduct an ablation study to assess the performance of various hidden layer architectures within our model. By testing six different convolutional configurations, one of which being ModernTCN by[11], we quantify their impact on model performance and provide insights into how they compare with the SOTA model.
+
+SECTION: 2Related Work
+
+Several Transformer-based models have advanced long-term time series forecasting (LTSF), with notable examples like iTransformer[26]and PatchTST[29]. iTransformer employs multimodal interactive attention to capture both temporal and inter-modal dependencies, suitable for multivariate time series, though it incurs high computational costs when multimodal data interactions are minimal. PatchTST, inspired by Vision Transformers[12], splits input sequences into patches to capture dependencies effectively, but its performance hinges on selecting the appropriate patch size and may reduce model interpretability. Other influential models include Informer[41], which uses sparse self-attention to reduce complexity but may overlook finer details in multivariate data; Autoformer[38], which excels in periodic data but struggles with non-periodic patterns; Pyraformer[24], which captures multi-scale dependencies through a hierarchical structure but at the cost of increased computational requirements; and Fedformer[42], which combines time- and frequency-domain representations for efficiency but may underperform on noisy time series. While each model advances LTSF in unique ways, they also introduce specific trade-offs and limitations.
+
+S4 models[14,15,16]are efficient sequence models for long-term time series forecasting (LTSF), leveraging linear complexity through four key components:(discretization step size),(state update matrix),(input matrix), and(output matrix). They operate in linear recurrence for autoregressive inference and global convolution for parallel training, efficiently transforming recurrences into convolutions. However, S4 struggles with time-invariance issues, limiting selective memory. Mamba[13]addresses this by making,, anddynamic, creating adaptable parameters that improve noise filtering and maintain Transformer-level performance with linear complexity. SIMBA[31]enhances S4 by integrating block-sparse attention, blending state space and attention to efficiently capture long-range dependencies while reducing computational overhead, ideal for large-scale, noisy data. TimeMachine[1]builds on these advances by employing a quadruple Mamba setup, managing both channel mixing and independence while avoiding Transformers’ quadratic complexity through multi-scale context generation, thereby maintaining high performance in long-term forecasting tasks.
+
+RWKV-TS[18]is a novel linear RNN architecture designed for time series tasks, achieving O(L) time and memory complexity with improved long-range information capture, making it more efficient and scalable compared to traditional RNNs like LSTM and GRU.[30]introduced the Linear Recurrent Unit (LRU), an RNN block matching the performance of S4 models on long-range reasoning tasks while maintaining computational efficiency. TTT[32]layers take a novel approach by treating the hidden state as a trainable model, learning during both training and test time with dynamically updated weights. This allows TTT to capture long-term relationships more effectively through real-time updates, providing an efficient, parallelizable alternative to self-attention with linear complexity. TTT’s adaptability and efficiency make it a strong candidate for processing longer contexts, addressing the scalability challenges of RNNs and outperforming Transformer-based architectures in this regard.
+
+Recent advancements in long-term time series forecasting (LTSF) have introduced efficient architectures that avoid the complexity of attention mechanisms and recurrence. TSMixer[6], an MLP-based model, achieves competitive performance by separating temporal and feature interactions through time- and channel-mixing, enabling linear scaling with sequence length. However, MLPs may struggle with long-range dependencies and require careful hyperparameter tuning, especially for smaller datasets. Convolutional neural networks (CNNs) have also proven effective for LTSF, particularly in capturing local temporal patterns. ModernTCN[11]improves temporal convolution networks (TCNs) using dilated convolutions and a hierarchical structure to efficiently capture both short- and long-range dependencies, making it well-suited for multi-scale time series data.
+
+Building on these developments, we improve the original TimeMachine model by replacing its Mamba blocks with Test-Time Training (TTT) blocks to enhance long-context prediction capabilities. We also explore CNN configurations, such as convolutional stacks, to enrich local temporal feature extraction. This hybrid approach combines the efficiency of MLPs, the local pattern recognition of CNNs, and the global context modeling of TTT, leading to a more robust architecture for LTSF tasks that balances both short- and long-term forecasting needs.
+
+SECTION: 3Model Architecture
+
+The task of Time Series Forecasting can be defined as follows: Given a multivariate time series dataset with a window of past observations (look-back window):, where eachis a vector of dimension(the number of channels at time), the goal is to predict the nextfuture values.
+
+The TimeMachine[1]architecture, which we used as the backbone, is designed to capture long-term dependencies in multivariate time series data, offering linear scalability and a small memory footprint. It integrates four Mamba[13]modules as sequence modeling blocks to selectively memorize or forget historical data, and employs two levels of downsampling to generate contextual cues at both high and low resolutions.
+
+However, Mamba’s approach still relies on fixed-size hidden states to compress historical information over time, often leading to the model forgetting earlier information in long sequences. TTT[32]uses dynamically updated weights (in the form of matrices inside linear or MLP layers) to compress and store historical data. This dynamic adjustment during test time allows TTT to better capture long-term relationships by continuously incorporating new information. Its Hidden State Updating Rule is defined as:
+
+We incorporated TTT into the TimeMachine model, replacing the original Mamba block. We evaluated our approach with various setups, including different backbones and TTT layer configurations. Additionally, we introduced convolutional layers before the sequence modeling block and conducted experiments with different context lengths and prediction lengths. We provide mathematical foundations as to why TTT is able to perform test-time adaptation without catastrophic forgetting and how the module adapts to distribution shifts in AppendixA. In the same Appendix we quantify the computational overhead introduced by test-time updates and provide empirical validation, published by the authors who proposed TTT in[33], on how it performs on real corrupted data and provide some intuition on the parameter initialization in TTT as discussed in the same reference.
+
+Our goal is to improve upon the performance of the state-of-the-art (SOTA) models in LTSF using the latest advancements in sequential modeling. Specifically, we integrate Test-Time Training (TTT) modules into our model for two key reasons, TTT is theoretically proven to have an extremely long context window, being a form of linear RNN[30], capable of capturing long-range dependencies efficiently.
+Secondly, the expressive hidden states of TTT allow the model to capture a diverse set of features without being constrained by the architecture, including the depth of the hidden layers, their size, or the types of blocks used.
+
+SECTION: 3.1General Architecture
+
+Our model architecture builds upon the TimeMachine model[1], introducing key modifications, as shown in Figure1,1and1. Specifically, we replace the Mamba modules in TimeMachine with TTT (Test-Time Training) modules[32], which retain compatibility since both are linear RNNs[30]. However, TTT offers superior long-range dependency modeling due to its adaptive nature and theoretically infinite context window. A detailed visualization of the TTT block and the different proposed architectures can be found in AppendixD
+
+Our model features a two-level hierarchical architecture that captures both high-resolution and low-resolution context, as illustrated in Figure1. To adapts to the specific characteristics of the dataset, the architecture handles two scenarios—Channel Mixing and Channel Independence—illustrated in Figure1and1respectively. A more detailed and mathematical description of the normalization and prediction procedures can be found in AppendixD. We provide a computational complexity analysis of the TTT, Transformer, Mamba and ModernTCN modules in AppendixFand we also provide a computational complexity analysis for our model, TimeMachine, iTransformer, PatchTST, TSMixer and ModernTCN in AppendixG. We also included a mathematical comparison between the Mamba and TTT modules in AppendixBas well as theoretical comparison between the TTT module and models handling noise or temporal regularization in AppendixC.
+
+SECTION: 3.2Hierarchical Embedding
+
+The input sequence(Batch, Channel, Length) is first passed through Reversible Instance Normalization[19](RevIN), which stabilizes the model by normalizing the input data and helps mitigate distribution shifts. This operation is essential for improving generalization across datasets.
+
+After normalization, the sequence passes through two linear embedding layers. Linear E1 and Linear E2 are used to map the input sequence into two embedding levels: higher resolution and lower resolution. The embedding operationsandare achieved through MLP.andare configurations that take values from, satisfying. Dropout layers are applied after each embedding layer to prevent overfitting, especially for long-term time series data. As shown in Figure1.
+
+We provide more intuition on the effectivenes of hierarchical modeling in AppendixE.
+
+SECTION: 3.3Two Level Contextual Cue Modeling
+
+At each of the two embedding levels, a contextual cues modeling block processes the output from the Dropout layer following E1 and E2. This hierarchical architecture captures both fine-grained and broad temporal patterns, leading to improved forecasting accuracy for long-term time series data.
+
+In Level 1,High-Resolution Contextual Cues Modelingis responsible for modeling high-resolution contextual cues. TTT Block 3 and TTT Block 4 process the input tensor, focusing on capturing fine-grained temporal dependencies. The TTT Block3 operates directly on the input, and transposition may be applied before TTT Block4 if necessary. The outputs are summed, then concatenated with the Level 2 output. There is no residual connection summing in Level 1 modeling.
+
+In Level 2,Low-Resolution Contextual Cues Modelinghandles broader temporal patterns, functioning similarly to Level 1. TTT Block 1 and TTT Block 2 process the input tensor to capture low-resolution temporal cues and add them togther. A linear projection layer (P-1) is then applied to maps the output (with dimension RM×n2) to a higher dimension RM×n1, preparing it for concatenation. Additionally, the Level 1 and Level 2 Residual Connections ensure that information from previous layers is effectively preserved and passed on.
+
+SECTION: 3.4Final Prediction
+
+After processing both high-resolution and low-resolution cues, the model concatenates the outputs from both levels. A final linear projection layer (P-2) is then applied to generate the output predictions. The output is subsequently passed through RevIN Denormalization, which reverses the initial normalization and maps the output back to its original scale for interpretability. For more detailed explanations and mathematical descriptions refer to AppendixD.
+
+SECTION: 3.5Channel Mixing and Independence Modes
+
+TheChannel Mixing Mode(Figure1and1) processes all channels of a multivariate time series together, allowing the model to capture potential correlations between different channels and understand their interactions over longer time. Figure1illustrates an example of the channel mixing case, but there is also a channel independence case corresponding to Figure1, which we have not shown here. Figures1and1demonstrate the channel mixing and independence modes of the Level 1 High-Resolution Contextual Cues Modeling part with TTT Block 3 and TTT Block 4. Similar versions of the two channel modes for Level 2 Low-Resolution Contextual Cues Modeling are quite similar to those in Level 1, which we have also omitted here.
+
+TheChannel Independence Mode(Figure1) treats each channel of a multivariate time series as an independent sequence, enabling the model to analyze individual time series more accurately. This mode focuses on learning patterns within each channel without considering potential correlations between them.
+
+The main difference between these two modes is that theChannel Independence Modealways uses transposition before and after one of the TTT blocks (in Figure1, it’s TTT Block 4). This allows the block to capture contextual cues from local perspectives, while the other block focuses on modeling the global context. However, in theChannel Mixing Mode, both TTT Block 3 and TTT Block 4 model the global context.
+
+The hidden size value for TTT Blocks in global context modeling is set tosince the input shape isfor Channel Mixing andfor Channel Independence. To make the TTT Block compatible with the local context modeling scenario—where the input becomesafter transposition—we add two linear layers: one for upsampling toand another for downsampling back. In this case, the hidden size of TTT Block 4 is set to 16.
+
+SECTION: 4Experiments and Evaluation
+
+SECTION: 4.1Original Experimental Setup
+
+We evaluate our model on seven benchmark datasets that are commonly used for LTSF, namely: Traffic, Weather, Electricity, ETTh1, ETTh2, ETTm1, and ETTm2 from[38]and[41]. Among these, the Traffic and Electricity datasets are significantly larger, with 862 and 321 channels, respectively, and each containing tens of thousands of temporal points. Table6summarizes the dataset details in AppendixI.
+
+For all experiments, we adopted the same setup as in[26], fixing the look-back windowand testing four different prediction lengths. We compared our TimeMachine-TTT model against 12 state-of-the-art (SOTA) models, including TimeMachine[1], iTransformer[26], PatchTST[29],
+DLinear[39], RLinear[21], Autoformer[38], Crossformer[40],
+TiDE[8], Scinet[23], TimesNet[37], FEDformer[42], and Stationary[27]. All experiments were conducted with both MLP and Linear architectures using the original Mamba backbone, and we confirmed the results from the TimeMachine paper. We include calculations on the resource utilization of the model in AppendixGand quantify the impact of test-time updates on memory and latency in AppendixA.
+
+SECTION: 4.2Quantitative Results
+
+Across all seven benchmark datasets, our TimeMachine-TTT model consistently demonstrated superior performance compared to SOTA models. In the Weather dataset, TTT achieved leading performance at longer horizons (336 and 720), with MSEs of 0.246 and 0.339, respectively, outperforming TimeMachine, which recorded MSEs of 0.256 and 0.342. The Traffic dataset, with its high number of channels (862), also saw TTT outperform TimeMachine and iTransformer at both medium (336-step MSE of 0.430 vs. 0.433) and long horizons (720-step MSE of 0.464 vs. 0.467), highlighting the model’s ability to handle multivariate time series data.
+
+In the Electricity dataset, TTT showed dominant results across all horizons, achieving an MSE of 0.135, 0.153, 0.166 and 0.199 at horizons 96, 192, 336, and 720 respectively, outperforming TimeMachine and PatchTST. For ETTh1, TTT was highly competitive, with strong short-term results (MSE of 0.352 at horizon 96) and continued dominance at medium-term horizons like 336, with an MSE of 0.412. For ETTh2, TTT beat TimeMachine on horizon 96 (MSE of 0.274), TTT also closed the gap at longer horizons (MSE of 0.448 at horizon 720 compared to 0.411 for TimeMachine).
+
+For the ETTm1 dataset, TTT outperformed TimeMachine at nearly every horizon, recording an MSE of 0.309, 0.381 and 0.431 at horizon 96, 336 and 720 respectively, confirming its effectiveness for long-term forecasting. Similarly, in ETTm2, TTT remained highly competitive at longer horizons, with a lead over TimeMachine at horizon 720 (MSE of 0.362 vs. 0.371). The radar plot in Figure2shows the comparison between TTT (ours) and TimeMachine for both MSE and MAE on all datasets.
+
+SECTION: 5Prediction Length Analysis and Ablation Study
+
+SECTION: 5.1Experimental Setup with Enhanced Architectures
+
+To assess the impact of enhancing the model architecture, we conducted experiments by adding hidden layer architectures before the sequence modeling block in each of the four TTT blocks. The goal was to improve performance by enriching feature extraction through local temporal context. As shown in Figure3in AppendixD.
+
+We tested the following configurations: (1)Conv 3: 1D Convolution with kernel size 3, (2)Conv 5: 1D Convolution with kernel size 5, (3)Conv Stack 3: two 1D Convolutions with kernel size 3 in cascade, (4)Conv Stack 5: two 1D Convolutions with kernel sizes 5 and 3 in cascade, (5)Inception: an Inception Block combining 1D Convolutions with kernel sizes 5 and 3, followed by concatenation and reduction to the original size and (6)ModernTCN: A modern convolutional block proposed in[11]that uses depthwise and pointwise convolutions with residual connections similar to the structure of the transformer block. For the simpler architectures kernel sizes were limited to 5 to avoid oversmoothing, and original data dimensions were preserved to ensure consistency with the TTT architecture. For ModernTCN we reduced the internal dimensions to 16 (down from the suggested 64) and did not use multiscale due to the exponential increase in GPU memory required which slowed down the training process and did not allow the model to fit in a single A100 GPU. We kept the rest of the parameters of ModernTCN the same as in the original paper.
+
+Our findings reveal that the introduction of additional hidden layer architectures, including convolutional layers, had varying degrees of impact on performance across different horizons. The best-performing setup was the Conv Stack 5 architecture, which achieved the lowest MSE and MAE at the 96 time horizon, with values of 0.261 and 0.289, respectively, outperforming the TimeMachine model at this horizon. At longer horizons, such as 336 and 720, Conv Stack 5 continued to show competitive performance, with a narrow gap between it and the TimeMachine model. For example, at the 720 horizon, Conv Stack 5 showed an MAE of 0.373, while TimeMachine had an MAE of 0.378.
+
+However, other architectures, such as Conv 3 and Conv 5, provided only marginal improvements over the baseline TTT architectures (Linear and MLP). While they performed better than Linear and MLP, they did not consistently outperform more complex setups like Conv Stack 3 and 5 across all horizons. This suggests that hidden layer expressiveness can enhance model performance.
+
+ModernTCN showed competitive results across multiple datasets (see AppendixI), such as ETTh2, where it achieved an MSE of 0.285 at horizon 96, outperforming Conv 3 and Conv 5. However, as with other deep convolutional layers, ModernTCN’s increased complexity also led to slower training times compared to simpler setups like Conv 3 and it failed to match Conv Stack 5’s performance.
+
+SECTION: 5.2Experimental Setup with Increased Prediction & Sequence Lengths
+
+For the second part of our experiments, we extended the sequence and prediction lengths beyond the parameters tested in previous studies. We used the same baseline architectures (MLP and Linear) with the Mamba backbone as in the original TimeMachine paper, but this time also included the best-performing 1D Convolution architecture with kernel size 3.
+
+The purpose of these experiments was to test the model’s capacity to handle much longer sequence lengths while maintaining high prediction accuracy. We tested the following sequence and prediction lengths, withand, far exceeding the original length of:
+
+SECTION: 5.3Results and Statistical Comparisons for Proposed Architectures
+
+The proposed architectures—TTT Linear, TTT MLP, Conv Stack 3, Conv Stack 5, Conv 3, Conv 5, Inception, and TTT with ModernTCN—exhibit varying performance across prediction horizons. TTT Linear performs well at shorter horizons (MSE 0.268, MAE 0.298 at horizon 96) but declines at longer horizons (MSE 0.357 at horizon 336). TTT MLP follows a similar trend with slightly worse performance. Conv 3 and Conv 5 outperform Linear and MLP at shorter horizons (MSE 0.269, MAE 0.297 at horizon 96) but lag behind Conv Stack models at longer horizons. TTT with ModernTCN shows promising results at shorter horizons, such as MSE 0.389, MAE 0.402 on ETTh1, and MSE 0.285, MAE 0.340 on ETTh2 at horizon 96. Although results for Traffic and Electricity datasets are pending, preliminary findings indicate TTT with ModernTCN is competitive, particularly for short-term dependencies (see Table7in AppendixI). Conv Stack 5 performs best at shorter horizons (MSE 0.261, MAE 0.289 at horizon 96). Inception provides stable performance across horizons, closely following Conv Stack 3 (MSE 0.361 at horizon 336). At horizon 720, Conv 5 shows a marginal improvement over Conv 3, with an MSE of 0.400 compared to 0.406. The Conv Stack 5 architecture demonstrates the best overall performance among all convolutional models.
+
+SECTION: 5.4Results and Statistical Comparisons for Increased Prediction and Sequence Lengths
+
+Both shorter and longer sequence lengths affect model performance differently. Shorter sequence lengths (e.g., 2880) provide better accuracy for shorter prediction horizons, with the TTT model achieving an MSE of 0.332 and MAE of 0.356 at horizon 192, outperforming TimeMachine. Longer sequence lengths (e.g., 5760) result in higher errors, particularly for shorter horizons, but TTT remains more resilient, showing improved performance over TimeMachine. For shorter prediction lengths (96 and 192), TTT consistently yields lower MSE and MAE compared to TimeMachine. As prediction lengths grow to 720, both models experience increasing error rates, but TTT maintains a consistent advantage. For instance, at horizon 720, TTT records an MSE of 0.517 compared to TimeMachine’s 0.535. Overall, TTT consistently outperforms TimeMachine across most prediction horizons, particularly for shorter sequences and smaller prediction windows. As the sequence length increases, TTT’s ability to manage long-term dependencies becomes increasingly evident, with models like Conv Stack 5 showing stronger performance at longer horizons.
+
+SECTION: 5.5Evaluation
+
+The results of our experiments indicate that the TimeMachine-TTT model outperforms the SOTA models across various scenarios, especially when handling larger sequence and prediction lengths. Several key trends emerged from the analysis:
+
+Improved Performance on Larger Datasets:On larger datasets, such as Electricity, Traffic, and Weather, TTT models demonstrated superior performance compared to TimeMachine. For example, at a prediction length of 96, the TTT architecture achieved an MSE of 0.283 compared to TimeMachine’s 0.309, reflecting a notable improvement. This emphasizes TTT’s ability to effectively handle larger temporal windows.
+
+Better Handling of Long-Range Dependencies:TTT-based models, particularly Conv Stack 5 and Conv 3, demonstrated clear advantages in capturing long-range dependencies. As prediction lengths increased, such as at 720, TTT maintained better error rates, with Conv Stack 5 achieving an MAE of 0.373 compared to TimeMachine’s 0.378. Although the difference narrows at longer horizons, the TTT architectures remain more robust, particularly in handling extended sequences and predictions.
+
+Impact of Hidden Layer Architectures:While stacked convolutional architectures, such as Conv Stack 3 and Conv Stack 5, provided incremental improvements, simpler architectures like Conv 3 and Conv 5 also delivered competitive performance. Conv Stack 5 showed a reduction in MSE compared to TimeMachine, at horizon 96, where it achieved an MSE of 0.261 versus TimeMachine’s 0.262. ModernTCN failed to meet the performance of simpler architectures.
+
+Effect of Sequence and Prediction Lengths:As the sequence and prediction lengths increased, all models exhibited higher error rates. However, TTT-based architectures, particularly Conv Stack 5 and Conv 3, handled these increases better than TimeMachine. For example, at a sequence length of 5760 and prediction length of 720, TTT recorded lower MSE and MAE values, demonstrating better scalability and adaptability to larger contexts. Moreover, shorter sequence lengths (e.g., 2880) performed better at shorter horizons, while longer sequence lengths showed diminishing returns for short-term predictions.
+
+SECTION: 6Conclusion and Future Work
+
+In this work, we improved the state-of-the-art (SOTA) model for time series forecasting by replacing the Mamba modules in the original TimeMachine model with Test-Time Training (TTT) modules, which leverage linear RNNs to capture long-range dependencies. Extensive experiments demonstrated that the TTT architectures—MLP and Linear—performed well, with MLP slightly outperforming Linear. Exploring alternative architectures, particularlyConv Stack 5andModernTCN, significantly improved performance at longer prediction horizons, withModernTCNshowing notable efficiency in capturing short-term dependencies. The most significant gains came from increasing sequence and prediction lengths, where our TTT models consistently matched or outperformed the SOTA model, particularly on larger datasets like Electricity, Traffic, and Weather, emphasizing the model’s strength in handling long-range dependencies. While convolutional stacks and ModernTCN showed promise, further improvements could be achieved by refining hidden layer configurations and exploring architectural diversity. We included some potential real world applications of the TTT module in AppendixCalong with why we believe it’s best suited for LTSF. Overall, this work demonstrates the potential of TTT modules in long-term forecasting, especially when combined with robust convolutional architectures and applied to larger datasets and longer horizons.
+
+SECTION: References
+
+SECTION: Appendix ATheory and Motivation of Test-Time Training
+
+SECTION: A.1Motivation of TTT on Non-Stationary Data
+
+Time series forecasting often faces challenges arising from non-stationary data, where the underlying statistical properties of the data evolve over time. Traditional models struggle with such scenarios, as they are typically trained on static distributions and are not inherently equipped to handle distribution shifts at inference time. Test-Time Training (TTT) has gained attention as a robust paradigm to mitigate this issue, enabling models to adapt dynamically during inference by leveraging self-supervised learning tasks. For example, the work on self-adaptive forecasting introduced by Google in[3]demonstrates how incorporating adaptive backcasting mechanisms allows models to adjust their predictions to evolving patterns in the data, improving accuracy and robustness under non-stationary conditions. Similarly, FrAug[5]explores data augmentation in the frequency domain to bolster model performance in distributionally diverse settings. While not explicitly a TTT method, FrAug’s augmentation principles align with TTT’s objectives by enhancing model resilience to dynamic changes in time series characteristics. These studies collectively highlight the potential of adaptive methods like TTT to address the unique challenges posed by non-stationary time series data, making them well-suited for applications where robustness and flexibility are paramount.
+
+SECTION: A.2Theoretical Basis for TTT’s Adaptability Without Catastrophic Forgetting
+
+TTT avoids catastrophic forgetting by performingonline self-supervised learningduring inference. The adaptation occurs for each test sample independently, ensuring that the original parameters of the model remain largely intact. The authors that originally proposed TTT provided most of the following mathematical theory in[33]where you can find more detailed explanations.
+
+Let:
+
+be the input.
+
+be the corresponding label.
+
+be the model parameterized by.
+
+be the primary task loss.
+
+be the self-supervised task loss.
+
+At test time, TTT minimizesfor each input, updating the model parameters as:
+
+whereis the learning rate.
+
+Adaptation is performed on, which does not require labels or the main task’s gradients.
+
+Sinceis computedindependentlyfor each test sample, no accumulated parameter updates overwrite prior knowledge.
+
+Theoretical support:The optimization ofensures that changes in parametersare local and transient, i.e., specific to each test sample.
+
+Define:
+
+the difference in main task loss due to test-time updates:
+
+where.
+
+Sinceis orthogonal toby design,
+
+leading to negligible interference with the main task.
+
+The claim that(the self-supervised task loss) is orthogonal to(the main task loss) is a simplifying assumption that holds in certain cases due to how the self-supervised tasks are typically designed. Below we present the reasoning behind this assumption and its justification.
+
+Distinct Optimization Objectives:
+
+Self-supervised tasks () are often designed to exploit auxiliary structures or representations in the data (e.g., rotation prediction, reconstruction).
+
+Main tasks () are task-specific and rely on labeled data.
+
+By design,operates on a different objective that does not directly interfere with.
+
+Gradient Independence:
+
+The gradientsandare computed from different aspects of the model’s output.
+
+For example, ifreconstructs data andclassifies labels, their parameter updates are unlikely to point in similar directions.
+
+The assumption of orthogonality can be expressed as:
+
+This condition implies that:
+
+whereis the angle between the gradient vectors.
+
+Design Choice:Self-supervised tasks are chosen to be auxiliary and independent from the main task. For instance:
+
+Rotation Prediction(self-supervised) vs.Classification(main task): Gradients act on different representations.
+
+Reconstruction Tasks:Focus on encoding input features rather than task-specific labels.
+
+Empirical Evidence:In[33], the authors show that TTT optimizations during inference generally improve robustness without significantly altering the main task’s performance. This is indirect evidence that the gradient interference is minimal.
+
+Gradient Magnitudes:Test-time updates often involve small gradient steps (), making any interference negligible.
+
+If the self-supervised task is too closely related to the main task, gradient overlap can occur, leading to interference.
+
+If the auxiliary task introduces biases that affect the features used by the main task, orthogonality breaks down.
+
+To empirically check for orthogonality:
+
+Dot Product Test:Compute the dot product of the gradients:
+
+If the result is close to zero, the tasks are approximately orthogonal.
+
+Loss Curve Analysis:Monitor the changes induring self-supervised updates:
+
+whereis updated using. Minimal changes imply negligible interference.
+
+SECTION: A.3Handling Extreme Distribution Shifts and Computational Overhead
+
+TTT leverages self-supervised tasks invariant to distribution shifts, such as rotation prediction or reconstruction tasks. These tasks guide the model to reorient itself in a new feature space without requiring explicit labels.
+
+Under extreme distribution shifts, letanddenote the training and test distributions, respectively, such that:
+
+The goal is to adapt the modelto the shifted distributionusing:
+
+Letandrepresent the training and test data distributions. Using auxiliary tasks, TTT minimizes:
+
+The minimization ofalignswith, adapting the model to the test distribution.
+
+For each test sample, the overhead is:
+
+Forward pass on:.
+
+Backpropagation to compute gradients:.
+
+Total per-sample overhead:.
+
+SECTION: A.4Impact on Computational Resources
+
+Letdenote the base memory required for the model:
+
+Test-time gradients increase memory usage proportional to:
+
+Test-time updates introduce additional runtime:
+
+whereis the number of iterations for test-time optimization.
+
+Define the test-time computation foras:
+
+Forward:(invariant to the base model complexity).
+
+Backward:.
+
+SECTION: A.5Parameter Initialization in TTT
+
+Test-Time Training (TTT) does not require specialized or customized parameter initialization methods. For backbone architectures, TTT modules utilize standard initialization techniques, such asXavierorHe initialization, to ensure stable learning dynamics. Since TTT’s test-time updates are based on the weights learned during training, the model is agnostic to specific initialization strategies.
+
+While TTT does not mandate particular initialization methods, it can benefit frompretrained weights. By using a pretrained backbone, the model can leverage representations already optimized for a related domain, allowing the test-time updates to refine these representations further. For example, substituting a pretrained backbone with a TTT module can enhance adaptability during inference without requiring substantial retraining.
+
+Empirical results from prior studies (e.g.,[33];[32]) support this observation. While pretrained weights can enhance performance, they are not strictly necessary. TTT’s adaptability and effectiveness primarily stem from itsself-supervised task, which guides the model to align with the test distribution rather than relying on the initialization strategy.
+
+This demonstrates that TTT is flexible and performs well across different initialization settings, with its core strength being its adaptability at test time. Further elaboration on this topic can be found in the cited references.
+
+SECTION: A.6Generalization of TTT Beyond Time Series Forecasting
+
+Furthermore, we wish to emphasize that TTT generalizes well beyond time series forecasting. From[32], TTT has been successfully applied toLanguage Modeling, where it demonstrated competitive results compared to Mamba and Transformer-based models. In[33], TTT was applied toObject Recognition, where it improved performance on noisy and accented images in the CIFAR-10-C dataset by adapting at test time. Finally, in[35], TTT was extended toVideo Prediction, enabling the model to adjust to environmental shifts such as changes in lighting or weather.
+
+These works collectively illustrate the generalization of TTT to other sequence modeling tasks and its effectiveness across diverse domains, includingVision Prediction, Language Modeling, and Object Recognitionapart from Time Series Forecasting.
+
+SECTION: A.7Failure Case Study
+
+In[33], TTT was tested on CIFAR-10-C, a corrupted version of CIFAR-10 that includes 15 types of distortions such as Gaussian noise, motion blur, fog, and pixelation applied at five severity levels. These corruptions simulate significant distribution shifts from the original dataset. The results demonstrated that TTT significantly improved classification accuracy, achieving 74.1% accuracy compared to 67.1% accuracy for models that did not adapt during test time.
+
+Notably:
+
+Under severe shifts likeGaussian Noise, TTT effectively adapted to noisy inputs, outperforming baseline models that lacked test-time updates.
+
+For distortions likemotion blur and pixelation, TTT successfully reoriented the model’s feature space to handle spatial distortions.
+
+Compared to methods such as domain adaptation and augmentation-based approaches, TTT demonstrated superior performance under extreme distribution shifts, highlighting its robustness and adaptability.
+
+While these results focus on image classification, they provide strong evidence of TTT’s capability to handle abrupt distributional changes, which can be analogous to sudden anomalies in time series data. We acknowledge that a failure case analysis specific to Time Series Forecasting is a valuable avenue for future research and appreciate the reviewer’s suggestion.
+
+For more detailed results, we encourage the reader to refer to[33].
+
+SECTION: Appendix BTTT vs Mamba
+
+Both Test-Time Training (TTT) and Mamba are powerful linear Recurrent Neural Network (RNN) architectures designed for sequence modeling tasks, including Long-Term Time Series Forecasting (LTSF). While both approaches aim to capture long-range dependencies with linear complexity, there are key differences in how they handle context windows, hidden state dynamics, and adaptability. This subsection compares the two, focusing on their theoretical formulations and practical suitability for LTSF.
+
+SECTION: B.1Mamba: Gated Linear RNN via State Space Models (SSMs)
+
+Mamba is built on the principles of State Space Models (SSMs), which describe the system’s dynamics through a set of recurrence relations. The fundamental state-space equation for Mamba is defined as:
+
+where:
+
+represents the hidden state at time step.
+
+is the input at time step.
+
+andare learned state transition matrices.
+
+is the output at time step, andis the output matrix.
+
+The hidden stateis updated in a recurrent manner, using the past hidden stateand the current input. Although Mamba can capture long-range dependencies better than traditional RNNs, its hidden state update relies on fixed state transitions governed byand, which limits its ability to dynamically adapt to varying input patterns over time.
+
+In the context of LTSF, while Mamba performs better than Transformer architectures in terms of computational efficiency (due to its linear complexity in relation to sequence length), it still struggles to fully capture long-term dependencies as effectively as desired. This is because the fixed state transitions constrain its ability to adapt dynamically to changes in the input data.
+
+SECTION: B.2TTT: Test-Time Training with Dynamic Hidden States
+
+On the other hand, Test-Time Training (TTT) introduces a more flexible mechanism for updating hidden states, enabling it to better capture long-range dependencies. TTT uses a trainable hidden state that is continuously updated at test time, allowing the model to adapt dynamically to the current input. The hidden state update rule for TTT can be defined as:
+
+where:
+
+is the hidden state at time step, updated based on the input.
+
+is the weight matrix at time step, dynamically updated during test time.
+
+is the loss function, typically computed as the difference between the predicted and actual values:.
+
+is the learning rate for updatingduring test time.
+
+The key advantage of TTT over Mamba is the dynamic nature of its hidden states. Rather than relying on fixed state transitions, TTT continuously adapts its parameters based on new input data at test time. This enables TTT to have an infinite context window, as it can effectively adjust its internal representation based on all past data and current input. This dynamic adaptability makes TTT particularly suitable for LTSF tasks, where capturing long-term dependencies is crucial for accurate forecasting.
+
+SECTION: Comparison of Complexity and Adaptability
+
+One of the major benefits of both Mamba and TTT is their linear complexity with respect to sequence length. Both models avoid the quadratic complexity of Transformer-based architectures, making them efficient for long time series data. However, TTT offers a distinct advantage in terms of adaptability:
+
+Mamba:
+
+whereis the sequence length andis the dimension of the state space. Mamba’s fixed state transition matrices limit its expressiveness over very long sequences.
+
+TTT:
+
+whereis the number of dynamic parameters (weights) andis the number of iterations for test-time updates. The dynamic nature of TTT allows it to capture long-term dependencies more effectively, as it continuously updates the weightsduring test time.
+
+Theoretically, TTT is more suitable for LTSF due to its ability to model long-range dependencies dynamically. By continuously updating the hidden states based on both past and present data, TTT effectively functions with an infinite context window, whereas Mamba is constrained by its fixed state-space formulation.
+Moreover, TTT is shown to be theoretically equivalent to self-attention under certain conditions, meaning it can model interactions between distant time steps in a similar way to Transformers but with the added benefit of linear complexity. This makes TTT not only computationally efficient but also highly adaptable to the long-term dependencies present in time series data.
+
+In summary, while Mamba provides significant improvements over traditional RNNs and Transformer-based models, its reliance on fixed state transitions limits its effectiveness in modeling long-term dependencies. TTT, with its dynamic hidden state updates and theoretically infinite context window, is better suited for Long-Term Time Series Forecasting (LTSF) tasks. TTT’s ability to adapt its parameters at test time ensures that it can handle varying temporal patterns more flexibly, making it the superior choice for capturing long-range dependencies in time series data.
+
+SECTION: Appendix CComparisons with Models Handling Noise or Temporal Regularization
+
+SECTION: C.1Comparisons with Models Handling Noise or Temporal Regularization
+
+To position Test-Time Training (TTT) relative to the state-of-the-art, we compare its performance with models specifically designed for noise robustness or temporal regularization:
+
+DeepAR is a probabilistic forecasting model that handles uncertainty in time series data using autoregressive distributions. While it excels in forecasting under stochastic conditions, TTT’s test-time adaptation offers significant advantages in handling sudden, unseen distributional shifts.
+
+Temporal Convolutional Networks (TCNs) are known for their ability to capture long-range dependencies efficiently. However, TCNs lack the adaptability of TTT, which dynamically aligns feature representations during test time. Adding noise to datasets like ETTh1 or ETTm1 could further highlight TTT’s advantage over static methods such as TCN.
+
+SECTION: C.2Theoretical Comparison
+
+Static models likeDeepARandTCNrely on fixed parametersthat are learned during training and remain unchanged during inference. Mathematically:
+
+whererepresents the input sequence,is the forecasted output, andis the model with fixed parameters.
+
+These models excel under stationary conditions or when the training and testing distributionsandare similar. However, they struggle underdistribution shifts, where, as they cannot adapt their parameters to align with the shifted test distribution.
+
+Test-Time Training (TTT) introduces atest-time adaptation mechanismthat updates the model parameters dynamically based on a self-supervised loss. During inference, the parametersare updated as follows:
+
+where:
+
+is the self-supervised auxiliary loss designed to align the model’s representations with the test distribution.
+
+is the learning rate for test-time updates.
+
+This dynamic adjustment allows TTT to adapt to unseen distribution shiftsby optimizing the feature representations for each test sample, resulting in improved generalization:
+
+whereis dynamically updated for each test instance. This mechanism enables TTT to handle abrupt, non-stationary shifts that static models cannot address effectively.
+
+To further compare, consider a scenario with noisy inputs, where.
+
+Static Models:The forecast relies on fixed parameters:
+
+Without adaptive mechanisms, noisedirectly degrades the model’s performance, as the learned parametersare not optimized for the noisy distribution.
+
+TTT:TTT updates its parameters to account for the noisy inputs:
+
+This update minimizes the impact ofby dynamically realigning the feature representations, resulting in improved predictions:
+
+Empirically, this adaptability enables TTT to outperform static models in scenarios with noise or abrupt distribution shifts.
+
+The key difference lies in the adaptability:
+
+Static models likeDeepARandTCNrely on fixed parameters and are effective under stationary conditions but struggle with non-stationary data or noise.
+
+TTT dynamically adjusts its parameters using self-supervised learning at test time, providing a significant advantage in handling distribution shifts and noisy inputs.
+
+SECTION: Appendix DModel Components
+
+SECTION: D.1TTT Block and Proposed Architectures
+
+Below we illustrate the components of the TTT block and the proposed architectures we used in our ablation study for the model based on convolutional blocks:
+
+SECTION: D.2Prediction
+
+The prediction process in our model works as follows. During inference, the input time series, whereis the look-back window length, is split intounivariate series. Each univariate series represents one channel of the multivariate time series. Specifically, an individual univariate series can be denoted as:
+
+Each of these univariate series is fed into the model, and the output of the model is a predicted seriesfor each input channel. The model predicts the nextfuture values for each univariate series, which are represented as:
+
+Before feeding the input series into the TTT blocks, each series undergoes a two-stage embedding process that maps the input series into a lower-dimensional latent space. This embedding process is crucial for allowing the model to learn meaningful representations of the input data. The embedding process is mathematically represented as follows:
+
+whereandare embedding functions (typically linear layers), andrepresents a dropout operation to prevent overfitting. The embeddings help the model process the input time series more effectively and ensure robustness during training and inference.
+
+SECTION: D.3Normalization
+
+As part of the preprocessing pipeline, normalization operations are applied to the input series before feeding it into the TTT blocks. The input time seriesis normalized into, represented as:
+
+We experiment with two different normalization techniques:
+
+Z-score normalization: This normalization technique transforms the data based on the mean and standard deviation of each channel, defined as:
+
+whereis the standard deviation of channel, and.
+
+Reversible Instance Normalization (RevIN)[20]: RevIN normalizes each channel based on its mean and variance but allows the normalization to be reversed after the model prediction, which ensures the output predictions are on the same scale as the original input data. We choose to use RevIN in our model because of its superior performance, as demonstrated in[1].
+
+Once the model has generated the predictions, RevIN Denormalization is applied to map the normalized predictions back to the original scale of the input data, ensuring that the model outputs are interpretable and match the scale of the time series used during training.
+
+SECTION: D.4Expanding on the Choice of Hierarchical Two-Level Context Modeling
+
+The hierarchical design of Test-Time Training (TTT) is well-suited for tasks like time series forecasting due to its ability to adapt across both high- and low-resolution contexts. Below, we outline the benefits of this structure for time-series forecasting:
+
+Multiscale patterns in time series data, such as daily, weekly, or seasonal trends, require capturing both fine-grained and coarse-grained temporal dependencies. Architectures likeConv Stacked 5andModernTCNimplicitly model hierarchical temporal features through stacked convolutional layers and depthwise-separable convolutions, respectively. These architectures balance local temporal feature extraction with the global adaptability provided by TTT.
+
+The hierarchical design ensures that the model can adapt to distribution shifts occurring at different temporal resolutions. For example:
+
+Sudden anomalies in fine-grained data.
+
+Gradual trends in coarse-grained data.
+
+To validate TTT’s ability to adapt to multiscale patterns, we propose the following:
+
+Additional evaluations onnoise-robust datasets, such as adding noise to ETTh1 and ETTm1.
+
+Temporal regularization tasks using benchmarks likeDeepARorProphet, which can serve as strong baselines for comparison.
+
+SECTION: Appendix EAnalysis on Increased Prediction and Sequence Length
+
+SECTION: E.1Effect of Sequence Length
+
+Shorter sequence lengths tend to offer better performance for shorter prediction horizons. For instance, with a sequence length of 2880 and a prediction length of 192, the TTT model achieves an MSE of 0.332 and an MAE of 0.356, outperforming TimeMachine, which has an MSE of 0.342 and an MAE of 0.359. This indicates that shorter sequence lengths allow the model to focus on immediate temporal patterns, improving short-horizon accuracy.
+
+Longer sequence lengths show mixed performance, particularly at shorter prediction horizons. For example, with a sequence length of 5760 and a prediction length of 192, the TTT model’s MSE rises to 0.509 and MAE to 0.442, which is better than TimeMachine’s MSE of 0.546 and MAE of 0.459. While the performance drop for TTT is less severe than for TimeMachine, longer sequence lengths can introduce unnecessary complexity, leading to diminishing returns for short-term predictions.
+
+SECTION: E.2Effect of Prediction Length
+
+Shorter prediction lengths consistently result in lower error rates across all models. For instance, at a prediction length of 96 with a sequence length of 2880, the TTT model achieves an MSE of 0.283 and an MAE of 0.322, outperforming TimeMachine’s MSE of 0.309 and MAE of 0.337. This demonstrates that both models perform better with shorter prediction lengths, as fewer dependencies need to be captured.
+
+As prediction length increases, both MSE and MAE grow for both models. At a prediction length of 720 with a sequence length of 2880, the TTT model records an MSE of 0.517 and an MAE of 0.445, outperforming TimeMachine, which has an MSE of 0.535 and MAE of 0.456. This shows that while error rates increase with longer prediction horizons, TTT remains more resilient in handling longer-term dependencies than TimeMachine.
+
+SECTION: Appendix FComputational Complexity Comparison of Modules
+
+SECTION: F.1Complexity Derivation
+
+To analyze the computational complexity of Test-Time Training (TTT) modules, Mamba modules, and Transformer modules, we evaluate their operations and the corresponding time complexities. Let:
+
+denote the sequence length.
+
+denote the dimensionality of hidden representations.
+
+denote the total number of model parameters.
+
+denote the number of test-time updates for TTT modules.
+
+denote the number of attention heads in Transformer modules.
+
+denote the kernel size in convolution operations for Mamba modules.
+
+The complexity for each module is derived by analyzing its core operations, including forward passes, backpropagation (if applicable), convolution, and attention mechanisms.
+
+SECTION: F.2Computational Complexity Analysis of Modules
+
+Test-Time Training modules perform two main tasks at inference:
+
+A forward pass through the main model.
+
+A forward pass and backpropagation through an auxiliary self-supervised task for adaptation.
+
+Letrepresent the complexity of the forward pass andrepresent the complexity of backpropagation. The total complexity for TTT modules can be expressed as:
+
+whereaccounts for the main forward pass, andcaptures the repeated backpropagation steps forupdates.
+
+Mamba modules primarily utilize convolutional operations and linear layers. The convolutional complexity depends on the kernel size, while the linear layers depend on the hidden dimensionality. The total complexity is given by:
+
+whererepresents the convolution operations, andrepresents the cost of the linear layers.
+
+Transformer modules consist of two main components:
+
+Multi-head self-attention, which requires matrix multiplication of dimensionwithto compute attention scores, leading tocomplexity.
+
+A feedforward network, which processes the sequence independently, contributingcomplexity.
+
+The total complexity of Transformer modules is therefore:
+
+ModernTCN uses depthwise-separable convolutions to process time series data efficiently. A depthwise convolution followed by a pointwise (1x1) convolution has the following complexities:
+
+Depthwise convolution:, whereis the kernel size.
+
+Pointwise convolution:.
+
+The total complexity of the convolutional block is:
+
+SECTION: F.3Comparison of Complexities
+
+To compare the complexities of TTT modules, Mamba modules, Transformer modules, and the convolutional block in ModernTCN, we summarize the results as follows:
+
+From these equations:
+
+TTT modules have the highest computational complexity during inference due to the additional test-time updates.
+
+Mamba modules are more efficient, leveraging convolutional operations with a complexity linear in.
+
+Transformer modules exhibit quadratic complexity indue to the self-attention mechanism, making them less scalable for long sequences.
+
+SECTION: Appendix GComputational Complexity Analysis of Models
+
+SECTION: G.1Test-Time Learning for Time Series Forecasting (TTT-LTSF)
+
+Test-Time Training modules for time series forecasting perform two main tasks:
+
+A forward pass through the base forecasting model, assumed to be Mamba-based for this analysis.
+
+Test-time updates using a self-supervised auxiliary task.
+
+Letdenote the sequence length,the dimensionality of hidden representations,the kernel size of the Mamba backbone, andthe number of test-time updates. The computational complexity of the Mamba backbone is:
+
+whererepresents convolutional operations andaccounts for linear layers.
+
+With the addition of test-time updates, the total computational complexity of TTT-LTSF is:
+
+wherecaptures the overhead introduced by test-time optimization.
+
+SECTION: G.2TimeMachine
+
+TimeMachine uses a combination of linear operations and multi-resolution decomposition with local and global context windows. Its computational complexity is:
+
+whererepresents linear operations, andarises from context-based decomposition.
+
+SECTION: G.3PatchTST
+
+PatchTST reduces the effective sequence length by dividing the input into non-overlapping patches. Letpatch_sizedenote the size of each patch, resulting in an effective sequence length. The complexity is:
+
+SECTION: G.4TSMixer
+
+TSMixer uses fully connected layers to mix information across the time and feature axes. Its complexity is:
+
+whererepresents time-axis mixing andrepresents feature-axis mixing.
+
+SECTION: G.5ModernTCN
+
+ModernTCN employs depthwise-separable convolutions to process time series data efficiently. Letanddenote the input and output channel dimensions, andthe kernel size. The complexity is:
+
+whereis for depthwise convolutions andfor pointwise convolutions.
+
+SECTION: G.6iTransformer
+
+iTransformer applies self-attention across variate dimensions rather than temporal dimensions. Letdenote the number of variates,the sequence length, andthe hidden dimension size:
+
+wherearises from self-attention across variates andfrom the feedforward network.
+
+SECTION: G.7Comparison of Complexities
+
+The complexities of the models analyzed are as follows:
+
+SECTION: G.8Summary of Model Complexities
+
+TTT-LTSF:
+Incorporates the complexity of the Mamba backbone () with additional overhead for test-time updates ().
+
+TimeMachine:
+Combines efficient linear operations and multi-resolution decomposition, maintaining a linear dependency onfor most operations.
+
+PatchTST:
+Reduces sequence length via patch embedding, resulting in a complexity dependent on.
+
+TSMixer:
+Uses fully connected layers for time and feature mixing but suffers from quadratic dependency onor, making it less scalable.
+
+ModernTCN:
+Relies on depthwise-separable convolutions, achieving linear complexity inwhile maintaining flexibility in channel dimensions (,).
+
+iTransformer:
+Applies self-attention across variates () instead of the temporal axis (), making it efficient for long sequences with a limited number of variates.
+
+SECTION: G.9Key Insights
+
+Efficiency:
+-ModernTCNandTimeMachineare the most efficient for long sequences due to their linear dependency on.
+-PatchTSTbenefits from sequence length reduction via patch embedding, but its quadratic dependency onmakes it less scalable for small patch sizes.
+
+Robustness:
+-TTT-LTSF(with Mamba) introduces additional adaptability through test-time updates, enhancing robustness to distribution shifts. The use of a Mamba backbone keeps the complexity manageable compared to Transformer-based backbones.
+
+Dimensionality Impact:
+-TSMixerstruggles with high-dimensional data due to its quadratic dependency onor, making it less practical for large-scale applications.
+-iTransformerscales better when the number of variates () is smaller than the sequence length ().
+
+Scalability:
+-ModernTCNandTimeMachineremain scalable for both long sequences and high-dimensional data.
+-iTransformeris effective for scenarios with long sequences but limited variates, avoiding the quadratic cost of traditional self-attention across.
+
+SECTION: G.10Resource Utilization: Memory, Training Time, and Inference Latency
+
+The computational trade-offs introduced by TTT are a critical consideration, particularly in resource-constrained environments. We assess TTT’s resource utilization as follows:
+
+TTT requires additional memory for storing gradients and activations during test-time optimization. On average, this increases memory usage by, proportional to the sequence length () and hidden dimensionality ().
+
+Since TTT does not modify its training procedure, the training time remains comparable to other models with similar backbones (e.g., Mamba, ModernTCN). However, inference with TTT introduces additional updates.
+
+TTT’s test-time updates increase inference latency due to gradient computations, with a total complexity ofper sample, whereis the number of updates. While this overhead is manageable in real-time systems with small batch sizes, it can become significant for high-frequency applications.
+
+SECTION: Balancing Adaptability and Efficiency
+
+To address these trade-offs, we propose the following strategies:
+
+Reducing the number of test-time updates ().
+
+Exploring parameter-efficient adaptations, such as low-rank updates or frozen layers.
+
+Using lightweight architectures (e.g., Single/Double Convolution Kernels) to reduce per-sample inference costs.
+
+SECTION: Appendix HPotential Real-World Applications of Test-Time Training
+
+We thank the reviewer for their suggestion to explore potential real-world applications of Test-Time Training (TTT). Below, we outline the practical relevance of TTT, its generalization across domains, and its unique strengths in time series forecasting.
+
+SECTION: H.1Real-World Applications of TTT
+
+TTT demonstrates significant potential for deployment in real-world scenarios, particularly in environments characterized by evolving data distributions or high non-stationarity. Some practical use cases include:
+
+Financial Prediction:Financial markets are highly dynamic, with patterns frequently shifting due to policy changes, economic crises, or unforeseen events. TTT can adapt to these shifts in real-time using auxiliary tasks such as historical sequence reconstruction or anomaly detection.Example:Predicting stock price movements or portfolio risks under conditions of sudden market volatility.
+
+Adaptive Traffic Monitoring:Traffic patterns are influenced by external factors like weather, accidents, or public events. TTT can dynamically adjust model parameters to account for these factors, improving the reliability of traffic predictions.Example:Real-time rerouting or adaptive traffic signal control during disruptions such as road closures or adverse weather conditions.
+
+Energy Demand Forecasting:Accurate load forecasting is critical for energy systems, especially under varying conditions like temperature fluctuations or equipment failures. TTT can learn from auxiliary signals (e.g., temperature, grid stability) to adapt to non-stationary conditions.Example:Predicting power demand during extreme weather events.
+
+Healthcare Time Series Analysis:Patient monitoring involves highly dynamic data streams, such as vital signs, lab results, and environmental factors. TTT can adapt to individual patient changes during inference, improving early detection of health deterioration or anomalies.Example:Predicting ICU readmissions or patient outcomes based on evolving health indicators.
+
+SECTION: H.2Examples of TTT beyond Time Series Forecasting
+
+While this work focuses on time series forecasting, TTT has shown promise across various sequence modeling domains, as demonstrated in prior works ([35];[32]). Below are notable examples:
+
+Language Modeling:In tasks like text completion or machine translation, TTT adjusts dynamically to unseen linguistic contexts during inference. Auxiliary tasks, such as masked token prediction, have been shown to improve performance under distributional shifts.
+
+Video Prediction:TTT has been successfully applied to tasks like sequential video prediction where it significantly outperforms the fixed-model baseline for four tasks, on three real-world datasets.
+
+Limitations of TTT Generalization:While TTT is highly effective in dynamic environments, its reliance on auxiliary tasks requires careful design to align with the primary task’s requirements. In static or stationary data scenarios, TTT may introduce unnecessary computational overhead without providing significant benefits.
+
+SECTION: H.3Effectiveness of Test-Time Training (TTT) in Language Modeling
+
+Test-Time Training (TTT) has demonstrated significant potential in language modeling tasks, particularly in scenarios involving distribution shifts. Below are notable examples:
+
+This study fine-tuned language models at test time using retrieved nearest neighbors to improve performance across various tasks.
+
+TTT narrowed the performance gap between smaller and larger language models, highlighting its capacity to enhance generalization dynamically.
+
+This work applied TTT to abstract reasoning tasks, demonstrating that updating parameters during inference based on input-derived loss functions improved reasoning capabilities in language models.
+
+This showcases TTT’s utility in tasks requiring dynamic adaptation during inference.
+
+These studies illustrate that TTT is not only effective for time series forecasting but also generalizes well to tasks like language modeling, where it improves performance by dynamically adjusting representations at test time.
+
+SECTION: H.4Why TTT is Best Suited for Time Series Forecasting
+
+TTT’s unique strengths make it particularly well-suited for time series forecasting tasks:
+
+Handling Non-Stationary Data:Time series data in domains like energy, healthcare, and traffic frequently exhibit shifting patterns due to external influences or seasonal trends. TTT dynamically adapts to these changes, ensuring robust performance.
+
+Capturing Long-Range Dependencies:By fine-tuning hidden representations during inference, TTT enhances the model’s ability to capture both short-term and long-term patterns in sequential data.
+
+Robustness to Distribution Shifts:Time series datasets often experience distributional changes, such as anomalies or evolving seasonal effects. TTT’s self-supervised task allows it to remain robust to such shifts without relying on labeled data.
+
+SECTION: Appendix ITables

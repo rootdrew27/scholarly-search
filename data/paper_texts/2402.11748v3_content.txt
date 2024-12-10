@@ -1,0 +1,807 @@
+SECTION: Low-power SNN-based audio source localisation using a Hilbert Transform spike encoding scheme
+Sound source localisation is used in many consumer devices, to isolate audio from individual speakers and reject noise.
+Localization is frequently accomplished by “beamforming”, which combines phase-shifted audio streams to increase power from chosen source directions, under a known microphone array geometry.
+Dense band-pass filters are often needed to obtain narrowband signal components from wideband audio.
+These approaches achieve high accuracy, but narrowband beamforming is computationally demanding, and not ideal for low-power IoT devices.
+We demonstrate a novel method for sound source localisation on arbitrary microphone arrays, designed for efficient implementation in ultra-low-power spiking neural networks (SNNs).
+We use a Hilbert transform to avoid dense band-pass filters, and introduce a new event-based encoding method that captures the phase of the complex analytic signal.
+Our approach achieves state-of-the-art accuracy for SNN methods, comparable with traditional non-SNN super-resolution beamforming.
+We deploy our method to low-power SNN inference hardware, with much lower power consumption than super-resolution methods.
+We demonstrate that signal processing approaches co-designed with spiking neural network implementations can achieve much improved power efficiency.
+Our new Hilbert-transform-based method for beamforming can also improve the efficiency of traditional DSP-based signal processing.
+
+SECTION: Introduction
+Identifying the location of sources from their received signal in an array consisting of several sensors is an important problem in signal processing which arises in many applications such as target detection in radar, user tracking in wireless systems, indoor presence detection, virtual reality, consumer audio, etc.
+Localization is a well-known classical problem and has been widely studied in the literature.
+
+A commonly-used method to estimate the location or the(DoA) of the source from the received signal in the array is to apply reverse beamforming to the incident signals.
+Reverse beamforming combines the received array signals in the time or frequency domains according to a signal propagation model, to “steer” the array towards a putative target.
+The true DoA of an audio source can be estimated by finding the input direction which corresponds to the highest received power in the steered microphone array.
+Super-resolution methods for DoA estimation such as MUSICand ESPRITare among the state-of-the-art methods that adopt reverse beamforming.
+Besides source localization, beamforming in its various forms appears as the first stage of spatial signal processing in applications such as audio source separation in the cocktail party problemand spatial user grouping in wireless communication.
+
+Conventional beamforming approaches assume that incident signals are far-field narrowband sinusoids, and use knowledge of the microphone array geometry to specify phase shifts between the several microphone inputs and effectively steer the array towards a particular direction.Obviously, most audio signals are not narrowband, with potentially unknown spectral characteristics, meaning that phase shifts cannot be analytically derived.
+The conventional solution is to decompose incoming signals into narrowband components via a dense filterbank or Fourier transform approach, and then apply narrowband beamforming separately in each band.
+The accuracy of these conventional approaches relies on a large number of frequency bands, which increases the implementation complexity and resource requirements proportionally.
+
+Auditory source localization forms a crucial part of biological signal processing for vertebrates, and plays a vital role in an animal’s perception of 3D space.
+Neuroscientific studies indicate that the auditory perception of space occurs through inter-aural time- and level-differences, with an angular resolution depending on the wavelength of the incoming signal.
+
+Past literature for artificial sound source localization implemented with spiking neural networks (SNNs) mainly focuses on the biological origins and proof of feasibility of localization based on inter-aural time differences, and can only yield moderate precision in direction-of-arrival (DoA) estimates.
+These methods can be seen as array processing techniques based on only two microphones and achieve only moderate precision in practical noisy scenarios.
+In this paper, we will not deal directly with the biological origins of auditory localization, but will design an efficient localization method for large microphone arrays (more than two sensors), based on Spiking Neural Networks (SNNs).
+
+SNNs are a class of artificial neural networks whose neurons communicate via sparse binary (0–1 valued) signals known as spikes.
+While artificial neural networks have achieved state-of-the-art performance on various tasks, such as in natural language processing and computer vision, they are usually large, complex, and consume a lot of energy.
+SNNs, in contrast, are inspired by biological neural mechanismsand are shown to yield increases in energy efficiency of several orders of magnitude over ANNs when run on emerging neuromorphic hardware.
+
+In this work we present a new approach for beamforming and DoA estimation with low implementation complexity and low resource requirements, using the sparsity and energy efficiency of SNNs to achieve an extremely low power profile.
+We first show that by using the Hilbert transformation and the complex analytic signal, we can obtain a robust phase signal from wideband audio.
+We use this result to derive a new unified approach for beamforming, with equivalent good performance on both narrowband and wideband signals.
+We show that beamforming matrices can be easily designed based on the singular value decomposition (SVD) of the covariance of the analytic signal.
+
+We then present an approach for estimating the analytic signal continuously in an audio stream, and demonstrate a new spike-encoding scheme for audio signals that accurately captures the real and quadrature components of the complex analytic signal.
+We implement our approach for beamforming and DoA estimation in an SNN, and show that it has good performance and high resolution under noisy wideband signals and noisy speech.
+By deploying our method to the SNN inference device Xylo, we estimate the power requirements of our approach.
+Finally, we compare our method against state of the art approaches for conventional beamforming, as well as DoA estimation with SNNs, in terms of accuracy, computational resource requirements and power.
+
+SECTION: Results
+SECTION: DoA estimation for far-field audio
+We examined the task of estimating direction of arrival (DoA) of a point audio source at a microphone array.
+Circular microphone arrays are common in consumer home audio devices such as smart speakers.
+In this work we assumed a circular array geometry of radius, withmicrophones arranged over the full angular range(e.g. Figurea).
+
+We assumed a far-field audio scenario, where the signal received from an audio source is approximated by a planar wave with a well-defined DoA.
+Briefly, a signaltransmitted by an audio source is received by microphoneas,
+with an attenuation factorcommon over all microphones;
+a delaydepending on the DoA;
+and with additive independent white noise.
+For a circular array in the far-field scenario, delays are given by,
+for an audio source at distancefrom the array;
+a circular array of radiusand with microphoneat anglearound the array;
+and with the speed of sound in air.
+These signals are composed into the vector signal.
+
+DoA estimation is frequently examined in the narrowband case, where incident signals are well approximated by sinusoids with a constant phase shift dependent on DoA, such that.
+In this scenario, the signalscan be combined with a set of beamforming weightsto steer the array to a chosen test DoA.
+The power in the resulting signal after beamforminggiven byis used as an estimate of received power from the directionand is adopted as an estimator of, as the power should be maximal when.
+
+In practice, the source signal is not sinusoidal, in which case the most common approach is to apply a dense filterbank or Fourier transformation to obtain narrowband components (Figureb).
+Collections of narrowband components are then combined with their corresponding set of beamforming weights, and their power is aggregated across the whole collection to estimate the DoA.
+
+SECTION: Phase behaviour of wideband analytic signals
+Non-stationary wideband signals such as speech do not have a well-defined phase, and so cannot be obviously combined with beamforming weights to estimate DoA.
+We examined whether we can obtain a phase counterpart for arbitrary wideband signals, similar to the narrowband case, by applying the Hilbert transform (Figured; Figure).
+
+The Hilbert transform is a linear time-invariant operation on a continuous signalwhich imparts a phase shift offor each frequency component, giving.
+This is combined with the original signal to produce the, where ‘’ indicates the imaginary unit.
+For a sinusoid, we obtain the analytic signal.
+We can write the analytic signal as, by defining the envelope functionand the phase function.
+
+If the envelope of a signalis roughly constant over a time interval, thenis an almost monotone function of, with, whereis the spectral average frequency of the signal given by
+
+(for proof see Supp. Section).
+
+This result implies that even for non-stationary wideband signals, the phase of the analytic signal in segments where the signal is almost stationary will show an almost linear increase, where the slope is an estimate of the central frequency.
+This is illustrated in Figuree, for wideband signals with.
+As predicted, the slope of the phase functionis very well approximated by the phase progression for a sinusoid with.
+Wideband speech samples show a similar almost linear profile of phase in the analytic signal (Figure).
+
+SECTION: Hilbert beamforming
+Due to the linear behaviour of the phase of the analytic signal, we can take a similar beamforming approach as in the narrowband case, by constructing a weighted combination of analytic signals.
+We used the central frequency estimateto design the beamforming weights in place of the narrowband sinusoid frequency(see Supp.; Methods).
+
+For narrowband sinusoidal inputs the effect of a DoAis to add a phase shift to each microphone input, dependent on the geometry of the array.
+For a signalof frequency, we can encode this set of phase shifts with anas
+
+The-dimensional received analytic signal at the array is then given by.
+The narrowband DoA estimation problem is then solved for the chosen frequencyby optimizing
+
+whereis the empirical covariance of, which depends on both the input signaland the DoAfrom which it is received (see Supp.).
+
+By generalising this to arbitrary wideband signals, we obtain
+
+whereis the Fourier transform (for proof see Supp.).is a complex(PSD) matrix that preserves the phase difference information produced by DoAover all frequencies of interest.
+
+Briefly, to generate beamforming weights, we choosea desired angular precision by quantizing DoA into a gridwithelements, with.
+We choose a representative audio signal, apply the Hilbert transform to obtain, and use this to computefor.
+The beamforming weights are obtained by finding vectorswithsuch thatis maximised.
+This corresponds to the singular vector with largest singular value inand can be obtained by computing the(SVD) of.
+
+To estimate DoA (Figured) we receive the-dim signalfrom the microphone array and apply the Hilbert transform to obtain.
+We then apply beamforming through the beamforming matrixto obtain the-dim beamformed signal.
+We accumulate the power across itscomponents to obtain-dimensional vectorand estimate DoA as.
+
+To show the benefit of our approach, we implemented Hilbert beamforming with(for an array withmicrophones with an angular oversampling of) and applied it to both narrowband (Figuref) and wideband (g;) signals (see Methods).
+In both the best- and worst-case DoAs for the array (blue and orange curves respectively), the beam pattern (power distribution over DoA) for the wideband signal was almost identical to that for the narrowband signal, indicating that our Hilbert beamforming approach can be applied to wideband signals without first transforming them to narrowband signals.
+
+SECTION: Efficient online streaming implementation of Hilbert beamforming
+The previous approach includes two problems that prevent an efficient streaming implementation.
+Firstly, the Hilbert transform is a non-causal infinite-time operation, requiring a complete signal recording before it can be computed.
+To solve this first problem, we apply an online Short-Time Hilbert Transform (STHT; Figurea) and show that it yields a good estimate of the original Hilbert transform in the desired streaming mode.
+
+Secondly, infinite-time power integration likewise does not lend itself to streaming operation.
+The traditional solution is to average signal energy over a sliding window and update the estimate of the DoA periodically.
+Our proposed method instead performs low-pass filtering in the synapses and membranes of a spiking neural network, performing the time-averaging operation natively.
+
+The STHT is computed by applying a convolutional kernelover a short window of lengthto obtain an estimation of the Quadrature componentof a signal.
+To compute the kernel, we made use of the linear property of the Hilbert transform (see Methods).
+Briefly, the impulse response ofwas obtained by applying the infinite-time Hilbert transform to the windowed Dirac delta signalof length, whereandforand wheredenotes the window length, and setting, whereis the Hilbert transform andis the imaginary part of the argument.
+
+The STHT kernel for a duration ofis shown in Figurea (top).
+The frequency response of this kernel (Figurea, bottom) shows a predominately flat spectrum, with significant fluctuations for only low and high frequencies.
+The frequency width of this fluctuation area scales proportionally to the inverse of the duration of the kernel and can be varied in case needed by changing the kernel length.
+In practice a bandpass filter should be applied to the audio signal before performing the STHT operation, to eliminate any distortions to low- and high-frequencies.
+
+Figureb illustrates the STHT applied to a noisy narrowband signal(blue; in-phase component).
+Following an onset transient due to the filtering settling time, the estimated STHT quadrature component(orange) corresponds very closely to the infinite-time Hilbert transformed version(dashed).
+
+SECTION: Robust Zero-crossing spike encoding
+In order to perform the beamforming operation, we require an accurate estimation of the phase of the analytic signal.
+We chose to use SNNs to implement low-power, real-time estimation of DoA; this requires an event-based encoding of the audio signals for SNN processing.
+We propose a new encoding method which robustly extracts and encodes the phase of the analytic signals, “Robust Zero-Crossing Conjugate” (RZCC) encoding.
+We estimated the zero crossings of a given signal by finding the peaks or troughs of the cumulative sum (Figurec).
+Our approach generates both up- and down-going zero-crossing events.
+Each input signal channel therefore requires 2 or 4 event channels to encode the analytic signal, depending on whether bi-polar or uni-polar zero crossing events are used.
+
+The events produced accurately encoded the phase of the in-phase and quadrature components of a noisy signal (Figureb; top).
+
+Earlier works have used zero-crossing spike encoders to capture the phase of narrowband signals.
+Our approach retains the phase of the full analytic signal, and is designed to operate robustly on wideband signals.
+
+SECTION: SNN-based implementation of Hilbert beamforming and DoA estimation
+We implemented our Hilbert beamforming and DoA estimation approach in a simulated SNN (Figure).
+We took the approach illustrated in Figured.
+We applied the STHT with kernel duration, then used uni-polar RZCC encoding to obtainevent channels for the microphone array, for each DoA.
+In place of a complex-valued analytic signal, we concatenated the in-phase and quadrature components of thesignals to obtainreal-valued event channels.
+
+Without loss of specificity, our SNN implementation used Leaky Integrate-and-Fire neurons (LIF; see Methods).
+We chose synaptic and membrane time constants, such that the equivalent low-pass filter had acorner frequencyequal to the centre frequency of a signal of interest(i.e.).
+
+We designed the SNN beamforming weights by simulating a template signal at a chosen DoAarriving at the array, and obtaining the resulting LIF membrane potentials, which is areal-valued signal.
+When designing beamforming weights we neglected the effect of membrane reset on the membrane potential, assuming linearity in the neuron response.
+Concretely we used a chirp signal spanningas a template.
+We computed the beamforming weights by computing the sample covariance matrix,
+whereis the expectation over time.
+The beamforming weights are given by the SVD of.
+
+We reshaped the-dimensioned complex signal into a-dimensioned real-valued signal, by separating real and complex components.
+By doing so we therefore work with thereal-valued covariance matrix.
+Due to the phase-shifted structure relating the in-phase and quadrature components of the analytic signal, the beamforming vectors obtained by PSD from thecovariance matrix are identical to those obtained from thecomplex covariance matrix (See Supp. Section).
+
+Figurea–b show the beam patterns for SNN Hilbert beamforming for narrowband (a) and wideband (b) signals (c.f. Figuref–g).
+For narrowband signals, synchronisation and regularity in the event encoded input resulted in worse resolution than for wideband signals.
+For noisy narrowband and noisy speech signals, beam patterns maintained good shape aboveSNR (Figurec–d).
+
+We implemented DoA estimation using SNN Hilbert beamforming, and measured the estimation error on noisy narrowband signals (Figuree–f).
+For SNRwe obtained an empirical Mean Absolute Error (MAE) of DoA estimationon noisy narrowband signals (Figuref).
+DoA error increased with lower SNR, with DoA error of approxmaintained for SNRs ofand higher.
+DoA error was considerably lower for noisy speech (Librispeech corpus; Figuref), with DoA errors down to.
+
+We deployed DoA estimation using SNN Hilbert beamforming on a seven-microphone circular array (Figurea) on live audio.
+A sound source was placedfrom the centre of the array, in a quiet office room with no particular acoustic preparation.
+We collected SNN output events with the peak event rate overoutput channels in eachbin indicating the instantaneous DoA.
+A stable DoA estimation was obtained by computing the running median over(see Methods).
+We examined frequency bands between, and obtained a measured MAE of.
+
+These results are an advance on previous implementations of binaural and microphone-array source localization with SNNs.
+Wall et al. implemented a biologically-inspired SNN for binaural DoA estimation, comparing against a cross-correlation approach.
+They obtained an MAE ofwith their SNN, andusing a cross-correlation approach, both on narrowband signals.
+Escudero et al. implemented a biologically-inspired model of sound source localization using a neuromorphic audio encoding device.
+They obtained an MAE ofon pure narrowband signals, andon noisy narrowband signals.
+Ghosh et al. implemented a trained feed-forward SNN for binaural DoA estimation, obtaining an MAE ofon narrowband signals.
+Roozbehi et al. implemented a trained recurrent SNN for binaural DoA and distance estimation, obtaining an MAE ofon wideband signals.
+Pan et al. implemented a trained recurrent SNN for DOA estimation on a circular microphone array.
+They reported an MAE ofunder SNRtraffic noise, and MAE ofin noise-free conditions(see Table).
+
+We therefore set a new state-of-the-art for SNN-based DoA estimation.
+
+SECTION: Deployment of DoA estimation to SNN hardware
+We deployed our approach to the SNN inference architecture Xylo.
+Xylo implements a synchronous digital, low-bit-depth integer-logic hardware simulation of LIF spiking neurons.
+The Rockpool software toolchainincludes a bit-accurate simulation of the Xylo architecture, including quantisation of parameters and training SNNs for deployment to Xylo-family hardware.
+We quantised and simulated the Hilbert SNN DoA estimation approach on the Xylo architecture, using bipolar RZCC spike encoding.
+
+Global weight and LIF parameter quantisation was performed by obtaining the maximum absolute beamforming weight value, then scaling the weights globally to ensure this maximum weight value mapped to, then rounding to the nearest integer.
+This ensured that all beamforming weights spanned the range
+
+Spike-based DoA estimation results are shown in Figureand Table.
+For noisy speech we obtained a minimum MAE ofat SNR.
+
+We deployed a version of Hilbert SNN DoA estimation based on unipolar RZCC encoding to the XyloAudio 2 device.
+This is a resource-constrained low-power inference processor, supportinginput channels, up tospiking LIF hidden neurons, andoutput channels.
+We usedinput channels for unipolar RZCC-encoded analytic signals from themicrophone array channels, and with DoA estimation resolution ofas before.
+We implemented beamforming by deploying the quantised beamforming weights() to the hidden layer on Xylo.
+We read out the spiking activity ofhidden layer neurons, and chose the DoA as the neuron with highest firing rate ().
+We measured continuous-time inference power on the Xylo processor while performing DoA estimation.
+
+Note that the Xylo development device was not designed to provide the high master clock frequencies required for real-time operation for beamforming.
+Inference results were therefore slower than real-time on the development platform.
+This is not a limitation of the Xylo architecture, which could be customised to support real-time operation for beamforming and DoA estimation.
+When operated at, Xylo requiredto processof audio data, usingtotal continuous inference power.
+With an efficient implementation of signed RZCC input spikes and weight sharing, the bipolar version would require an additionalof power consumption.
+In the worst case, the bipolar RZCC version would require double the power required for the unipolar version.
+Scaling our power measurements up for real-time bipolar RZCC operation, the Xylo architecture would perform continuous DoA estimation withtotal inference power.
+
+SECTION: MUSIC beamforming
+For comparison with our method, we implemented MUSIC beamforming for DoA estimation, using an identical microphone array geometry.
+MUSIC is a narrowband beamforming approach, following the principles in Figureb.
+Beam patterns for MUSIC on the same circular array are shown in Figure.
+Figureshows the accuracy distribution for MUSIC DoA estimation (same conventions as Figured).
+For SNRwe obtained an empirical MAE for MUSIC ofon noisy narrowband signals, and MAE ofon noisy speech.
+
+To estimate the first-stage power consumption of the MUSIC beamforming method, we reviewed recent methods for low-power Fast Fourier Transform (FFT) spectrum estimation.
+Recent work proposed a 128-point streaming FFT for six-channel audio in low-powerCMOS technology, with a power supply ofand clock rate of.
+Another efficient implementation for 256-point FFT was reported forCMOS, using apower supply and a clock rate of.
+To support a direct comparison with our method, we adjusted the reported results to align with the number of required FFT points, the CMOS technology node, the supply voltage and the master clock frequency used in Xylo (see Methods).
+After appropriate scaling, we estimate these FFT methods to requireandrespectively.
+These MUSIC power estimates include only FFT calculation and not beamforming or DoA estimation, and therefore reflect a lower bound for power consumption for MUSIC.
+
+SECTION: Resources required for DoA estimation
+We compared the DoA estimation errors and resources required for Hilbert SNN beamforming (this work), multi-channel RSNN-based beamformingand MUSIC beamforming(Table).
+We estimated the compute resources required by each approach, by counting the memory cells used by each method.
+We did not take into account differences in implementing multiply-accumulate operations, or the computational requirements for implementing FFT/DFT filtering operations in the RSNNor MUSICmethods.
+
+The previous state of the art for SNN beamforming and DoA estimation from a microphone array uses a recurrent SNN to perform beamforming.
+Their approach used a dense filterbank to obtain narrowband signal components, and a trained recurrent network withneurons for beamforming and DoA estimation.
+Their network architecture required input weights offrom thefilterbank channels;recurrent weights for the SNN; andoutput weights for theDoA estimation channels.
+They also requiredneuron states for their network.
+For the implementation described in their work, they requiredmemory cells for beamforming and DoA estimation.
+
+The MUSIC beamforming approach uses a dense filterbank to obtain narrowband signals, and then weights and combines these to perform beamforming.
+This approach requiresmemory cells.
+For the implementation of MUSIC described here,memory cells are required.
+
+Since our Hilbert beamforming approach operates directly on wideband signals, we do not require a separate set of beamforming weights for each narrowband component of a source signal.
+In addition, we observed that the beamforming weights for down-going RZCC input events are simply a negative version of the beamforming weights for up-going RZCC input events (see Supplementary Material).
+This observation suggests an efficient implementation that includes signed event encoding of the analytic signal, in the RZCC event encoding block.
+This would permit a single set of beamforming weights to be reused, using the sign of the input event to effectively invert the sign of the beamforming weights.
+This approach would further halve the required resources for our DoA estimation method.
+Our method therefore requiresmemory cells to hold beamforming weights, andneuron states for the LIF neurons.
+For the implementation described here, our approach requiresmemory cells for beamforming and DoA estimation.
+
+In the case of the quantised integer low-power architecture Xylo, the memory requirements are reduced further due to use of 8-bit weights and 16-bit neuron state.
+
+Our Hilbert beamforming approach achieved very good accuracy under noisy conditions, using considerably lower compute resources than other approaches, and a fraction of the power required by traditional FFT or DFT-based beamforming methods.
+
+SECTION: Previous methods for beamforming and source separation using the Hilbert Transform
+Several prior works performed source localization by estimating the time delay between arrival at multiple microphones.
+Kwak et al.applied a Hilbert transform to obtain the signal envelope, then used cross-correlation between channels to estimate the delay.
+Several other works also obtained the Hilbert signal envelope and use the first peak of the amplitude envelope to estimate the delay from a sound event to a microphone in an array.
+These are not beamforming techniques, and make no use of the phase (or full analytic signal) for source localization.
+
+Molla et al. applied the Hilbert transform after performing narrowband component estimation, to estimate instantaneous frequency and amplitude of incident audio.
+They then estimated inter-aural time- and level- differences (ITD and ILD), and performed standard binaural source localization based on these values, without beamforming.
+
+Kim et al. used the Hilbert transform to obtain a version of a high-frequency input signal that can be decimated, to reduce the complexity of a subsequent FFT.
+They then performed traditional frequency-domain beamforming using the narrowband signals obtained through FFT.
+This is therefore distinct from our direct wideband beamforming approach.
+
+Some works performed active beamforming on known signals, using the Hilbert transform to estimate per-channel delays prior to beamforming.In these works, the Hilbert transform was used to obtain higher accuracy estimation of delays, where the transmitted signal is known.
+We instead use the increasing phase property of the Hilbert transform to provide a general beamforming approach applicable to unknown wideband and narrowband signals.
+
+SECTION: Discussion
+We presented a novel beamforming approach for microphone arrays, suitable for implementation in a spiking neural network (SNN).
+We applied our approach to a direction-of-arrival (DoA) estimation task for far-field audio.
+Our method is based on the Hilbert transform, coupled with efficient zero-crossing based encoding of the analytic signal to preserve phase information.
+We showed that the phase of the analytic signal provides sufficient information to perform DoA estimation on wide-band signals, without requiring resource-intensive FFT or filterbank pre-processing to obtain narrow-band components.
+We provided an efficient implementation of our method in an SNN architecture targeting low-power deployment (Xylo).
+By comparing our approach with state-of-the art implementations of beamforming and DoA estimation for both classical and SNN architectures, we showed that our method obtains highly accurate DoA estimation for both noisy wideband signals and noisy speech, without requiring energy- and computationally-intensive filterbank preprocessing.
+
+Our Hilbert beamforming approach allows us to apply a unified beamforming method for both narrowband and wideband signals.
+In particular, we do not need to decompose the incident signals into many narrowband components using an FFT/DFT or filterbank.
+This simplifies the preprocessing and reduces resources and power consumption.
+
+Our design for event-based zero-crossing input encoding (RZCC) suggests an architecture with signed input event channels (i.e.).
+The negative symmetric structure of the up-going and down-going RZCC channel Hilbert beamforming weights permits weight sharing over the signed input channels, allowing us to consider a highly resource- and power-efficient SNN architecture for deployment.
+
+A key feature of our audio spike encoding method is to make use of the Hilbert analytic signal, making use of not only the in-phase component (i.e. the original input signal) but also the quadrature component, for spike encoding.
+Previous approaches for SNN-based beamforming used a dense narrowband filterbank, obtaining almost sinusoidal signals from which the quadrature spikes are directly predicable from in-phase spikes.
+Existing SNN implementations required significantly more complex network architectures for DoA estimation, perhaps explained by the need to first estimate quadrature events from in-phase events, and then combine estimations across multiple frequency bands.
+Our richer audio event encoding based on the STHT permits us to use a very simple network architecture for DoA estimation, and to operate directly on wideband signals.
+
+While our approach permits unipolar RZCC event encoding and beamforming (i.e. using only up- or down-going events but not both), we observed bipolar RZCC event encoding was required to achieve high accuracy in DoA estimation.
+This increases the complexity of input handling slightly, requiring 2-bit signed input events instead of 1-bit unsigned events.
+The majority of SNN inference chips assume unsigned events, implying that modifications to existing hardware designs are required to deploy our method with full efficiency.
+
+We showed that our approach achieves good DoA estimation accuracy on noisy wideband signals and noisy speech.
+In practice, if a frequency band of interest is known, it may be possible to achieve even better performance by first using a wide band-pass filter to limit the input audio to a wide band of interest.
+
+We demonstrated that engineering an SNN-based solution from first principles can achieve very high accuracy for signal processing tasks, comparable with off-the-shelf methods designed for DSPs, and state-of-the-art for SNN approaches.
+Our new approach is highly appropriate for ultra-low-power SNN inference processors, and shows that SNN solutions can compete with traditional computing methods without sacrificing performance.
+
+Here we have demonstrated our method on a circular microphone array, but it applies equally well to alternative array geometries such as linear or random arrays with good performance (see Figuresand).
+
+Our novel Hilbert Transform-based beamforming method can also be applied to DSP-based signal processing solutions, by using the analytical signal without RZCC event encoding (see Figuref–g; Figurea–b).
+This can improve the computational- and energy-efficiency of traditional methods, by avoiding the need for large FFT implementations.
+
+SECTION: Methods
+SECTION: Signal Model
+We denote the incoming signal frommicrophones bywheredenotes the time-domain signal received from the-th microphone.
+We adopted a far-field scenario where the signal received from each audio source can be approximated with a planar wave with well-defined(DoA).
+Under this model, when an audio source at DoAtransmits a signal, the received signal at the microphoneis given by
+
+wheredenotes the additive noise in microphone, whereis the attenuation factor (same for all microphones), and wheredenotes the delay from the audio source to microphonewhich depends on the DoA.
+In the far-field scenario we assumed that the attenuation parameters from the audio source to all the microphones are equal, and drop them after normalization.
+We also assume that
+
+wherewithdenoting the distance of the audio
+source from the center of the array, wherem/s is
+the speed of sound in the open air, whereis the radius of the
+array, and wheredenotes the angle of the microphonein the circular array configuration as illustrated in Figurea.
+
+SECTION: Wideband noise signals
+Random wideband signals were generated using coloured noise.
+White noise traces were generated using iid samples from a Normal distribution:, with a sampling frequency of.
+These traces were then filtered using a second-order Butterworth bandpass filter from the python module.
+
+SECTION: Noisy speech signals
+We used speech samples from the Librispeech corpus.
+These were normalised in amplitude, and mixed with white noise to obtain a specified target SNR.
+
+SECTION: Beamforming for DoA Estimation
+The common approach for beamforming and DoA estimation for wideband signals is to apply DFT-like or other filterbank-based transforms to decompose the input signal into a collection of narrowband
+components as
+
+whereis a collection ofcentral frequencies to which the input signal is decomposed.
+Beamforming is then performed on the narrowband components as follows.
+
+When the source signal is narrowband and in the extreme case a sinusoidof frequency, time-of-arrival to different microphones appear as aphase shift
+
+at each microphonewhere this phase-shift depends on the DoA. By combining thereceived signalwith proper weights, one may zoom the array beam on a specificcorresponding to the source DoA and obtain the beamformed signal
+
+By performing this operation over a range of test DoAs, the incident DoA can be estimated by findingwhich maximises the power of the signal obtained after beamforming:
+
+SECTION: Hilbert beamforming
+To generate beamforming vectors, we choose a desired precision for DoA estimation by quantizing the range of DoAs into a gridof sizewherewheredenotes the spatial oversampling
+factor.
+
+We choose a template representative for the audio signal, apply the HT to obtain its analytic version, computefor each angle, and design beamforming vectors.
+We arrange the beamforming vectors as anbeamforming matrix.
+In practice we choose a chirp signal for, spanning.
+
+We estimate the DoA of a target signal as follows.
+We receive the-dim time-domain signalincident to the microphone array over a time-interval of durationand apply the STHT to obtain the analytic signal.
+
+We then apply beamforming using the matrixto compute the-dim time-domain beamformed signal
+
+We accumulate the power of the beamformed signalover the whole interval, and compute the average power over the grid elements as a G-dim vector, where
+
+Finally we estimate the DoA of a target by identifying the DoA incorresponding to the maximum power, such that
+
+SECTION: DoA estimation with live audio
+We recorded live audio using a 7-channel circular microphone array (UMA-8 v2, radius), sampled at.
+The microphone array and sound source (speaker width approx.) were placed in a quiet office environment with no particular acoustic preparation, separated by.
+We implemented Hilbert SNN beamforming, withDoA bins, and a Hilbert kernel ofduration.
+Chirp signals were used for template signals when generating beamforming weights, with a duration ofand a frequency range of.
+Bipolar RZCC audio to event encoding was used.
+Output events were collected over theoutput channels, and the channel with highest event rate in eachbin was taken to indicate the instantaneous DoA estimate.
+To produce a sample DoA estimation, windows of(25 bins) were collected, and the running median was computed over each window.
+This was taken as the final DoA estimate.
+Mean Absolute Error (MAE) was computed to measure the accuracy of DoA estimation.
+
+SECTION: LIF spiking neuron
+We used an LIF (leaky integrate and fire) spiking neuron model (See Figure), in which impulse responses of synapse and neuron are given byand, whereanddenote the time-constants of the synapse and neuron, respectively.
+LIF filters can be efficiently implemented by1 order filters and bitshift circuits in digital hardware.
+Here we set.
+For such a choice of parameters, the frequency response of the cascade of synapse and neuron is given by
+
+which has a 3dB corner frequency of.
+
+SECTION: MUSIC beamforming for DoA estimation
+We compared our proposed method with the state-of-the-art super-resolution localization method based on the MUSIC algorithm.
+Our implementation of MUSIC proceeds as follows.
+
+We apply a Fast Fourier Transform (FFT) to sequences ofaudio segments, sampled at(samples), retaining only those frequency bins in the range.
+This configuration achieves an angular precision ofwhile minimising power consumption and computational complexity.
+See Sectionfor details on setting parameters for MUSIC.
+
+We computed the array response matrix for the retained FFT frequencies to target an angular precision of.
+To reduce the power consumption and computational complexity of MUSIC further, we retained onlyFFT frequency bin for localization, thus requiring only a single beamforming matrix.
+Consideringangular bins (where, for multi-mic board withmicrophones, thus, an angular oversampling factor of), each array response matrix will be of dimension.
+
+MUSIC beamforming was performed by applying FFT to frames from each microphone, choosing the highest-power frequency bin in the range, and multiplying with the array response matrix for that freqeuncy.
+We then accumulated power over time for each DoA, to identify the DoA with maximum power as the estimated incident DoA.
+
+To estimate power consumption for MUSIC, we performed a survey of recent works on hardware implementation of the MUSIC algorithm, where the FFT frame size, number of microphone channels, fabrication technology, rail voltage, clock speed and resulting power consumption were all reported.
+This allowed us to re-scale the reported power to match the required configuration of our MUSIC configuration, and to match the configuration of Xylo used in our own power estimates.
+
+For example, in Ref.the authors implemented a 128-point FFT in streaming mode for a 6-channel input signal inCMOS technology with a power supply ofand clock rate of, achieving a power consumption of around.
+Scaling the power totechnology andpower supply on Xylo, assuming 7-channel input audio with a sampling rate ofand FFT lengthfor our proposed MUSIC implementation, yields a power consumption of
+
+where the last two factors denote the effect of technology and power supply.
+We made the optimistic assumption that the power consumption in streaming mode grows only proportionally to FFT frame length.
+We included only power required by the initial FFT for MUSIC, and neglected the additional computational energy required for beamforming and DoA estimation itself.
+Our MUSIC power estimates are therefore a conservative lower bound.
+
+SECTION: Data availability
+All data recorded as part of this study are available at.
+We used speech recordings from the Librispeech corpus to measure DoA performance on human speech.
+
+SECTION: Code availability
+All scripts to reproduce our results are available at.
+
+SECTION: References
+SECTION: 
+The Hilbert transform (HT) is well-known in signal processing
+applications. It is not, however, as widely adopted as Fourier transform family including convolution,(FFT/DFT),(STFT), etc.
+
+The HT is linear time-invariant (LTI) and can be described by its impulse responsewhere the outputfor the input signalis given bywheredenotes the convolution operation. There is some difficulty, however, due to singularity of the impulse response at. By removing this singularity, one can write HT as
+
+Asis not zero forand as can be seen also from (), HT is not a causal transform, namely, it uses both the past and future values of the signal to compute the outputat each time instant.
+
+It is always more insightful to visualize HT in the frequency domain where it can be described by
+the frequency response
+
+wheredenotes the sign function.
+For example, for a sinusoidal signalwith Fourier transform
+
+it yields
+
+which corresponds to the time-domain signal. It is seen that for sinusoidal signal, applying HT yields a simple phase shift of.
+
+In this paper, we apply HT to the real-valued signalreceived from each microphone in the array to obtain the corresponding analytic signal
+
+By applying the Fourier transform to,
+one can see that
+
+wheredenotes the Heaviside step function.
+It is seen that the spectrum of the analytic signal is zero for all negative
+frequencies. For example, for a sinusoid,
+one has
+
+which has a Fourier transform, which is zero at negative frequencies.
+
+In signal processing literature, it is conventional to call the real-valued signaland its Hilbert transformthe in-phase and quadrature components of the corresponding analytic signal. We use this convention throughout the paper.
+
+Intuitively speaking, applying HT to a real-valued signalyields a complex signal, which can be illustrated as a curve in 2D complex plane. This allows to define the concept of phase and instantaneous frequency for the original signal.
+For example, for a sinusoid at frequency, the analytic signalhas a phasewhich grows linearly with timeand corresponds to a constant instantaneous frequency. One of our main contributions is to generalize this property and show that the phase of any analytic signal grows almost linearly in time (see, e.g., Theorem). This allows us to adopt conventional beamforming methods even if the signal is wideband.
+
+SECTION: 
+Letbe a real-valued signal and letbe its corresponding analytic signal. It is conventional to define the envelope and phase of the analytic signal as
+
+and writeas.
+
+The phasecomputed from () is in wrapped format, namely, lies in the range. So, it may have jumps at some time instants. We need to unwrap this phase by adding or subtracting integer multiples ofat those jump points and glue the in-between parts together to obtain a well-defined unwrapped phase signal.
+In practice, we will always work with continuous and well-behaved signalsfor whichis also continuous. For such signals, bothand especiallyafter unwrapping are
+continuous and well-defined functions of.
+
+As a rule-of-thumb, the envelopeis always slowly-varying and the main variation in the analytic signal is due to the rapidly-varying phase.
+For example, in the extreme case of a sinusoid with a frequency, the analytic signalhas a constant envelopeand fast linearly-growing phase.
+
+Let us consider the analytic signal. From inverse Fourier transform, we have that
+
+where one can see thatis a super position of complex exponentialwith non-negative frequencywith weights proportional to.
+
+As we will show, in our proposed localization method, we need the monotonic behavior of the phaseof the analytic signal. For example, for a sinusoid with frequency, as we saw, phasegrows linearly withand its slopeis the parameter that specifies the spatial resolution of the DoA estimation. We would like to derive a similar counterpart for an arbitrary analytic signalwhich in particular may not be narrowband.
+To illustrate this, let us consider (). Since the phase of each complex exponential component increases linearly with time, we may expect that the phase of the analytic signal should be an increasing function
+of.
+A simple example can illustrate that this is not necessarily true.
+
+Consider the signal
+
+whereand where bothandare increasing functions of. Let us assume thatand let us write this as
+
+Since, it is not difficult to show that the phase of the second term is just a bounded functionwithfor.
+As a result, the phase of the whole signal is given bywhereis the phase of the stronger exponential signal.
+Sinceis an increasing function of, the whole phaseshould be anfunction of.
+This is illustrated in Figureforand for two linear phase functionsand.
+
+Exampleillustrates that in general phase may show a very complicated behavior where by slightly modifying the amplitudes, i.e., by makingslightly smaller than, phase may switch fromto(of course after neglecting the bounded additive terms).
+This extreme case of course does not happen in real-world scenarios since in practice the audio signal received from the source is a superposition of a large number of complex exponentials where none of them typically dominates the others.
+“Domination” here would imply that the amplitude of one exponential terms is larger than the sum of the amplitudes of the others.
+
+SECTION: 
+Although it is difficult to prove the almost-increasing property of the phase in the general case, we make an attempt to prove it for those signals whose envelope variation in time is quite small.
+
+Letbe the analytic signal corresponding to a real-valued signaland letandbe its envelope and phase respectively. Letbe such that the time intervalcontains major part of the energy of the signal. Define the average ofover this interval asand suppose thatsuch that the variation ofaround its average is negligible in the interval. Thenis an almost-monotone function ofwithwheredefined by
+
+is the spectral average of the frequency of the signal.
+
+If we considerwhereas some sort of measure that illustrates the distribution of signal energy in the frequency spectrum, we can interpretas average of the frequency w.r.t. this measure where each frequency is weighted proportionally to the fraction of the energy it contributes to the signal.
+
+We use the definition. Recall that as we mentioned in Rem.the phase computed from this formula is in wrapped format, namely, it lies inand may have jumps at some time instants.
+To avoid these jumps in the proof, we take the derivative of the phase which is always local and does not need any correction or global phase unwrapping in time. We obtain
+
+We then take the integral of this expression to obtain:
+
+where
+
+inwe used the fact that the envelopchanges quite slowly with time and replaced its weighting effect in the integral for sufficiently largeby its average.
+
+inwe used the Cauchy-Schwartz inequality
+
+and that the numerator is positive as we show next.
+
+inwe used the fact that the majority of the energy of the signal lies in the intervalso we expanded the limits of the integral to.
+
+By applying the Parseval equality
+
+for real-valued signalsandand their Fourier transformandand using the fact that, we can show that
+
+where we also used the conjugate symmetry of the Fourier transform for real-valued signalswhich yields. Replacing these expressions in () completes the proof.∎
+
+One of the implications of Theoremis that if the signal is non-stationary with time-varying spectrum (consider, e.g., a chirp signal), the average slope of the phase of its HT in short intervals in which the signal is almost stationary will be proportional to the active signal frequency at that interval.
+Therefore, by tracking the phase of the HT one can detect the instantaneous frequency of the signal.
+Figureillustrates this for a chirp signal that sweeps the frequency range fromtoKHz with a period of 2 seconds.
+
+We did some numerical simulation to investigate the precision of formula. We produce white Gaussian noise and filter it with a bandpass filter with a sharp transition in the rangeKHz. Since the specrum of the output signal is almost flat, i.e.,one can show that
+
+Figuree illustrates the simulation results, where it is seen that the slope of the phase in various simulation is very close toKHz predicted by Theorem.
+
+SECTION: 
+One of the implications of Theoremis that after applying the HT, the phase of the resulting analytic signal shows an almost linear growth whose slope is given by the average frequencyas in () which in the case of narrowband signals of center frequencyyields the slope.
+
+As we explained before, in the case of sinusoid signals, the linear behavior of phase allows to steer the array to a specific DoAby a simple linear weighting of the signals received from various microphones.
+Now let us consider the audio signaland its corresponding
+analytic signal. Since both the HT and the propagation model are linear, whenis
+transmitted from the audio source, the analytic version of the signal
+received in the microphoneis given by
+
+where we used the fact that the envelopevaries slowly with
+time such that. It is seen that the analytic version of the received signal at microphonebehaves very similarly to a sinusoid signal of frequency.
+
+Since the phase of the HT shows a similar linear behavior, we may expect that we can steer and zoom the array on a specific DoA by applying a similar linear weighting technique with the difference that in designing the weightsfor a specific DoA, we need to use the average frequencyrather than the sinusoid frequency.
+
+Using HT enables us to develop and apply a unified beamforming approach for both narrowband and wideband scenarios. In particular, we do not need to decompose the signal into many narrowband and almost sinusoid-like components. This simplifies the preprocessing and reduces the consumed power, which is of interest of low-power applications we target in this paper.
+
+SECTION: 
+Our main motivation for using HT and its almost-linear phase behavior is to be able to steer the array on a specific DoA by applying a simple weighting to the signals received from various microphones. In this section, we develop a step-by-step method to derive those weight parameters.
+
+SECTION: 
+To gain intuition, let us start from the well-known narrowband case whereand the analytic signal after applying HT is given by.
+For such a signal, the effect of the delay in the received signal in each microphone
+is to add the phase shiftwhereis the propagation delay from an audio source lying at DoAto the-th microphone. It is
+convenient in array processing to write this as theor
+
+which encodes the phase variation in a narrowband signal at frequencyas a function of DoA. The-dim analytic signal then can be written asFor the narrowband case, one can pose DoA estimation as the following optimization problem
+
+where we defined theempirical covariance ofas
+
+wheredenotes the Hermitian transpose, whereis the effective duration of the signal, and where we used the subscriptto show thatdepends both on the input signaland its DoA. For a sinusoid with frequency, since, one can check thatis the rank-1(PSD) matrix.
+In this case,has a single non-zero singular value whose singular vector is along.
+As a result, we can define the corresponding beamforming weight for a narrowband signal coming from DoAby computing the SVD ofand using its singular vector corresponding to the largest singular value, which yields. Also, once we have beamforming weightsfor all, we can find the DoA as
+
+wherecoincides with the DoA of the signal.
+
+SECTION: 
+We will use the intuition gain from narrowband scenario and the linear behavior of the phase of the analytic signal to generalize beamforming for arbitrary signals. We first need the following theorem.
+
+Letbe the real-valued input signal to the array coming from a DoAand letbe its analytic version. Also letbe thematrix defined as in (). Then,
+
+wheredenotes the Fourier transform of the input signal.
+
+We write the-th component ofas
+
+where in, we applied Parseval identity and used the fact that the Fourier transform ofis given by, thus, is zero at negative frequencies.
+This completes the proof.∎
+
+It is seen from () thatis a superposition of rank-1 PSD matriceswhere the array response at frequencyappears with weight proportional to the energy spectrum of the signal. It is also worthwhile to note that althoughis real-valued and has both positive and negative frequency components (following conjugate symmetry), only the positive frequency components appear in. This makesa complex PSD matrix that preserves the phase information due to DoA. For example, it is not difficult to check that if we had usedrather thanin computing, we would have had, thus, an ambiguity in detecting the DoA of the signal.
+
+We can then propose the following step-by-step procedure for designing the beamforming matrix:
+
+choose a grid of DoAswhereis chosen such that it yields a reasonable precision for DoA estimation.
+
+choose a candidate signaland use the far-field propagation model and the array geometry to computewhen the signalis received from a generic DoA.
+
+apply the SVD to the PSD matrixand compute the singular vector(normalized to have norm) corresponding to the larges singular value.
+
+build thebeamforming matrixby putting together the beamforming vectorsfor all the DoA.
+
+Once the beamforming matrixwas designed, we use it for DoA estimation as follows:
+
+we receive the-dim real-valued signalfrommicrophones and apply HT to compute the-dim complex analytic signal.
+
+we apply beamforming to compute the-dim beamformed signal.
+
+we aggregate the energy of each component ofover a window of durationto compute the-dim power vectorwhere the absolute value and integration is done component-wise.
+
+we compute the DoA of the signal by finding the grid elementwith maximum power, i.e.,where we used the fact that, due to multiplication with, the components ofare labeled with the grid elements.
+
+SECTION: 
+SECTION: 
+In the previous sections, we intentionally decided to work with the continuous-time Hilbert transform since it allows to derive and illustrate the main ideas (e.g., behavior of phase of analytic signal and its adoption in our proposed beamforming technique) much easier.
+In practical implementations, however, we always need to work with the discrete-time sampled version of the signal.
+An extension of HT and analytic signal to the discrete-time can be easily developed. The main idea is to use the
+fact the Fourier transform of the analytic signal given byis zero at negative frequencies.
+This property can be used to extend HT to the discrete-time signals. Given a signalwith sampling rateand length, we first compute its-point DFT given bywherewhenis even andwhenis odd. It is known from signal processing thatcorresponds to spectrum of the discrete-time signalat the discrete frequency
+
+Therefore, inspired byfor the continuous-time variant, we may define the DFT of the analytic signalby dropping the
+negative frequency components in the DFT
+of. There is a slight difference
+between odd and even values of:
+
+we defineatand setandforandelsewhere.
+
+we defineand setforandelsewhere.
+
+As in the continuous-time case, by exploiting the key property that the original signal is given
+by inverse DFT equation as
+
+we may see thatconsists of superposition of complex exponentials each of which has a positive discrete
+frequency(corresponding tosuch that the phase of each termis growing linearly with.
+
+SECTION: 
+Let us consider the real-valued signaland its analytic version.
+As in the continuous-time case, we will call the real and imaginary part ofby in-phase and quadrature components. Similarly, we will define the envelop and phase of the analytic signal by
+
+so that we can write
+
+In the case of continuous-time
+signals, the phaseof the analytic signal is a continuous
+function ofwith jumps of an integer multiple ofat only a discrete set of time instants. So there is no ambiguity in defining its unwrapped version (after removing these jumps). In the
+case of discrete-time signals, consecutive samples of the phasemay have arbitrary jumps. In such a case, we need to define the unwrapped version of the phase signal that satisfies the condition
+
+In fact, given a phase signal whose
+components are all bounded in the intervalwe can
+convert it into its unwrapped version by modifying each term by an integer multiples ofsuch that the condition
+
+is fulfilled. This is implemented, e.g., infunction in Python. It is not difficult to see that,is the necessary and sufficient
+condition for the phase to be uniquely recovered (of course
+up to a constant shift which is an integer multiple of) from its
+analytic signal. In practice, this
+condition can be fulfilled if the signal is sampled with a sufficiently
+large sampling rate such that the variation between two consecutive phase
+samples is smaller than.
+
+As in the continuous-time case, we can show that unwrapped phase of the
+analytic signal is an almost increasing function ofsince we have only complex exponentialswhose phase is increasing withwith a positive slope. Of course, the larger the, the faster the phase signal changes as a function of the discrete time.
+
+SECTION: 
+One of the problems with the HT is that although it is a linear transform, it in anti-causal and requires all the samples of the signalto compute its analytic version.
+This is not typically feasible in practical implementations since it requires accumulating a large number of signal samples. To solve this issue, we develop an online streaming approximation of the HT that is applied to a windowed version of the signal of lengthrather than the whole signal.
+
+Since HT is linear, the resulting approximate transform will should be a linear ones, thus, it can be described by its impulse response.
+To compute the impulse response, therefore, it is sufficient to find out how this transformation acts on a windowed Dirac delta signalof lengthdefined as-dim vector.
+This implies that,can be easily computed by applying HT toand setting
+
+Now given any arbitrary real-valued signal(since here the input audio is real-valued), the output of approximate HT can be written aswheredenotes the convolution operator.
+We call the linear transform with impulse responsethe(STHT).
+We define the approximate analytic signal produced by STHT by
+
+where the in-phase part is the input real-valued signalwhereas the quadrature part is given by.
+Note that in (), with some abuse of notation, we used the notationandalso for the output of STHT and corresponding analytic signal.
+Moreover, we shifted the input signalbyto eliminate the delay due to the FIR filterin order to align in-phase and quadrature components of STHT.
+
+Our proposed STHT resembles the well-known STFT: Rather than applying DFT to the whole signal samples, STFT decomposes the input signal into consecutive overlapping windows each of lengthand applies DFT to the signal samples within each windows.
+Similarly, in our case, by applying windowing and STHT, we convert the original signalinto its short-time (windowed) analytic version.
+Note that in contrast with STFT which hasfilters corresponding tofrequencies at which DFT is computed, STHT has only a single FIR filter, thus, it yields a single-channel time-domain signalrather than the-channel time-frequency-domain signal generated by STFT.
+
+In the continuous-time case, HT converts the sinusoid signalof frequencyinto.
+A more or less similar situation also happens in the discrete-time case with the difference for a signal of lengthonly those sinusoidswhose frequencylies on the gridwith spacingare converted exactly into, wheredenotes the sampling frequency of the discrete-time signal.
+This implies that HT/STHT transformation of sinusoids will be closer to the continuous-time counterpart if the number of signal samples/window length for STHTis large enough such that the frequency grid spacing/covers the whole rangevery densely.
+
+SECTION: 
+Recall that we defined HT for the discrete-time case based on DFT of the input discrete-time signal. It is well-known from signal processing that DFT as a transform decomposes any discrete-time signalinto a linear combination of
+discrete-time sinusoids.
+
+These two facts imply that
+to evaluate the effectiveness of our proposed STHT compared with the original HT, we only need to check how effectively STHT approximates HT over the class of sinusoid signals. Moreover, since STHT is an FIR filter with impulse response, its response to sinusoids is again a sinusoid with the same frequency whose amplitude and phase are adjusted according to the frequency response of. This simply implies that we can benchmark the effectiveness STHT by comparing the frequency response ofwith that of the original HT given byover, wheredenotes the sampling frequency of the discrete-time signal.
+
+This is illustrated in Figurea for a STHT kernel of durationms for an audio with sampling rate ofKHz (thus, a window length ofsamples). It is seen that as in HT, which has a frequency response, thus, a flat spectrum, STHT also has a flat response for frequencies far from the low- and high-frequency boundaryHz and, respectively, wheredenotes the duration of STHT kernel. The frequency width of this fluctuation can be varied in case needed by changing the kernel duration/kernel length. In practice, however, to have a good performance, we should apply a bandpass filter to the signal before performing the STHT operation to eliminate the effect of this boundary frequency regions.
+
+The time-domain performance of STHT is also illustrated in Figureb for a sinusoid whose frequency lies within the flat spectrum of STHT.
+It is seen that after some transient phase of duration half kernel length
+(e.g., aroundms in this example), STHT is indeed able
+to recover the quadrature part of the analytic signal quite precisely.
+Recall that for the sinusoid signals, quadrature part
+has a phase shift ofw.r.t. the original in-phase signal, as can be seen from the plots.
+
+SECTION: 
+There is a variety of spike encoding methods that can be used to convert an analog input signal into binary spike features. For example, in applications such as keyword spotting, the spike encoding that seems to work quite well is rate-based coding where the rate of the spike in each frequency channel/filter is proportional to its instantaneous signal energy, as motivated by STFT (). This type of spike encoding, however, does not work well for localization since it is not sensitive enough to capture the difference in time of arrival of signals at various microphones, which is the crucial factor in localization.
+
+In this paper, instead, we use(RZCC) spike encoding, where we call the encoding conjugate since it is applied to both in-phase and quadrature channels of the signal. In zero-crossing spike encoding, in general, a spike is produced when the output signalof a filter changes sign, i.e.,
+
+where we denoted the spike time sequence byand where illustrated the up and down zero-crossings byand, respectively.
+It is not difficult to see that this type of spike encoding can be very sensitive to noise. To make it robust, we use the fact that the down/up zero-crossings ofcorrespond to the local maxima/minima of the cumulative sum signal defined by. Therefore, we can increase robustness by keeping only those local maxima/minima in cumulative sum signalthat are maxima/minima over a window of size. More specifically,is announced as robust local maxima ofwhen
+
+with a similar expression holding for the local minima.
+By makinglarger, we may increase the robustness of this method to noise. The maximum spike rate produced in this type of encoding can be at most. For example, if the center frequency of the filter in the filterbank is, it has a zero-crossing of rate. Thus, in order not to miss the real zero-crossing, one needs to make sure that, which implies that.
+
+For example, settingKHz andKHz, we obtain. So in the worst case, where the output of the filter is a zero-mean Gaussian noise, the probability that a pointis announced as a robust zero-crossing is given by the probability that
+
+where we used the simplifying assumption that noise samples are independent and that for a zero-mean Gaussian variablewe have.
+Thus the rate of random spikes due to noise in this method would be
+
+Tab.summarises some design choices and also quantifies the robustness of this method. For example, for an array with maximum frequency coverage ofKHz, by setting, we can work with a spike rate of aroundK spike/sec when the signal is present while keeping the random uninformative spike due to noise to as low asspike/sec when there is no audio source or when the signal received from source is very weak. It is also seen that this encoding is not that effective when the array coverage moves to higher frequency bands. For example, for a maximum frequency ofKHz, we have to choosefor which the noise spikes rate can be very close to signal spike rate. However, as we will see, this method is quite effective in almost all practical localization scenarios.
+
+Our RZCC spike encoding seems to be similar to neural phase spike encoding inwhere the spikes are produced at the peak of the output of the filter. However, our method is completely different. First, rather than peak locations at, our proposed RZCC uses the zero-crossing locations of, which correspond to the peak locations of the cumulative sumrather than that of the original signal. This makes a big difference since cumulative sum is a low-pass filter so it already reduces the noise power significantly and makes spike encoding quite robust to noise. Second, by detecting robust peak location of, we eliminate the spikes due to noise significantly. Note that this is not very important insince filters are very narrowband, thus, eliminate a significant portion of the noise power but is very essential for our method since it is going to work equally well in both narrowband and wideband scenarios.
+
+In general, one can see that using both up and down zero-crossings, which we call bipolar spike encoding, may indeed be redundant. We observed that this is indeed true and by careful design of beamforming vectors, one can perform SNN localization using only up zero-crossings for example, which we call unipolar spike encoding. However, this requires that one designs the weights such that the DC part of the membrane voltage signals in SNNs is eliminated to a large extent. This is not always easy, especially in the presence of weight quantization, and results in outliers in DoA estimation. These outliers, however, disappear when we use the bipolar spike encoding, as it has an interlacing of positive and negative spikes which eliminates the DC part almost perfectly. Because of this, we decided to use bipolar spike encoding, as illustrated in Figureb.
+
+After applying RZCC encoding for both in-phase and quadrature channels, we forward these spikes into SNN for further processing.
+
+SECTION: 
+Our method is quite generic and can be applied to a neuron with arbitrary(SRM). In this paper, as an example, we focus on LIF (leaky integrate and fire) model illustrate in Figurein which impulse responses of synapse and neuron are given byandwhereanddenote the time-constants of the synapse and neuron, respectively. Due to their exponential decay, LIF filters have the practical advantage that they can be easily implemented by1 order filters and bitshift circuits on the chip. In our design, we set. It is not difficult to show for such a choice of parameters, the frequency response of the cascade of synapse and neuron is given by
+
+which has, thus, a 3dB corner frequency of. In our design, we process the spike signal obtained from a filter of center frequencywith an SNN whose parameteris selected such that, which implies
+
+In practice, the input signal is discrete-time and we need to approximateandby
+
+where,, and wheredenotes the sampling rate.
+In our design, we setfor filter, which yields
+
+For example, for a filter with maximum center frequencyKHz and for a sampling frequencyKHz, we obtain that.
+
+SECTION: 
+STHT and filters in the preprocessing and also spike encoding all preserve the relative delay in signals received from various microphones. These spikes are then fed into the first layer of an SNN consisting of a linear weighting layer followed by low-pass filtering in synapse and neuron.
+
+Let us denote the-dim spike signal (obtained by concatenation ofin-phase andquadrature spikes) byand let us focus on a generic neuron with weight. The membrane potential of this neuron at each timeis given by
+
+wheredenotes the convolution, whereis a discrete 0-1 valued signal denoting the output spikes, and wheredenotes the refractory response due to membrane potential reset at the output spike time.
+
+To do beamforming, we will use the weights of the first layer in SNN. We will initialize these weights under the simplifying assumption that the neuron is linear, thus, we will neglect the refractory effect of output spikes on the membrane potential of the neuron ().
+Under this assumption, the membrane potential of the neuron is given by
+
+where we use the fact that convolution and weighting are both linear operations, so we can exchange their order, where we definedas the-dim real-valued signal whose-th component is given by
+
+and where we used the subscriptto illustrate the explicit dependence of the spike signal, thus,, on the signaland its DoA.
+
+Comparing with the our method for design of beamforming matrices, reveals that in the case of SNNs, we need to design beamforming matrices by applying SVD to the sample covariance matrix
+
+As we pointed out before, in contrast withwhich was ancomplex PSD matrix,in the SNN version is a real-valued PSD matrix but of a larger dimension.
+One can indeed show that, for a generic signal, the singular vectors are incompatible between the real and complex version. However, as we prove in Section, this does not happen when the real and imaginary components are the in-phase and quadrature parts of an underlying analytic signal, where in that case there is a one-to-one correspondence between the singular vectors (due to correlation between the real and imaginary parts).
+
+SECTION: 
+Let as denote the-dim analytic signal by. We first prove the following lemma.
+
+Letbe the sample covariance of the analytic signal. Then the sample covarianceof the real-valued-dim signalis given by
+
+Therefore, there is a one-to-one correspondence betweenand.
+
+As we will show in the proof of this lemma, this correspondence betweenandholds only becauseandare I/Q conjugates and does not hold for arbitrary signalsand.
+
+Let us definewiththe matrix
+
+By applying the Parseval’s identity and using the fact that in the Fourier domain we have, it is straightforward to show thatand. Therefore, by definingand, one can see that the sample covariance ofis given by
+
+Moreover, one can check that the sample covariance of the complex analytic signalcan be written as
+
+This completes the proof.
+∎
+
+The next theorem makes the final connection between the real-valued and complex-valued covariance matrices.
+
+Letandbe the ordercomplex and orderreal covariance matrices. Let us denote the singular values and singular vectors ofbyandwherewheredenote the real and complex part of the singular vector,. Thenhas singular valueswhere eachhas a multiplicity of(thus, a complete set ofsingular values) and corresponds to two real-valued singular vectors
+
+The proof simply follows by writing the singular vector definition for. More specifically, denoting a generic singular value byand corresponding singular vector by, we have that
+
+yield the following set of equations
+
+This immediately implies thatis the real-valued singular vector corresponding to the singular value. By changing the order of the equations, one can also verify thatcorresponds to the singular vector for the same singular value. This completes the proof.
+∎
+
+Since singular vectorsandare orthogonal and correspond to the same singular value, one can verify that any vector of the form
+
+for an arbitraryis also a singular vector ofwith the same singular value. This indeed implies that the singular subspace corresponding tois 2-dim. Seen in the complex domain, this result simply implies that ifis a singular vector of the complex covariance matrixso is its rotated versionfor an arbitrary.
+
+One of the important implications of Rem.is that while evaluating the overlap/correlation between two different DoAs, we need tocompute the real-valued singular vectorsandconstruct the complex valued counterpartand, and thenthe complex-valued inner productto obtain the beam pattern as function ofwhen the array points at a specific DoA. If we denote the 2-dim linear subspace generated byandbyand, we can write the beam patternas
+
+which implies that in computing the beam pattern, one should take into account the maximum overlap/interference between two DoAs to target the least selectivity of the array. This makes sense intuitively and is illustrated much easier in the complex counterpart.
+
+SECTION: 
+In the wideband applications addressed in this paper, one has significant flexibility in choosing signal bandwidth, number and frequency subbands, number of samples in each FFT frame, etc. for the implementation of MUSIC algorithm.
+To obtain the minimum power consumption for MUSIC, we adopt the following design setup:
+
+applying FFT to a sequence consisting ofaudio samples yields its frequency content equally sampled atpoints in the frequency rangeHz whereKHz is the sampling rate of the input audio in multi-mic board we are using. Since we are mainly working in the frequency bandKHz for audio (and also with real-valued audio signal), we will need only those FFT frequency bins that lie in the rangeKHz.
+
+each FFT binregisters signal frequencies in the range. So, thus, FFT resolution should be designed to be high enough so that narrowband beamforming can be realized. Otherwise, due to possible shift in frequency, the array response vector, thus, the beam pattern may be shifted in the angular domain, reducing the precision of DoA estimation.
+
+assuming a slice ofof input audio consisting ofsamples on which the FFT is applied, the frequency resolution is. So the worst frequency shift happens when we move fromwhenis the lowest frequency, say,KHz. Here we should make sure that narrow-band approximation holds, i.e.,, say with a precision of% or more to make sure that we can achieve an angular precision of.
+
+settingKHz, this implies that we need at least a resolution ofHz, thus, at least an FFT frame of durationms. If we are more inclined towards higher frequencies to obtain better angular resolution, we can setKHz and target a frequency resolution ofHz, thus, an FFT frame of duration ofms.
+
+with the audio sampling rateKHz in multi-mic board, this requires at leastsignal samples within the FFT frame to fulfill narrowband approximation in MUSIC at high/low frequency.
+
+we set the FFT frame length to be a power offor more efficient implementation and to be even more in favor of the methods in the literature, we use the smallest frame sizeto target the lowest power consumption for MUSIC.
+
+To achive an angular precision of, we useangular bins (where, for multi-mic board withmicrophones, thus, an angular oversampling factor of). As a result, the array response matrix at each frequency (used as beamforming matrix at that frequency) will be of dimension.
+
+In the most naive case, beamforming at each frequency requires multiplying thearray response matrix with the-dim signal obtained from FFT. This is assuming that we only use aFFT frequency bin for localization. If we have more frequency bins, the computational complexity, thus, power consumption grows proportionally to. Again to favor MUSIC algorithm, we assume that we are using onlyFFT frequency bin for localization.
+
+In general, matrix multiplication at the beamforming stage can indeed be more computationally demanding than computing the FFT itself. For special array geometries, however, one may be able to use array structure to avoid direct multiplication. For example, in linear arrays, multiplication with thearray response matrix is equivalent to doing another FFT in the angle domain where the FFT size (considering angular bins) may be chosen to be a power of 2 for efficient implementation. This, however, seems not to be easy in the circular array geometry used in this paper. To favor MUSIC algorithm, we focus on power consumption for FFT implementation. This will definitely yield a lower bound on the power consumption of MUSIC.
+
+SECTION: 
+SECTION: 
+SECTION: 
+SECTION:

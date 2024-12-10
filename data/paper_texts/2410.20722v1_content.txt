@@ -1,0 +1,471 @@
+SECTION: Interpretable Image Classification with Adaptive Prototype-based Vision Transformers
+We present ProtoViT, a method for interpretable image classification combining deep learning and case-based reasoning. This method classifies an image by comparing it to a set of learned prototypes, providing explanations of the form “this looks like that.” In our model, a prototype consists of, which can deform over irregular geometries to create a better comparison between images. Unlike existing models that rely on Convolutional Neural Network (CNN) backbones and spatially rigid prototypes, our model integrates Vision Transformer (ViT) backbones into prototype based models, while offering spatially deformed prototypes that not only accommodate geometric variations of objects but also provide coherent and clear prototypical feature representations with an adaptive number of prototypical parts. Our experiments show that our model can generally achieve higher performance than the existing prototype based models. Our comprehensive analyses ensure that the prototypes are consistent and the interpretations are faithful. Our code is available at.
+
+SECTION: Introduction
+With the expanding applications of machine learning models in critical and high-stakes domains like healthcare, autonomous vehicles, financeand criminal justice, it has become crucial to develop models that are not only effective but also interpretable by humans. This need for clarity and accountability has led to the emergence of prototype networks. These networks combine the capabilities of deep learning with the clarity of case-based reasoning, providing understandable outcomes in fine-grained image classification tasks. Prototype networks operate by dissecting an image into informative image patches and comparing these with prototypical features established during their training phase. The model then aggregates evidence of similarities to these prototypical features to draw a final decision on classification.
+
+Existing prototype-based models, which are(i.e., the learned prototypes are directly interpretable, and all calculations can be visibly checked), are mainly developed with convolutional neural networks (CNNs). As vision transformers (ViTs)gain popularity and inspire extensive applications, it becomes crucial to investigate how prototype-based architectures can be integrated with vision transformer backbones. Though a few attempts to develop a prototype-based vision transformer have been made, these methods do not provide inherently interpretable explanations of the models’ reasoning because they do not project the learned prototypical features to examples that actually exist in the dataset. Thus, thethat these models use in their reasoning have no well defined visual representation, making it impossible to know what exactly each prototype represents.
+
+The coherence and clarity of the learned prototypes are important. Most prototype-based models, such as ProtoPNet, TesNetand ProtoConcept, use spatially rigid prototypical features (such as a rectangle), which cannot account for geometric variations of an object. Such rigid prototypical features can be ambiguous as they may contain multiple features in one bounding box (see top row of Fig.for an example). Deformable ProtoPNetdeforms the prototypes into multiple pieces to adjust for the geometric transformation. However, Deformable ProtoPNet utilizes deformable convolution layers that rely on a continuous latent space to derive fractional offsets for prototypical parts to move around, and thus are not suitable for models like ViTs which output discrete tokens as latent representations. Additionally, the prototypes learned by Deformable ProtoPNet tend to be incoherent (see Fig., middle row).
+
+Addressing the gaps in current prototype-based methods (see Table), we propose the prototype-based vision transformer (ProtoViT), a novel architecture that incorporates aand canlearnandprototypes of, without requiring explicit information about the shape or size of the prototypes.
+We do so using a novel greedy matching algorithm that incorporates an adjacency mask and an adaptive slots mechanism.
+We provide global and local analysis, shown in Fig., that empirically confirm theandof the prototype representations from ProtoViT. We show through empirical evaluation that ProtoViT achieves state-of-the-art accuracy as well as excellent clarity and coherence.
+
+SECTION: Related Work
+explanations for CNNs like activation maximization, image perturbation, and saliency visualizationsfall short in explaining the reasoning process of deep neural networks because their explanations are not necessarily faithful. In addition, numerous efforts have been made to enhance the interpretability of Vision Transformers (ViTs) by analyzing attention weights, and other studies focus on understanding the decision-making process through gradients, attributions, and redundancy reduction techniques. However, because of their posthoc nature, the outcomes of these techniques can be uncertain and unreliable.
+
+In contrast, prototype-based approaches offer a transparent prediction process through. These models compare a small set of learned latent feature representations called prototypes (the “cases”) with the latent representations of a test image to perform classification. These models are inherently interpretable because they leverage comparisons to only well-defined cases in reasoning. The original Prototypical Part Network (ProtoPNet)employs class-specific prototypes, allocating a fixed number of prototypes to each class. Each prototype is trained to be similar to feature patches from images of its own class and dissimilar to patches from images of other classes. Each prototype is also a latent patch from a training image, which ensures that “cases” are well-defined in the reasoning process.
+The similarity score from the test image to each prototype is added as positive evidence for each class in a “scoresheet,” and the class with the highest score is the predicted class. The Transparent Embedding Space Network (TesNet)refines the original ProtoPNet by utilizing a cosine similarity metric to compute similarities between image patches and prototypes in a latent space. It further introduces new loss terms to encourage the orthogonality among prototype vectors of the same class and diversity between the subspaces associated with each class. Deformable ProtoPNetaims to decompose the prototypical parts into smaller sub-patches and use deformable convolutionsto capture pose variations. Other worksmove away from class-specific prototypes, which reduces the number of prototypes needed. This allows prototypes to represent a similar visual concept shared in different classes. Our work is similar to these works that define “cases” as latent patch representations by projecting the trained class-specific prototypes to the closest latent patches.
+
+As an alternative to the closest training patches, ProtoConceptdefines the cases as a group of visualizations in the latent spaces bounded by a prototypical ball. Although they are not projected, the visualizations of ProtoConcept are fixed to the set of training patches falling in each prototypical ball, which establishes well defined cases for each prototype. On the other hand, works such as ProtoPFormerdo not project learned prototypes to the closest training patches because they observed a performance degradation after projection. The degradation is likely caused by the fact that the prototypes are not sufficiently close to any of the latent patches. The design of a “global branch” that aims to learn prototypical features from class tokens also raises concerns about interpretability, as visualizing an arbitrary trained vector (class token) does not offer any semantic connection to the input image. On the other hand, work such as ViTNetalso lack details about how the “cases” are established, yielding concerns about the interpretability of the model. Without a mechanism likeorto enable visualizations, prototypes are just arbitrary learned tensors in the latent space of the network, with no clear interpretations. Visualizing nearby examples alone cannot explain the model’s reasoning, since the closest patch to a prototype can be arbitrarily far away without the above mechanisms.
+
+Our work is also related to INTR, which trains a class specific attention query and inputs it to a decoder to localize the patterns in an image with cross-attention. In contrast, our encoder-only model, through a different reasoning approach, learns patch-wise deformed features that are more explicit, semantically coherent, and provides more detail about the reasoning process than attention heatmaps– it shows how the important pixels are used in reasoning, not just where they are.
+
+SECTION: Methods
+We begin with a general introduction of the architecture followed by an in-depth exploration of its components.
+We then delve into our novel training methodology that encourages prototypical features to capture semantically coherent attributes from the training images. Detailed implementations on specific datasets are shown in the experiment sections.
+
+SECTION: Architecture Overview
+Fig.shows an overview of the ProtoVit architecture. Our model consists of a feature encoder layer, which is a pretrained ViT backbone that computes a latent representation of an image; a greedy matching layer, which compares the latent representation to learned prototypes to compute prototype similarity scores; and an evidence layer, which aggregates prototype similarity scores into a classification using a fully connected layer. We explain each of these in detail below. Letbe the shape of an input image, whereare the height, width and number of channels of the image respectively. The feature encoder layeris a ViT backbone, which first splits the input images intounits ofsized patches (such as the Chestnut Sided Warbler in Fig.), whereis the height and width of the image patch. The feature encoder layerthen flattens and encodes the image patches into a set of latent feature tokensdefined later in Eq., where each latent feature tokenandis the hidden dimension of the model. The network aims to learnprototypes, where eachis composed ofsub-prototype vectors. The greedy matching layerthen finds the most similar latent feature token, measured by cosine similarity, of the input image to each sub-prototypewithout replacement (i.e., ifmatches,cannot match with). We further introduce an adjacency maskto ensure that, for each prototype, its sub-prototypesare geometrically contiguous.
+We then introduce our adaptive slots mechanism, which decides whether each prototypeshould include each sub-prototypebased on its coherence to the other sub-prototypes and its influence on model performance, allowing the model to learn prototypes with a dynamic number of sub-prototypes.
+Finally, the evidence layercomputes the logit values for each class based on the summed cosine similarity scorefor each prototype. The logit values are then normalized by a softmax function to make predictions. Intuitively, the prototypes, which are later projected to the closest latent feature tokens, can be viewed as the most representative features of each class that the model found among the training examples. The model performs classification based on the input’s similarity to these key features.
+
+SECTION: Feature Encoder Layer
+Given an input image, the feature encoder layer first splits the image intounit patcheseach of shape. It then flattens the unit patches and projects them to the embedding space as, which is then prepended with a trainable class token, and passed into the Multi-Head Attention layers along with a learnable position embedding. The ViT backbone then outputs the encoded tokens as, where. In this sense, each of the output patch tokensis the latent representation of the corresponding unit patch. The class token can be viewed as a way to approximate the weighted sum over patch tokens, enabling an image-level representation. It is, thus, difficult to visualize the class token and therefore unsuitable for comparisons to prototypes. Drawing inspiration from the idea of focal similarity, which involves calculating the maximum prototype activations minus the mean activations to achieve more focused representations, we take the difference between patch-wise features and the image-level representation. In doing so, we aim to similarly produce more salient visualizations. Specifically, we define the feature tokenby taking the difference between each patch token and the image-level representation. Thus, latent feature tokens can be written as:
+
+By this design, we not only encode richer semantic information within the latent feature tokens, but also enable the application of prototype layers to various ViT backbones that contains a class token. An ablation study shows that model performance drops substantially when removing the class token from the feature encoding (see Appendix Sec.) .
+
+SECTION: Greedy Matching Layer
+The greedy matching layerintegrates three key components: a greedy matching algorithm, adjacency masking, and an adaptive slots mechanism, as illustrated in Fig..
+
+The greedy matching layer containsprototypes, where eachconsists ofsub-prototypesthat have the same dimension as each latent feature token.
+Each sub-prototypeis trained to be semantically close to at least one latent feature token. To measure the closeness of the sub-prototypeand latent feature token, we use cosine similarity, which has range -1 to 1.
+The overall similarity between prototypeand the latent feature tokensis then computed as the sum across the sub-prototypes of the cosine similarities, which has a range fromto.
+
+We have not yet described how the tokento whichis compared is selected. In contrast to prior work, we do not restrict that sub-prototypes have fixed relative locations. Rather, we perform a greedy matching algorithm to identify and compare each of thesub-prototypesoftonon-overlapping latent feature tokens. To be exact, for a given prototypewithsub-prototypes, we iteratively identify the sub-prototypeand latent feature tokenthat are closest in cosine similarity, “match”withand removeandfrom the next iteration, until allpairs are found. This is illustrated in Fig., and more details can be found in Appendix Sec..
+
+Without any restrictions, this greedy matching algorithm can lead to many sub-prototypes that are geometrically distant from each other. Assuming that the image patches representing the same feature are withinspatial units of one another in horizontal, vertical and diagonal directions, we introduce the Adjacency Maskto temporarily mask out latent feature tokens that are more thanpositions away from a selected sub-prototype/latent feature token pair in all directions.
+Within each iterationof the greedy matching algorithm, the next pair can only be selected from the latent feature tokens,, that are withinpositions of the last selected pair. An example of how the adjacency mask withworks is illustrated in Fig.. Incorporating adjacency masking with the greedy matching algorithm, we thus findnon-overlapping and adjacent sub-prototype-latent patch pairs.
+
+Because not all concepts requiresub-prototypes to represent, we introduce the the adaptive slots mechanism. The adaptive slots mechanism consists of learnable vectorsand a sigmoid function with a hyperparameter temperature. We chose a sufficiently large value forto ensure that the sigmoid function has a steep slope. The vectorsare sent to the sigmoid function to approximate the indicator function as. Eachis an approximation of the indicator for whether the-th sub-prototype will be included in the-th prototype. More details can be found in Appendix Sec..
+
+As described above, we measure the similarity of a selected latent-patch–sub-prototype pair using cosine similarity. We use the summed similarity across sub-prototypes to measure the overall similarity for prototypewithselected non-overlapping latent feature tokens. As pruning out some sub-prototypes for a prototypereduces the range of the summed cosine similarity for, we rescale the summed similarities back to their original range by. We formally define the reweighted summed similarity function obtained from the greedy matching layeras:
+
+SECTION: Training Algorithm
+Training of ProtoViT has four stages: (1) optimizing layers before the last layer by stochastic gradient descent (SGD); (2) prototype slots pruning; (3) projecting the trained prototype vectors to the closest latent patches; (4) optimizing the last layer. Note that a well-trained first stage is crucial to achieve minimal performance degradation after prototype projection. A procedure plot is illustrated in Appendix Fig..
+
+The first training stage aims to learn a latent space that clusters feature patches from the training set that are important for a class near semantically similar prototypes of that class. This involves solving a joint optimization problem over the network parameters via stochastic gradient descent (SGD).
+We initialize every slot indicatoras 1 to allow all sub-prototypes to learn during SGD. We initialize the last layer weight similarly to ProtoPNet. The slot indicators and the final layer are frozen during this training stage. The slot indicator functions are not involved in computing cluster loss or separation loss because each sub-prototype should remain semantically close to certain latent feature tokens, regardless of its inclusion in the final computation. Since we deform the prototypes, we propose modifications to the original cluster and separation loss defined into:
+
+The minimization of this new cluster loss encourages each training image to have some unit latent feature tokenthat is close to at least one sub-prototypesof its own class. Similarly, by minimizing the new separation loss, we encourage every latent feature token of a training image to stay away from the nearest sub-prototype from any incorrect class. This is similar to the traditional cluster and separation loss fromif we define the prototypes to consist of only one sub-prototype. We further introduce a novel loss term, called coherence loss, based on the intuition that, if the sub-prototypes collectively represent the same feature (e.g., the feet of a bird), these sub-prototypes should be similar under cosine similarity. The coherence loss is defined as:
+
+Intuitively, the coherence loss penalizes the sub-prototypes that are the most dissimilar to the other sub-prototypes out of theslots for prototype. The slots indicator function is added to the coherence loss term to prune sub-prototypes that are semantically distant from others in a prototype. Moreover, we use the orthogonality loss, introduced in previous work, to encourage each prototypeto learn distinctive features. The orthogonality loss is defined as:
+
+whereis the number of classes. For each classwithassigned prototypes,is a matrix obtained by flattened the prototypes from class, andis the number of prototypesfor each class.is an identity matrix in the shape of. Overall, this training stage aims to minimize the total loss as:
+
+whereis the cross entropy loss for classification andare hyper-parameters.
+
+In this stage, our goal is to prune the sub-prototypesthat are dissimilar to the other sub-prototypes for each prototype. Intuitively, we aim to remove these sub-prototypes because sub-prototypes that are not similar will lead to prototypes with an inconsistent, unintuitive semantic meaning. We freeze all of the parameters in the model, except the slot indicator vectors. During this stage, we jointly optimize the coherence loss defined in Eq.along with the cross entropy loss. We lower the coherence loss weight to avoid removing all the slots. Since the slot indicators are approximations of step functions using sigmoid functions with a sufficiently high temperature parameter, the indicator values during this phase are fractional but approach binary values close to 0 or 1. The loss in the stage is defined as:
+
+In this stage, we first round the fractional indicator values to the nearest integer (either 1 or 0), and freeze the slot indicators’ values. Then, we project each prototypeto the closest training image patch measured by the summed cosine similarity defined in Eq., as in. Because the latent feature tokens from the ViT encoder correspond to image patches, we do not need to use up-sampling techniques for visualizations, and the prototypes visualized in the bounding boxes represent the exact corresponding latent feature tokens that the prototypes are projected to.
+
+As demonstrated in Theorem 2.1 from ProtoPNet, if the prototype projection results in minimal movement, the model performance is unlikely to change because the decision boundary remains largely unaffected. This is ensured by minimizing cluster and separation loss, as defined in Eq.. In practice, when prototypes are sufficiently well-trained and closely clustered to certain latent patches, the change in model performance after the projection step should be minimal. Additionally, this step ensures that the prototypes are inherently interpretable, as they are projected to the closest latent feature tokens, which have corresponding visualizations and provide a pixel space explanation of the “cases” in the model’s reasoning process.
+
+Similar to other existing works, we performed a convex optimization on the last evidence layerafter performing projection, while freezing all other parameters. This stage aims to introduce sparsity to the last layer weightsby penalizing thenorm of layer weights(initially fixed as -0.5) associated with the classfor the-th class prototype, where. By minimizing this loss term, the model is encouraged to use only positive evidence for final classifications. The loss term is defined as:
+
+SECTION: Experiments
+SECTION: Case Study 1: Bird Species Identification
+To demonstrate the effectiveness of ProtoVit, we applied it to the cropped Caltech-UCSD Birds-200-2011 (CUB 200-2011) dataset. This dataset contains 5,994/5,794 images for training and testing from 200 different bird species. We performed similar offline image augmentation to previous workwhich used random rotation, skew, shear, and left-right flipping. After augmentation, the training set had roughly 1,200 images per class. We performed prototype projections on only the non-augmented training data. Additionally, we performed ablation studies on the class token (See Appendix Sec.), coherence loss (See Appendix Sec.), and adjacency mask (See Appendix Sec.). The quantitative results for the ablation can be found in Appendix Table.. We assigned the algorithm to choose 10 class-specific prototypes for each of the 200 classes. Each of the prototypes is composed of 4 sub-prototypes. Each set of sub-prototypes was encouraged to learn the ‘key’ features for its corresponding class through only the last layer weighting, and the 4 sub-prototypes were designed to collectively represent one key feature for the class. More discussion on different choices ofcan be found in Appendix. For more details about hyperparameter settings and training schedules, please refer to Appendix Sec.and Appendix Sec.respectively. Details and results of user studies regarding the interpretability of ProtoViT can be found in Appendix. Sec..
+
+The performance of our ProtoViT with CaiT and DeiT backbones is compared to that of existing work in Table, including results from prototype-based models using DenseNet161 (CNN) backbones. Integrating ViT (Vision Transformer) backbones with a smaller number of parameters into prototype-based algorithms significantly enhances performance compared to those using CNN (Convolutional Neural Network) backbones, particularly on more challenging datasets. Compared with other prototype-based models that utilize ViT backbones, our model produces the,even the black box ViTs used as backbones, while offering. We provide accuracy using an ImageNet pretrained Densenet-161 to match the ImageNet pretraining used in all transformer models.
+
+Figshows the reasoning process of ProtoViT for a test image of a Barn Swallow. Example visualizations for the classes with the top two highest logit scores are provided in the figure. Given this test image, our model compares its latent feature tokens against the learned sub-prototypesthrough the greedy matching layer. In the decision process, our model uses the patches that have the most similar latent feature tokens to the learned prototypes as evidences. In the example, our model correctly classifies a test image of a Barn Swallow and thinks the Tree Swallow is the second most likely class based on prototypical features.
+In addition to this example reasoning process, we conducted local and global analyses (shown in Fig.) to confirm the semantic consistency of prototypical features across all training and testing images, where local and global analyses are defined as in. The left side of Fig.displays local analysis examples, visualizing the most semantically similar prototypes to each test image. The right side of Fig.shows global analysis examples, presenting the top three nearest training and testing images to the prototypes. Our local analysis confirms that, across distinct classes and prototypes, the comparisons made are reasonable. For example, the first prototype compared to the white breasted kingfisher seems to identify the bird’s blue tail, and is compared to the tail of the bird in the test image. Further, our global analysis shows that each prototype consistently activates on a single, meaningful concept. For example, the prototype in the first row of the global analysis consistently highlights the black face of the common yellowthroat at a variety of scales and poses. Taken together, these analyses show that.
+More examples of the reasoning process and analysis can be found in Appendix Sec.and Sec.respectively.
+
+Vision Transformers (ViTs) use an attention mechanism that blends information from all image patches, which may prevent the latent token at a position from corresponding to the input token at that position.
+To assess whether ViT backbones can be interpreted as reliably as Convolutional Neural Networks (CNNs) in ProtoPNets, we conducted experiments using the gradient-based adversarial attacks described in the Location Misalignment Benchmark. As summarized in Table, our method, which incorporates a ViT backbone, consistently matched or outperformed leading CNN-based prototype models such as ProtoPNet, ProtoPool, and ProtoTreeacross key metrics: Percentage Change in Location (PLC), Percentage Change in Activation (PAC), and Percentage Change in Ranking (PRC), as defined in the benchmark. Lower values for these metrics indicate better performance. This shows that ProtoViT is at least as robust as CNN-based models. Moreover, as observed in the Location Misalignment Benchmark, the potential for information leakage also exists in deep CNNs, where the large receptive fields of deeper layers would encompass the entire image same as attention mechanisms.Qualitative comparisons that further support this point can be found in Appendix. Sec., and more results and discussions on PLC for ablated models can be found in Appendix. Sec.
+
+SECTION: Case Study 2: Cars Identification
+In this case study, we apply our model to car identification. We trained our model on the Stanford Car datasetof 196 car models. More details about the implementation can be found in Appendix. Sec.. The performance with baseline models can be found in Table.. Example visualizations and analysis can be found in Appendix. We find that
+
+SECTION: Limitations
+While we find our method can offer coherent and consistent visual explanations, it is not yet able to provide explicit textual justification to explain its reasoning process. With recent progress in large vision-language hybrid models, a technique offering explicit justification for visual explanations could be explored in future work. It is important to note that in some visual domains such as mammography or other radiology applications, features may not have natural textual descriptions – thus, explicit semantics are not yet possible, and a larger domain-specific vocabulary would first need to be developed. Moreover, as discussed in Sec., our model is not completely immune to location misalignment, meaning the learned prototypical features may be difficult to visualize in local patches. However, this issue is not unique to our approach; CNN-based models face the same challenge. As layers deepen, the receptive field often expands to cover the entire image, leading to the same problem encountered with attention mechanisms in vision transformers.
+
+SECTION: Conclusion
+In this work, we presented an interpretable method for image classification that incorprates ViT backbones with deformed prototypes to explain its predictions (looks like). Unlike previous works in prototype-based classification, our method offers spatially deformed prototypes that not only account for geometric variations of objects but also provide coherent prototypical feature representations with an adaptive number of prototypical parts. While offering inherent interpretability, our model empirically outperform the previous prototype based methods in accuracy.
+
+SECTION: Acknowledgement
+We would like to acknowledge funding from the National Science Foundation under grants HRD-2222336 and OIA-2218063 and the Department of Energy under DE-SC0021358.
+
+SECTION: References
+[appendices]
+
+SECTION: Appendix Table of Contents
+[appendices]0
+
+SECTION: Training Hyperparameters
+This section documents the specific hyper-parameters used to train ProtoViT, shown in Table. We used identical parameter settings across all the backbones. We used the values suggested in prior work for terms that already existed, and used a small grid search to select the other values. No dedicated tuning procedure is necessary for these coefficients.
+
+SECTION: Training schedule
+This section documents the specific training schedule used to train ProtoViT. As discussed in Sec., the training stages are generally divided into four steps as shown in Appendix Fig.. Training schedule settings can be found in Appendix Table. Warm-up optimization is performed by training the feature encoder with a extremely small learning rate while training the prototype vectors for 5 epochs. Then, we increase the learning rate for the feature encoder layer for the following 10 epochs. As mentioned in Appendix Sec., the number of sub-prototypes being pruned during the slots pruning stage depend on the learning rate of the slots parameters and the weight of the coherence loss in the slots pruning stage.
+
+SECTION: More discussion on the greedy matching layer
+Intuitively, a non-deformed prototypeconsists ofnon-overlapping sub-prototypeswith rigid adjacency (i.e., a rectangular shape). These non-deformed prototypes are compared withnon-overlapping latent feature tokensin the same geometric shape (i.e., in a rectangle). To deform such a prototype, we could treat each sub-prototype vectoras an independent “prototype” to train. Then, the prototypeis naturally deformed intoindependent sub-prototypesthat move freely in the latent space. However, this naïve approach could lead to significant overlap among the sub-prototypes. Although this could be mitigated by incorporating a unit-wise orthogonality loss during the training phase to encourage dissimilarity among the sub-prototypes, similar to the orthogonality loss outlined in Eq., such a unit-wise orthogonality loss is in conflict with the objectives of the coherence loss defined in Eq., which encourages the sub-prototypesto remain neighboring in cosine distance to preserve the semantic coherence of each prototype. Thus, an algorithm that could provide unit-wise and non-overlapped matching is ideal, and the greedy matching algorithm with adjacency masking meets the needs. An summary of the algorithm for greedy matching with adjacency masking is shown in Alg..
+
+SECTION: More discussions on adaptive slots mechanism
+As discussed in the Sec., The adaptive slots mechanism consists of learnable vectorsand a sigmoid function with a hyper-parameter temperature. The vectorsare sent to the sigmoid function to approximate the indicator function as. Eachis an approximation of the indicator for whether the-th sub-prototype will be included in the-th prototype. To be specific, we define the approximated indication functionwith temperatureas:
+
+By the range of the sigmoid function, we are able to approximate the indicator function with a high temperature. Fig.shows an example of different choices of. As the temperature value goes up, the sigmoid function more closely approximates the behavior of the indicator function. Thus, we picked a sufficiently largefor approximation, and later rounded the values to the closest integer (i.e 0 or 1) to serve as the actual slot indicator for each sub-prototype.
+
+SECTION: Ablation studies
+This section details ablation studies on the class token, coherence loss, and adjacency mask. We performed the ablation studies with backbone DeiT-Small withandfor the adjacency mask and number of sub-prototypes respectively.
+
+SECTION: Class-token
+In this section, we performed an ablation study on the class token. In the ablated model ProtoViT (patch tokens only), the latent feature tokensare defined as the latent patch tokens. The class tokenand its corresponding component in position embeddingare excluded in training. As shown in Appendix Table., by incorporating the class token into the latent feature tokens, the performance of the model generally increased by 1with and without the adjacency mask and coherence loss. Though we observe a drop in performance by excluding the class token and the corresponding component in the position embedding, the ablated model still achieves comparable performance to the other prototype-based ViTs and the black-box backbone.
+
+Subtracting out the class token may have interesting implications for the class specificity of our prototypes. We expect subtracting the class token out operates as a kind of focal similarity, where each token (after taking the difference) represents the unique information available in that position which is relevant to the target class. Prototypes will, then, learn to represent unique positional information that is relevant to the predicted class. As such, we might expect prototypes to be more tightly tied to their class than they would be if they were learning with simple arbitrary tokens. We thus expect an improvement in class-specific saliency of the prototypes.
+
+To test if class token improved the saliency of prototype to its assigned class, we performed the analysis on correct and incorrect class similarity scores.
+If prototypes are more specific to their assigned class when including the class token, we would expectthe gap between the mean activation for prototypes of the correct class (summed cosine similarity scores as defined in Eq.) and the largest mean activation for prototypes of an incorrect class to be larger. To test this, we randomly pick a model with the class token and one without the class token and evaluate each model on the test set of CUB200-2011. For each test image, we average over the correct class prototypes activations, and denote this average asfor the model trained with patch-tokens only, andfor the model trained with class tokens. Similarly, we denote the largest mean activations from the incorrect class prototypes as, andfor the models with and without class token respectively. We useandto denote the difference between the two measures for the two models. As shown in Appendix Fig., there is a clear shift in distribution between the two models for all three measures. When we include the class token, prototypes tend to activate more highly on the correct class, and the gap between the mean correct class activation and the highest mean incorrect class activation tends to be larger.
+
+We further perform one sided t-tests to test whetherandare significantly greater than 0. As shown in Appendix Table., including the class token statistically significantly increases each measure relative to a model trained with patch token only.
+That is, including the class token improves the saliency of encoded features.
+
+SECTION: Adjacency mask
+As introduced in Sec., the adjacency mask is designed to ensure that sub-prototypes are geometrically adjacent. Without the adjacency mask, sub-prototypes are able to match with latent feature tokens from anywhere in the image.As indicated in Appendix Table, removing the adjacency mask typically results in a slight improvement in performance. This outcome is expected since prototypes are learned for the maximum possible performance with fewer constraints.
+However, removing the adjacency mask tends to damage the semantics of the model’s prototypes.
+For instance, as demonstrated in Appendix Fig., without the adjacency mask, the model might correctly identify the beak of a least tern in one image patch but erroneously relate other prototypical sub-parts to the bird’s feet in another patch. Although the slim feet of the least tern indeed looks similar to the slim beak on the scale of the sub-prototype, such comparisons are not meaningful. In contrast, implementing the adjacency mask in ProtoViT effectively prevents such issues by enforcing geometric adjacency among the sub-prototypes. Furthermore, without the adjacency mask, the model may learn sub-prototypes that, though visually similar to other sub-prototypes, are fundamentally different, introducing noisy representations and disrupting the coherence of prototypical features. For instance, as demonstrated in Appendix Fig., both models misclassified a test image of a black tern as a pigeon guillemot which also has red feet. Without the adjacency mask, the prototypical feature capturing the red feet of the pigeon guillemot also mistakenly includes reflections of the red feet in the water. Although the water reflection looks similar to the actual red feet captured by the other sub-prototypes, this misrepresentation undermines the coherence of the feature representation. On the other hand, ProtoViT compares the feet of the black tern to the red feet of the pigeon guillemot. Thus, the use of an adjacency mask is essential for preserving the coherence of prototypical feature representations.
+
+SECTION: Coherence loss
+As explained in Eq., coherence loss is used to ensure that the sub-prototypes within each prototypical feature are semantically similar to each other. By design, this loss term helps sub-prototypes to collectively represent a coherent feature. By removing the coherence loss, the prototypical features would still contain diverse parts of features in one prototypical feature, a similar problem that the non-deformed prototypes have, even though the sub-prototypes remain geometrically adjacent. For example, as shown in Appendix Fig., a model trained without coherence loss tends to mix the wing and belly of the Myrtle Warbler into one prototypical feature, while it mixes the head and wing for the prototypical features for Painted Bunting. In comparison, training ProtoViT with coherence loss ensures that all the sub-prototypes collectively represent one prototypical feature, in this case containing the striped belly of the Myrtle Warbler, or the wing and the red lower part of the Painted Bunting.
+
+SECTION: Ablated Misalignment
+We computed the Prototype Location Change (PLC) for each ablated model using greedy matching algorithms. Following the PLC metric defined in Sacha et al. (2024), we measured the shift in the 90th percentile of prototype activations across test images. As shown in Table, the combination of coherence loss and adjacent masks effectively reduces changes in prototype locations after adversarial attacks. This indicates that these mechanisms promote greater stability in the learned prototypes. Interestingly, incorporating the class token into the latent representations increases PLC. This is expected, as the class token contains more global information, which, while improving overall model performance, leads to larger shifts in prototype locations.
+
+SECTION: Choices of K sub-prototypes
+By the design of the vanilla ProtoPNetand the other non-deformed CNN based prototype models, the input images are encoded into latent featuresby CNN backbones, whereanddenotes the latent dimension varying by different choices of backbones.
+These models learn prototypical featuresof shapefrom the latent features. On the other hand, ViT backbones such as CaiT and DeiT encode the input images intolatent feature tokens. To be consistent with existing models, we design the model to learn prototypes of shapefrom thelatent features, so that each prototype corresponds to the same proportion of the input image. Using the greedy matching algorithm, we can move away from learning fixedrectangular prototypes and instead haveconsisting of four sub-prototypes. It is worth noting that prototype-based models with CNN backbones heavily rely on up-sampling for prototype visualizations. This process can introduce errors, leading to the use of the top 5most similar regions for visualization, which results in irregularly sized bounding boxes, as shown in the top row of Fig.. In contrast, with ViT backbones, we are able to visualize the exact image patches that the prototype projected to, and thus produce more precise and accurate prototype visualizations.
+
+Although we selected= 4 to maintain consistency with other existing prototype-based models, alternative values of K are also viable. The model performance forandsettings can be found in Appendix Table.. We observed that the model performs best withwhenis used, and withwhen. As shown in the table, the models with different choices ofperform similarly to the setting with. Appendix Fig.and Fig.show examples of reasoning process for ProtoViT() and ProtoViT() respectively. As shown in the figures, though having more sub-prototypes is helpful to capture larger featuires such as the tail of the Lincoln Sparrow and Forster Tern in Fig.and Fig.respectively, because of variations in scale, many features such as the beak and the head indo not always need that many sub-prototypes. Local and global analysis for ProtoViT() and ProtoViT() are shown in Fig.and Fig.respectively. As shown in the figures, having more sub-prototypes is advantageous in representing features that are large in scale such as the white belly of Sayornis shown in the second row of global analysis in Fig., and brown pattern of Eastern Towhee in the bottom row of Fig.. Both the local and global analysis again show that
+
+It is worth noting that prior prototype-based models could not easily support prototypes with 5 or 6 sub-prototypes. Since methods like Deformable ProtoPNet treat prototypes as convolutional features, the only way to handle prototypes with 5 sub-prototypes would be to form each prototype as a 1 by 5 dimensional convolutional filter. This would allow the model to have 5 sub-prototypes, but would enforce a very strange shape on prototypes (a horizontal line).
+
+SECTION: Qualitative examples of robustness against perturbations
+We provide several instances of the perturbation examples, in which we mask out the region selected by each prototype, as shown in Fig.. In each row, we mask out all matched locations for a prototype (middle-left column) using a white mask on the black wings and a black mask on the red parts, and check where that prototype activates after masking (shown in the leftmost column). We then confirm that the activated region for other prototypes remains reasonable when the mask from another prototype is applied (right two columns). We observed that after removing the preferred region by each prototype, it activates on another reasonable alternative (e.g., a red belly prototype might activate on a red back as a second choice).
+
+SECTION: More examples of reasoning process
+This section provides more examples for the model reasoning process. Fig., Fig., and Fig.demonstrate more examples of the reasoning process of ProtoViT with DeiT-Small backbone. Fig., Fig.andare the examples of reasoning process of ProtoViT with CaiT-backones. Fig., Fig.and Fig.are the examples of reasoning process of ProtoViT with Deit-Tiny backbone. In each case, we again see intuitive reasoning from ProtoViT.
+
+SECTION: More examples of reasoning process for misclassification
+In this section, we provide the reasoning process of how our model misclassified a test image of a summer tanager and a slaty backed gull in Fig.. We found that the misclassification of the given summer tanager example may be because of data mislabeling in the original dataset. A summer tanager does not have a black colored wing. That test image should indeed belong to the scarlet tanager class as the model predicted. Similar mislabeling cases also happen for Red Headed Woodpecker with image ID Red_Headed_Woordpecker_0018_183455 and Red_Headed_Woordpecker_0006_183383, as we found out when randomly selecting examples to present for the paper. On the other hands, misclassifications can be contributed by the similarity between different classes. As shown in the bottom of Fig., the West Gull looks very similar to Slaty Gull. And the model’s reasoning process indeed shows that the model believes that these two classes are the top two most likely classes for prediction.
+
+These examples showcase the ability of our method to help us understand the reasoning process of the model, not just when it is right, but also when it is wrong.
+
+SECTION: More examples of analysis
+This section provides more examples for the local and global analysis. Fig., Fig., and Fig.are the examples for analysis for ProtoViT with Deit-Small, CaiT-xxs24 and DeiT-tiney backbones respectively. The visualizations demonstrate that
+
+SECTION: Details on User Studies
+This section provides details on the user study we conducted. Through our user study, we show that ProtoVit improves both the clarity of reasoning process and coherence of prototypical features relative to ProtoPNetand Deformable ProtoPNet. We randomly selected 10 bird images from test set, and show the comparison with the three most similar prototypes from its top-1 predicted class of the three models. We then presented the test to 10 participants, all of whom attend college in the U.S. and have some background in Machine Learning. We instructed participants to rate how well they understood the models’ reasoning process through the presented examples, and asked them to rate their confidence in their evaluation. Intuitively, the user should easily be able to distinguish which feature the model is comparing to, if the model has superb clarity. At the end of the experiment, we asked participants to rank the three models based on overall clarity of reasoning as well as coherence of prototypical features learned. Coherence of feature refers to when the visualization represents one, and only one feature. Some sample questions are shown in Appendix. Fig.. Although this task does not pose any risk to the participants, they were nevertheless informed of their rights, and were asked for consent before data collection. The participants took on average 10 to 20 minutes to complete their assigned tasks, and were compensated atper hour.
+
+To quantify the user study result on model clarity, we assign a score from 4 to 1 as the participant rated their understanding of the model’s reasoning from best to bad. Similarly, we assign a score from 4 to 1 for the confidence rating from completely confident to not confident. We then multiply the confidence score and the understanding score to have the total score on the clarity of the model reasoning. The maximum total score for a question is 16, which indicates that the participant has a very clear and confident understanding of the model’s reasoning. The minimum total score for a question is 1, which indicates that the participant does not understand the model’s reasoning at all. As shown in Table., on average, the participants believe that they understand the reasoning process of ProtoViT the best with the highest confidence. The result of the one-sided t-test on understanding score and total score further illustrate that there is a statistically significant improvement in model clarity of ProtoViT to the vanilla ProtoPNet. Fig.shows the result of participants ranking on the three models based on coherence of prototypical features and the clarity of the reasoning process. Again, ProtoViT is mostly ranked as the best in providing coherent prototypical features and clear reasoning process. It is worth noting that the majority of the participants commented that the prototypical features by ProtoPNet are usually too broad to understand what specific part the model is looking at. Moreover, the prototypical features by Deformable ProtoPNet are less accurate in pinpointing the specific parts. On the other hand, the prototypical features by Protovit can provide more accurate and specific visualizations. It is easy to tell if the prototypical features are representing the head of birds or the feet of the birds.
+
+SECTION: Details on Car dataset
+This section provides details on the implementation of ProtoViT on a second dataset. The Standford Car datasetcontains 8144/8041 images for training and testing from 196 different car models. We performed a similar offline data-augmentation as described in Sec.. After augmentation, the training set has roughly 1,600 images per class. We assigned the algorithm to choose 10 class-specific prototypes for each of the 196 classes. Each of the prototypes is composed of 4 sub-prototypes. We kept the training schedule and hyper-parameters same as on the bird dataset. The specific training schedule and hyper-parameters settings are documented in Appendix Tablesandrespectively. Fig.and Fig.show examples of the reasoning process for the DeiT-Small backbone. Fig.and Fig.show examples of the reasoning process for the CaiT-xxs-24 backbone. Fig.and Fig.show examples of the reasoning process for the DeiT-Tiny backbone. Examples of global analysis and local analysis for ProtoViT with different backbones are shown in Fig., Fig., and Fig.respectively.
+
+SECTION: Broader Impact
+Interpretability is an essential ingredient to trustworthy AI systems. Our work successfully integrates one of the most popular and powerful model families into prototype-based networks, which are one of the leading techniques for interpretable neural networks in computer vision. Our technique can be used for important computer vision applications to discover new knowledge and create better human-AI interfaces for difficult, high-impact applications.
+
+SECTION: Computational Cost
+By introducing greedy matching and coherence loss, we do not observe a significant increase in the computational cost. On the other hand, the computation of the adjacency mask may rely on the power of CPUs, as it involves more of matrix broadcasting and iterations. On a 13th Gen Intel R Core(TM) i9-13900KF CPU, it takes 0.2 seconds to compute each iteration with batch size 128, andwith 2000 prototypes. Overall, it takes roughly 16 hours to train the model with DeiT-Small backbone on the bird dataset, which is a similar amount of training time as ProtoPooland TesNetusing a similar amount of backbone parameters.
+
+SECTION: Training software and platform
+We implemented our ProtoViT using Pytorch. The experiments were run on 1 NVIDIA Quadro RTX 6000 (24 GB), 1 NVIDIA Ge Force RTX 4090 (24 GB) or 1 NVIDIA RTX A6000 (48 GB).
+
+SECTION: NeurIPS Paper Checklist
+Question: Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope?
+
+Answer:
+
+Justification: The experiments and results to support the claims in the introduction and abstract are all in the main paper and the appendix.
+
+Guidelines:
+
+The answer NA means that the abstract and introduction do not include the claims made in the paper.
+
+The abstract and/or introduction should clearly state the claims made, including the contributions made in the paper and important assumptions and limitations. A No or NA answer to this question will not be perceived well by the reviewers.
+
+The claims made should match theoretical and experimental results, and reflect how much the results can be expected to generalize to other settings.
+
+It is fine to include aspirational goals as motivation as long as it is clear that these goals are not attained by the paper.
+
+Question: Does the paper discuss the limitations of the work performed by the authors?
+
+Answer:
+
+Justification: The limitations are discussed in the main paper Sec.Limitations.
+
+Guidelines:
+
+The answer NA means that the paper has no limitation while the answer No means that the paper has limitations, but those are not discussed in the paper.
+
+The authors are encouraged to create a separate "Limitations" section in their paper.
+
+The paper should point out any strong assumptions and how robust the results are to violations of these assumptions (e.g., independence assumptions, noiseless settings, model well-specification, asymptotic approximations only holding locally). The authors should reflect on how these assumptions might be violated in practice and what the implications would be.
+
+The authors should reflect on the scope of the claims made, e.g., if the approach was only tested on a few datasets or with a few runs. In general, empirical results often depend on implicit assumptions, which should be articulated.
+
+The authors should reflect on the factors that influence the performance of the approach. For example, a facial recognition algorithm may perform poorly when image resolution is low or images are taken in low lighting. Or a speech-to-text system might not be used reliably to provide closed captions for online lectures because it fails to handle technical jargon.
+
+The authors should discuss the computational efficiency of the proposed algorithms and how they scale with dataset size.
+
+If applicable, the authors should discuss possible limitations of their approach to address problems of privacy and fairness.
+
+While the authors might fear that complete honesty about limitations might be used by reviewers as grounds for rejection, a worse outcome might be that reviewers discover limitations that aren’t acknowledged in the paper. The authors should use their best judgment and recognize that individual actions in favor of transparency play an important role in developing norms that preserve the integrity of the community. Reviewers will be specifically instructed to not penalize honesty concerning limitations.
+
+Question: For each theoretical result, does the paper provide the full set of assumptions and a complete (and correct) proof?
+
+Answer:
+
+Justification: There is no theoretical result and proof involved.
+
+Guidelines:
+
+The answer NA means that the paper does not include theoretical results.
+
+All the theorems, formulas, and proofs in the paper should be numbered and cross-referenced.
+
+All assumptions should be clearly stated or referenced in the statement of any theorems.
+
+The proofs can either appear in the main paper or the supplemental material, but if they appear in the supplemental material, the authors are encouraged to provide a short proof sketch to provide intuition.
+
+Inversely, any informal proof provided in the core of the paper should be complemented by formal proofs provided in appendix or supplemental material.
+
+Theorems and Lemmas that the proof relies upon should be properly referenced.
+
+Question: Does the paper fully disclose all the information needed to reproduce the main experimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)?
+
+Answer:
+
+Justification: The training schedule and hyper-parameters are listed in Appendix Sec.and Sec.. The data information and augmentation are described in the Main and Appendix.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+If the paper includes experiments, a No answer to this question will not be perceived well by the reviewers: Making the paper reproducible is important, regardless of whether the code and data are provided or not.
+
+If the contribution is a dataset and/or model, the authors should describe the steps taken to make their results reproducible or verifiable.
+
+Depending on the contribution, reproducibility can be accomplished in various ways. For example, if the contribution is a novel architecture, describing the architecture fully might suffice, or if the contribution is a specific model and empirical evaluation, it may be necessary to either make it possible for others to replicate the model with the same dataset, or provide access to the model. In general. releasing code and data is often one good way to accomplish this, but reproducibility can also be provided via detailed instructions for how to replicate the results, access to a hosted model (e.g., in the case of a large language model), releasing of a model checkpoint, or other means that are appropriate to the research performed.
+
+While NeurIPS does not require releasing code, the conference does require all submissions to provide some reasonable avenue for reproducibility, which may depend on the nature of the contribution. For example
+
+If the contribution is primarily a new algorithm, the paper should make it clear how to reproduce that algorithm.
+
+If the contribution is primarily a new model architecture, the paper should describe the architecture clearly and fully.
+
+If the contribution is a new model (e.g., a large language model), then there should either be a way to access this model for reproducing the results or a way to reproduce the model (e.g., with an open-source dataset or instructions for how to construct the dataset).
+
+We recognize that reproducibility may be tricky in some cases, in which case authors are welcome to describe the particular way they provide for reproducibility. In the case of closed-source models, it may be that access to the model is limited in some way (e.g., to registered users), but it should be possible for other researchers to have some path to reproducing or verifying the results.
+
+Question: Does the paper provide open access to the data and code, with sufficient instructions to faithfully reproduce the main experimental results, as described in supplemental material?
+
+Answer:
+
+Justification: The data are public, and code is provided in the github link.
+
+Guidelines:
+
+The answer NA means that paper does not include experiments requiring code.
+
+Please see the NeurIPS code and data submission guidelines () for more details.
+
+While we encourage the release of code and data, we understand that this might not be possible, so “No” is an acceptable answer. Papers cannot be rejected simply for not including code, unless this is central to the contribution (e.g., for a new open-source benchmark).
+
+The instructions should contain the exact command and environment needed to run to reproduce the results. See the NeurIPS code and data submission guidelines () for more details.
+
+The authors should provide instructions on data access and preparation, including how to access the raw data, preprocessed data, intermediate data, and generated data, etc.
+
+The authors should provide scripts to reproduce all experimental results for the new proposed method and baselines. If only a subset of experiments are reproducible, they should state which ones are omitted from the script and why.
+
+At submission time, to preserve anonymity, the authors should release anonymized versions (if applicable).
+
+Providing as much information as possible in supplemental material (appended to the paper) is recommended, but including URLs to data and code is permitted.
+
+Question: Does the paper specify all the training and test details (e.g., data splits, hyperparameters, how they were chosen, type of optimizer, etc.) necessary to understand the results?
+
+Answer:
+
+Justification: We have listed all the settings in the appenix for paramtere settings and training schedules. The data splits are decribed under each case study section in the main paper.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The experimental setting should be presented in the core of the paper to a level of detail that is necessary to appreciate the results and make sense of them.
+
+The full details can be provided either with the code, in appendix, or as supplemental material.
+
+Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments?
+
+Answer:
+
+Justification: All of our results are listed with error bars.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The authors should answer "Yes" if the results are accompanied by error bars, confidence intervals, or statistical significance tests, at least for the experiments that support the main claims of the paper.
+
+The factors of variability that the error bars are capturing should be clearly stated (for example, train/test split, initialization, random drawing of some parameter, or overall run with given experimental conditions).
+
+The method for calculating the error bars should be explained (closed form formula, call to a library function, bootstrap, etc.)
+
+The assumptions made should be given (e.g., Normally distributed errors).
+
+It should be clear whether the error bar is the standard deviation or the standard error of the mean.
+
+It is OK to report 1-sigma error bars, but one should state it. The authors should preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis of Normality of errors is not verified.
+
+For asymmetric distributions, the authors should be careful not to show in tables or figures symmetric error bars that would yield results that are out of range (e.g. negative error rates).
+
+If error bars are reported in tables or plots, The authors should explain in the text how they were calculated and reference the corresponding figures or tables in the text.
+
+Question: For each experiment, does the paper provide sufficient information on the computer resources (type of compute workers, memory, time of execution) needed to reproduce the experiments?
+
+Answer:
+
+Justification: The compute resources of experiments are documented in the appendix.
+
+Guidelines:
+
+The answer NA means that the paper does not include experiments.
+
+The paper should indicate the type of compute workers CPU or GPU, internal cluster, or cloud provider, including relevant memory and storage.
+
+The paper should provide the amount of compute required for each of the individual experimental runs as well as estimate the total compute.
+
+The paper should disclose whether the full research project required more compute than the experiments reported in the paper (e.g., preliminary or failed experiments that didn’t make it into the paper).
+
+Question: Does the research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics?
+
+Answer:
+
+Justification: The research conducted in the paper conform, in every respect, with the NeurIPS Code of Ethics.
+
+Guidelines:
+
+The answer NA means that the authors have not reviewed the NeurIPS Code of Ethics.
+
+If the authors answer No, they should explain the special circumstances that require a deviation from the Code of Ethics.
+
+The authors should make sure to preserve anonymity (e.g., if there is a special consideration due to laws or regulations in their jurisdiction).
+
+Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed?
+
+Answer:
+
+Justification: The broader impact is discussed in the appendix and shortly discussed in conclusion section in the main paper.
+
+Guidelines:
+
+The answer NA means that there is no societal impact of the work performed.
+
+If the authors answer NA or No, they should explain why their work has no societal impact or why the paper does not address societal impact.
+
+Examples of negative societal impacts include potential malicious or unintended uses (e.g., disinformation, generating fake profiles, surveillance), fairness considerations (e.g., deployment of technologies that could make decisions that unfairly impact specific groups), privacy considerations, and security considerations.
+
+The conference expects that many papers will be foundational research and not tied to particular applications, let alone deployments. However, if there is a direct path to any negative applications, the authors should point it out. For example, it is legitimate to point out that an improvement in the quality of generative models could be used to generate deepfakes for disinformation. On the other hand, it is not needed to point out that a generic algorithm for optimizing neural networks could enable people to train models that generate Deepfakes faster.
+
+The authors should consider possible harms that could arise when the technology is being used as intended and functioning correctly, harms that could arise when the technology is being used as intended but gives incorrect results, and harms following from (intentional or unintentional) misuse of the technology.
+
+If there are negative societal impacts, the authors could also discuss possible mitigation strategies (e.g., gated release of models, providing defenses in addition to attacks, mechanisms for monitoring misuse, mechanisms to monitor how a system learns from feedback over time, improving the efficiency and accessibility of ML).
+
+Question: Does the paper describe safeguards that have been put in place for responsible release of data or models that have a high risk for misuse (e.g., pretrained language models, image generators, or scraped datasets)?
+
+Answer:
+
+Justification: The paper poses no such risks.
+
+Guidelines:
+
+The answer NA means that the paper poses no such risks.
+
+Released models that have a high risk for misuse or dual-use should be released with necessary safeguards to allow for controlled use of the model, for example by requiring that users adhere to usage guidelines or restrictions to access the model or implementing safety filters.
+
+Datasets that have been scraped from the Internet could pose safety risks. The authors should describe how they avoided releasing unsafe images.
+
+We recognize that providing effective safeguards is challenging, and many papers do not require this, but we encourage authors to take this into account and make a best faith effort.
+
+Question: Are the creators or original owners of assets (e.g., code, data, models), used in the paper, properly credited and are the license and terms of use explicitly mentioned and properly respected?
+
+Answer:
+
+Justification: They are properly cited and credited.
+
+Guidelines:
+
+The answer NA means that the paper does not use existing assets.
+
+The authors should cite the original paper that produced the code package or dataset.
+
+The authors should state which version of the asset is used and, if possible, include a URL.
+
+The name of the license (e.g., CC-BY 4.0) should be included for each asset.
+
+For scraped data from a particular source (e.g., website), the copyright and terms of service of that source should be provided.
+
+If assets are released, the license, copyright information, and terms of use in the package should be provided. For popular datasets,has curated licenses for some datasets. Their licensing guide can help determine the license of a dataset.
+
+For existing datasets that are re-packaged, both the original license and the license of the derived asset (if it has changed) should be provided.
+
+If this information is not available online, the authors are encouraged to reach out to the asset’s creators.
+
+Question: Are new assets introduced in the paper well documented and is the documentation provided alongside the assets?
+
+Answer:
+
+Justification: the new model introduced in the paper is well documented.
+
+Guidelines:
+
+The answer NA means that the paper does not release new assets.
+
+Researchers should communicate the details of the dataset/code/model as part of their submissions via structured templates. This includes details about training, license, limitations, etc.
+
+The paper should discuss whether and how consent was obtained from people whose asset is used.
+
+At submission time, remember to anonymize your assets (if applicable). You can either create an anonymized URL or include an anonymized zip file.
+
+Question: For crowdsourcing experiments and research with human subjects, does the paper include the full text of instructions given to participants and screenshots, if applicable, as well as details about compensation (if any)?
+
+Answer:
+
+Justification: The paper includes an user study and example questions are included.
+
+Guidelines:
+
+The answer NA means that the paper does not involve crowdsourcing nor research with human subjects.
+
+Including this information in the supplemental material is fine, but if the main contribution of the paper involves human subjects, then as much detail as possible should be included in the main paper.
+
+According to the NeurIPS Code of Ethics, workers involved in data collection, curation, or other labor should be paid at least the minimum wage in the country of the data collector.
+
+Question: Does the paper describe potential risks incurred by study participants, whether such risks were disclosed to the subjects, and whether Institutional Review Board (IRB) approvals (or an equivalent approval/review based on the requirements of your country or institution) were obtained?
+
+Answer:
+
+Justification: The details of the user studies, including the consent process are described in Appendix Sec.As the risks to the participants are minimal, we were exempted by our institution’s IRB.
+
+Guidelines:
+
+The answer NA means that the paper does not involve crowdsourcing nor research with human subjects.
+
+Depending on the country in which research is conducted, IRB approval (or equivalent) may be required for any human subjects research. If you obtained IRB approval, you should clearly state this in the paper.
+
+We recognize that the procedures for this may vary significantly between institutions and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the guidelines for their institution.
+
+For initial submissions, do not include any information that would break anonymity (if applicable), such as the institution conducting the review.

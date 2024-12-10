@@ -1,0 +1,235 @@
+SECTION: big.LITTLE Vision Transformer for Efficient Visual Recognition
+In this paper, we introduce the big.LITTLE Vision Transformer, an innovative architecture aimed at achieving efficient visual recognition. This dual-transformer system is composed of two distinct blocks: theperformance block, characterized by its high capacity and substantial computational demands, and theefficiency block, designed for speed with lower capacity. The key innovation of our approach lies in its dynamic inference mechanism. When processing an image, our system determines the importance of each token and allocates them accordingly: essential tokens are processed by the high-performance big model, while less critical tokens are handled by the more efficient little model. This selective processing significantly reduces computational load without sacrificing the overall performance of the model, as it ensures that detailed analysis is reserved for the most important information. To validate the effectiveness of our big.LITTLE Vision Transformer, we conducted comprehensive experiments on image classification and segment anything task. Our results demonstrate that the big.LITTLE architecture not only maintains high accuracy but also achieves substantial computational savings. Specifically, our approach enables the efficient handling of large-scale visual recognition tasks by dynamically balancing the trade-offs between performance and efficiency. The success of our method underscores the potential of hybrid models in optimizing both computation and performance in visual recognition tasks, paving the way for more practical and scalable deployment of advanced neural networks in real-world applications.
+
+SECTION: Introduction
+Vision Transformer (ViT)has increasingly
+influenced the field of computer vision since its introduction. It demonstrates
+exceptional performance in fundamental tasks such as image
+classification, image segmentation, and object
+detection. Furthermore, the flexibility of the
+transformer architecture enables ViT to act as a crucial conduit between visual
+and linguistic information in multimodal
+models, significantly contributing to
+their rapid development. Additionally, due to the scalability of ViT, as the model
+sizes increase, ViT is able to effectively learn richer representations of
+images. Therefore, making large ViT is highly desirable for downstream tasks
+and applications.
+
+Despite the impressive performance of ViT, its slow inference speed remains a
+notable drawback. For instance, models utilizing ViT-Huge with more than 600M
+parameters as a core component, such as the Segment Anything Model
+(SAM), may operate at less than 2 FPS on a high-end
+NVIDIA A100 GPU, not to mention ViTs with billion-level
+parameters. This limitation significantly hinders the practical
+deployment of ViT-based models in real-world applications and there is an urgent need for improving the inference speed of ViT models.
+
+To tackle this issue, a variety of strategies have been developed to enhance
+the inference speed of ViT in recent years. Some works address the problem from
+the model perspective, either by distilling the knowledge into a
+lighter-weight model, or lowering the precision of
+model parameters. Instead, inspired by the discovery
+that only representative tokens are crucial for the final prediction, token
+pruning methods emerge and speed up the inference by reducing the number of
+tokens layer by layer. Although they have shown
+promising results with the enhanced model speed on the image classification
+task, which only requires predicting one class label for each image, directly
+dropping the unrepresentative tokens can disrupt the spatial structure of image
+tokens and lose the context information. Such incomplete information flow may
+lead to sub-optimal model performance when performing downstream perception
+tasks, such as image segmentation.
+
+Therefore, to achieve higher inference speed while preserving the context
+information images, we recognize that all tokens are needed, but not all tokens
+are equally important. Intuitively, we humans have a large field of view, but
+will only focus on a small area each time when we see the world. For the
+focused area, we pay more attention to detailed processing while keeping an eye
+on the surroundings.
+
+Motivated by this observation, we introduce a novel system called big.LITTLE
+Vision Transformer (bLViT), which comprisesperformance blocks andefficiency blocks within the ViT architecture. In our design, only
+a few important tokens are updated with the performance blocks each time, which
+ensures theof the model during the inference with a
+reduced computation. For the less important areas, we keep the context
+information but pay less computation cost to enable high inferencewith the efficiency blocks. Although most image tokens are
+pruned from the performance blocks based on their importance, the efficiency
+blocks ensure that all tokens continue to update layer by layer, preserving the
+structured attributes of image tokens. Whether a token is processed by the big
+model is determined by its importance score from prediction layers.
+Throughout training, our differential design on token selection enables the
+prediction layers to appropriately route critical tokens to the performance blocks,
+ensuring intensive computation for those deemed most significant.
+
+We demonstrate the efficacy of our bLViT through applications in image
+classification and image segmentation tasks, employing DeiTand SAMas the base
+models within our big.LITTLE system. The experimental results exhibit a
+competitive trade-off between computational speed and accuracy, highlighting
+our model’s capability to effectively balance performance and efficiency.
+
+To summarize, our contributions are as follows:
+
+We propose a big.LITTLE Vision Transformer (bLViT) model which effectively
+prunes tokens to reduce computational overhead while preserving the context
+information and achieve a better speed-accuracy tradeoff.
+
+We conduct experiments on image classification and image segmentation tasks and
+demonstrate the efficacy and efficiency of our bLViT.
+
+We perform extensive ablation studies to verify the design choice of our models
+and improve its performance. We hope these designs could benefit the future
+development of such heterogeneous model architecture.
+
+SECTION: Related Work
+Vision Transformerhas achieved a great success and
+shows state-of-the-art performance on many tasks including image
+classification, object
+detection, semantic
+segmentation, etc. The long-range dependency
+modulation enables its capability to encode rich contextual information, which
+can benefit downstream tasks by providing better image representations.
+Therefore, a stream of work studies how to adapt plain ViT to different tasks
+to optimal the network architecture and boost the performance, using
+the pretrained model on large-scale datasets with different pretraining
+strategies. Despite its wide application and high performance, the
+computational burden poses challenges to the inference speed and practical
+deployment in resource-constrained environments. A better speed-accuracy tradeoff for the model is desirable.
+
+To reduce the computation of existing models, several works have attempted to
+prune the input tokensor merge
+the input tokens. This is achieved by
+identifying and retaining only the most informative tokens, effectively
+reducing the number of tokens to process. AdaViTfurther
+tries to partially or entirely drop the layers for all tokens. This type of
+method can achieve good speedup with only marginal performance decreases on
+ImageNet classification. However, few of them have proven the model can work
+with downstream tasks besides image classification as many tokens are dropped
+in a very early stage.
+
+Leveraging a smaller model is another way to speed up model inference. The speculative decoding
+frameworkintroduces a mechanism using a separate large
+language model along with a smaller one to improve inference speed in natural
+language processing.
+Big-little Netproposes to learn multi-scale feature
+representations with Big-Branches process the low-resolution input and
+Little-Branches process the high-resolution input to balance the computation on
+image and speech recognition.
+Mixture-of-Expertcan also be seen as a way to speed up the inference by
+selecting a part of the model (“experts”) at each time.
+While our method shares a similar spirit with these works, our model focuses
+on developing a single model instead of two separate models and still works on
+the same input resolution. Our “model experts” also have different
+computation complexity, which allows it to be more adaptive and achieves a
+better speed-accuracy tradeoff.
+
+There are also some works that focus on the model
+distillationas well as model
+quantizationto speed up the computation. Since our goal is to propose a
+general model architecture that incorporates computation-intensive and
+efficient blocks, we argue that our model is complementary to these methods and the speed can be further improved.
+
+SECTION: big.LITTLE Vision Transformer
+SECTION: Overview
+The core big.LITTLE module in the bLViT architecture comprises two components: a performance block (P-block) and an efficiency block (E-block). The token processing pipeline is illustrated in Fig.. This module processes a sequence of image tokens as input.
+The importance of each token is predicted beforehand by the prediction layers, allowing for the ranking of tokens based on their importance. The top-K tokens, deemed the most critical, are processed by the P-block, which, though having higher computational capacity, operates at a slower speed.
+In contrast, the entire token sequence is passed through the E-blocks, which prioritize efficiency, offering faster processing at the cost of lower capacity. The P-block handles the crucial tokens in detail to maintain model performance, while the E-block efficiently updates all tokens to preserve context information at a lower computational cost.
+The output of P-block and E-block are then fused to form the final output of the big.LITTLE module.
+
+SECTION: Performance-Efficiency Block
+In a big.LITTLE module, the forward function is shown in Algo.. We begin with a set of image token.
+
+Before the dual blocks, a prediction layer—composed of a linear layer followed by a softmax function—estimates the importance scores of all image tokens, identifying the most crucial tokens for further processing, as shown in Fig.. We employ a top-k selection mechanism to select primary tokens based on these importance scores. These selected tokens are then routed to the more computationally intensive P-block.
+As described in Algo., only a subset of tokens is processed by the attention and FFN layers of the P-block, while all tokens are updated by the E-block.
+To enable back-propagation through the prediction layer, we followby multiplying the scores of selected tokens with the P-block output, formulated as
+
+whereis the importance score of the token in the-th layer, the module can be the FFN or attention layer in the P-block, andis a learnable parameter initialized at 0 to stabilize the training process. For simplicity, this part is omitted in the pseudo-code.
+
+As the E-block and P-block have different model capacities, the hidden dimensions of the representations are inevitably different.
+To reconcile these differences and accommodate the requirements of both the efficiency and performance blocks,
+we modify the vallina ViT block for the E-block. Specially, we insert two linear layers in the beginning and ending in the FFN layer to conduct dimension mapping; as for the attention layer, input and output dimensions are modified directly to match the dimension of the main flow. These operations are conducted in E_Attention and E_FFN in the pseudocode.
+
+In the previous token pruning method, unimportant tokens were directly removed, preventing the remaining tokens from exchanging information with the pruned tokens in the attention layer. To address this issue, we propose a Semi-Cross Attention mechanism for P-blocks. Specifically, in the attention layer of the P-block, we use the primary tokens as queries (q) and all tokens (both selected and unselected) as keys (k) and values (v), instead of only using the same tokens as queries. This allows the primary tokens to still gather information from all tokens, not just from themselves.
+
+After processing through the dual blocks, the output of the P-block is fused with that of the E-block with the globally updated context. This fusion is performed using a learnable parameter, which adjusts the influence of the tokens on the final output, formulated as
+
+Here,is a binary mask indicating whether the-th token is a primary token () or not ().
+This ensures that the most significant features are emphasized while maintaining the overall integrity of the data representation.
+
+In practice, the configuration of P-block and E-block can vary depending on the model size, and inner dimensions of both P-block and E-block follow variants of the vanilla ViT block.
+For instance, we can set the dimensions of the P-block and E-block as those of ViT-Base block and ViT-Tiny block respectively,
+as the E-block to match ViT-Base performance while saving computation. Here, we adopt a 1:1 stacking ratio of P and E blocks, meaning each layer of image tokens passes through one P-block and one E-block. In models with a larger size, such as a huge-base combination, we might employ a 2:1 stacking ratio or other variations.
+
+To reduce computational demands, we empirically let the performance blocks process the topmost important tokens by default, while the efficiency block updates all
+tokens, ensuring comprehensive coverage of context information. In this way, our model allocates computational resources for each token adaptively based on its content, leading to a better speed-accuracy tradeoff.
+We conduct a simple analysis of how much computation we can save:
+for input with shape, whereis the number of tokens andis the hidden dimensions of tokens, the computation cost of a vanilla ViT block is(is for attention layer andis for FFN).
+A performance block updatestokens with a cost of(is for semi-cross attention andis for FFN) and an efficiency block withhidden dimensions costs(is for attention layer andis for FFN, which is larger than the result of substitutingintoin vanilla cost because of additional overhead incurred by dimension matching) when processing all tokens.
+This leads to a total cost of, overtheoretical speedup for each layer, which could further be higher as the efficiency block becomes smaller.
+
+SECTION: Training Strategy
+In practice, we find that naively training a model with big.LITTLE modules may
+lead to suboptimal performance, possibly due to the high pruning ratio, and we
+empirically find that feature distillation can improve its performance.
+
+During training, feature distillation is used to transfer knowledge from a pre-trained vallina ViT to our big.LITTLE ViT. By aligning the features learned by the student with those of the teacher, the model can retain critical information even when aggressive pruning is applied.
+The feature distillation loss is formulated as:
+
+whererepresents the feature embeddings from the big.LITTLE model, andrepresents the embeddings from the pre-trained teacher model. The cosine similarity function ensures that the feature representations of our model are as close as possible to those of the teacher.
+The total loss used for training combines the supervised losswith the feature distillation loss, weighted by a scalar:
+
+SECTION: Experiments
+SECTION: Implementation Details
+In our experiments, we employ two variants of the bLViT. In the first variant, we use the ViT-Base as the P-block and the ViT-Tiny as the E-block, denoted as B+T. The model consists of 12 layers as the vanilla ViT-Base, the first layer is the ViT-Base layer where it can see all tokens, and starting from the second layer we start to use big.LITTLE modules, therefore this model consists of 12 P-blocks and 11 E-blocks in total. The prediction layers are used after layers 1, 4, 7 and 10.
+In the second variant, we test it with a larger model size and use the ViT-Huge as the P-block and the ViT-Base as the E-block, denoted as H+B.
+This model follows the 32-layer architecture of the standard ViT-Huge, with the first 9 layers exclusively using the ViT-Huge, fully processing all tokens. Starting from the tenth layer, a big.LITTLE module is alternately used in every other layer. In layers without an E-block, onlyof tokens are updated by the P-block, resulting in a configuration of 32 P-blocks and 12 E-blocks in total. Here, the prediction layers are used after layers 8, 16 and 24.
+
+For models with window attention such as SAM, token selection occurs within each window, ensuring the same number of tokens in different windows, which facilitates parallel computation.
+
+All experiments are conducted on 8 NVIDIA A100 GPUs.is initialized to.is set toby default. AdamW optimizer is applied in the experiment, with learning rate ofin both sets of tasks.
+
+SECTION: Baselines and Evaluation Metrics
+We compare our method with existing token pruning methods for ViT structure, i.e., AdaViT, ATS, A-ViT, DynamicViT, Evo-ViT, E-ViT, efficient ViT models, i.e., EfficientViT, MobileViT, and also include the comparison with vanilla ViT. We validate the performance on two tasks including image classification and segment anything task.
+
+We choose the vanilla ViT as the baseline. The Top-1 accuracy is employed as the evaluation metric.
+Three vanilla ViT variants from DeiT were employed. For ATS, A-ViT, DynamicViT, Evo-ViT, E-ViT, and our method, the pretrained weights of DeiT were used for initialization, followed by training on the ImageNet-1K dataset for 300 epochs with a batch size of 1024 on 8 GPUs, and then tested for top-1 accuracy in image classification. The training details followed DeiT. For AdaViT, it was initilaized by T2T-ViT, which is marked with an asterisk in Table.
+We adopted multiple settings in some methods. For EfficientViT, we used the models corresponding to resolutions of 224 and 512 under the M5 configuration. DynamicViT utilized two model sizes (base and small), and EViT used two keep ratios of 0.5 and 0.6.
+
+The evaluation is similar to SAM, where segmentation is performed from a single foreground point, a single box, and multiple points. Here, random points are uniformly sampled within the ground truth mask for clicking, and the ground truth box is used as the prompt box. We also conduct zero-shot instance segmentation experiments, following the setting of SAM.
+Regarding the baseline, vanilla variants of SAM were trained on the complete SA-1B dataset for 2 epochs. For Evo-ViT and E-ViT, two experimental setups were divided: ViT-Base and ViT-Huge. In both setups, the pretrained weights of vanilla SAM were used for initialization. Correspondingly, the big.LITTLE configurations B+T and H+B were used. During training, the models were trained for 10 epochs onof the SA-1B dataset with a batch size of. For testing, the LVISdataset was utilized to evaluate the mask prediction performance of the models, and the COCO dataset was used in zero-shot instance segmentation.
+
+SECTION: Image Classification
+We conducted experiments on the ImageNet-1k classification datasetand report the top-1 accuracy and GFLOPs in Table. The results demonstrate that our method achieves the best performance. Specifically, our Base + Tiny bLViT reduces computations by about 50% while outperforming ViT-B.
+Although methods utilizing light architectures exhibit significantly lower computational costs compared to most efficient ViT approaches, their performance is severely limited by model capacity. In the efficient ViT group, the performance of ATS and A-ViT, both based on ViT-Small, significantly lags behind our model. Our method achieves the best performance and the second-best computational efficiency compared to models based on ViT-Base. Notably, our model is the only one based on ViT-B that surpasses its performance, while other similar models tend to sacrifice performance for reduced computational costs, as illustrated in Fig..
+
+Further, we visualize which tokens pass through the P-block in the 11-layer big.LITTLE module. As illustrated in Fig., after training, the model effectively selects regions critical for image classification to be processed by the high-capacity P-block. This capability highlights the architectural efficiency and targeted processing power of our bLViT.
+
+SECTION: Segment Anything Task
+With the models trained on SA-1B dataset, we validate them on two types of experiments, as shown in Table. We report mIoU under three settings of mask prediction and AP under zero shot instance segmentation, respectively. From the table, one can see that our model largely reduces the computation, reflected in that our B+T version reduces about half of the GLOPs compared with ViT-B. Also, our approach outperforms other accelerating techniques significantly, with the highest performance and also the highest efficiency. Notably, under the testing settings of three points and bounding boxes, our models even surpasses ViT-B and ViT-H respectively. The potential explanation for this phenomenon could be attributed to the signals obtained from both the distillation loss and the supervision loss.
+
+SECTION: Ablation Study
+We conduct ablation studies on the ImageNet classification task to verify our model
+design choices. Besides the vanilla DeiT-Base model without any token pruning,
+we also select Evo-ViT with 81.0 Top-1 Accuracy and 50% token pruning ratio as
+our baseline model and illustrate how we reach our final model design. We
+can see that, while naively increasing the pruning ratio to 75% and
+reducing the number of performance blocks (Early Prune) can save the
+computation and we observe a decent FLOPs reduction, the performance also drops
+severely. Simply adding the efficiency block (E-Block) can mitigate this issue, but
+still fall behind the baseline. We then apply prediction layers (Predictor) and semi-cross attention (Semi-CA) to bridge this gap.
+Then, we leverage the pretrained weights initialization, where the weights
+of the performance blocks are pretrained without any token pruning. We
+empirically find this yields better performance. Finally, we use feature distillation (Feat. Dis.) that are described in
+§during the training process to obtain the best performance.
+
+When using feature distillation loss for model training, the coefficient for this loss needs to be set empirically, as values that are too large or too small can hinder optimal performance. In Table, one can observe thatis a notable discrete peak value worth adopting.
+
+In our model, when entering the P-block, a portion of the tokens will be discarded, and this proportion is referred to as the pruning ratio. Intuitively, the performance tends to decrease as the pruning ratio increases. Therefore, we need to balance the trade-off between model performance and computational efficiency. In Table, we can roughly observe that when the pruning ratio is less than, the decline in performance becomes less pronounced as the pruning ratio increases; however, beyond this point, the decline becomes noticeably faster. Consequently, we empirically adopt a pruning ratio of.
+
+SECTION: Conclusion
+This paper introduces the big.LITTLE Vision Transformer (bLViT), an innovative architecture designed to enhance the efficiency of visual recognition systems. By strategically allocating image tokens between a high-capacity performance block and a speed-optimized efficiency block, this architecture significantly reduces computational demands while maintaining high accuracy. Our experimental results demonstrate that the bLViT not only preserves robust accuracy but also boosts computational efficiency, making it a practical choice for scalable and adaptable AI deployments.
+
+SECTION: Broader Impact
+Our work aims to improve the inference speed of the vision transformer models. Our model design can allow the vision transformer model to run on cheaper and more energy-efficient hardware at an acceptable speed. It would benefit people without access to expensive hardware and make a positive impact on combating climate change since the inference becomes more efficient.
+We acknowledge unknown risks can be brought by the development of AI technology; however, the contribution of
+this paper has no greater risk than any other generic deep-learning paper that studies standard datasets
+such as ImageNet and MSCOCO.
+
+SECTION: References

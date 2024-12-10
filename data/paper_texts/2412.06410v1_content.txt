@@ -1,0 +1,71 @@
+SECTION: BatchTopK Sparse Autoencoders
+Sparse autoencoders (SAEs) have emerged as a powerful tool for interpreting language model activations by decomposing them into sparse, interpretable features. A popular approach is the TopK SAE, that uses a fixed number of the most active latents per sample to reconstruct the model activations. We introduce BatchTopK SAEs, a training method that improves upon TopK SAEs by relaxing the top-k constraint to the batch-level, allowing for a variable number of latents to be active per sample. As a result, BatchTopK adaptively allocates more or fewer latents depending on the sample, improving reconstruction without sacrificing average sparsity. We show that BatchTopK SAEs consistently outperform TopK SAEs in reconstructing activations from GPT-2 Small and Gemma 2 2B, and achieve comparable performance to state-of-the-art JumpReLU SAEs. However, an advantage of BatchTopK is that the average number of latents can be directly specified, rather than approximately tuned through a costly hyperparameter sweep. We provide code for training and evaluating BatchTopK SAEs at.
+
+SECTION: Introduction
+Sparse autoencoders (SAEs) have been proven effective for finding interpretable directions in the activation space of language models. SAEs find approximate, sparse, linear decompositions of language model activations by learning a dictionary of interpretable latents from which the activations are reconstructed.
+
+The objective used in training SAEshas both a sparsity and a reconstruction term. These are naturally in tension as, for an optimal dictionary of a given size, improving the reconstruction performance requires decreasing sparsity and vice versa. Recently, new architectures have been proposed to address this issue, and achieve better reconstruction performance at a given sparsity level, such as Gated SAEs, JumpReLU SAEs, and TopK SAEs.
+
+In this paper, we introduce BatchTopK SAEs, a novel variant that extends TopK SAEs by relaxing the top-constraint to a batch-level constraint. This modification allows the SAE to represent each sample with a variable number of latents, rather than assuming that all model activations consist of the same number of units of analysis. By selecting the top activations across the entire batch, BatchTopK SAEs enable more flexible and efficient use of the latent dictionary, leading to improved reconstruction without sacrificing average sparsity. During inference we remove the batch dependency by estimating a single global threshold parameter.
+
+Through experiments on the residual streams of GPT-2 Smalland Gemma 2 2B, we show that BatchTopK SAEs consistently outperform both TopK and JumpReLU SAEs in terms of reconstruction performance across various dictionary sizes and sparsity levels, although JumpReLU SAEs have less downstream CE degradation in large models with a high number of active latents. Moreover, unlike JumpReLU SAEs, BatchTopK SAEs allow direct specification of the sparsity level without the need for tuning additional hyperparameters.
+
+SECTION: Background: Sparse Autoencoder Architectures
+Sparse autoencoders aim to learn efficient representation of data by reconstruction inputs while enforcing sparsity in the latent space. In the context of large language models, SAEs decompose model activationsinto sparse linear combinations of learned directions, which are often interpretable and monosemantic.
+
+An SAE consists of an encoder and a decoder:
+
+whereis the sparse latent representation andis the reconstructed input.is the encoder matrix with dimensionandis a vector of dimension; converselyis the decoder matrix with dimensionandis of dimension. The activation functionenforces non-negativity and sparsity in, and a latentis active on a sampleif.
+
+SAEs are trained on the activations of a language model at a particular site, such as the residual stream, on a large text corpus, using a loss function of the form
+
+whereis a function of the latent coefficients that penalizes non-sparse decompositions, andis a sparsity coefficient, where higher values ofencourage sparsity at the cost of higher reconstruction error. Some architectures also require the use of an auxiliary loss, for example to recycle inactive latents in TopK SAEs.
+
+use the L1-normas an approximation to the L0-norm for the sparsity penalty. This provides a gradient for training unlike the L0-norm, but suppresses latent activations harming reconstruction performance. Furthermore, the L1 penalty can be arbitrarily reduced through reparameterization by scaling the decoder parameters, which is resolved inby constraining the decoder directions to the unit norm. Resolving this tension between activation sparsity and value is the motivation behind the newer architecture variants.
+
+enforce sparsity by retaining only the topactivations per sample. The encoder is defined as:
+
+wherezeroes out all but thelargest activations in each sample. This approach eliminates the need for an explicit sparsity penalty but imposes a rigid constraint on the number of active latents per sample. An auxiliary lossis used to avoid dead latents, whereis the reconstruction using only the top-dead latents (usually 512), this loss is scaled by a small coefficient(usually 1/32).
+
+replace the standard ReLU activation function with the JumpReLU activation, defined as
+
+whereis the Heaviside step function, andis a learned parameter for each SAE latent, below which the activation is set to zero. JumpReLU SAEs are trained using a loss function that combines L2 reconstruction error with an L0 sparsity penalty, using straight-through estimators to train despite the discontinuous activation function. A major drawback of the sparsity penalty used in JumpReLU SAEs compared to (Batch)TopK SAEs is that it is not possible to set an explicit sparsity and targeting a specific sparsity involves costly hyperparameter tuning. While evaluating JumpReLU SAEs,chose the SAEs from their sweep that were closest to the desired sparsity level, however this resulted in SAEs with significantly different sparsity levels being directly compared. JumpReLU SAEs use no auxiliary loss function.
+
+SECTION: BatchTopK Sparse Autoencoders
+We introduceas an improvement over standard TopK SAEs. In BatchTopK, we replace the sample-leveloperation with a batch-levelfunction. Instead of selecting the topactivations for each individual sample, we select the topactivations across the entire batch ofsamples, setting all other activations to zero. This allows for a more flexible allocation of active latents, where some samples may use more thanlatents while others use fewer, potentially leading to better reconstructions of the activations that are more faithful to the model.
+
+The training objective for BatchTopK SAEs is defined as:
+
+Here,is the input data batch;andare the encoder weights and biases, respectively;andare the decoder weights and biases. The BatchTopK function sets all activation values to zero that are not among the topactivations by value in the batch, not changing the other values. The termis an auxiliary loss scaled by the coefficient, used to prevent dead latents, and is the same as in TopK SAEs.
+
+BatchTopK introduces a dependency between the activations for the samples in a batch. We alleviate this during inference by using a thresholdthat is estimated as the average of the minimum positive activation values across a number of batches:
+
+whereis theth latent activation of theth sample in a batch. With this threshold, we use the JumpReLU activation function during inference instead of the BatchTopK activation function, zeroing out all activations under the threshold.
+
+SECTION: Experiments
+We evaluate the performance of BatchTopK on the activations of two LLMs: GPT-2 Small (residual stream layer 8) and Gemma 2 2B (residual stream layer 12). We use a range of dictionary sizes and values for, and compare our results to TopK and JumpReLU SAEs in terms of normalized mean squared error (NMSE) and cross-entropy (CE) degradation. For the experimental details, see Appendix.
+
+We find that for a fixed number of active latents (L0=32) the BatchTopK SAE has a lower normalized MSE and less cross-entropy degradation than TopK SAEs on both GPT-2 activations (Figure) and Gemma 2 2B (Figure). Furthermore, we find that for a fixed dictionary size (12288) BatchTopK outperforms TopK for different values of k on both models.
+
+In addition, BatchTopK outperforms JumpReLU SAEs on both measures on GPT-2 Small model activations at all levels of sparsity. On Gemma 2 2B model activations the results are more mixed: although BatchTopK achieves better reconstruction than JumpReLU for all values of k, BatchTopK only outperforms JumpReLU in terms of CE degradation in the lowest sparsity setting (k=16).
+
+To confirm that BatchTopK SAEs make use of the enabled flexibility to activate a variable number of latents per sample, we plot the distribution of the number of active latents per sample in Figure. We observe that BatchTopK indeed uses a wide range of active latents, activating only a single latent on some samples and activating more than 80 on others. The peak on the left of the distribution are model activations on the <BOS>-token. This serves as an example of the advantage of BatchTopK: when the model activations do not contain much information, BatchTopK does not activate many latents, whereas TopK would use the same number of latents regardless of the input. This corroborates our hypothesis that the fixed TopK inis too restrictive and that samples contain a variable number of active dictionary latents.
+
+SECTION: Conclusion
+In this work, we introduced BatchTopK sparse autoencoders, a novel variant of TopK SAEs that relaxes the fixed per-sample sparsity constraint to a batch-level constraint. By selecting the top activations across the entire batch rather than enforcing a strict limit per sample, BatchTopK allows for a variable number of active latents per sample. This flexibility enables the model to allocate more latents to complex samples and fewer to simpler ones, thereby improving overall reconstruction performance without sacrificing average sparsity. We evaluated BatchTopK SAEs using the standard metrics of reconstruction loss and sparsity. We evaluated BatchTopK SAEs using standard metrics of reconstruction loss and sparsity, and while we did not directly assess human interpretability, the architectural similarity to TopK SAEs suggests that these latents would remain comparably interpretable. Our results demonstrate that small modifications to the activation function can have significant effects on SAE performance and expect that future work will continue to find improvements that better approximate the latent structure of model activations.
+
+SECTION: Acknowledgements
+We thank the ML Alignment and Theory Scholars (MATS) program for facilitating this work. In particular, we are grateful for McKenna Fitzgerald for her support in planning and managing this collaboration. We are also thankful for the helpful discussions we had with Joseph Bloom, Curt Tigges, Adam Karvonen, Can Rager, Javier Ferrando, Oscar Obeso, Stepan Shabalin, and Slava Chalnev about this work. Finally, BB and PL want to thank AI Safety Support for funding this work.
+
+SECTION: References
+SECTION: Supplemental Material
+SECTION: Experimental Details
+In this appendix, we provide details about the datasets used, model configurations, and hyperparameters for our experiments.
+
+We trained our sparse autoencoders (SAEs) on the OpenWebText dataset, which was processed into sequences of a maximum of 128 tokens for input into the language models.
+
+All models were trained using the Adam optimizer with a learning rate of,, and. The batch size was 4096, and training continued until a total oftokens were processed.
+
+We experimented with dictionary sizes of 3072, 6144, 12288, and 24576 for the GPT-2 Small model, and used a dictionary size of 16384 for the experiment on Gemma 2 2B. In both experiments, we varied the number of active latentsamong 16, 32, and 64.
+
+For the JumpReLU SAEs, we varied the sparsity coefficient such that the resulting sparsity would match the active latentsof the BatchTopK and TopK models. The sparsity penalties in the experiments on GPT-2 Small were 0.004, 0.0018, and 0.0008. For the Gemma 2 2B model we used sparsity penalties of 0.02, 0.005, and 0.001. In both experiments, we set the bandwidth parameter to 0.001.

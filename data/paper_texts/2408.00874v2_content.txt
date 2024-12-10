@@ -1,0 +1,220 @@
+SECTION: Medical SAM 2: Segment Medical Images as Video via Segment Anything Model 2
+
+Medical image segmentation plays a pivotal role in clinical diagnostics and treatment planning, yet existing models often face challenges in generalization and in handling both 2D and 3D data uniformly. In this paper, we introduce Medical SAM 2 (MedSAM-2), a generalized auto-tracking model for universal 2D and 3D medical image segmentation. The core concept is to leverage the Segment Anything Model 2 (SAM2) pipeline to treat all 2D and 3D medical segmentation tasks as a video object tracking problem. To put it into practice, we propose a novelself-sorting memory bankmechanism that dynamically selects informative embeddings based on confidence and dissimilarity, regardless of temporal order. This mechanism not only significantly improves performance in 3D medical image segmentation but also unlocks aOne-Prompt Segmentationcapability for 2D images, allowing segmentation across multiple images from a single prompt without temporal relationships. We evaluated MedSAM-2 on five 2D tasks and nine 3D tasks, including white blood cells, optic cups, retinal vessels, mandibles, coronary arteries, kidney tumors, liver tumors, breast cancer, nasopharynx cancer, vestibular schwannoma, mediastinal lymph nodules, cerebral artery, inferior alveolar nerve, and abdominal organs, comparing it against state-of-the-art (SOTA) models in task-tailored, general and interactive segmentation settings. Our findings demonstrate that MedSAM-2 surpasses a wide range of existing models and updates new SOTA on several benchmarks. The code is released on the project page:https://supermedintel.github.io/Medical-SAM2/.
+
+SECTION: 1Introduction
+
+Artificial intelligence has significantly transformed various industries, and healthcare is poised for a substantial revolution driven by advancements in medical image understanding[66,38,65,64,10]. Medical image segmentation, which involves partitioning images into meaningful regions, is crucial for applications like diagnosis, treatment planning, and image-guided surgery[72,73,74]. Despite the progress made with automated segmentation methods using deep learning models such as convolutional neural networks (CNNs) and vision transformers (ViTs), significant challenges remain[57,4]. One primary issue is model generalization; models trained on specific targets like certain organs or tissues often struggle to adapt to other targets or modalities. Additionally, many deep learning architectures are designed for 2D images, whereas medical imaging data frequently exist in 3D formats (e.g., CT, MRI), creating a gap when applying these models to 3D data[17,50].
+
+Recent developments in promptable segmentation models, particularly the Segment Anything Model (SAM)[38]and its enhanced version SAM 2[55], have shown promise in addressing some challenges. SAM has demonstrated remarkable zero-shot capabilities in image segmentation tasks by leveraging user-provided prompts to segment objects without prior training on specific targets. However, this approach requires user interaction for each image, which can be labor-intensive and impractical in clinical settings where large volumes of data are common[48]. SAM 2 extends SAM’s capabilities to videos, introducing real-time object tracking with reduced user interaction time. Yet, it still relies on temporal relationships between frames, limiting its applicability to unordered medical images and failing to fully address the generalization challenges in medical image segmentation.
+
+In this work, we introduce MedSAM-2, a generalized auto-tracking model for universal medical image segmentation. MedSAM-2 tackles these challenges by treating medical images as videos and incorporating a novelself-sorting memory bank.
+This mechanism dynamically selects informative embeddings based on confidence and dissimilarity, allowing the model to handle unordered medical images effectively. By rethinking the memory mechanism in SAM 2, MedSAM-2 not only improves performance in 3D medical image segmentation but also unlocks theOne-Prompt Segmentationcapability[70]for 2D medical images. This capability enables the model to generalize from a single prompt to segment across multiple images without temporal relationships, significantly reducing user interaction and enhancing convenience for clinicians.
+
+We evaluated MedSAM-2 across 14 different benchmarks, encompassing 25 distinct tasks for validation. Compared with previous fully-supervised segmentation models and SAM-based interactive models, MedSAM-2 demonstrated superior performance across all tested methods and achieved state-of-the-art results in both 2D and 3D medical image segmentation tasks. Specifically, under the one-prompt segmentation setting, MedSAM-2 outperformed previous foundation segmentation models, thereby showcasing its exceptional generalization capabilities. Our contributions can be summarized as follows:
+
+Contributions.(i)We introduce MedSAM-2, the first SAM-2-based generalized auto-tracking model for universal medical image segmentation, capable of uniformly handling both 2D and 3D medical imaging tasks with minimal user intervention.(ii)We propose a novelself-sorting memory bankmechanism that dynamically selects informative embeddings based on confidence and dissimilarity, enhancing the model’s ability to handle unordered medical images and improves generalization.(iii)We evaluate MedSAM-2 across 15 different benchmarks, including 25 distinct tasks, demonstrating superior performance compared to previous fully-supervised and SAM-based interactive models.
+
+SECTION: 2Related Works
+
+Medical Image Segmentation.Traditionally, medical image segmentation models have been task-specific, designed and optimized for particular targets like specific organs or tissues[14,12]. These task-tailored models leverage the unique characteristics of each task to achieve high performance. For instance, uncertain-aware modules have been utilized to handle the ambiguity in optic cup segmentation in fundus images[35]However, the reliance on task-specific models presents significant challenges. Designing and training a unique model for each segmentation task is labor-intensive and time-consuming. Moreover, many deep learning architectures are designed for 2D images, whereas medical imaging data often exist in 3D formats (e.g., CT, MRI), creating a gap when applying these models to 3D data[17,50,24,25,26].
+To address these limitations, there has been growing interest in developing generalized medical image segmentation models capable of handling multiple tasks and modalities[28,72,74]. These models aim to generalize across different targets without the need for task-specific adaptations. However, achieving robust generalization remains a significant challenge due to the diverse nature of medical images, which can vary greatly in appearance, resolution, and anatomical structures. On the other hand, our MedSAM-2 is a generalized model that tackles multiple domains and can be used for both 2D and 3D medical image segmentation.
+
+Prompting Segment Anything Models (SAMs).The introduction of the Segment Anything Model (SAM)[38]marked a significant advancement in the field of image segmentation. SAM leverages user-provided prompts to segment objects in images without prior training on specific targets, demonstrating remarkable zero-shot capabilities. In medical imaging, early applications of SAM involved fine-tuning the model to adapt to different medical segmentation tasks[58,18,15,73]. However, these approaches still required user interaction for each image, which can be impractical in clinical settings with large volumes of data.
+To reduce the reliance on extensive user prompting, researchers have explored few-shot and zero-shot segmentation methods[20,71,44,52], enabling adaptation to new tasks with minimal annotated samples. For example, UniSeg[11]requires only a few annotated samples to process an entire unseen segmentation task during inference. One-Prompt Segmentation[70]further combines SAM’s interactive setting with zero-shot segmentation, requiring only one visual prompt for a template sample to segment similar targets in subsequent samples without retraining. Nonetheless, these models still primarily focus on 2D medical images and are not yet tailored for the unique requirements of 3D medical imaging. Our MedSAM-2 uses a self-sorting memory bank allowing the model to generalize better on unsorted medical images while leveraging the context-rich video pretraining of SAM 2 with minimal prompting requirements.
+
+SECTION: 3Method
+
+We introduce MedSAM-2, an advanced segmentation model based on SAM 2[55], tailored for medical image segmentation tasks.
+
+SECTION: 3.1Preliminaries on Segment Anything Model (SAM 2)
+
+SAM 2[55]is a promptable visual segmentation model designed for image and video tasks. Given an input sequence of frames or imagesand optional prompts, the model predicts segmentation masksfor each frame. The architecture comprises an image encoderthat encodes each frameinto a feature embedding; a prompt encoderthat processes user prompts, generating embeddings; a memory bankthat storespast embeddingsbefore frame; a memory attention mechanismthat combines,, and; and a mask decoderthat predicts the segmentation mask. Mathematically, the segmentation process can be formulated:
+
+SECTION: 3.2MedSAM-2: Self-Sorting SAM2 for Medical Imaging
+
+Although SAM2 has been highly successful with natural images, directly applying it to medical images is not straightforward. In medical imaging, the order of slices or images may not be meaningful due to varying acquisition protocols and orientations. Moreover, 2D medical images are often unordered, and each orientation in 3D imaging can be considered as an independent sequence to be integrated with different order. To address this, we propose aself-sorting memory bankthat dynamically selects and retains the most informative embeddings, rather than simply using the most recentframes as in SAM 2[55].
+
+Memory Bank Update with Confidence and Dissimilarity.At each time step, we update the self-sorting memory bankbased onand the embeddingof the previous frame.
+First, the model predicts the segmentation maskand computes IOU confidence scorefor frame, estimated by the model itself.
+If the confidence score satisfies, we consider addingto the memory bank. We form a candidate set.
+To maintain diversity, we compute the total dissimilarity for each embedding in:
+
+whereis a similarity function (e.g., cosine similarity).
+We then select the topembeddings with the highest total dissimilarity to form the updated memory bank:
+
+If the confidence condition is not met (), we keep the memory bank unchanged
+
+Resampling the Memory Bank.Before computing the attention for frame, we resample the memory bank to emphasize embeddings similar to the current embedding, enhancing relevance. This is achieved by assigning higher selection probabilities to embeddings more similar to.
+We calculate the similarity scores betweenand each embeddingin the memory bankusing a similarity function(e.g., cosine similarity):
+
+Using the probability distribution, we perform resampling with replacement to create the importance-weighted memory bank. Specifically, we sampleembeddings from, where each embeddingis selected independently with probability:
+
+This resampling process effectively prioritizes embeddings more similar to current embedding, enhancing the relevance of the memory bank in the attention mechanism.
+
+MedSAM-2 Pipeline.The segmentation process in MedSAM-2 incorporates the self-sorting memory bank and resampled embeddings into SAM 2. With the fixed promptfrom the first frame, we modify (1) as:
+
+where,, andis the resampled memory bank from Eq (5).
+This modification allows MedSAM-2 to handle unordered medical images effectively, leveraging informative and relevant embeddings for segmentation, thus enhancing performance in both 2D and 3D medical imaging tasks after training with standard segmentation loss[48].
+
+Self-Sorting Works because of Entropy and Mutual Information.By utilizing the self-sorting memory bank, we ensure that the memory bank contains the most reliable and informative embeddings, regardless of their temporal order. This self-sorting mechanism not only handles the unordered nature of medical images but also forces the extracted features to have higher entropy due to the increased randomness introduced by the "learned shuffle“ based on confidence rather than inherent temporal order. This increased entropy coincides with an increase in the mutual information between the memory bank features and the output, improving the robustness and generalization of the model according to principle of maximum entropy[34]. Consequently, the model is better equipped to handle unordered medical images. We show mathematically inAppendixhow entropy-increase and mutual information by self-sorting improve learning generalization.
+
+SECTION: 3.3Unified Approach for 2D and 3D Images
+
+MedSAM-2 leverages a self-sorting memory bank to improve robustness and effectively utilize context in both 2D and 3D medical imaging segmentation tasks. This unified framework allows MedSAM-2 to perform effectively across diverse medical imaging scenarios, unlocking the ’One-Prompt Segmentation’ capability for 2D medical images and improving performance in 3D segmentation.
+
+MedSAM-2 for 3D Medical Imaging.For 3D medical images, such as MRI or CT scans represented as volumes, we treat the volume as a sequence of 2D slices along various orientations, similar to frames in a video. We define six orientations for processing the 3D volume:
+
+Axial:.
+
+Coronal:.
+
+Sagittal:.
+
+Reverse Axial:.
+
+Reverse Coronal:.
+
+Reverse Sagittal:.
+
+Processing the volume with all orientations combinedexposes the model to diverse anatomical perspectives, enhancing its ability to generalize and capture anisotropic structures. However, the bestorderof picking these directions is stillunknown. Hence, our self-sorting memory bank order embeddings from different orientations based on the mean direction features and their confidences as before. This allows our MedSAM-2 model tojointlycapture the 3D context and reap the benefits of the self-sorting mechanism.
+
+During inference, the model processes the input data in multiple orientations with combined input, obtaining segmentation predictions where the final output for the 3D volume is obtained by aggregating these predictions:whereis a function such as averaging or majority voting applied pixel-wise.
+
+MedSAM-2 for One-prompt 2D Segmentation.For 2D medical images, which may consist of independent slices or images lacking temporal connections, we treat sets of images as pseudo-video sequences. By processing them sequentially using MedSAM-2’s memory mechanism, we achieve aOne-Prompt Segmentationcapability[70], where providing a prompt on a single image template () allows the model to propagate the segmentation across the entire set. Our MedSAM-2 approach leverages the self-sorting memory bank to associate the prompt more closely with intrinsic features in each frame, improving generalization and efficiency.
+This ability of one-prompt-segmentation is less restrictive than the universal interactive video object segmentation (iVOS)[48], where its target is to learn a universal function for any single input imageand prompt, to predict the output mask.
+
+SECTION: 4Experiment
+
+SECTION: 4.1Dataset
+
+To build a foundation model with strong generalization on unseen tasks, we train and test our model on the One-Prompt dataset[70], a large-scale and diverse collection of 2D and 3D medical images assembled from publicly accessible datasets with clinicians-annotated prompts. This data source comprises 78 datasets across various medical domains and imaging modalities, covering a wide range of organs such as lungs[59,60,61], eyes[21,32,49,51], brain[7,23,31,39,40], and abdominal organs[36,8,29,37,41,42,43,45,46,47,54,61]. Each dataset includes at least one image or slice annotated by a professional clinician, with over 3,000 samples collectively annotated by clinicians. A detailed list of the One-Prompt datasets is provided in the supplementary materials.
+
+We follow the default split of the One-Prompt dataset, using 64 datasets for training and 14 for testing. The test set includes 8 MICCAI2023 Challenge tasks across diverse anatomies—kidney tumor[30], liver tumor[53], breast cancer[1], nasopharynx cancer[6], vestibular schwannoma[2], mediastinal lymph node[56], cerebral artery[13], and inferior alveolar nerve[9]—along with 6 other tasks for structures like white blood cells[79], optic cups[21], mandibles[3], coronary arteries[63], abdominal organs[22], and retinal vessels[32]. We evaluate model performance on each test dataset using task-specific prompts: theClickprompt for KiTS23, ATLAS23, TDSC, and WBC; theBBoxprompt for SegRap, CrossM23, REFUGE, Pendal, LNQ23, and CAS23; and theMaskprompt for CadVidSet, STAR, BTCV-test and ToothFairy. Among these, STAR, BTCV-test, and TDSC involve tasks seen in training, while the remaining 11 tasks are used for zero-shot testing.
+
+SECTION: 4.2Human-User Prompted Evaluation
+
+For evaluation, we engaged human users to simulate real-world interactions in prompt-based segmentation. Fifteen users were assigned to prompt approximately 10% of the test images, including 5 laypersons with a clear understanding of the task but no clinical background, 7 junior clinicians, and 3 senior clinicians. This setup aims to reflect real-world prompting scenarios, such as clinical training or semi-automated annotation.
+
+SECTION: 4.3Implementation
+
+We conduct training and testing on the PyTorch platform, leveraging 64 NVIDIA A100 GPUs for distributed training. Optimization uses the AdamW optimizer (,) with a linear learning rate warmup followed by cosine decay. Our training simulates an interactive environment by sampling 8-frame sequences, randomly selecting up to 2 frames (including the first) for corrective clicks. Prompts are generated from ground-truth masks and model predictions, with initial prompts consisting of the ground-truth mask with 50% probability, a positive click from the mask with 25%, or a bounding box input with 25%. To maintain diversity across tasks and prompts, we use a balanced sampling strategy that avoids equal representation across all tasks, as certain image modalities, tasks, or prompt types are more frequent. To prevent overfitting to these dominant elements, we uniformly select tasks and sequence states, starting with a random task selection, then narrowing the pool to data associated with that task. We proceed by selecting an image modality available for the task, refining the pool to ensure homogeneity, and finally selecting a sample from the filtered set.
+All comparison models are trained and tested under the same setting. Additional details on data processing and training are provided in the supplementary material.
+
+SECTION: 5Results
+
+In this section, we present a comprehensive evaluation of MedSAM-2 on both 2D and 3D medical image segmentation tasks. We compare our model with a range of state-of-the-art (SOTA) methods, including task-specific, diffusion-based, and interactive segmentation models. Performance is quantified using the Dice coefficient, Intersection over Union (IoU), and Hausdorff Distance (HD95) where appropriate.
+
+SECTION: 5.1Performance of Universal Medical Image Segmentation
+
+For 3D medical images, prompts are provided to frames with a probability of 0.25, meaning each frame has a 25% likelihood of receiving a prompt. For 2D images, prompts are provided with a probability of 0.3. Results for 3D medical image segmentation are presented in Table1, while 2D results are presented in Table2.
+
+On 3D Medical Images.To assess the general performance of MedSAM-2 on 3D medical images, we conducted experiments on the BTCV multi-organ segmentation dataset (Figure3). We compare MedSAM-2 with established SOTA segmentation methods such as nnUNet[33], TransUNet[14], UNetr[28], Swin-UNetr[27], and diffusion-based models like EnsDiff[68], SegDiff[5], and MedSegDiff[72]. Additionally, we evaluate interactive segmentation models including SAM[38], MedSAM[48], SAMed[77], SAM-Med2D[16], SAM-U[19], VMN[80], and FCFI[67]. For FCFI, ConvNext-v2-H[69]is used as the backbone. We also compare MedSAM-2 with auto-tracking generalized models, such as SAM 2[55], TrackAny[76], iMOS[75], UniverSeg[11], OnePrompt[70]. Table1presents the quantitative results on the BTCV dataset. MedSAM-2 achieves a Dice score of 89.0%, outperforming all compared methods. Specifically, MedSAM-2 surpasses the previous SOTA model MedSegDiff by a margin of 1.10%. Among interactive models, MedSAM-2 maintains the lead, outperforming the previously leading interactive model, FCFI, by 3.20%. It is important to note that all these competing interactive models require prompts for each frame, whereas MedSAM-2 achieves better results with far fewer user prompts.
+
+On 2D Medical Images.We further evaluate MedSAM-2 in a zero-shot setting on 11 unseen 2D medical image segmentation tasks.
+Similar to 3D medical image segmentation ask, we compare the results with task-tailored models, interactive models that require prompts for each image, and auto-tracking models.
+Table2summarizes the results across different datasets. MedSAM-2 consistently outperforms the compared methods, demonstrating its superior generalization capability across diverse medical imaging modalities. For instance, MedSAM-2 improves the Dice score by 2.5% on optic disc segmentation and 2.9% on brain tumor segmentation compared to the previous best models. Even when compared to interactive models that require prompts for each image, MedSAM-2 maintains its lead, highlighting the effectiveness of our proposed self-sorting memory bank mechanism. See Figure4for visualizations.
+
+SECTION: 5.2One-prompt Segmentation Performance under different prompts
+
+We further assess MedSAM-2 under the One-Prompt segmentation setting by comparing it to various few/one-shot learning baselines that use different prompts.
+We benchmark against few/one-shot models such as PANet[62], ALPNet[52],TrackAny[76], DAT[78], iMOS[75], turned SAM2[55], UniverSeg[11], and One-Prompt[70]. We further evaluate the models by testing them 5 times with different prompted images and input sequences to observe performance variance. Figure5presents the average Dice scores and variance per task for each method. MedSAM-2 not only consistently achieves higher average performance but also demonstrates significantly lower variance in most cases, underscoring its robust generalization across various tasks and prompt types.
+
+SECTION: 5.3Analysis and Ablation Study
+
+Mutual Information Analysis of Memory Bank.We analyze the effectiveness of the self-sorting memory bank in MedSAM-2 by examining the mutual information of stored embeddings over time using the ISIC dataset. The mutual information analysis assesses the diversity of embeddings in the memory bank.
+Figure6illustrates the pairwise mutual information of memory bank samples at different stages. Initially, the total mutual information is high (2.54), indicating redundancy among the stored embeddings. As the memory bank evolves, the mutual information decreases to 1.43, showing that the embeddings become more diverse and representative of different features. This confirms that the self-sorting mechanism effectively captures a diverse set of informative embeddings, enhancing the model’s generalization capability. The right side of Figure6visually supports this trend, showing an increasingly diverse set of samples as the memory bank develops from the initial to the final stage.
+
+Prompt Frequency Analysis on 2D and 3D Medical Images.We conduct experiments to study the impact of prompt frequency on the performance of 2D (REFUGE) and 3D (BTCV) datasets. The performance improves with increasing prompt given frequency, as seen in the progressive increase in Dice scores for both datasets (Figure7). Compared to SAM 2, our model demonstrates greater robustness under varying prompt frequencies. On 3D images, the performance gap between 5% prompting and full prompting is only 2% for our model, while SAM 2 shows a 7.5% gap. This difference is even more pronounced in 2D medical images, where our model maintains a 3.5% gap, whereas SAM 2 shows a substantial 33.1% drop. This highlights how our self-sorting memory bank significantly enhances model robustness, achieving strong performance even with minimal human interaction.
+
+Ablation Study.In the ablation study, we evaluate several key design choices for the MedSAM-2 model, including the use of an IOU confidence thresholdfrom Section3.2for storing samples, the storage of dissimilar templates in the memory bank, and the application of resampling strategies on the memory bank. This study is conducted with with CadVidSet dataset and the aorta task in the BTCV dataset.
+Table3presents the results of the ablation study. Using an IOU confidence threshold for the memory bank improves CadVidSet dataset’s average Dice score to 57.8%, whereas without the threshold, it reaches only 53.9%. This selective storage based on confidence enhances the quality of retained samples and reduces redundancy. In addition, further storing dissimilarity templates results in a Dice score of 64.5% and 88.4% for CadVidSet and BTCV dataset, respectively. The dissimilarity-based storage captures a broader range of features, allowing the memory bank to adapt more effectively to diverse inputs. Applying the resampling conditioned on feature relevance raises the Dice score to 72.9% and 89.6% for CadVidSet and BTCV datasets, by prioritizing relevant samples for specific segmentation tasks.
+
+SECTION: 6Conclusion
+
+In this work, we introduced MedSAM-2, an generalized auto-tracking segmentation model for both 2D and 3D medical images. By treating medical images as videos and incorporating a novelself-sorting memory bank, MedSAM-2 effectively handles unordered medical images and enhances generalization across diverse tasks.
+This innovation unlocks theOne-Prompt Segmentationcapability, allowing MedSAM-2 to generalize from a single prompt to segment similar structures across multiple images without temporal relationships. Comprehensive evaluations across 14 benchmarks and 25 tasks demonstrate that MedSAM-2 consistently outperforms state-of-the-art models in both 2D and 3D medical image segmentation. It achieves superior performance while reducing the need for continuous user interaction, making it particularly advantageous in clinical settings.
+
+SECTION: References
+
+SECTION: Appendix AWhy Does Self-Sorting Work?
+
+The effectiveness of the self-sorting memory bankin MedSAM-2 can be understood through the lens of information theory, particularly in terms of entropy and mutual information.
+
+Letdenote the input image at time, letdenote the predicted segmentation mask at time, and letdenote the ground truth at time. The mutual informationmeasures the amount of information that the predicted segmentation mask contain about the ground truth:
+
+Given that the input imageis specified, bothandremain constant. Consequently, the only variable is the selected memory bank. Therefore, increasing the mutual information betweenand, conditioned on, will lead to an improved predicted mask.
+
+By leveraging the relationship between mutual information and conditional entropy, the following decomposition can be derived:
+
+wheredenotes the entropy of the ground truth given the input image, andrepresents the conditional entropy of the ground truthgiven the known, defined as:
+
+Sincecan be interpreted as the amount of information required to describe the random variablegiven the value of, the conditional entropycan thus be viewed as the expected information needed to describe the ground truthgiven the selected memory bank.
+
+By selecting embeddings based on the highest confidence scores, the self-sorting memory bank seeks to maximizeby minimizing. Given thatis assumed to be constant, high-confidence embeddings provide more information regarding the output, thereby reducing the information required to describe. This reduction leads to a smallerand, consequently, an increase in mutual information. This increase in mutual information suggests that the model is able to make more accurate and reliable predictions based on the embeddings stored in the memory bank.
+
+Furthermore, the self-sorting mechanism introduces variability in the selection of memory embeddings, as it is not limited to the most recent frames but instead selects from all past frames based on confidence scores. This variability enhances the diversity of information within the memory bank, potentially decreasing the additional information needed to infer, especially in contexts where frames change rapidly and significantly. As a result, the self-sorting mechanism can yield a smaller, thereby increasing the mutual information.
+
+This increased entropy in the memory embeddings enhances the model’s ability to generalize. According to the principle of maximum entropy[34], a model that considers a broader distribution of features is less likely to overfit to specific patterns in the training data and is better equipped to handle variability in unseen data. By increasing both the mutual information between the memory embeddings and the output and the entropy of the memory embeddings themselves, the self-sorting memory bank improves the robustness and generalization of MedSAM-2.
+
+Consequently, the model is better suited to handle unordered medical images, as it leverages the most informative and diverse embeddings for segmentation. This leads to enhanced performance across diverse medical imaging tasks after training with standard segmentation loss[48].
+
+SECTION: Appendix BExperimental Details
+
+SECTION: B.1Evaluation Metrics
+
+We use Intersection over Union (IoU) and Dice Score to assess the performance of models in medical image segmentation.
+
+Intersection over Union (IoU), also known as the Jaccard Index, is a measure used to evaluate the accuracy of an object detector on a specific dataset. It quantifies the overlap between two datasets by dividing the area of overlap between the predicted segmentation and the ground truth by the area of their union. The formula for IoU is given by:
+
+IoU provides a clear metric at the object level, assessing both the size and position accuracy of the prediction relative to the actual data, which is particularly useful for understanding detection model performance.
+
+The Dice Score, or Dice Coefficient, is a statistical tool that compares the similarity between two samples. It is particularly prevalent in medical image analysis due to its sensitivity to the size of the objects being examined. The Dice Score is calculated by taking twice the area of overlap between the predicted and actual segmentations, divided by the total number of pixels in both the prediction and the ground truth. The formula for the Dice Score is:
+
+This score ranges from 0 to 1, where a score of 1 indicates perfect agreement between the model’s predictions and the ground truth. The Dice Score is known for its robustness against the size variability of the segmented objects, making it extremely valuable in medical applications where such variability is common.
+
+Both metrics, IoU and Dice Score, provide comprehensive insights into model accuracy, with Dice Score being particularly effective in scenarios involving significant variations in object size.
+
+The Hausdorff Distance (HD95) is a metric used to determine the extent of discrepancy between two sets of points, typically used to evaluate the accuracy of object boundaries in image segmentation tasks. It is particularly useful for quantifying the worst-case scenario of the distance between the predicted segmentation and the ground truth boundary.
+
+The Hausdorff Distance measures the maximum distance of a set to the nearest point in the other set. For image segmentation, this means calculating the greatest of all the distances from a point in the predicted boundary to the closest point in the ground truth boundary and vice versa. The formula for the Hausdorff Distance is given by:
+
+whereandrepresent the sets of boundary points of the ground truth and the predicted segmentation, respectively, anddenotes the Euclidean distance between pointsand.
+
+While the Hausdorff Distance provides a strict measure by considering the maximum distance, it can be overly sensitive to outliers. To mitigate this, the HD95 metric is used, which considers only the 95th percentile of the distances instead of the maximum. This adjustment makes the HD95 less sensitive to outliers and provides a more robust measure for practical applications:
+
+This metric is particularly relevant in medical image analysis where precision in the segmentation of anatomical structures is critical and outliers can distort the evaluation of segmentation performance.
+
+SECTION: Appendix CData
+
+SECTION: C.1Data Preprocessing
+
+The original 3D datasets contain a variety of CT and MRI images stored in DICOM, NRRD, or MHD formats. To ensure uniformity and compatibility, all images, regardless of modality, were converted to the widely used NIfTI format. This conversion also included grayscale images, such as X-Ray and Ultrasound, while RGB images depicting endoscopy, dermoscopy, fundus, and pathology were converted into the PNG format. For tasks involving multiple segmentation targets, each target is treated as an individual task for predicting a binary segmentation mask. During the inference stage for predicting multiple targets, we predict a soft segmentation mask with a fixed threshold (averaging 0.5) to filter out uncertain predictions.
+
+Notably, image intensities varied significantly across modalities. For instance, CT images ranged fromto, MRI values ranged fromto, endoscopy/ultrasound images fromto, and some modalities were already within the rangeto. To harmonize this variability, intensity normalization was systematically conducted for each modality. The default normalization during training and inference involved normalizing each image independently by subtracting its mean and dividing by its standard deviation. For MRI, X-Ray, ultrasound, mammography, and Optical Coherence Tomography (OCT) images, intensity values were trimmed to fall between the 0.5th and 99.5th percentiles before normalization. If cropping resulted in aor greater reduction in average size, a mask for central non-zero voxels was generated, and normalization was confined to this mask, disregarding surrounding zero voxels. For CT images, Hounsfield units were first normalized using window width and level values before applying standard normalization. Furthermore, since CT intensity values quantitatively reflect tissue properties, we applied a global normalization scheme to all images. Specifically, this involved clipping intensity values to the 0.5th and 99.5th percentiles of foreground voxels, followed by normalization using the global foreground mean and standard deviation.
+
+To standardize image sizes, the provided samples were first cropped to their non-zero regions and then uniformly resized to. During resizing, we used bi-cubic interpolation for images and nearest-neighbor interpolation for masks, ensuring smooth standardization and compatibility across all images. For 3D images, we generally operated on the two axes with the highest resolution. If all three axes were isotropic, the two trailing axes were used for slice extraction. The channel was replicated threefold to ensure consistency during processing. For slice-based processing, no resampling along the out-of-plane axis was required.
+
+Masks with multiple classes were processed into individual masks for each class. Masks containing multiple connected components were dissected, while original masks were retained in cases with only one component. Additionally, masks where the target area was less thanof the total image (equivalent to areas smaller thanpixels in a resizedresolution) were excluded. This deliberate decision ensures the dataset only includes significant and well-defined target areas. The standardized preprocessing pipeline was consistently applied across all compared methods to ensure a fair and unbiased comparison.
+
+SECTION: C.2Data Augmentation
+
+During training, we utilize a range of data augmentation techniques, dynamically computed on the CPU. Spatial augmentations are applied, including rotations, scaling, Gaussian noise, Gaussian blur, intensity and contrast adjustments, low-resolution simulation, gamma correction, and flipping. To enhance image variability, most augmentations involve random parameter selection from predefined ranges. The application of these augmentations follows stochastic principles, adhering to predefined probabilities. Consistent augmentation parameters are maintained across datasets. Each augmentation is individually applied to both the template sample and the query sample.
+
+Details of the augmentation techniques are as follows:
+
+Rotation:Applied with a probability of 0.15 to all images. The rotation angle is uniformly sampled from the range.
+
+Scaling:Scaling is achieved by multiplying image coordinates with a scaling factor. Scale factors smaller than 1 result in a "zoom out" effect, while values larger than 1 create a "zoom in" effect. The scaling factor is uniformly sampled from, with a probability of 0.15.
+
+Gaussian Noise:Zero-centered Gaussian noise is independently added to each sample with a probability of 0.15. The noise variance is sampled from, considering that normalized sample intensities are close to zero mean and unit variance.
+
+Gaussian Blur:Blurring is applied with a probability of 0.15 per sample. For each task, it occurs with a probability of 0.5 per modality. The Gaussian kernel size is uniformly sampled fromfor each modality.
+
+Intensity Adjustment:Intensities are modified by multiplying them with a factor uniformly sampled fromwith a probability of 0.15. Alternatively, intensities can be flipped using. Intensity augmentation is not applied to labels. After multiplication, the values are clipped to the original intensity range.
+
+Low Resolution:Applied with a probability of 0.25 per sample and 0.5 per associated modality. This augmentation downsamples the triggered modalities by a factor uniformly sampled fromusing nearest neighbor interpolation, then resamples them back to the original size using cubic interpolation.
+
+Gamma Augmentation:Applied with a probability of 0.15. Image intensities are first scaled to a range of 0 to 1, followed by a nonlinear intensity transformation defined as, whereis uniformly sampled from. The intensities are then scaled back to their original range. This augmentation is applied after the intensity flip, also with a probability of 0.15.
+
+Spatial Flip:Samples are flipped along all axes with a probability of 0.5.

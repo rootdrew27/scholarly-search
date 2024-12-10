@@ -1,0 +1,140 @@
+SECTION: Vote&Mix: Plug-and-Play Token Reduction for Efficient Vision Transformer
+Despite the remarkable success of Vision Transformers (ViTs) in various visual tasks, they are often hindered by substantial computational cost. In this work, we introduce Vote&Mix (), a plug-and-play and parameter-free token reduction method, which can be readily applied to off-the-shelf ViT models. VoMix tackles the computational redundancy of ViTs by identifying tokens with high homogeneity through a layer-wise token similarity voting mechanism. Subsequently, the selected tokens are mixed into the retained set, thereby preserving visual information. Experiments demonstrate VoMix significantly improves the speed-accuracy tradeoff of ViTs on both images and videos. Without any training, VoMix achieves a 2increase in throughput of existing ViT-H on ImageNet-1K and a 2.4increase in throughput of existing ViT-L on Kinetics-400 video dataset, with a mere 0.3% drop in top-1 accuracy.
+
+SECTION: Introduction
+Since the migration from Natural Language Processing (NLP) to Computer Vision (CV), Transformers have set new performance benchmarks in a variety of tasks including image classificationand action recognition, surpassing Convolutional Neural Networks. However, a notable challenge of Vision Transformers (ViTs) lies in their substantial computational cost. This is primarily due to the self-attention mechanism, where the computational cost grows quadratically with respect to the number of tokens. Moreover, maintaining a constant token count across all layers of ViT exacerbates this issue, limiting its applicability in many real-world scenarios.
+
+Recent studieshave revealed that, compared to languages, visual data exhibits significantly heavy redundancy. A large proportion of tokens within ViT can be discarded and recovered by neighboring tokens. Motivated by it, an acceleration strategy for ViT has emerged, referred to as, which mitigates computational cost by reducing token number in ViT.
+
+However, there are notable limitations in existing token reduction methods. Some rely heavily on specific tokens (typically class tokens) to assign significance scores to other tokens, thus confining their application to particular models only. Some methods introduce extra parameters, with the need for model retraining. These drawbacks limit their practical applicability, making adapting token reduction methods to a trained ViT model troublesome.
+
+Recent researchhas suggested that the attention mechanism in ViTs tends to collapse into homogeneity, where different query tokens elicit identical attention signals. Inspired by this, we argue that tokens with high homogeneity can be more effectively represented by other tokens. Hence, diverging from previous token reduction strategies that focus on discarding insignificant tokens, we aim to reduce token homogeneity. Accordingly, pruning homogenized tokens enhance the efficiency of token utilization in ViT, thereby boosting performance.
+
+Therefore, we introduce Vote&Mix (), a plug-and-play, parameter-free token reduction method. In each layer, VoMix identifies tokens with high homogeneity through amechanism and thenthem into the retained tokens. Remarkably, VoMix can be applied to off-the-shelf ViT models, significantly accelerating inference while maintaining accuracy. Experiments on both image and video datasets, including ImageNet-1K, Kinetics-400, and SSV2demonstrate that VoMix achieves a state-of-the-art tradeoff between computational cost and accuracy. As is shown in Figure, VoMix significantly improves the speed-accuracy tradeoff of ViT. VoMix achieves improved accuracy at the same speed, and greater speed at the same accuracy. Furthermore, we visually explore VoMix’s tendency to retain and mix tokens, discovering that VoMix functions similarly to soft token clustering, thereby accelerating inference while maintaining accuracy. We conduct ablation studies and demonstrate the superiority of the voting mechanism. Finally, we discuss the pruning schedules and acceleration effects of training VoMix.
+
+Compared to other token reduction methods, in addition to the excellent performance, VoMix possesses advantages in the following aspects:
+
+: VoMix saves the time and cost for retraining and deployment.
+
+: VoMix is a parameter-free method introducing very low computational complexity and allows for flexible model scaling.
+
+: It can be applied to most mainstream ViTs and excels in image and video modalities.
+
+SECTION: Related Work
+SECTION: Efficient Vision Transformers
+Since the advent of the Transformerand its subsequent adaptation in the Vision Transformer, there has been a surge in research aimed at enhancing the efficiency of Transformer models, particularly in the computer vision domain. These include model pruning, quantizationand efficient attention. Since Transformer allows variable token length, there emerges. It aims to enhance the efficiency of ViT by reducing the number of tokens processed. The proposed method in our paper falls into this category.
+
+SECTION: Token Reduction
+The prior work on token reduction can be divided into token pruning, token clustering and token merging.
+
+reduces tokens by removing less important ones.
+One typical strategyleverages the attention weights of class tokens to estimate per-token keep probabilities. However, the absence of meaningful class tokens in many ViTs limits the applicability. Another strategyemploys a learnable module to predict per-token significance scores. While it introduces extra parameters and computational cost, it also requires retraining the model. Inherently, token pruning risks information loss, and score-based sampling strategies tend to discard tokens within the same category, leaving redundancy in others. Contrary to pruning-based methods, our proposed method focuses on reducing token homogeneity while preserving the information of pruned tokens.
+
+reduces tokens by clustering tokens into several clusters. It can be divided into hard-clustering and soft-clustering according to the strategy. Hard-clustering methodstypically use commonly known clustering methods like K-Means or K-Medoids, and combine tokens within clusters. These methods often require multiple iterations for clustering and lack flexibility. Soft-clustering methodsgenerally involve parameterized learners to predict cluster centers and assignment matrix, thereby introducing extra parameters. Our proposed method enables efficient token mixture in a soft manner, and no need for training.
+
+reduces tokens by merging redundant tokens into one. A typical method is ToMe, which gradually merges similar token pairs. The following workupdates naive average merging to normalized average. Nevertheless, these methods still rely on simply calculating pairwise similarity to select tokens to merge, while neglecting the global homogeneity of the tokens. In contrast, our proposed method offers two key improvements: (1) Voting mechanism: VoMix uses a global voting method to select the most homogeneous tokens. We will demonstrate the effectiveness of voting in the ablation study. (2) Token mix: VoMix performs query fusion within the attention mechanism before applying qkv-attention, which is softer and reduces the time complexity of self-attention to.
+
+SECTION: Vote&Mix
+We introduce VoMix, which alters only the self-attention mechanism in ViT. At each layer, with an initial token count of, VoMix first selectstokens with high homogeneity via token voting. Subsequently, VoMix mixes the selected queries () into the retained ones. In the attention mechanism, the mixedqueries interact with the originalkeys () and values (), ultimately yielding an output oftokens. Figureillustrates the VoMix process.
+
+SECTION: Token Vote
+in the-th layer, given the input tokens, token voting aims to select a subsetconsisting oftokens with the highest homogeneity, whereis the pruning ratio.
+
+Intuitively, a token with high homogeneity implies a high similarity with many other tokens. We adopt a similarity voting strategy to identify these tokens.
+
+Within each transformer block of the ViT, VoMix measures the cosine similarity between tokens, yielding a similarity score matrix. Here, we use the head-wise mean of keys () as the metric to reduce the additional computation. Mathematically,
+
+whereis attention head number anddenotes the cosine similarity between tokenand.is set toto prevent self-voting.
+
+Each token casts its vote for the most similar token to itself, where the votes are weighted by similarity scores. The score of each tokenis the sum of weighted votes received:
+
+wheredenotes the index that tokenvote to,is the Kronecker delta, which is 1 if a=b and 0 otherwise. After that, VoMix sorts tokens by, selecting the topproportion of tokens, as. The remains form the set.
+
+SECTION: Token Mix
+given the selected subsetand remained, token mixing aims to integrate the tokens ofintoto preserve the information of.
+
+Directly discarding the selected tokens would invariably loss information. To mitigate it, VoMix mixes them into the retained pool. The steps are as follows:
+
+VoMix gathers the similarity scoredirectly from, as the similarity betweenand. Then the mixture weightis the softmaxed gathered score.
+
+Query mix conducts a soft feature mixture for queries. Before attention, queriesfromare mixed into queriesfromwith the mixture weights. Note that token mixing assigns tokens with variable weights, the queryneeds to be scaled by a mixed sizefirst:
+
+whereis the mixed size of tokenin the-th layer, indicating how many tokens have been mixed into token. The initial size ofis. Then we update the new weighted sizeand normalize the final query:
+
+After that, we obtain the mixed queries.
+
+We conduct self-attention using the mixed querieswith original keysand values. We use proportional attention to pay more attention to larger weighted keys, formulated as:
+
+Sinceare not mixed in-th layer, we use the size. Finally, we obtain the output tokensof layer. The pseudocode in Algorithmshows how VoMix works in pytorch-style pseudocode.
+
+SECTION: Complexity Analysis
+We conduct a complexity analysis of VoMix to explore the additional time complexity.
+Here,denotes the initial number of tokens in each layer,is the dimension of the feature representation,denotes the number of attention heads, andis the pruning ratio.
+
+The complexity of head-wise mean of keys is. Calculating the cosine similarity matrixincurs, and the voting complexity is. Given that, the dominant term is.
+
+The complexity for soft-maxing weights is, and for the query mix is. Hence, the stepwise complexity is.
+
+Aggregating the above components yields a total additional time complexity for VoMix of, which does not exceed.
+
+SECTION: Experiments
+In this section, to verify the effectiveness of VoMix across different visual modalities, we conduct experiments on both image and video classification tasks. The experimental datasets are common benchmarks in these tasks: ImageNet-1K, Kinetics-400 (K400), and Something-Something-V2 (SSV2). We apply VoMix to off-the-shelf models to re-evaluate their accuracy and speed, thereby verifying the plug-and-play capability of VoMix. All throughput results are obtained on a single 32GB Nvidia Tesla V100 GPU with a batch size of 32.
+
+VoMix is a token reduction method that relies on a hyperparameterto control the pruning ratio at the-th layer. In our experiments, we set the value offor each layer to manage the tradeoff between accuracy and speed. We define two pruning schedules as follows:
+
+constant schedule:indicates pruning a constant proportion oftokens in each of the firstlayers.
+
+decreasing schedule:indicates pruning a decreasing proportion fromtoin the firstlayers.
+
+SECTION: Image Experiments
+We evaluate VoMix with several ViT models including MAE, SWAGand DeiTon ImageNet-1K. We apply VoMix to the officially released fine-tuned models
+to verify its effects on off-the-shelf models.
+
+Tablepresents the acceleration effects of VoMix on various tiers and input resolutions of ViTs on ImageNet-1K. With an acceptable accuracy drop ranging from 0.2% to 0.6%, VoMix notably enhances the throughput for all tiers of ViTs. Larger ViTs exhibit a greater acceleration benefit. This is attributed to the fact that larger ViTs have deeper layers, which amplifies the cumulative effect of token reduction. In terms of input resolution, larger-sized inputs experience better acceleration with less precision loss, aligning with the intuition that high-resolution images contain higher redundancies.
+
+In Table, we compare VoMix with several token pruning methods including HVIT, IA-RED, A-ViT, DynamicViT, SP-ViT, EViTand BAT. All these methods for comparision require retraining or further fine-tuning. By directly applying VoMix to DeiT-Swithout any training, we achieve the same accuracy and efficiency as A-ViT. We also apply VoMix on ViT-S-AugReg, achieve accuracy comparable to other state-of-the-art methods with improved efficiency. It is noteworthy that VoMix does not require training, thereby actually saving training time. Futhermore, for a fair comparison, we fine-tune VoMix from DeiT-S for 100 epochs, achieving results consistent with BAT. This indicates that VoMix not only achieves impressive results as a plug-and-play method but also has potential that can be further unlocked through training.
+
+To evaluate the plug-and-play performance of VoMix, we make a comparison between VoMix and other pluggable token reduction methods. First, we compare VoMix with token merge (ToMe)on MAE models, and plot the tradeoff curves in Figure. In the same configuration, VoMix presents a more favorable speed-accuracy tradeoff compared with ToMe. Specifically, at lower pruning ratios, the difference in accuracy is quite marginal; however, when the pruning ratio is further increased, ToMe suffers a significantly greater precision loss than VoMix. We hypothesize that this difference arises from the distinct pruning manners: ToMe merges token features in a hard manner, resulting in the combination of dissimilar tokens into one when many tokens are pruned. In contrast, VoMix selects queries through a voting mechanism and re-assigns feature information via a soft approach, thereby more effectively preserving the original features even with fewer tokens retained. Futhermore, Figureshows VoMix can be trained to get better performance. Additionally, we also compared VoMix with another pluggable method, ATS. Due to the requirement of ATS for ViT with a class token, our comparison is limited to DeiT. As is shown in Table, with the same FLOPs cost, VoMix achieves higher accuracy when both two models are not fine-tuned.
+
+To investigate how VoMix mixes token features, we visualize the tokens of the last layer and their source distribution in Figureusing ViT-Lon ImageNet-1K. We aim to address two key inquiries: (1) Which tokens does VoMix tend to retain? (2) From which tokens do the retained tokens draw information?
+
+For the first inquiry, we find that unlike previous pruning methods that only retain foreground tokens, VoMix preserves at least one representative token for each semantic region. More tokens are retained in semantic-rich regions, like the bird’s head, with fewer tokens for the background region. Moreover, the retained tokens are strategically placed at the boundaries of semantic regions, highlighting VoMix’s capability to prioritize dissimilar tokens, thereby emphasizing edge tokens as excellent representatives. This mechanism encourages the model to focus on contour features, steering away from redundancy within the interior of regions.
+
+Addressing the second inquiry, we elucidate the feature sources of the retained tokens by selecting two tokens from each image and visualizing their source heatmaps. These heatmaps, where hotter areas indicate higher feature weights being mixed into the selected token, reveal the diverse source distribution of different retained tokens. In the left image, the bird’s nape (purple box) primarily draws features from its body, while the grass token (green box) mainly draws from the background. In the right image, the fish’s tail (green box) mainly derives its features from its tail fin and the water area token (purple box) from the background. This pattern of feature aggregation demonstrates VoMix’s functionality akin to token clustering, where it aggregates similar token features around a retained token, reducing redundancy by merging similar tokens into representative regions.
+
+These findings are further supported by the visualizations in Figure, which make it apparent that VoMix tends to cluster similar tokens into the same region, thereby substantiating our analysis of how VoMix mixes token features to achieve efficient and effective representation.
+
+SECTION: Video Experiments
+We conducted experiments on two video classification datasets: Kinetics-400 (K400)and Something-Something-V2 (SSV2), using VideoMAEas the base model. We apply VoMix to the officially released fine-tuned models
+and conduct evaluation.
+
+Considering the need to segment videos into clips for video experiments, we adopt the clip settings of VideoMAEfor fairness. During the evaluation, we sample 5 clips3 crops with 16 frames for K400 and 23 views for SSV2. For throughput evaluation, we report the throughput of 16-frame 224224 clips per second.
+
+Tableshows the results of ViT with VoMix on K400 and SSV2. Starting from ViT-B, we report two results in the table: one with a slight loss in accuracy, and the other with throughput comparable to the lower tier ViT. With only a 0.2%0.3% decrease in accuracy, VoMix reduces the computational cost by approximately 30% for low-tier ViTs (ViT-S, ViT-B) and 60% for high-tier ViTs (ViT-L, ViT-H). The actual throughput increase aligns closely with the reduction in computational cost, demonstrating the additional computational cost introduced by VoMix is negligible compared to its benefits. By further increasing the pruning ratio, VoMix achieves a dual advantage in both accuracy and speed for the high-tier ViT over the low-tier one. Figureshows the improvement of speed-accuracy tradeoff introduced by VoMix.
+
+We compare VoMix with other state-of-the-art work on K400 and report the results in Table. The results are manually split into two tracks according to the FLOPs range. We include video-specific models like TimeSformer, Motionformer, VideoSwin, MViTv2-Land two pluggable token pruning methods based on VideoMAEmodels: ToMeand STAas the baselines. In both two tracks, VoMix outperforms other models in terms of accuracy and computational cost. ViT with VoMix significantly surpasses video-specific models in both accuracy and speed. Compared with two pluggable pruning methods, VoMix achieves the same accuracy with less computational cost. Furthermore, we completely compare the speed-accuracy tradeoff between VoMix and ToMe on K400 using ViT-Lin Figure. Similar to the results on ImageNet-1K, ToMe is slightly ahead at lower pruning ratios. However, as the pruning ratio increases, ToMe suffers a highly significant loss in accuracy while VoMix maintains a better accuracy.
+
+Similar to image visualization, we visualize the source heatmap over multiple frames of video using VoMix-Lin Figure. We select a final retained token (red box) of the blue bottle and track the mixture source. As is shown in the heatmap, it mainly draws features from the blue bottle across the frames, which indicates that VoMix can also perform feature aggregation on video.
+
+SECTION: Ablation Study
+To investigate the optimal strategy, we conduct ablation studies on ImageNet-1K using ViT-L@512 from SWAG. The results are displayed in Table.
+
+Three strategies include (1)employed by VoMix; (2), which selects tokens with the highest average similarity to all the other tokens; (3), which randomly selects tokens. Compared to global similarity, voting strategy demonstrates a clear advantage. This is attributed to the locality of voting, meaning that the selected tokens are not required to be globally most similar, but only to exhibit the highest similarity among several tokens.
+
+To explore how many tokens should a token vote to, we examine three settings: (1) vote for; (2) vote for; (3) vote for. Top 1 outperforms others, supporting the aforementioned conclusion that the superiority of voting strategy lies in its locality.
+
+We utilize three features to measure similarity:,,. Usingas the metric performs best. Besides, we experiment with three methods of similarity measurement: cosine similarity, L2 distance, and vector dot product. Cosine similarity outperforms others in similarity measurement.
+
+We explore the effects of three different query mixing strategies: (1), where the selected queries are mixed according to the similarity to all retained queries; (2), where the selected queries are mixed only with the most similar retained query; (3), where the selected queries are discarded without any mixing. The global query mix outperforms the others, indicating the superiority of soft-manner mixing.
+
+We explore the effects of attention mix with the three settings: (1)employed by VoMix, which performs proportion attention with retainedand original,; (2); (3), where ViT performs attention with retained,,. The results show no mixing suffers a significant precision loss, indicating that after query mixing, attention should be performed with the full set of keys and values.
+
+SECTION: Discussion
+We design three pruning schedules: (1) constant schedule: a constant proportion of tokens are pruned across all layers; (2) decreasing schedule: the pruning ratio gradually decreases to zero across layers; (3) truncated schedule: pruning is performed only at the early half layers. The results are illustrated in Figure. The constant schedule is almost the worst strategy at any throughput. At lower pruning ratios, the truncated schedule performs better, while at higher ratios, the decreasing schedule surpasses it.
+
+We have demonstrated the potential of training VoMix in Tableand Figure. Here, we further discuss the time and performance benefits brought by training VoMix. We train ViT-Lapplied VoMix from scratch on ImageNet-1K using the fine-tuning scripts of MAE. Results are shown in Table. Training with VoMix results in a slight increase in accuracy compared with plug-and-play mode. Notably, training with VoMix and inferring on vanilla ViT-L only suffers 0.1% accuracy drop but saves nearly 30% training time. It indicates that training VoMix further enhances the accuracy-speed tradeoff, and also effectively speeds up training.
+
+SECTION: Conclusion
+In this work, we introduce Vote&Mix (VoMix), a plug-and-play and parameter-free token reduction method, which can be readily applied to off-the-shelf ViT models. VoMix tackles computational redundancy of ViTs by voting and mixing tokens with high homogeneity. Experiments demonstrate that VoMix significantly improves the speed-accuracy tradeoff of ViTs on both images and videos and surpasses the existing token reduction methods.
+
+SECTION: References

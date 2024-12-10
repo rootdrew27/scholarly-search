@@ -1,0 +1,356 @@
+SECTION: FUN-AD: Fully Unsupervised Learning for Anomaly Detection with Noisy Training Data
+
+While the mainstream research in anomaly detection has mainly followed the one-class classification, practical industrial environments often incur noisy training data due to annotation errors or lack of labels for new or refurbished products.
+To address these issues, we propose a novel learning-based approach for fully unsupervised anomaly detection with unlabeled and potentially contaminated training data.
+Our method is motivated by two observations, that i) the pairwise feature distances between the normal samples are on average likely to be smaller than those between the anomaly samples or heterogeneous samples and ii) pairs of features mutually closest to each other are likely to be homogeneous pairs, which hold if the normal data has smaller variance than the anomaly data.
+Building on the first observation that nearest-neighbor distances can distinguish between confident normal samples and anomalies, we propose a pseudo-labeling strategy using an iteratively reconstructed memory bank (IRMB).
+The second observation is utilized as a new loss function to promote class-homogeneity between mutually closest pairs thereby reducing the ill-posedness of the task.
+Experimental results on two public industrial anomaly benchmarks and semantic anomaly examples validate the effectiveness of FUN-AD across different scenarios and anomaly-to-normal ratios.
+Our code is available athttps://github.com/HY-Vision-Lab/FUNAD.
+
+SECTION: 1Introduction
+
+Anomaly detection refers to the process of detecting events that are rare and interesting, and is an essential application in engineering, science, medicines and finance[23,40,6].
+In particular, anomaly detection involving visual data has received much attention recently, ranging from defect detection in manufacturing industry[10,28,36,48,22,9,29,33,8,41,47,11,32,45,20,30,2,51,38,46,25], lesion detection in medical imaging[37,39]to violence detection in surveillance[44,14,26,43,1].
+
+While the task of industrial anomaly detection is relatively well-defined, there are two main issues that raise the difficulty of the problem in practice.
+First, anomaly samples are rare and consequently difficult to obtain, triggering significant data imbalance between the normal and abnormal classes.
+Second, anomalies can arise from different causes, leading to a diverse distribution of anomaly samples.
+Due to these problems, it is a commonly adopted problem setting in industrial anomaly detection[10,28,36,48,22,9,29,33,32,45,20,30,2,46,8]that only the class of normal data is used for training.
+While these methods are often noted as “unsupervised” approaches, they mostly adopt a form of supervised learning called one-class training since the training data requires correctly labeled normal samples.
+When training data is contaminated, one-class classification methods which do not separately consider outliers in the training data (e.g. OC-SVM[24]does consider outliers) are vulnerable to contamination and may continue to mistake certain classes of anomalies for normals as they consider anomalies in the training dataset to be normals.
+Consequently, this problem setting still requires clean data collection, which incurs considerable annotation costs and time.
+In this study, we explore the possibility of addressing the challenging question “can we train an accurate industrial anomaly detection algorithm without any labeled data?”.
+In real-world scenarios, normal data can easily become outdated due to regular product upgrades or changes in manufacturing processes.
+Moreover, even labeled training data can be contaminated with anomalies due to human errors in annotation.
+All these issues with one-class training would be eradicated in the fully unsupervised setting, providing practical motivation.
+
+While fully unsupervised approaches[38,21,42,25,7]exist to address the above questions, they mostly focus on eliminating samples pseudo-labeled as anomalies and performing one-class training with the remaining data.
+However, supervised anomaly detection studies[47,41]have shown that even limited anomaly information can enhance both anomaly detection and localization performance, while also addressing the issue of small anomalies being overlooked by traditional one-class classification methods.
+
+To this end, we take a different approach towards using anomaly information compared to other fully unsupervised schemes.
+Our work leverages statistical observations that i) pairs of normal features are likely to be closer together than other types of pairs and ii) mutually closest pairs are likely to be formed by pairs from the same class (homogeneous pairs).
+We demonstrate that they provide cues to distinguish normal samples from anomalies when the variance of normal data is smaller than that of the anomalies.
+
+We summarize the contributions of our work as follows:
+
+A previously-untouched statistical analysis of pairwise distance of features which provides a cue to distinguishing confident normal samples from unlabeled data,
+
+a new pseudo-labeling approach based on iteratively re-constructed memory bank (IRMB) designed to utilize above statistics of pairwise distances,
+
+a novelmutual smoothnessloss which reduces the ill-posedness by aligning anomaly scores of mutually closest feature pairs under the validated assumption that they largely belong to the same class, and
+
+a simple yet effective iterative learning-based framework for fully unsupervised anomaly detection, achieving state-of-the-art (SOTA) performance in anomaly detection and localization across various contaminated settings on public industrial datasets (MVTec AD and VisA).
+
+SECTION: 2Related work
+
+We briefly review studies in anomaly detection that are mostly relevant to our work.
+
+In the one-class classification setting, we assume the training data contains correctly labeled normal samples and no anomalies.
+While a plethora of different methods exist, these can be largely categorized into i) reconstruction-based methods[45,48,46,32]which learn to reconstruct a normal image from an anomaly sample and detect the anomaly region via difference of images, ii) embedding-based methods[28,22,29,2,9,10,8,33,36]which measure similarity against normal features extracted from a pretrained network, and iii) self-supervised methods[20,30,33]based on generating pseudo-anomalies.
+
+We summarize previous works partially incorporated into our approach, but used differently as detailed in Sec.4.
+The first relevant work is PatchCore[28], which utilizes a pretrained feature extractor to obtain normal patch features from training data, subsamples them and stores them in a static memory bank.
+During inference, query image features are extracted and compared to the memory bank via nearest-neighbor search for anomaly detection.
+
+The second relevant work is SimpleNet[22], which uses self-supervised learning by adding Gaussian noise to normal features to create pseudo anomalies for training alongside normal samples.
+These pseudo anomalies are generated in feature space and used to train a simple discriminator network to detect anomalies.
+Nevertheless, these two approaches are designed to work with clean normal samples, which is not robust to noisy training data.
+
+More recently, several studies explored fully-unsupervised learning for industrial anomaly detection whereby the training data is unlabeled and may comprise anomalies.
+Most research[42,38,25]attempts to eliminate pseudo-anomalies from the training data and re-deploy one-class anomaly detection[28,20]on the filtered training set.
+Xiet al.[38]proposed to filter the training data via thresholding based on the value of local outlier factor (LOF)[4]and re-deploy PatchCore[28]on the filtered dataset using reweighted anomaly scores.
+McIntosh and Albu[25]extracted high-confidence normal patches based on the assumption that normal patch features exhibit high span (large in numbers) and low spread (small diversity), and used them to detect anomaly patches.
+While both approaches achieve fully unsupervised training, they solely rely on a pretrained feature extractor for constructing a memory bank, so any incorrectly classified anomaly sample can be stuck inside the memory bank and consistently degrade the detection accuracy.
+
+SECTION: 3Motivations
+
+We illustrate two observations motivating our strategy proposed in Sec.4.
+In Sec.3.1, we show analytically that the pair of features that are relatively close is most likely to arise from the pair of normal samples.
+In Sec.3.2, we empirically demonstrate that the mutually closest feature pairs are highly likely to be derived from the same class.
+Interestingly, these results only rely on the assumption of smaller variance for the normal data compared to the anomalies, and they do not require the means of two distributions to be different or need anomalies to be scarce.
+
+SECTION: 3.1Statistical analysis of pairwise distances between features
+
+For the purpose of intuitive illustration, we present our analysis to an ideal case whereby the normal features and anomaly features follow distinct isotropic Gaussian distributions.
+Letbe the distribution of the normal samples withandthe distribution of the anomaly samples with.
+Provided that the anomaly samples are more spread out than the normal samples, we acknowledge.
+
+Ifandare samples each drawn from one of the two distributions,
+then it naturally follows that, whereis the class (or) of sample 1 andis the class of sample 2 respectively.
+Then, the probability of the distance betweenandbeing less than the thresholdcan be represented as:
+
+Ifandare from the same distribution, then, and thus Eq. (1) becomes
+
+whereandis the cumulative distribution function of the chi-squared distributionwithdegrees of freedom.
+Ifandare drawn from different distributions,
+
+whereandis the cumulative distribution function of the non-central chi-squared distribution with the non-centrality parameter.
+
+We now analyze the probability in Eq. (1) for different types of features pairs, namely the normal-normal pair, anomaly-anomaly pair and normal-anomaly pair, withto simulate close pairs.
+Since Eq. (1) tends to 0 asfor any type of feature pairs, we instead resort to evaluating the ratio of probabilities between different types of pairs to approximate the comparative sizes.
+Comparing the probabilities between the normal-normal pair and the anomaly-anomaly pair using Eq. (2) yields
+
+forsince.
+This means that a pair of normals ismore likelyto be within the distance ofthan a pair of anomalies.
+We compare the probabilities between the normal-normal pair and the normal-anomaly pair for, yielding
+
+We consider two lower-bound cases to show that Eq. (5) is always greater than 1.
+First, when the two distributions have the same mean, i.e., thenapproximates towhich is less thanso long as, yielding Eq. (5) to be greater than 1.
+Second, when the normal and anomaly distributions have substantially different means but similar variances, thenwhich cannot be larger thanfor.
+In practice, the normal and anomaly data usually have different means and variances to safely go over 1.
+This implies a pair of normal features ismore likelyto be within the distance ofthan a heterogeneous pair of anomaly and normal features.
+
+SECTION: 3.2Empirical analysis on mutually closest features
+
+This section is motivated by the seminal work of Zhouet al.[50], which leverages the assumption that nearby points are likely to belong to the same class for semi-supervised learning.
+Similarly, we turn our attention to analyzing the type of feature pairs formed between mutually closest pairs and aim to check if this label-consistency assumption can be applied to our problem.
+Since the statistical analysis of mutually exclusive pairs is complex, we directly resort to empirical analysis to classify the type (heterogeneous or homogeneous) of these pairs.
+As in the empirical validation part of Sec. 1 in[18], we perform this analysis on the synthetic data comprising the same isotropic Gaussian distributions and real data from MVTec AD[3].
+
+In the synthetic experiment, we identified the closest sample for each data point and counted the instances where they formed mutually closest pairs. The matching ratio was then calculated as twice the number of unique mutually closest pairs divided by the total number of participating samples. For example, the matching ratio for normal-normal pairs is determined by doubling the number of mutually closest normal-normal pairs and dividing it by the total number of normal samples. As shown in Fig.2(a), nearly all mutually closest pairs were homogeneous.
+
+In the real-world experiment, the same process for calculating the matching ratio was applied separately using image-level features and patch-level features for each sequence in the MVTec AD dataset[3]. The results for both feature levels were averaged to produce Figs.2(b)and2(c), which indicate a low proportion of heterogeneous mutually closest pairs. These findings underscore the importance of enforcing class consistency between closest pairs.
+
+SECTION: 4Proposed method
+
+We describe a learning framework calledFUN-ADfor fully unsupervised industrial anomaly detection, which consists of an anomaly pseudo-labeling method motivated by Sec.3.1and a loss function inspired by Sec.3.2.
+
+We define the training set as, whereis the-th image,is the number of training samples, andandare the image height and width, respectively. We define the-th patch ofas, whereis the patch size.
+FUN-AD comprises two sub-networks: a feature extractorand the Local-Net modelfor detecting anomalies.is passed throughto extract the patch-level features.
+
+SECTION: 4.1Generating patch-level pseudo-labels from pairwise-distance statistics
+
+From Sec.3.1, we note that feature pairs with smaller pairwise distances are more likely to be homogeneous normal pairs, provided that the anomaly features are more spread out than normal features.
+This observation motivates us to utilize the statistics for pseudo-labeling.
+
+We update the patch feature vector of images classified as normal byinside the memory bank at each iteration.
+This implies that even with a randomly constructed (noisy) memory bank containing as many anomalies as normal samples, analyzing the statistics of pairwise distances will allow us to distinguish some confident normal and anomalous samples from the unlabeled training set, providing sufficient supervision to initiate the learning process.
+
+This approach demonstrates that even in the early stages of training, when the memory bank is nearly random, it predominantly consists of normal samples.
+Since some of the normals in the initial memory bank will pull other normals into memory and push out anomalies, only normals will remain in the memory bank after an iteration.
+The normal-only memory bank will no longer be noisy and will therefore be better able to distinguish normal from abnormal.
+Hence, we propose to gradually refine our memory bank features through iteratively re-constructed memory banks and assign pseudo-labels based on pairwise distances.
+
+In each iteration, we construct a memory bank comprising features likely derived from normal images.
+To achieve this, we first estimate the global anomaly score of each image by max-pooling the patch-level anomaly scores of the constituent patches, i.e.,.
+Then, we apply min-max normalization to these scores across all training images and use a thresholdto identify a setcomprising features that are more likely to be normal.
+Anomaly scores from the local network are normalized, but since they are mostly distributed near 0.5 at the beginning, we perform min-max normalization to distinguish between confident normal and confident abnormal.
+In terms of equation,
+
+Additionally, we sample a random subsetto reduce computational time.
+Finally, we construct a memory bankby storing patch-level features fromthat have additionally passed through the learnable feature adaptor of the Local-Net ().
+This allows features from pretrainedadapt to our anomaly detection task.
+This feature adaptation along with iteratively reconstructed memory bank allows gradually sharpening of the learning signal.
+
+In each iteration, we utilize the pairwise distance statistics linked to IRMB for assigning patch-level pseudo labels.
+We conduct a nearest-neighbor search for each adapted patch feature against the internal features of the memory bank, excluding the feature itself.
+This exclusion is necessary because the initial Local-Net is random, and not all feature vectors in the memory bank can reliably be considered normal.
+If a query feature inside the memory bank requires pseudo-labeling, it may continue to be labeled as normal, resulting in persistent incorrect pseudo-labels in the absence of exclusion.
+
+Initially, we define the patch features within the minibatch of the-th iteration as, whereis the batch size.
+The nearest-neighbor distanceto the features inis defined as:
+
+whereis anandoperator to remove the case whereis derived from.
+This distance is min-max normalized to yield the anomaly score for pseudo labeling () as:
+
+which is thresholded to assign the patch-level pseudo label as, whereis a unit step function andis the threshold below which is classified as normal.
+Since our goal is to distinguish between outliers and normals, we use a threshold to divide the regions taking advantage of the large spikes in maximum values caused by outliers.
+This assignment strategy, based on pairwise-distance statistics, is robust to the initially random memory bank and can still provide correct learning signals from the confident normal and anomaly samples.
+The remaining issues with false positives and false negatives are addressed in Sec.4.3.
+
+SECTION: 4.2Mutual-smoothness loss
+
+Following the pseudo-label assignment process, many incorrect pseudo-labels may result from assigning hard labels based on a threshold, potentially leading to inaccurate learning.
+Therefore, building on the observation from Sec.3.2that the mutually closest pairs of features are likely to share the same class, we propose a newmutual smoothness lossto align the patch-level anomaly scores of the features forming a mutually-closest pair.
+For this purpose, we employ theloss function known for its robustness against noisy labels as outlined in[15], yielding
+
+whereis defined as the unique set of mutually closest pairs such that, for all,
+
+In ambiguous situations where the pseudo-label scores of samples that are mutual nearest-neighbors are close to the threshold, each sample may be assigned a different label.
+However, since mutually-nearest-neighbor pairs are likely to be in the same class, the anomaly scores between the two samples are made similar to prevent incorrect prediction.
+The positive effect of this loss is demonstrated in Table3.
+
+SECTION: 4.3Training procedure
+
+Subsequently, the Local-Net is trained to minimize the total loss function, which is a weighted sum of the balanced cross-entropy lossand the mutual smoothness loss.is defined as
+
+based on the pseudo-labels assigned from Sec.4.1, and the mutual smoothness loss expressed in Sec.4.2.andare the set of samples pseudo-labeled as anomaly and normal respectively in iteration.
+
+The hard pseudo-labels from Sec.4.1inevitably yield false positives and false negatives. While it is difficult to avoid them completely, we introduce simple feature augmentation to reduce their negative impact.
+This is achieved by adding Gaussian noise to the set of ambiguous features, which are classified as anomalies, but do not acquire scores above the confident-anomaly threshold of.
+This approach mitigates the problem by introducing noise as a perturbation, which prevents the model from incorrectly classifying normal features as anomalies.
+Our method is partly motivated by[27,13,22], which demonstrate that additive Gaussian noise applied to the normal features can generate useful pseudo-anomalies.
+Above can be expressed as,
+whereis the set of ambiguous anomalies andis the Gaussian perturbation withbeing a diagonal covariance matrix with the elements computed by estimating the element-wise variance of the patch-level features in the mini-batch, i.e.. Finally, the Local-Net is updated by incorporating all of the aforementioned steps. See Algorithm 1 for detailed model training steps.
+
+SECTION: 5Experimental results and discussions
+
+We compared our method against several baselines using industrial anomaly detection benchmark datasets.
+We also evaluated the performance when varying the percentage of anomalies in the training dataset, the presence of each module, and the hyperparameters through ablation study.
+
+SECTION: 5.1Toy example of semantic anomaly detection
+
+We used CIFAR-10[19]to conduct a toy experiment.
+The normal class is “automobile”, and the outliers consist of the remaining classes in CIFAR-10.
+Fig.4(a)shows the semantic anomaly scores when Local-Net is randomly initialized, and Fig.4(b)shows the semantic anomaly scores after Local-Net has been trained by FUN-AD’s training process.
+Fig.4(c)illustrates that the AUROC metric shows a clear separation between normal and anomaly, with most of the normal samples remaining in the memory bank as training progresses.
+For more details, please refer to[18].
+
+SECTION: 5.2Experiments
+
+We primarily utilized two widely recognized public benchmarks, MVTec AD[3]and VisA[51].
+MVTec AD comprises 15 categories (10 objects, 5 textures), and VisA includes 12 object categories.
+For MVTec AD, we modified the one-class classification setup by randomly incorporating some of the test set anomalies into the training set at a 1:10 ratio, creating noisy training data contaminated with anomalies.
+All training samples were stripped of their labels to construct a fully unsupervised setting.
+In theNo overlapscenario, these relocated anomalies were excluded from evaluation across different anomaly-to-normal ratios.
+In theOverlapscenario, the anomalies moved from the test set to the training set were also used for inference.
+We also consideredOverlapscenario, as existing fully unsupervised anomaly detection baselines[38,25]have been evaluated.
+
+In Table1,FUN-ADoutperforms previous SOTA methods in both anomaly detection and localization on the contaminated MVTec AD in theNo overlapsetting.
+In theOverlapsetting, our model performs almost as well, unlike the degradation observed in one-class classification models, including fully-unsupervised methods.
+
+Similarly, on VisA, our model exhibits significantly improved results compared to existing models.
+In theOverlapsetting of VisA, where other one-class classification models show significant performance degradation, our model maintains consistent accuracy.
+In particular, we show that our method achieves robust performance on the VisA dataset, which contains multiple objects and lacks camera alignment.
+Fig.5shows our method produces sharper boundaries than models that resemble one-class classification.
+
+SECTION: 5.3Ablation study
+
+In ablation study, we considered the possibility that the training dataset may not be contaminated in real-world scenarios.
+We emphasize that the synthetic anomalies were generated using a noisy (anomaly-present) dataset, which differs from the approach in[49]that requires clean samples, potentially deteriorating the quality of generated images.
+We conducted all ablation studies, except those related to semantic anomaly detection, using the training dataset with synthetic anomalies added.
+Additionally, we used MVTec AD (with 10% contamination) for all ablations except those related to semantic anomaly detection and contamination rate.
+Additional ablation studies can be found in the supplementary document[18].
+
+Table3presents the results of mutual-smoothness loss, and feature augmentation with Gaussian noise.
+The comparison with and withoutin Table3demonstrates the effectiveness of the feature augmentation approach introduced in Sec.4.3.
+FUN-AD exhibits a significant performance drop without additive Gaussian noise, highlighting the importance of reducing ambiguous anomaly features when providing effective pseudo-anomalies.
+We demonstrate in Table3that mutual smoothness loss performs effectively even in the absence of feature augmentation generated by Gaussian noise, a condition that can lead to many false positives.
+
+We examined the sensitivity of patch-level pseudo-labeling to hyperparametersand.
+As mentioned in Sec.4.3, ifis larger than, we consider it as a confident anomaly.
+On the other hand, ifis betweenand, we consider it as an ambiguous situation, where the distinction between normal and anomalous is unclear, and perturb the features by adding Gaussian noise to treat it as an anomaly.
+The results in Table4demonstrate robustness within a range of0.1 from the baseline values ofand.
+This suggests that our method is relatively robust to threshold variations, except whenis significantly lower than the default value of 0.9, causing a high rate of false positives, or whenfalls substantially below the default value of 0.5, resulting in very few normal samples being labeled as normal.
+
+Table2demonstrates the performance of FUN-AD according to the contamination ratio in the training dataset.
+Here, “FUN-AD” refers to the results obtained from training with the dataset without synthetic anomalies, while “FUN-AD*” refers to the results from training the FUN-AD framework with synthetic anomalies added at a rate of 5% of the training dataset size.
+Synthetic anomalies were created from a noisy (anomaly-present) dataset considering a fully unsupervised setting.
+Given that they contain noisy samples, which could potentially degrade the quality of generated data, their utility in the training process may not always be advantageous.
+
+Since FUN-AD relies on pseudo-labeled anomaly samples for detection, it does not perform as well as other baselines when the training dataset contains very few anomalies.
+However, when synthetic anomalies are added, the model effectively learns to distinguish between anomalies and normal samples by pseudo-labeling synthetic anomalies in situations where real anomalies are scarce.
+
+SECTION: 6Conclusion
+
+We have addressed the challenging problem of identifying industrial anomalies without any labeled normal or anomaly data in the fully unsupervised setting whereby the training dataset contains anomalies but the labels are unavailable.
+Based on the assumption of wider spread for anomalies, we illustrated analytic and empirical motivations for our methodology, namely that normal-normal feature pairs are more likely to form closer feature pairs, and mutually closest pairs are likely to share the same class labels.
+To incorporate these observations, we presented a novel unsupervised anomaly detection framework, which assigns pseudo-labels based on iteratively re-constructed memory bank and pairwise-distance statistics to achieve robustness to initial noisy labels and allow gradual refinement of the learning signals.
+We also leveraged the class-consistency of mutually closest features by proposing a new MAE-based mutual smoothness loss for training.
+Through extensive experimental evaluations, we demonstrated the competitiveness of our approach across different industrial anomaly benchmarks in presence of contaminated training data.
+
+This work was in part supported by the Technology Innovation Program (1415178807, Development of Industrial Intelligent Technology for Manufacturing, Process, and Logistics) funded by the Ministry of Trade, Industry and Energy (Korea), in part by the National Research Foundation of Korea (NRF) grant funded by the Korean government (No. RS-2023-00302424), and in part by the Institute of Information and communications Technology Planning and Evaluation (IITP) under the artificial intelligence semiconductor support program to nurture the best talents (IITP-2024-RS-2023-00253914) grant funded by the Korean government (MSIT).
+
+SECTION: References
+
+Supplementary Document for FUN-AD: Fully Unsupervised Learning for Anomaly Detection with Noisy Training Data
+
+SECTION: Appendix 1Additional statistical analysis of pairwise distances between features
+
+Since our statistical analysis is limited to isotropic Gaussian distributions, it is not directly applicable other distributions or real-world data.
+Therefore, we aim to bridge this theoretical gap with empirical analysis using real-world data.
+We validate these findings on both synthetic data with isotropic Gaussian distributions and real data from thebottleset in MVTec AD[3], utilizing normal images from the training set and anomaly images from the test set, as the training set does not contain any anomalies.
+
+For the synthetic experiment, we sampled 1000 16-dimensional features from the normal distributionand 1000 samples from the anomaly distribution. We then computed all pairwise feature distances, resulting in the histogram shown in Fig.1(a).
+For the real experiment, we extracted both image-level features and patch-level features from all 209 normal (training) images and 63 anomaly (test) images of thebottlesequence in MVTec AD using the pretrained DINO model from[5].
+Again, we calculated all pairwise feature distances over all pairs of patch-level features and over all pairs of image-level features, yielding histograms in Figs.1(b)and1(c).
+While the histograms have different degrees of skewness, we observe the normal pairs are consistently the most likely to yield shorter pairwise distances compared to other types of pairs.
+
+SECTION: Appendix 2Toy example of semantic anomaly detection
+
+We used CIFAR-10[19]to conduct a toy experiment, setting the data to a scenario where the distribution of outliers is more spread out than the distribution of normals, consistent with our assumptions.
+The normal class is “automobile”, and the outliers consist of the remaining classes in CIFAR-10.
+The contamination ratio (the ratio of outliers to normals) within the training dataset is set to 10%.
+Unlike detecting patch-level defects, Local-Net in semantic anomaly detection outputs one anomaly score per image (because semantic anomalies are not divided into normal and abnormal regions within a single image).
+For further details, please refer to Sec.4for related results.
+
+SECTION: Appendix 3Additional framework details
+
+FUN-AD comprises two sub-networks: a pretrained feature extractor(to leverage semantic information, the self-supervised DINO[5]) based on vision transformer (ViT)[12]and the Local-Net modelbased on a simple multilayer perceptron (MLP) for detecting patch-level anomalies.takes an imageas input and outputs one class token andpatch tokens.
+To identify anomalies at the patch level, we concatenate the class token with each patch token to form a patch-level featurefor each image patch.
+With abuse of notation, we represent, where. In our setting,,, and thus.
+Since the class token is 768-dimensional and the patch token is 768-dimensional,.
+The local patch featureserves as input to the Local-Net, from which we obtain a normalized anomaly score using a sigmoid function.
+
+In the inference phase, FUN-AD performs anomaly detection and anomaly localization by predicting the anomaly score for a given input.
+For anomaly detection, a test imageis passed throughto extract the patch-level features.
+These features are passed throughto obtain the patch-level anomaly scores.
+We then perform global max-pooling of these scores to calculate the image-level global anomaly score.
+For anomaly localization, the patch-level anomaly scores are spatially arranged to form an anomaly score map, as shown in Fig. 5 in[17].
+As in[38,22], we then perform bilinear interpolation of the map with Gaussian smoothing () to match the dimensions of the original image ().
+
+The Local-Net has the FC[1536, 1024, 128, 1] structure.
+Leaky ReLU activation functions (slope: 0.2) are applied between layers, and the output layer uses the sigmoid function for outputting normalized anomaly score.
+We use the RMSProp optimizer with momentum of 0.2 and learning rate of 2e-5 for training using the batch size of 32.
+We set,,andby default.
+For each object/texture class, we train for 1500 epochs and choose the model with the best average of image-wise and pixel-wise AUROCs.
+In Sec. 3 of the main paper[17], the real data consists of normal data in the training set and anomalous data in the test set.
+Also, we set the patch size to 8, yielding one 768-dimensional image-level feature and768-dimensional patch-level features for each normal or anomaly image.
+
+SECTION: Appendix 4Additional ablation studies
+
+Tab.1demonstrates the performance of FUN-AD according to the contamination ratio in the training dataset.
+Here, “FUN-AD” refers to the results obtained from training with the dataset without synthetic anomalies, while “FUN-AD*” refers to the results from training the FUN-AD framework with synthetic anomalies added at a rate of 5% of the training dataset size.
+Synthetic anomalies were created from a noisy (anomaly-present) dataset considering a fully unsupervised setting.
+The results demonstrate that our proposed framework achieves state-of-the-art performance on texture-based dataset, highlighting its robustness across various types of anomalies.
+
+In an industrial setting, real-time anomaly detection is crucial.
+When comparing the inference speed with existing methods using the GPU RTX-4090 (refer to Tab.2), our method operates at an impressive speed of approximately 113 fps, outperforming other methods.
+
+Tab.3shows that optimal performance is achieved whenon MVTec AD.
+In these results,indicates that the pseudo-labeling method alone is sufficient for the network to learn from the normal and anomaly information and succeed in anomaly detection and localization.
+Additionally, when mutual-smoothness loss is applied, the anomaly detection performance improves with a weight value ofcompared to using only pseudo-labeling.
+
+Since Eq.7 needs to be calculated for pseudo-labeling, the training time overhead can be significant if computed with all feature vectors in the memory bank.
+However, applying corset sampling[31], which has been used in a one-class classification environment, is difficult because we cannot assume that all the samples in the memory bank are normal.
+Therefore, we compare the performance by randomly sampling only a small percentage of the feature vectors in the memory bank.
+Table4shows the performance of anomaly detection and localization according to the sampling ratio. The performance does not vary significantly depending on the degree of sampling.
+This indicates that using a low sampling rate for efficient training does not result in significant performance degradation.
+
+The comparison with and withoutin Tab.5shows that our proposed pseudo labels perform better than those using Perlin masks to assign labels for synthetic anomalies.
+This indicates that our pseudo-labeling method is more effective for detecting real anomalies by identifying semantically anomalous regions and using them for training, rather than merely learning that regions with the Perlin noise are anomalous.
+
+Detecting semantic anomalies also requires a fully unsupervised setting, and according to[35], it is more similar to the real world when the training data is contaminated with abnormal samples.
+Therefore, we conducted experiments on the STR-10[34]and CIFAR-10[19]datasets to verify the applicability of our framework.
+We designated one class as the normal class and randomly sampled anomalies from the remaining classes to create contaminated unlabeled datasets with a 1:10 anomaly-to-normal ratio.
+The findings are presented in Tab.6, demonstrating that although FUN-AD was originally developed for industrial anomaly detection, it effectively distinguishes between normal and abnormal classes under specific conditions.
+In these experiments, where the normal class is singular and the abnormal classes encompass the remaining nine, the variation is substantial enough to validate the effectiveness of our assumptions and approach.
+
+Sampling ratio0.2598.8398.660.598.9598.550.7599.1198.511.098.8498.53
+
+Methodw/o97.8397.51w98.9598.55
+
+SECTION: Appendix 5Qualitative results
+
+Fig.2shows some anomaly localization results yielded by FUN-AD.
+Each class is represented by three columns: the first column shows the RGB image, the second column shows the segmentation mask of the defect area, and the third column shows the anomaly score predicted by FUN-AD.
+Our method is not only effective at detecting large defects but also excels at clearly separating the boundary between normal and anomaly without ambiguity, even in the presence of very small defects.
+This is evident when comparing the ground-truth mask and the heatmap in Fig.2.
+These results demonstrate that FUN-AD is robust, particularly for very small defects, but not limited to large detects with higher confidence score compared to other models.
+
+SECTION: Appendix 6Details of the experimental results
+
+We show the experimental results for all categories ofoverlap,No overlapfor MVTec AD and VisA in Tab.7,8,9,10.
+Each table presents image-wise AUROC (%) / pixel-wise AUROC (%), representing anomaly detection and localization performance, respectively.
+The best results are in bold and the runner-ups are underlined.FUN-ADplaces a stronger emphasis on local anomalies by utilizing Local-Net for inference. Consequently, it excels at detecting small defects in images with multiple instances, as observed in capsules and macaroni2 in VisA, outperforming other models in this regard.
+
+SECTION: Appendix 7Limitations and broader impacts
+
+While FUN-AD is shown to work across many different unsupervised settings, it may be compromised if the feature diversity of the normal data is comparable to that of the anomalies, e.g. when one type of anomaly dominates.
+Also, our analytic analysis in Sec.3.1 is limited to the case of normal and anomaly distributions following isotropic Gaussians.
+Our approach still requires use of a pretrained feature extraction network such as DINO[5]for basic initialization.
+Finally, FUN-AD yields suboptimal performance for scarce anomaly-to-normal ratios (0 to 1%).
+
+Our approach can reduce the physical burden of human workers by reducing the manual labor required for annotating normal samples.
+This allows reducing expenditure on data acquisition which in return may be invested towards improving the quality of product.

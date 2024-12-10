@@ -4,6 +4,7 @@ from sentence_transformers import SentenceTransformer, SimilarityFunction
 from sentence_transformers.models.Normalize import Normalize
 import logging
 import traceback
+import copy
 import re
 
 class EmbeddingLibrary():
@@ -60,21 +61,31 @@ class EmbeddingLibrary():
         # check for section in first line
         # check for usage of SECTION
         # check for section names: introduction, conclusion
-        has_title = 'SECTION:' in paper.split('\n', 1)[0]
-        re.match(r'SECTION:\s*[\d\.]*\s+\n', paper)
-        n_secs = len(re.findall(r'SECTION:', paper))
-        paper_lower = paper.lower()
-        n_important_secs = len(re.findall(r'section: [\d\.]*[introduction|methodology|methods|conclusions|conclusion|results|experimental results and analysis|experimental results]', paper_lower))
-        
-        good_paper = True if n_secs > 4 and n_important_secs > 2 and has_title else False
-        if not good_paper:
-            self.paper_paths.remove(file)
-            self.paper_ids.remove(file.stem.replace('_content', ''))
+        try:
+            has_title = 'SECTION:' in paper.split('\n', 1)[0]
+            re.match(r'SECTION:\s*[\d\.]*\s+\n', paper)
+            n_secs = len(re.findall(r'SECTION:', paper))
+            paper_lower = paper.lower()
+            n_important_secs = len(re.findall(r'section: [\d\.]*[introduction|methodology|methods|conclusions|conclusion|results|experimental results and analysis|experimental results]', paper_lower))
+           
+            self.logger.info(f'n_secs = {n_secs}, n_important_secs = {n_important_secs}, has title = {has_title}')
+     
+            good_paper = True if n_secs > 4 and n_important_secs > 2 and has_title else False
+            if not good_paper:
+                self.logger.info('Starting removal')
+                self.logger.info(f'Old lenght of paper_ids = {len(self.paper_ids)}')
+                self.paper_paths.remove(file)
+                self.paper_ids.remove(file.stem.replace('_content', ''))
+                self.logger.info(f'New Length of paper_ids = {len(self.paper_ids)}')
+        except Exception as ex:
+            print('Exception caught in is_paper_good')
+            raise ex
 
         return good_paper
 
     def update_paper_list(self):
-        for paper_path in self.paper_paths:
+        paper_paths = copy.deepcopy(self.paper_paths)
+        for paper_path in paper_paths:
             with open(paper_path, 'r', encoding='utf-8') as f:
                 paper = f.read()
                 self.is_paper_good(paper, paper_path)
@@ -105,37 +116,43 @@ class EmbeddingLibrary():
                     if p.stem.replace('_content', '') not in existing_embs:
                         papers_list.append(p)
             else:
-                papers_list = self.paper_paths
-
+                papers_list = copy.deepcopy(self.paper_paths)
+            
+            skip_count = 0 # does not include papers_to_skip
             self.logger.info(f'STARTING EMBEDDING PROCESS!\n')
-            self.logger.debug(f'The paper_list has {len(papers_list)} papers.')
+            self.logger.info(f'The paper_list has {len(papers_list)} papers.')
+            self.logger.info(f'The paper_list = {papers_list}')
             for file in papers_list:
-                try:
-                    with open(file, 'r', encoding='utf-8') as f:
+                with open(file, 'r', encoding='utf-8') as f:
+                    
+                    paper = f.read()
+                    if not self.is_paper_good(paper, file):
+                        self.logger.info(f"SKIPPING {file.name}\n");
+                        skip_count+=1
+                        continue
 
-                        paper = f.read()
-                        if not self.is_paper_good(paper, file): self.logger.info(f"SKIPPING {file.name}\n"); continue
+                    self.logger.info(f'STARTING TO EMBED: {file.name}')
 
-                        self.logger.info(f'STARTING TO EMBED: {file.name}')
+                    title, chunks = self.preprocess_paper(paper)
+                    title_emb = self.model.encode(title, normalize_embeddings=self.norm_embs).reshape(1, self.emb_size)
+                    chunk_embs = self.model.encode(chunks, normalize_embeddings=self.norm_embs).reshape(-1, self.emb_size)
 
-                        title, chunks = self.preprocess_paper(paper)
-                        title_emb = self.model.encode(title, normalize_embeddings=self.norm_embs).reshape(1, self.emb_size)
-                        chunk_embs = self.model.encode(chunks, normalize_embeddings=self.norm_embs).reshape(-1, self.emb_size)
-
-                        self.logger.info(f'END OF FILE - SAVING EMBEDDINGS FOR {file.name}\n')
-                        paper_emb_mean = np.concatenate([title_emb, chunk_embs]).mean(axis=0)
-                        paper_emb = (paper_emb_mean / np.linalg.norm(paper_emb_mean)).reshape(-1, self.emb_size) # normalize paper emb
-                        np.save(self.path_to_embs / file.stem.replace('_content', ''), paper_emb)
-
-                except Exception as ex:
-                    self.logger.error(f'Error caught while embedding file: {file.name}:\nException: {ex}\nMessage: ' + traceback.format_exc())
-
-            assert self.paper_ids == [file.stem for file in sorted(self.path_to_embs.iterdir())], 'the paper IDs and the embeddings IDs must be in the same order.'
-            self.set_paper_embs()
-
+                    self.logger.info(f'END OF FILE - SAVING EMBEDDINGS FOR {file.name}\n')
+                    paper_emb_mean = np.concatenate([title_emb, chunk_embs]).mean(axis=0)
+                    paper_emb = (paper_emb_mean / np.linalg.norm(paper_emb_mean)).reshape(-1, self.emb_size) # normalize paper emb
+                    self.logger.info(f'Embedding Shape = {paper_emb.shape}')
+                    np.save(self.path_to_embs / file.stem.replace('_content', ''), paper_emb)
+ 
+            self.logger.info(f'{self.paper_ids}')
             self.logger.info('Ending Embedding Process')
+            self.logger.info(f'Num of papers skipped = {skip_count} (not including papers_to_skip attribute).')
+
+            assert len(self.paper_ids) == len(list(self.path_to_embs.iterdir())), f"The num of paper_ids {len(self.paper_ids)} must match the num of embs {len(list(self.path_to_embs.iterdir()))}"
+
+            assert self.paper_ids == [file.stem for file in sorted(self.path_to_embs.iterdir())], f'The paper IDs and the embeddings IDs must be in the same order.\nPaper IDs = {self.paper_ids}\nEmbedding IDs = {[file.stem for file in sorted(self.path_to_embs.iterdir())]}'
+
         except Exception as ex:
-            self.logger.error('Error in Embedding Process: {ex}')
+            self.logger.error(f'Error with th embedding process: {ex}')
             raise ex
 
     def preprocess_llm_response(self, prompt:str, response:str) -> list[str]:
@@ -153,7 +170,7 @@ class EmbeddingLibrary():
     def search_papers(self, prompt:str, response:str, n_results=5, threshold=0.75):
         assert self.paper_embs is not None, print("self.paper_embs must be set to use this function!")
         r_secs = self.preprocess_llm_response(prompt, response)
-        r_emb = self.model.encode(r_secs, normalize_embeddings=self.norm_embs).mean(axis=0)
+        r_emb = self.model.encode(r_secs, normalize_embeddings=self.norm_embs).mean(axis=0).to(torch.float32)
         scores = self.model.similarity(r_emb, self.paper_embs)
         good_scores = scores > threshold
         top_n_idxs:list = np.argsort(good_scores).tolist()[0][-n_results:]

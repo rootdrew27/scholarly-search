@@ -1,0 +1,223 @@
+SECTION: MuSiCNet: A Gradual Coarse-to-Fine Framework for Irregularly Sampled Multivariate Time Series Analysis
+
+Irregularly sampled multivariate time series (ISMTS) are prevalent in reality. Most existing methods treat ISMTS as synchronized regularly sampled time series with missing values, neglecting that the irregularities are primarily attributed to variations in sampling rates. In this paper, we introduce a novel perspective that irregularity is essentiallyrelativein some senses. With sampling rates artificially determined from low to high, an irregularly sampled time series can be transformed into a hierarchical set of relatively regular time series from coarse to fine. We observe that additional coarse-grained relatively regular series not only mitigate the irregularly sampled challenges to some extent but also incorporate broad-view temporal information, thereby serving as a valuable asset for representation learning. Therefore, following the philosophy of learning thatSeeing the big picture first, then delving into the details, we present theMulti-Scale and Multi-Correlation AttentionNetwork (MuSiCNet) combining multiple scales to iteratively refine the ISMTS representation. Specifically, within each scale, we explore time attention and frequency correlation matrices to aggregate intra- and inter-series information, naturally enhancing the representation quality with richer and more intrinsic details. While across adjacent scales, we employ a representation rectification method containing contrastive learning and reconstruction results adjustment to further improve representation consistency. MuSiCNet is an ISMTS analysis framework that competitive with SOTA in three mainstream tasks consistently, including classification, interpolation, and forecasting.
+
+SECTION: 1Introduction
+
+Irregularly sampled multivariate time series (ISMTS) are ubiquitous in realistic scenarios, ranging from scientific explorations to societal interactionsCheet al.(2018); Shukla and Marlin (2021); Sunet al.(2021); Agarwalet al.(2023); Yalavarthiet al.(2024). The causes of irregularities in time series collection are diverse, including sensor malfunctions, transmission distortions, cost-reduction strategies, and various external forces or interventions, etc. Such ISMTS data exhibit distinctive features including intra-series irregularity, characterized by inconsistent intervals between consecutive data points, and inter-series irregularity, marked by a lack of synchronization across multiple variables. The above characteristics typically result in the lack of alignment and uneven count of observationsShukla and Marlin (2020), invalidating the assumption of coherent fixed-dimensional feature space for most traditional time series analysis models.
+
+Recent studies have made efforts to address the above problems. Most of them treat the ISMTS as synchronized regularly sampled Normal Multivariate Time Series (NMTS) data with missing values and concentrate on the imputation strategiesCheet al.(2018); Yoonet al.(2018); Caminoet al.(2019); Tashiroet al.(2021); Zhanget al.(2021c); Chenet al.(2022); Fan (2022); Duet al.(2023). Such direct imputation, however, may distort the underlying relationships and introduce substantial noise, severely compromising the accuracy of the analysis tasksZhanget al.(2021b); Wuet al.(2021); Agarwalet al.(2023); Sunet al.(2024). Latest developments circumvent imputation and aim to address these challenges by embracing the inherent continuity of time, thus preserving the continuous temporal dynamics dependencies within the ISMTS data. Despite these innovations, most methods above are merely solutions for intra-series irregularities, such as Recurrent Neural Networks (RNNs)De Brouweret al.(2019); Schirmeret al.(2022); Agarwalet al.(2023)- and Neural Ordinary Differential Equations (Neural ODEs)Kidgeret al.(2020); Rubanovaet al.(2019); Jhinet al.(2022); Jinet al.(2022)-based methods and the unaligned challenges presented by inter-series irregularities in multivariate time series remain unsolved.
+
+Delving into the nature of irregularly sampled time series, we discover that the intra- and inter-series irregularities in ISMTS primarily arise from inconsistency in sampling rates within and across variables. We argue that irregularities are essentially relative in some senses and by artificially determined sampling rates from low to high, ISMTS can be transformed into a hierarchical set of relatively regular time series from coarse to fine. Taking a broader perspective, setting a lower and consistent sampling rate within an instance can synchronize sampling times across series and establish uniform time intervals within series. This approach can mitigate both types of irregularity to some extent and emphasize long-term dependencies. As shown in Fig.1, the coarse-grained scalesandexhibit balanced placements for all variables in the instance and provide clearer overall trends. However, lower sampling rates may lead to information loss and sacrifice detailed temporal variations. Conversely, with a higher sampling rate as in scale, more real observations contain rich information and prevent artificially introduced dependencies beyond original relations during training. Nonetheless, the significant irregularity in fine-grained scales poses a greater challenge for representation learning.
+
+To bridge this gap, we propose MuSiCNet—a Multi-Scale and Multi-Correlation Attention Network—to iteratively optimize ISMTS representations from coarse to fine. Our approach begins by establishing a hierarchical set of coarse- to fine-grained series with sampling rates from low to high.At each scale, we employ a custom-designed encoder-decoder framework called multi-correlation attention network (CorrNet), for representation learning. The CorrNet encoder (CorrE) captures embeddings of continuous time values by employing an attention mechanism and correlation matrices to aggregate intra- and inter-series information. Since more attention should be paid to correlated variables for a given query which can provide more valuable knowledge, we further design frequency correlation matrices using Lomb–Scargle Periodogram-based Dynamic Time Warping (LSP-DTW) to mitigate the awkwardness in correlation calculation in ISMTS and re-weighting the inter-series attention score.Across scales, we employ a representation rectification operation from coarse to fine to iteratively refine the learned representations with contrastive learning and reconstruction results adjustment methods. This ensures accurate and consistent representation and minimizes error propagation throughout the model.
+
+Benefiting from the aforementioned designs, MuSiCNet explicitly learns multi-scale information, enabling good performance on widely used ISMTS datasets, thereby demonstrating its ability to capture relevant features for ISMTS analysis. Our main contributions can be summarized as follows:
+
+We find that irregularities in ISMTS are essentially relative in some senses and multi-scale learning helps balance coarse- and fine-grained information in ISMTS representation learning.
+
+We introduce CorrNet, an encoder-decoder framework designed to learn fixed-length representations for ISMTS. Notably, our proposed LSP-DTW can mitigate spurious correlations induced by irregularities in the frequency domain and effectively re-weight attention across sequences.
+
+We are not limited to a specific analysis task and attempt to propose a task-general model for ISMTS analysis, including classification, interpolation, and forecasting.
+
+SECTION: 2Related Work
+
+SECTION: 2.1Irregularly Sampled Multivariate Time Series Analysis
+
+An effective approach for analyzing ISMTS hinges on the understanding of their unique properties. Most existing methods treat ISMTS as NMTS with missing values, such asCheet al.(2018); Yoonet al.(2018); Caminoet al.(2019); Tashiroet al.(2021); Chenet al.(2022); Fan (2022); Duet al.(2023); Wanget al.(2024). However, most imputation-based methods may distort the underlying relationships, introducing unsuitable inductive biases and substantial noise due to incorrect imputationZhanget al.(2021b); Wuet al.(2021); Agarwalet al.(2023), ultimately compromising the accuracy of downstream tasks. Some other methods treat ISMTS as time series with discrete timestamps, aggregating all sample points of a single variable to extract a unified feature for each variableZhanget al.(2021b); Hornet al.(2020); Liet al.(2023). These methods can directly accept raw ISMTS data as input but often struggle to handle the underlying relationships within the time series. Recent progress seeks to overcome these challenges by recognizing and utilizing the inherent continuity of time, thereby maintaining the ongoing temporal dynamics present in ISMTS dataDe Brouweret al.(2019); Rubanovaet al.(2019); Kidgeret al.(2020); Schirmeret al.(2022); Jhinet al.(2022); Chowdhuryet al.(2023).
+
+Despite these advancements, existing methods mainly suffer from two main drawbacks, they primarily address intra-series irregularity while overlooking the alignment issues stemming from inter-series irregularity, and 2) they rely on assumptions tailored to specific downstream tasks, hindering their ability to consistently perform well across various ISMTS tasks.
+
+SECTION: 2.2Multi-scale Modeling
+
+Multi-scale and hierarchical approaches have demonstrated their utility across various fields, including computer vision (CV)Fanet al.(2021); Zhanget al.(2021a), natural language processing (NLP)Nawrotet al.(2021); Zhaoet al.(2021), and time series analysisChenet al.(2021); Shabaniet al.(2022); Caiet al.(2024). Most recent innovations in the time series analysis domain have seen the integration of multi-scale modules into the Transformer architecture to enhance analysis capabilitiesShabaniet al.(2022); Liuet al.(2021)and are designed for regularly sampled time series. Nevertheless, the application of multi-scale modeling specifically designed for ISMTS data, and the exploitation of information across scales, remain relatively unexplored.
+
+SECTION: 3Proposed MuSiCNet Framework
+
+As previously mentioned, our work aims to learn ISMTS representation for further analysis tasks by introducing MuSiCNet, a novel framework designed to balance coarse- and fine-grained information across different scales. The overall model architecture illustrated in Fig.2(a) indicates the effectiveness of MuSiCNet can be guaranteed to a great extent by 1)Hierarchical Structure. 2)Representation Learning Using CorrNet Within Scale. 3)Rectification Across Adjacent Scales. We will first introduce problem formulation and notations of MuSiCNet and then discuss key points in the following subsections.
+
+SECTION: 3.1Problem Formulation
+
+Our goal is to learn a nonlinear embedding function, such that the set of ISMTS datacan map to the best-described representations for further ISMTS analysis including both supervised and unsupervised tasks. We denoteas a D-dimensional instance with the length of observation. Specifically, the-th dimension in instancecan be treated as a tuplewhere the length of observations is.is the list of observations and the list of corresponding observed timestamps is. We drop the data case indexfor brevity when the context is clear.
+
+SECTION: 3.2CorrNet Architecture Within Scale
+
+In this subsection, we elaborate on the Multi-Correlation Attention module. Time attention has proven effective for ISMTS learningShukla and Marlin (2021); Hornet al.(2020); Chowdhuryet al.(2023); Yuet al.(2024). Most existing methods capture interactions between observation values and their corresponding sampling times within a single variable. However, due to the potential sparse sampling in ISMTS, observations from all variables are valuable and need to be considered.
+
+To address this, we use irregularly sampled time points and corresponding observations from all variables within a sample as keys and values to produce fixed-dimensional representations at the query time points. The importance of each variable cannot be uniform for a given query and similar variables that provide more valuable information should receive more attention. Therefore, we designed frequency correlation matrices to re-weight the inter-series attention scores, enhancing the representation learning process.
+
+In general, as illustrated in Fig.2(b), taking ISMTSas input, the CorrNet Encodergenerates multi-time attention embedding as follows:
+
+where the calculation ofis based on a time attention mechanism with queryand key. Since more attention should be paid to correlated variables for a given query which can provide more valuable knowledge. Therefore, different input dimensions should utilize various weights of time embeddings through the correlation matrix, and we will introduce it in the next paragraph.
+
+Since the continuous function defined by the CorrE module is incompatible with neural network architectures designed for fixed-dimensional vectors or discrete sequences, following the method inShukla and Marlin (2021), we generate an output representation by materializing its output at a pre-defined set of reference time points. This process transforms the continuous output into a fixed-dimensional vector or a discrete sequence, thereby making it suitable for subsequent neural network processing.
+
+The correlation matrix is essential for deriving reliable and consistent correlations within ISMTS, which must be robust to the inherent challenges of variable sampling rates and inconsistent observation counts at each timestamp in ISMTS. Most existing distance measures, such as Euclidean distance, Dynamic Time Warping (DTW)Berndt and Clifford (1994), and Optimal Transport/Wasserstein DistanceVillani and others (2009), risk generating spurious correlations in the context of irregularly sampled time series. This is due to their dependence on the presence of both data points for the similarity measurement, and the potential for imputation to introduce unreliable information before calculating similarity and we will further discuss it in Section4.5of our experiments.
+
+At an impasse, the Lomb-Scargle Periodogram (LSP)Lomb (1976); Scargle (1982)provides enlightenment to address this issue. LSP is a well-known algorithm to generate a power spectrum and detect the periodic component in irregularly sampled time series. It extends theFourier periodogramapproach to accommodate irregularly sampled scenariosVanderPlas (2018)eliminating the need for interpolation or imputation. This makes LSP a great tool for simplifying ISMTS analysis. Compared to existing methods, measuring the similarity between discrete raw observations, LSP-DTW, an implicit continuous method, utilizes inherent periodic characteristics and provides global information to measure the similarity.
+
+As demonstrated in Fig.2(b), we first convert ISMTS into the frequency domain using LSP and then apply DTW to evaluate the distance between variables. The correlation betweenandis:
+
+whereis the search path of DTW. We calculate the correlation matrixby iteratively performing the aforementioned step for an instance.
+
+Drawing inspiration from notable advances in NLP and CV, our core network, CorrNet employs time series masked modeling, which learns effective time series representations to facilitate various downstream analysis tasks. It is a framework consisting of an encoder-decoder architecture based on continuous-time interpolation. At each scale, CorrE learns a set of latent representationsdefined atreference time points on the randomly masked ISMTS. We further employ CorrNet Decoder (CorrD), a simplified CorrE (without correlation matrix), to produce the reconstructed output, using the input time point sequenceas reference points. We iteratively apply the same CorrNet at each scale. Here, we emphasize that all scales share a single encoder that can reduce the model complexity and keep feature extraction consistency for various scales.
+
+We measure the reconstruction accuracy using the Mean Squared Error (MSE) between the reconstructed values and the original ones at each timestamp and calculate the MSE loss specifically for the masked timestamps, as expressed in the following equation
+
+whereis the-th scale mask,is Hadamard product.
+
+SECTION: 3.3Rectification Strategy Across Scales
+
+Following the principle that adjacent scales exhibit similar representations and coarse-grained scales contain more long-term information, the rectification strategy is a key component of our MuSiCNet framework. We implement a dual rectification strategy across adjacent scales to enhance representation learning. We start by generating a hierarchical set of relatively regular time series from coarse to fine by
+
+While the coarse-grained series ignores detailed variations for high-frequency signals and focuses on much clearer broad-view temporal information, the fine-grained series retains detailed variations for frequently sampled series. As a result, iteratively using coarse-grained information for fine-grained series as a strong structural prior can benefit ISMTS learning.
+
+Firstly, the reconstruction results at scaleis designed to align closely with the results at the-th scale, that is to say, the reconstruction results at scalecan be used to adjust the results at scaleusing MSE,
+
+Secondly, contrastive learning is leveraged to ensure coherence between adjacent scales. Pulling these two representations between adjacent scales together and pushing other representations within the batchapart, not only facilitates the learning of within-scale representations but also enhances the consistency of cross-scale representations. Taking into consideration that the dimensions ofandare different, we employ a GRU Network as a decoder to uniform dimension asandbefore contrastive learning.
+
+where theis the indicator function. The advantage of the two operations lies in their ability to ensure a consistent and accurate representation of the data at different scales. This strategy significantly improves the model’s ability to learn representations from ISMTS data, which is essential for tasks requiring detailed and accurate time series analysis. Last but not least, this method ensures that the model remains robust and effective even when dealing with data at varying scales, making it versatile for diverse applications.
+
+SECTION: 4Experiment
+
+In this section, we demonstrate the effectiveness of MuSiCNet framework for time series classification, interpolation and forecasting.Notably, for each dataset, the window size is initially set toof the time series length and then halved iteratively until the majority of the windows contain at least one observation.Our results are based on the mean and standard deviation values computed overindependent runs.Boldindicates the best performer, whileunderlinerepresents the second best. Due to the page limitation, we provide more detailed setup for experiments in the Appendix.
+
+SECTION: 4.1Time Series Classification
+
+Datasets and experimental settings.We use real-world datasets including healthcare and human activity for classification. (1)P19Reynaet al.(2020)with missing ratio up to, includespatients that are monitored bysensors. (2)P12Goldbergeret al.(2000)records temporal measurements of 36 sensors ofpatients in the first 48-hour stay in ICU, with a missing ratio of. (3)PAMReiss and Stricker (2012)containssegments fromactivities of daily living that are measured bysensors and the missing ratio is.Importantly, P19 and P12 areimbalancedbinary label datasets.
+
+Here, we follow the common setup by randomly splitting the dataset into training (), validation (), and test () sets and the indices of these splits are fixed across all methods. Consistent with prior researches, we evaluate the performance of our framework on classification tasks using the area under the receiver operating characteristic curve (AUROC) and the area under the precision-recall curve (AUPRC) for the P12 and P19 datasets, given their imbalanced nature. For the nearly balanced PAM dataset, we employ Accuracy, Precision, Recall, and F1 Score. For all of the above metrics, higher results indicate better performance.
+
+Main Results of classification.We compare MuSiCNet with ten state-of-the-art irregularly sampled time series classification methods, including TransformerVaswaniet al.(2017), Trans-mean, GRU-DCheet al.(2018), SeFTHornet al.(2020), and mTANDShukla and Marlin (2021), IP-NetShukla and Marlin (2018), DGM2-OWuet al.(2021), MTGNNWuet al.(2020), RaindropZhanget al.(2021b)and ViTSTLiet al.(2023). Since mTAND is proven superior over various recurrent models, such as RNNImputeCheet al.(2018), Phased-LSTMNeilet al.(2016)and ODE-based models like LATENT-ODE and ODE-RNNChenet al.(2018), we focus our comparisons on mTAND and do not include results for the latter model.
+
+As indicated in Table1, MuSiCNet demonstrates good performance across three benchmark datasets, underscoring its effectiveness in typical time series classification tasks. Notably, in binary classification scenarios, MuSiCNet surpasses the best-performing baselines on the P12 dataset by an average ofin AUROC andin AUPRC. For the P19 dataset, while our performance is competitive, MuSiCNet stands out due to its lower time and space complexity compared to ViTST. ViTST converts 1D time series into 2D images, potentially leading to significant space inefficiencies due to the introduction of extensive blank areas, especially problematic in ISMTS. In the more complex task of 8-class classification on the PAM dataset, MuSiCNet surpasses current methodologies, achieving aimprovement in accuracy and aincrease in precision.
+
+Notably, theconsistently low standard deviationin our results indicates that MuSiCNet is a reliable model. Its performance remains steady across varying data samples and initial conditions, suggesting a strong potential for generalizing well to new, unseen data. This stability and predictability in performance enhance the confidence in the model’s predictions, which is particularly crucial in sensitive areas such as medical diagnosis in clinical settings.
+
+SECTION: 4.2Time Series Interpolation
+
+Datasets and experimental settings.PhysioNetSilvaet al.(2012)consists ofvariables extracted from the firsthours after admission to the ICU. We use allinstances for interpolation experiments whose missing ratio is.
+
+We randomly split the dataset into a training set, encompassingof the instances, and a test set, comprising the remainingof instances. Additionally,of the training data is reserved for validation purposes. The performance evaluation is conducted using MSE, where lower values indicate better performance.
+
+Main Results of Interpolation.For the interpolation task, we compare it with RNN-VAE, L-ODE-RNNChenet al.(2018), L-ODE-ODERubanovaet al.(2019), mTAND-full.
+
+For the interpolation task, models are trained to predict or reconstruct values for the entire dataset based on a selected subset of available points. Experiments are conducted with varying observation levels, ranging fromtoof observed points. During test time, models utilize the observed points to infer values at all time points in each test instance.
+
+As illustrated in Table2, MuSiCNet demonstrates superior performance, highlighting its effectiveness in time series interpolation. This can be attributed to its ability to interpolate progressively from coarse to fine, aligning with the intuition of multi-resolution signal approximationMallat (1989).
+
+SECTION: 4.3Time Series Forecasting
+
+Datasets and Experimental Settings.(1)USHCNMenneet al.(2015)is an artificially preprocessing dataset containing measurements ofvariables fromweather stations in the USA. The missing ratio is. (2)MIMIC-IIIJohnsonet al.(2016)are dataset that rounded the recorded observations intovariables,-minute intervals and only use observations from thehours after admission. The missing ratio is. (3)Physionet12Silvaet al.(2012)comprises medical records fromICU patients. It includes measurements ofvital signs recorded during the firsthours of admission and the missing ratio is. We use MSE to measure the forecasting performance.
+
+Main Results of Forecasting.We compare the performance with the ISMTS forecasting models: GrafitiYalavarthiet al.(2024), GRU-ODE-BayesDe Brouweret al.(2019), Neural FlowsBilošet al.(2021), CRUSchirmeret al.(2022), NeuralODE-VAEChenet al.(2018), GRUSimple, GRU-D and TLSTMBaytaset al.(2017), mTAND, and variants of InformerZhouet al.(2021), FedformerZhouet al.(2022), DLinear, and NLinearZenget al.(2023), denoted as Informer+, Fedformer+, DLinear+, and NLinear+, respectively.
+
+This experiment is conducted following the setting of GraFITi where for the USHCN dataset, the model observes for the first 3 years and forecasts the next 3 time steps and for other datasets, the model observes the first 36 hours in the series and predicts the next 3 time steps.
+
+As shown in Table3, MuSiCNet consistently achieves competitive performance across all datasets, maintaining accuracy within the top two among baseline models. While GraFITi excels by explicitly modeling the relationship between observation and prediction points, making it superior in certain scenarios, MuSiCNet remains competitive without imposing priors for any specific task.
+
+SECTION: 4.4Ablation Study
+
+Taking P12 in the classification task as an example, we conduct the ablation study to assess the necessity of two fundamental components of MuSiCNet: correlation matrix and multi-scale learning reflected in reconstruction results adjustment and contrastive learning. As shown in Table4, the complete MuSiCNet framework, incorporating all components, achieves the best performance. The absence of any component leads to varying degrees of performance degradation, as evidenced in layers two to five. The second layer, which retains the multi-scale learning, exhibits the second-best performance, underscoring the critical role of multi-scale learning in capturing varied temporal dependencies and enhancing feature extraction. Conversely, the version lacking all components shows a significant performance drop of, indicating that each component is crucial to the overall effectiveness of the framework.
+
+SECTION: 4.5Correlation Results
+
+This experiment verifies the performance of the proposed LSP-DTW and some other correlation calculation baseline methods in the P12 dataset including Interpolation-Global Alignment Kernel (I-GAK)Cuturi (2011), Interpolation-DTW (I-DTW)Berndt and Clifford (1994), and LSP-DTW. I-GAK and I-DTW are methods that interpolate the ISMTS data before computing correlations.
+
+Interpolation for missing values significantly distorts correlation calculations, resulting in fictitious correlations in I-GAK and I-DTW matrices.
+I-GAK method in Fig.3(b) shows a complex pattern among variables, indicated by the darker color. Unfortunately, most correlations are negatively correlated with the observation rate, meaning pairs with lower observation rates show stronger correlations. This suggests GAK relies heavily on interpolation and may not be suitable for ISMTS data. Notably, correlations in the upper-left region appear to be artifacts of interpolation rather than actual observations.
+Moreover, I-DTW method in Fig.3(c) shows a relatively uniform distribution of correlations among variables. It reveals positive correlations between almost all variables, which is not intuitive and suggests I-DTW is still influenced by interpolation.
+In contrast, LSP-DTW accurately identifies correlations between variables, focusing on the essential characteristics of data without introducing spurious correlations from interpolation which is also verified in Table5.
+
+In Table5, we keep the hyper-parameters of MuSiCNet consistent and change the correlation matrices: (1) Ones: denotes the Full-1 matrix, (2) Rand: a random symmetric matrix sampling from, (3) Diag is a diagonal-1 matrix, (4-6) DTW-based methods mentioned above. We found that LSP-DTW achieved the best results, whereas I-DTW performed poorly, even worse than a random correlation matrix. This indicates that in highly sparse datasets (with a missing rate ofin P12), simple interpolation followed by similarity computation results in strong dependence on the interpolation quality, failing to capture the true correlations between variables. Ones performs significantly worse than all other methods, demonstrating that merging all input dimensions with equal weightis ineffective, as it combines all variables into each channel indiscriminately. This makes Diag, which does not utilize correlations, still outperforms Ones. Other methods achieve competitive results, underscoring the importance of accurately modeling variable correlations, particularly for our LSP-DTW.
+
+SECTION: 5Conclusion
+
+In this study, we introduce MuSiCNet, an innovative framework designed for analyzing ISMTS datasets. MuSiCNet addresses the challenges arising from data irregularities and shows superior performance in both supervised and unsupervised tasks. We recognize that irregularities in ISMTS are inherently relative and accordingly implement multi-scale learning, a vital element of our framework. In this multi-scale approach, the contribution of extra coarse-grained relatively regular series is important, providing comprehensive temporal insights that facilitate the analysis of finer-grained series. As another key component of MuSiCNet, CorrNet is engineered to aggregate temporal information effectively, employing time embeddings and correlation matrix calculating from both intra- and inter-series perspectives, in which we employ LSP-DTW to develop frequency correlation matrices that not only reduce the burden for similarity calculation for ISMT, but also significantly enhance inter-series information extraction.
+
+SECTION: 6Acknowledgments
+
+The authors wish to thank all the donors of the original datasets and everyone who provided feedback on this work. Specially, the authors wish to thank Xiang Li and Jiaqiang Zhang for proofreading this manuscript. This work is supported by the Key Program of NSFC under Grant No.62076124 and No.62376126, Postgraduate Research & Practice Innovation Program of Jiangsu Province under Grant No.KYCX21_0225 and National Key R&D Program of China under Grant No.2022ZD0114801.
+
+SECTION: References
+
+SECTION: Appendix APseudo Code for MuSiCNet
+
+The Pseudo Code is provided using classification as an example. The interpolation task can be obtained by removing the projection headand the classification loss termfrom the total loss in line. While in the case of forecasting tasks, the projection head will be replaced withand task loss will be changed toas in Eq.11.
+
+Input:Training set, the number of scale layers, random masking ratio, max reference point number, hyper-parameters,,.
+
+Parameters:Encoder model, decoder model, GRU model, projection head
+
+Output:Encoder model, GRU model, projection head
+
+SECTION: Appendix BTime Embedding in CorrNet
+
+Time Embedding method embeds continuous time points of ISMTS into a vector spaceKazemiet al.[2019]; Shukla and Marlin [2021]. It leveragesembedding functionssimultaneously and each outputting a representation of size. Dimensionof embeddingis defined as follows:
+
+where the’s and’s are learnable parameters that represent the frequency and phase of the sine function. This time embedding method can capture both non-periodic and periodic patterns with linear and periodic terms, respectively.
+
+SECTION: Appendix CISMTS Analysis Tasks
+
+The overall loss is defined as Eq.(8), incorporating an optional task-specific loss component.
+
+We augment the encoder-decoder CorrNet by integrating a supervised learning component that utilizes the latent representations for feature extraction. In this work, we specifically concentrate on classification tasks as a representative example of supervised learning. The loss function is
+
+wheredenotes the number of classes,denotes the number of samples in-th class,denotes the projection head for classification, anddenotes the cross-entropy loss.
+
+For our unsupervised learning example, we choose interpolation and forecasting. The loss function for interpolation is defined as
+
+This equation essentially represents the reconstruction outcome at the finest scale asin Eq.(4) making the interpolation task fit seamlessly into our model with minimal modifications.
+Therefore, it is unnecessary to incorporate an additional loss function into our overall loss function Eq.(8).
+
+While the loss function for forecasting is defined as
+
+As observations might be missing also in the groundtruth data, to measure forecasting accuracy we average an element-wise loss functionover only valid values using.
+
+SECTION: Appendix DFurther Details on Datasets
+
+We adopt the data processing approach used in RAINDROPZhanget al.[2021b]for the classification task, mTANsShukla and Marlin [2021]for the interpolation task, and GraFITiYalavarthiet al.[2024]for the forecasting task. The aforementioned processing methods serve as the usual setup, which our method also follows for fair comparison.However, it’s important to note that we do not incorporate static attribute vectors(such as age, gender, time from hospital to ICU admission, ICU type, and length of stay in ICU) in our processing. This decision is based on the fact that our model, MuSiCNet, is not specifically designed for clinical datasets. Instead, it is designed as a versatile, general model capable of handling various types of datasets, which may not always include such static vectors. The detailed information of baselines is in Table6.
+
+SECTION: D.1Datasets for Classification
+
+P19 datasetReynaet al.[2020]comprises data frompatients, each monitored byirregularly sampled sensors, including 8 vital signs andlaboratory values. The original dataset containedpatients, but we excluded those with excessively short or long time series, resulting in a range oftoobservations per patient as in RAINDROP. Each patient has a binary label representing the occurrence of sepsis within the nexthours. The dataset has a high imbalance with approximatelypositive samples.
+
+P12Goldbergeret al.[2000]includes data frompatients after removing inappropriatesamples as explained inHornet al.[2020]. This dataset features multivariate time series from 36 sensors collected during the firsthours of ICU stay. Each patient has a binary label indicating the length of stay in the ICU, in which a negative label for stays under 3 days and a positive label for longer stays. P12 is imbalanced withpositive samples.
+
+PAMReiss and Stricker [2012]records the daily activities ofsubjects usinginertial measurement units. RAINDROP has adapted it for irregularly sampled time series classification by excluding the ninth subject for short sensor data length. The continuous signals were segmented into samples with the window sizeandoverlapping rate. Originally withactivities, we retainwith oversamples each, while others are dropped. After modification, PAM includessensory signal segments, each withobservations fromsensors atHz. To simulate irregularity,of observations are randomly removed by RAINDROP, uniformly across all experimental setups for fair comparison. The 8 classes of PAM represent different daily activities, with no static attributes and roughly balanced distribution.
+
+SECTION: D.2Dataset for Interpolation
+
+PhysionetReiss and Stricker [2012]comprisesvariables from ICU patient records, with each record containing data from the firsthours after admission to ICU. Aligning with the methodology of Neural ODERubanovaet al.[2019], we round observation times to the nearest minute, resulting in up topotential measurement times for each time series. The dataset encompasseslabeled instances and an equal number of unlabeled instances. For our study, we utilize allinstances in interpolation experiments. Our primary objective is to predict in-hospital mortality, withof the instances belonging to the positive class.
+
+SECTION: D.3Dataset for Forecasting
+
+USHCNMenneet al.[2015]data are used to quantify national and regional-scale temperature changes in the contiguous United States. It contains measurements ofvariables fromweather stations. Following the preprocessing proposed byDe Brouweret al.[2019], the majority of the overyears of observations are excluded, and only data from the years 1996 to 2000 are used in the experiments. Furthermore, to create a sparse dataset, only a randomly sampledof the measurements are retained.
+
+This dataset consists of medical records fromICU patients. During the firsthours of admission, measurements ofvital signs were recorded. Following the forecasting approach used in recent work, such asYalavarthiet al.[2024]; Bilošet al.[2021]; De Brouweret al.[2019], we pre-process the dataset to create hourly observations, resulting in a maximum ofobservations per series.
+
+MIMIC-IIIJohnsonet al.[2016]is a widely utilized medical dataset offering valuable insights into ICU patient care. To capture a diverse range of patient characteristics and medical conditions,variables are meticulously observed and documented. For consistency, we followed the preprocessing steps outlined in previous studiesYalavarthiet al.[2024]; Schirmeret al.[2022]; Bilošet al.[2021]; De Brouweret al.[2019]. Specifically, we rounded the recorded observations to-minute intervals and used only the data from the firsthours post-admission. Patients who spent less thanhours in the ICU were excluded from the analysis.
+
+SECTION: Appendix EExperimental details
+
+SECTION: E.1MuSiCNet parameters
+
+We present the training hyperparameters and model parameters here.
+The maximum epoch is set to 300, and AdamW optimizer is selected as our optimizer without weight decay.
+By default, the learning rate is set to-, and the learning rate schedule is cosine decay for each epoch.
+Batch size for all datasets is set to, the dimension of the encoder output is set to, and the dimension of the hidden representations in GRU is typically set to.
+The random masking ratiofor each scale is set to.
+
+Due to inconsistent series lengths, we set the maximum reference point number tofor long series, such as P12, PAM, PhysioNet and USHCN, tofor Physionet12, and tofor short series, such as PAM and MIMIC-III.
+
+Initially, the window size is set toof the time series length and then halved iteratively until the majority of the windows contain at least one observation.
+
+According to the observed timestamps on each dataset, the number of scale layersis set to,,,,,, andfor P12, P19, PAM, Physionet, USHCN, MIMIC-III, and Physionet12, respectively.
+For example, in classification, for P12, the scales areand raw length.
+For P19, the scales areand raw length.
+And for PAM, the scales areand raw length.
+In all mainstream tasks involved, the hyperparametesare selected in--. All the models were experimented using the PyTorch library on a GeForce RTX-2080 Ti GPU.
+
+SECTION: E.2Baseline Parameters
+
+The implementation of baseline models adheres closely to the methodologies outlined in their respective papers, including SeFTHornet al.[2020], GRU-DCheet al.[2018], mTANDShukla and Marlin [2021]and ViTSTLiet al.[2023]. We follow the settings of the attention embedding module baseline in mTAND and implement the Multi-Correlation Attention module in our work.

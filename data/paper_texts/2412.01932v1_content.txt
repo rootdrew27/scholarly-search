@@ -1,0 +1,233 @@
+SECTION: Machine learning-based moment closure model for the semiconductor Boltzmann equation with uncertainties
+In this paper, we propose a machine learning (ML)-based moment closure model for the linearized Boltzmann equation of semiconductor devices, addressing both the deterministic and stochastic settings. Our approach leverages neural networks to learn the spatial gradient of the unclosed highest-order moment, enabling effective training through natural output normalization. For the deterministic problem, to ensure global hyperbolicity and stability, we derive and apply the constraints that enforce symmetrizable hyperbolicity of the system. For the stochastic problem, we adopt the generalized polynomial chaos (gPC)-based stochastic Galerkin method to discretize the random variables, resulting in a system for which the approach in the deterministic case can be used similarly. Several numerical experiments will be shown to demonstrate the effectiveness and accuracy of our ML-based moment closure model for the linear semiconductor Boltzmann equation with (or without) uncertainties.
+
+SECTION: Introduction
+Kinetic equations have been widely used in many areas such as rarefied gas, plasma physics, astrophysics, semiconductor device modeling, and social and biological sciences. They describe the non-equilibrium dynamics of a system composed of a large number of particles and bridge atomistic and continuum models in the hierarchy of multiscale modeling. The Boltzmann-type equation, as one of the most representative models in kinetic theory, provides a power tool to describe molecular gas dynamics, radiative transfer, plasma physics, and polymer flow. They have significant impacts in designing, optimization, control, and inverse problems. For example, it can be used in the design of semiconductor devices, topology optimization of gas flow channels, or risk management in quantitative finance. Many of these applications often require finding unknown or optimal parameters in the Boltzmann-type equations or mean-field models. The linearized Boltzmann equation, particularly the semi-conductor Boltzmann equation in this work, has wide applications in semiconductor device modeling.
+
+In addition, kinetic equations typically involve various sources of uncertainty, such as modeling errors, imprecise measurements, and uncertain initial conditions. As a result, addressing uncertainty quantification (UQ) becomes essential for evaluating, validating, and improving the underlying models, underscoring our project’s significance. In particular, the collision kernel or scattering cross-section in the Boltzmann equation governs the transition rates during particle collisions. Calculating this collision kernel from first principles is highly complex, and in practice, heuristic approximations or empirical data are often used, inevitably introducing uncertainties. Additionally, uncertainties may stem from inaccurate measurements of initial or boundary conditions, as well as from source terms, further compounding the uncertainties in the model. For numerical studies of the Boltzmann equation and other kinetic models with or without randomness, we refer readers to works such asand, and particularly for the linear Boltzmann equation.
+Among the various numerical approaches, the generalized polynomial chaos (gPC)-based stochastic Galerkin (SG) method and its variations have been widely adopted, demonstrating success in a range of applications. Beyond numerical simulations, theoretical studies have established the stability and convergence of these methods. Spectral convergence for the gPC-based SG method was demonstrated in, whileandintroduced a robust framework based on hypocoercivity to perform local sensitivity analysis for a class of multiscale, inhomogeneous kinetic equations with random uncertainties—approximated using the gPC-based SG method. For further reference, we point readers to the recent collectionand the survey.
+
+An important approximation strategy in kinetic theory is given by Grad’s moment methodbased on the expansion of the distribution function in Hermite polynomials, which extends the set of variables of a continuum model
+beyond the fields of density, velocity, and temperature. The additional variables are given
+by higher-order moments of the distribution function. Indeed, to describe the kinetic effects in highly non-equilibrium regimes, many moments are needed which results in a large
+systems of PDEs to be solved. It is known that Struchtrup and Torrilhonhave rigorously derived the regularized 13-moment equations from the Boltzmann equation of the monatomic gases. The final system consists of evolution equations for the 13 fields of density, velocity, temperature, stress tensor and heat flux. Seefor regularized moment equations and moment closure hierarchies for kinetic theory. In 1950’s, Grad solved the closure problem by assuming the distribution can be expressed around the Maxwellian function. According to, Grad’s choice, or other nonlinear closure such as Pearson’sis problematic, as it exhibits negative values in the tail for non-vanishing heat flux, which could be the reason for the loss of hyperbolicity of the moment equations. In general, the moment closure is a challenging and important problem in the approximation theory for kinetic models. Many numerical computational methods have been developed based on the Grad moment approach. However, these closure conditions may not be valid in practice, especially when there are shock profiles or complicated boundary conditions.
+We list some works here: for examples themodel, the filteredmodel, the positivemodel, the entropy-basedmodeland themodel.
+In this work, our goal is to use the machine learning approach to find an accurate closure system.
+
+With the recent development of data-driven methodology and machine learning (ML) techniques, some new approaches based on machine learning and neural networks have been proposed to solve the moment closure problem; since the relationship between the highest-order moment and lower-order moments is generally unknown, aside from the assumption that such a relationship exists, a neural network appears to be an ideal candidate to serve as a black-box model representing this relationship after training from the data, which are obtained by solving the kinetic equation. One of the groundbreaking frameworks is inby Han et al., where they first used an autoencoder to learn a set of generalized moments that optimally represent the underlying velocity distribution, and then trained a moment closure model for these generalized moments to effectively capture the dynamics associated with the kinetic equation. By utilizing the conservation-dissipation formalism, a stable closure model is developed from irreversible thermodynamics for the Boltzmann-BGK equation in, parameterized by a multilayer perception. In addition, Bois et al.inintroduced a nonlocal closure model for the Vlasov-Poisson system using a convolutional neural network. Furthermore, in, the widely recognized Hammett–Perkins Landau fluid closure model was studied by ML and neural network techniques. In particular, we highlight the recent workby Huang et al., where they develop a new ML framework for the moment closure problem of the radiative transfer equation (RTE).
+
+For the moment closure problems, the hyperbolicity of the derived moment system is critical to the well-posedness of the first-order partial differential equations. In fact, Grad’s pioneering work on moment closure in gas kinetic theory, presented in, laid the foundation for moment models. However, it was later shown inthat in the three-dimensional case, the equilibrium state for Grad’s 13-moment model lies on the boundary of the hyperbolicity region. This limitation significantly restricts the applicability of the moment method. Consequently, this issue has garnered considerable attention, with numerous studies in the literaturededicated to developing globally hyperbolic moment systems. The classical philosophy in deriving and solving the moment system, instead of the kinetic equations themselves, is to pursue the balance between generic accuracy and practical computability. However, with recent advancements in ML and data-driven modeling, novel ML-based approacheshave emerged to address the moment closure problem, offering new potential for both accuracy and practicality. We refer the readers toand the references therein for more recent progress in this field. Albeit the success of ML in the application of moment closure problems, it is worth mentioning that most of the aforementioned works do not ensure hyperbolicity or long-term stability, with the exception of the work in, where a stable ML-based closure model is proposed with hyperbolicity and Galilean invariance for the BGK equation, a simplified Boltzmann kinetic equation, though this model is restricted to a single additional nonequilibrium variable.
+
+In this paper, we focus on developing an ML-based moment closure model for the linearized Boltzmann equation in semiconductor devices, addressing both deterministic and stochastic cases. Classical moment closure approaches approximate unclosed higher-order moments based on empirical assumptions, which may not hold in general. Additionally, unclosed higher-order moments often vary widely in magnitude and can become very small on certain scales, such as in the optically thick regime for RTE. This variability complicates neural network training, as the target function may be difficult to learn directly from lower-order moments without appropriate output normalization. Therefore, rather than directly learning the unclosed higher-order moments, we opt to learn the spatial gradient of the unclosed moment using neural networks, drawing on a similar strategy proposed for RTE.
+For the deterministic case, we first derive the unclosed moment system using Hermite polynomials and their recurrence relations. A neural network incorporating gradients of lower-order moments with natural output normalization is then introduced to learn the gradient of the highest-order moment. To ensure long-term stability, we also introduce an approach inspired bythat enforces global hyperbolicity in the ML-based moment closure model. This is achieved by constructing a symmetrizer (i.e., a symmetric positive definite matrix) for the closure system and deriving constraints that make the system globally symmetrizable hyperbolic.
+For the stochastic case, we use the gPC-based SG method to discretize the random variable and derive a higher-dimensional deterministic moment system. The gradient-learning approach is also applied to this system, enabling an ML-based moment closure model.
+
+The rest of this paper is organized as follows: We first introduce the semi-conductor Boltzmann equation and its associated moment closure problem in Section. In Section, we propose an ML-based moment closure model to learn the unclosed highest-order moment, where the random variables are handled by the stochastic Galerkin method. The training process of the neural networks including the data generation is presented in Section. We validate our proposed ML-based moment closure model by numerical examples in Section. Some conclusion remarks are given in Section.
+
+SECTION: Semiconductor Boltzmann equation and moments system
+SECTION: Semiconductor Boltzmann equation
+The linear Boltzmann equation for semiconductor devices with random parameters is given by
+
+with the initial condition
+
+whereis the probability density function at timeand position, with velocity variableand random variablecharacterizes the random inputs.
+Here, the collision operatordescribes a linear approximation of the electron-photon interaction, given by
+
+whereis the normalized Maxwellian distribution
+
+In this paper,
+In this paper, we consider the one-dimensional in space and velocity variables, with uncertain parameters arising from:
+
+the initial datum;
+
+the collision kernel.
+
+In particular, if we assume the scattering kernel to be isotropic (independent of the velocity variable), i.e.,, the equation becomes
+
+SECTION: Moments system
+We take the moments of the linearized Boltzmann equation against the Hermite polynomials ofin the whole space, instead of the bounded domain as for RTE.
+Denoting the-th order Hermite polynomial byfor, the-th order moments can be defined as
+
+Recall the recurrence relation of the Hermite polynomials:
+
+withand. Furthermore, the orthogonal relation with respect to the weight functionholds:
+
+Hence, multiplying both sides of () byand integrating over the whole velocity spacelead to
+
+which, by considering the definition of (), involving the recurrence relation () on the left-hand side and the orthogonal relation () on the right-hand side of () above, can be further simplified as
+
+Therefore, the moment system up tois presented as follows:
+
+We can find that, in the last equation of () above, the evolution of-th order momentdepends on, therefore, the moments system () is unclosed. In fact, there are many classical ways to close the system, where themodelis the most straightforward approach. Themodel utilizes the orthogonal polynomials in the velocity space and assumesto close the model, such that the system () can be written in the following vector form:
+by denoting,
+
+where the diagonal coefficient matrixis
+
+and the coefficient matrixis
+
+SECTION: Machine learning based moments closure model
+Recent advancements in ML techniques have led to notable progress in using ML frameworks to enhance moment closure models.
+One of the standard ways for the moments closure is to seek the relation between the highest momentand the lower-order moments:
+
+whereis a neural network trained from data.
+This is the so-called Learning the Moment (LM) approach. In, it served as the regression in supervised learning and a part of the end-to-end learning procedure.
+
+SECTION: Formulation and hyperbolic condition
+In order to close the moment system () and circumvent the challenge in the LM framework, where the training process often converges to a local minimum, we will adopt the closure relation introduced in. This approach assumes a linear relationship between the gradient of the highest moment,, and the gradients of lower-order moments,, as follows:
+
+In this case, we can rewrite the moments system () in the following vector form:
+
+where the diagonal coefficient matrixis
+
+and the coefficient matrixis
+
+with coefficientsin the last row ofandsatisfying the following relation:
+
+In general, the matrixis not real-diagonalizable, so the system is not necessarily hyperbolic. We are trying to find a condition that enforcesto be hyperbolic, so that the system () remains stable over time. To achieve this, we follow the technique introduced in, i.e., we seek an SPD matrixsuch thatis symmetric. However, this matrixis usually hard to compute. Therefore, without loss of generality, we relax the assumption () by removing the firstdependence that
+
+whereare typical choices to simplify the computation, and in either case, we assumeto avoid the trivial results.
+In what follows, we will taketo illustrate the idea, whereas the same strategy can be extended directly to.
+
+Sinceis required to be a real symmetric matrix, we perform the matrix multiplication and impose the condition that the corresponding entries be equal, thereby ensuring thatis symmetric. This leads to the following equations:
+
+which can be further written in matrix formwith
+
+Then, using the Cramer’s rule to solve () above, we find
+
+Considering the fact thatis an SPD matrix, by Sylvester’s criterion, it has to satisfy the following inequalities:
+
+from which, it is clear that, i.e.,
+
+Since, we must have. On the other hand, to achieve, we have. Hence, considering, all these inequalities can be summarized into a single constraint ().
+
+Finally, by substituting () into (), we can obtain the constraint () that should be satisfied by,.
+
+If, we have no other option but to set. In this case, the hyperbolic constraint is given by, or equivalently,.
+
+SECTION: Stochastic Galerkin (SG) method for random variable
+In this subsection, we discuss how to manage the random variableexisting in the moment system (). The main idea involves applying the stochastic Galerkin (SG) method to eliminate the randomness, thereby transforming the system into an equivalent form containing only deterministic coefficients. For simplicity of notation, we assumewiththroughout the rest of this paper, which can be generalized to high dimension without an essential difference.
+
+We define the space
+
+equipped with the inner product with respect to the probability density functionin:
+
+whereis an orthonormal gPC basis function, i.e.,
+
+Then, the typical SG method is based on seeking an approximation ofinsuch that
+
+Now, in the case of (), we can expandas follows:
+
+with
+
+More precisely, considering the-th equation in (),
+
+and following (), we can project both sides of () intoand obtain
+
+forand, where the matrixincludes pre-computed weights concerning the random collision kernelas follows:
+
+Furthermore, by denoting, we can rewrite () in the following vector form,
+
+for, and
+
+for.
+
+Again, we need to propose a closure relation before we can solve the system. We follow the same dependence as in () and assume:
+
+Then, by inserting () into () and denoting, the moment system via SG method can be written as:
+
+where
+
+with
+
+and
+
+In fact, when applying the SG method, we are often interested in the moments’ expectationand standard deviation, which are closely related to the coefficients in (). Without loss of generality, we assumesuch that for each moment, we have,
+
+where we apply the orthonormality ofin the last equality above.
+
+For the standard deviation, we have,
+
+SECTION: Training and methodology
+In this section, we present the details about learningby the lower orders of moments, and using the WENO scheme to solve the system afteris properly approximated. We will deal with both the deterministic case and the corresponding UQ problem. Numerical results of both cases will be presented in the next Section.
+
+SECTION: Data preparation
+One key ingredient of our methodology is to approximate the highest moment using the lower orders of moments. To achieve this goal, we need to train a neural network:as in () for the deterministic problem or a networkas in () for the stochastic case. The first step of our training process is to prepare training data to fit in our models. We will use synthetic data, ie: reference solutions for the moments obtained from classical numerical algorithms, to serve as the input and labels of our networks.
+
+In the case of the deterministic model ()-(), we apply the method given by Jin and Pareschi into solve the deterministic counterpart of () (no) and obtain the reference solution. For simplicity, we consider the one dimension in spaceand velocityfor illustration, where we set the computational domain ofto bewith grid points, and applyfor velocity discretization. Following the CFL condition, the time step size is chosen aswith the final time.
+Onceis obtained, we compute the-th momentby integratingagainst the corresponding Hermite polynomial, as introduced in (), where the Gauss-Hermite quadrature rule withis used for integral evaluation.
+
+In the case of the moment system with uncertainty ()-(), we need to compute reference solutions, which is the-th Galerkin coefficient of the-th moment as defined in (). Based on the stochastic collocation (SC) method, we can obtain the coefficientsas in (). To this end, the integral in () is evaluated by
+
+whereare the collocation points and corresponding weights with-quadrature nodes, andare obtained similarly as in the deterministic case at each.
+
+SECTION: Training
+In this subsection, we discuss the details of the architecture and the training process of the neural networks (or) mentioned in the subsection above. The architecture (Figure) we choose is a standard fully connected neural network, where the input consists of lower moments (or their Galerkin coefficients in the UQ setting). This network is designed with 5 hidden layers, each containing 256 nodes, and employs the ReLU activation function. The output dimension matches that of the input. Figureprovides a graphical representation of this architecture. If hyperbolic condition is considered, we follow the same construction into modify the output layer to incorporate hyperbolicity into our model.
+
+To train the neural networks, we apply the Adam optimizer with the learning rateinitially. The total number of training epochs is 1000 and the learning rate is set to decrease toevery 100 epochs. We let the batch size be 1024.
+The input is normalized with zero mean and unit variance. These training hyperparameters are used in both deterministic and stochastic tests, and the only difference between the networksandis the size of the input and output. We use 90% of the data to train the networks and the rest of the data for validation. The hyperparameters and the activation function are tuned to minimize the loss function, which we describe below.
+
+In the last subsection above, we have discussed how to obtain the reference solution forin the deterministic problem andin the stochastic problem, for which we denote “true” in the superscript as follows:
+
+Then, in the architecture shown in Figure, thestand for the approximation from the neural networkin the deterministic case: following (),
+
+whereis the inner product in the standard Euclidean space. The approximation in the stochastic case is denoted byin a similar manner.
+
+Now, we are in a position to introduce the loss functions for our neural networks in both the deterministic and the stochastic settings:
+
+and we will measure the accuracy of our moment closure models by evaluating the relativeerrors between the approximated solutions by neural networks and reference solutions by solving the kinetic equation as follows:
+
+In Figure, we present the relativeerrors with respect to epochs by using our architecture to trainin the deterministic problem. We compare the performances whenwithand.
+We observe that when, the error is significant if the number of moments we choose to close the system is small (say).
+In both cases, the saturated error becomes smaller asincreases.
+
+SECTION: WENO Scheme
+Onceis properly learned using the lower-order moments, we need to solve the systems () and () using some classical numerical schemes. The scheme we choose is the fifth-order finite difference WENO scheme with a Lax-Friedrichs flux-splitting for spatial discretization. We take the grid number in space to be. For the time discretization, we apply the third-order strong-stability-preserving Runge-Kutta (RK) schemewith CFL condition. The penalty constant in the Lax-Friedrichs numerical flux is chosen to be.
+
+SECTION: Numerical results
+SECTION: 
+We first examine the deterministic case, where () does not depend on the random variable. We set the initial conditions as follows:
+
+whereis a constant. We randomly generate 10 values for(assuming a uniform distribution). For each initial condition, we solve for reference solutions of the moments as described in. We then use all these reference moments up to timeas our training data. Once the network is properly trained, we test the performance of our model at timewith a new initial condition given by. With this setup, we can analyze the generalizability of our model across different initial conditions and various time spots.
+
+We compare the results with two constant choices for the collision frequency:and, and three different number of moments, including,and. For, in Figure,and, we show the numerical solutions ofandatfor, respectively.
+It can be observed that all closure models can achieve reasonably good approximation results with this large collision frequency.
+
+On the other hand, in Figure,and, we show the numerical profile ofandfor smallerwithrespectively.
+Whenin Figure, there is no clear distinction between the prediction by different methods from the reference solution.
+Whenin Figure, the errors for theand LM model start to blow up, while those for the LG model are visible but insignificant compared to the other models, and the LG with hyperbolicity remain to be accurate. Whenin Figure, even the solutions obtained by the LG model become oscillatory starting at. However, when the hyperbolic condition is added during the training process, the behavior of the solutions gets regulated and the model achieves a reasonable approximation to the benchmark solution obtained from the kinetic equation.
+
+The reason for the incompetence of the LG model in the casebecomes apparent if we analyze the relativeerror when predictingusing neural networks. In Figure, we have demonstrated these errors for variouswhenand. It can be clearly observed that when, the predicting error foris considerably more significant than that for. This explains the large deviation from the reference solution when using LG method in this case. We can control the oscillation by adding hyperbolicity to our model, but the prediction ofstill remains inaccurate, counting for the relatively large errors of the method LGhyper in Figure. In contrast, when, the predicting errors forare much more parallel among different choices of, as shown in Figure. This explains why when, the LG method performs well asvaries.
+
+SECTION: 
+We now study the case with collision frequencyinvolving randomness. We setwherefollows the exponential distribution with parameter, i.e.,for.
+In this case, the gPC-basis functionsare given by the Laguerre polynomials with the recurrence relation:
+
+and.
+
+In Figure, we show the numerical simulation of the mean () ofandwithat. In this example, the initial condition assumes the form of, with. The training process is similar to that in the deterministic case, except that we replace the reference moments with their stochastic Galerkin counterparts. When performing the Galerkin expansion, we choose the order of truncation to be. One can observe that our proposed LG model performs much better than themodel, especially when predicting the mean of.
+
+SECTION: 
+In the following two tests, we consider the initial data containing uncertainties. The collision frequency is constant and set asin both tests below.
+
+We study the problem with uncertain initial data, which is given by
+
+wherefollows the uniform distribution on, i.e.,for.
+In this case, the gPC-basis functionsare given by the Legendre polynomials in the recurrence relation:
+
+with.
+The basis functions are normalized in our simulation.
+
+In Figure, we show the numerical solutions of the mean () ofandwithat. We again set the order of truncation to be. Our proposed LG model accurately reproduces the mean of, while the error in the mean ofis noticeable but significantly smaller compared to that in themodel.
+
+In the last example, we assume the initial data contains uncertainty and is given as
+
+The setting for the random variableand the choices of gPC basis functions as well as the truncation order are the same as in Test III (a) above.
+
+Figureillustrates the comparison for the mean () approximated by themodel and our proposed LG model. Themodel exhibits significant errors in solving the system, whereas the LG model effectively captures the random effects, even as the true solutions exhibit more oscillatory behavior compared to the previous test. The deviation in the LG model, particularly for, becomes noticeable; however, the errors remain substantially smaller than those observed in themodel.
+
+SECTION: Conclusion
+In this work, we develop a machine learning (ML)-based moment closure model for the linear Boltzmann equation in semiconductor devices, addressing both deterministic and stochastic settings. By using neural networks to approximate the spatial gradient of the unclosed highest-order moment, our approach achieves effective training to close the moment system.
+To guarantee its global hyperbolicity and stability, we imposed constraints for ensuring the symmetrizable hyperbolicity. For the stochastic problem, we incorporated a gPC-based SG method to discretize the random variables, transforming the problem into one that is similar to the deterministic setting.
+Several numerical experiments validate the proposed framework, highlighting its stability and accuracy in achieving reliable moment closures for linear transport problems with (or without) uncertainties. These results underscore the potential of incorporating ML techniques to the moment closure of the more complicated nonlinear Boltzmann equation in our future work.
+
+SECTION: References

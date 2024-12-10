@@ -1,0 +1,316 @@
+SECTION: Prompt Generation Networks for Input-Space Adaptation of Frozen Vision Transformers
+With the introduction of the transformer architecture in computer vision, increasing model scale has been demonstrated as a clear path to achieving performance and robustness gains. However, with model parameter counts reaching the billions, classical finetuning approaches are becoming increasingly limiting and even unfeasible when models become hosted as inference APIs, as in NLP. Visual input-prompt learning, an adaptation technique in which additional inputs in visual (RGB) space are learned, has emerged as a potential solution for adapting frozen and cloud-hosted models, requiring neither access to the forward pass, nor post-processing.
+Yet so far, these constraints have deteriorated adaptation performances significantly. To this end, we propose the Prompt Generation Network (PGN) that generates a different prompt for every data point, which is then used to adapt a frozen pretrained vision model to a target task.
+We show that the PGN effectively adapts pretrained models to various new datasets: It surpasses previous methods by a large margin on 12/12 datasets and even outperforms full-finetuning on 5/12, while requiring 100x fewer parameters.
+Lastly, we introduce the “prompt inversion” trick, with which PGNs can be efficiently trained in a latent space but deployed in RGB input space for inference.
+
+SECTION: Introduction
+Large-scale pretrained models, such as those obtained from self-supervised or vision-language pretraining have shown remarkable performance gains for various visual tasks.
+Particularly models such as SEER, CLIPand ALIGNhave demonstrated that large and multi-modal datasets can yield models that exhibit novel abilities in terms of robustness or few- and zero-shot learning.
+However, the requirements in terms of dataset size and compute infrastructure are exceedingly prohibitive for most researchers, such that these models are and will likely remain limited in terms of their diversity and availability.
+Exacerbating this trend further, model sizes are steadily increasing: a case in point is the recent development of a Vision Transformer model with 22B parameters.
+Eventually, models will reach sizes that can only be served via dedicated hardware or API interfaces, as is already the case for the largest and best models in NLP (e.gLlama 3).
+
+Both of these developments mean that many classic approaches for finetuning models are not applicable anymore.
+This is because the prevailing paradigms entangle the adaptation and computation phase, for example by directly adapting weights in a model or by requiring internal access to the model’s forward pass and modifying it with additional inputs, or additional intermediate layers.
+A solution to this is adapting frozen models by solely learning additional inputs.
+This approach covers not only the setting where the model is impossible to directly change,because it is served via an API or hard-coded as an application-specific integrated circuit (ASIC), but also where it is very sensitive to changes,due to quantization.
+Additionally learned inputs, also called, are typically learned per domain and downstream task and have shown promising results for adapting to image domainsand are broadly inspired from adversarial reprogramming.
+However, so far, the resulting performances have fallen short compared to finetuning models.
+
+In this paper, we argue that the main reason for this shortfall is the arbitrary definition of a domain and the resulting limited modeling flexibility, as the prompt set is constant and therefore does not depend on the input data.
+In contrast, we propose a new method that allows adapting toevery singleinput image.
+For this, we introduce the Prompt Generation Network (PGN) that learns to generate new prompts for every image by combining items from a jointly learned library of tokens.
+Furthermore, as these prompts’ purpose is to only aid the large-scale model, the PGN can be kept lightweight, which allows for efficient, yet strong modelling capabilities.
+By fully decoupling the adaptation part from the internal model computations, a PGN can be simply deployed on client devices after an initial stage of server-side training.
+On a benchmark covering 12 datasets, we show that our PGN approach achieves performances that matches and outperforms those of fully finetuned models, while being two orders of magnitude more efficient in terms of additional parameters.
+This demonstrates that our proposed method effectively closes the divide between high-performing classical finetuning and previously constrained adaptation of frozen vision models.
+
+Overall, this paper makes four main contributions:
+
+We develop a simple and effective framework for learning input-dependent visual prompts via Prompt Generation Networks.
+
+We propose an alternative inference mode that decouples the PGN from the large-scale model, such that it is possible to arrange them in a client-server setup, making our approach compatible with recent developments in the industry.
+
+We demonstrate the generalizability and state-of-the-art performances of the proposed method across 12 datasets, architectures and settings such as multi-dataset inference.
+
+Finally, via quantitative and qualitative analyses, we showcase how with our method a “division of labor” emerges between the frozen model and the PGN.
+
+SECTION: Related works
+While pretrained vision models generally need to be finetuned, vision-language models can perform zero-shot transfer by prompting the text encoder to perform downstream tasks.
+However, for most datasets there is still a significant performance gap with respect to full-finetuning, which is computationally expensive and reduces robustness.
+A range of alternative methods has been proposed to address these issues.
+
+Inspired by previous works in NLP, lightweight feature adapters (made of trainable parts in between frozen ones) have shown performance gains.
+Requiring few additional parameters, only finetuning the bias parameters of pretrained models has also been proposed.
+In contrast, VPTlearns additional inputs to multiple layers in a pretrained vision transformerbut also finetunes a linear classifier on top.
+Another finetuning-based approach proposed inis to ensemble the weights between zero-shot and finetuned models and which trains additional networks that are fused via summation.
+Specific to vision-language models,learn an adaptation network between CLIP’s vision and text encoders.
+
+Although these works show promising results, they either change the model’s weights or require access to the internals of the forward pass for inserting additional computations. This is a key difference to our work, in which we strictly separate the adaptation stage from the frozen model computation stage.
+
+Optimizing solely in the, prompt learning originates from language modeling and is a lightweight approach to adapting a model to perform downstream tasks.
+For computer vision, initial efforts focused on learning continuous prompts for the text encoder of pretrained vision-language models for imageand video tasks.
+In contrast to these, our method does not rely on multi-modal systems or a general text encoder but can be used for any visual encoder.
+
+Most related to our work is the work of, that proposes visual prompting through the addition of learnable pixels, effectively learning prompts in the data space.
+This is the same setting as adversarial reprogramming, where pretrained CNNs are repurposed to classify images from different datasets by applying transformations. This form of adaptation therefore does not affect the model itself, making it an excellent option for scenarios with restricted model access during inference.
+
+And although these works show significant gains, they do not match the performance of classic adaptation techniques like finetuning and linear probing.
+Our method bridges the performance gap by learning prompts that, unlike previous works, are adapted to.
+
+SECTION: Methods
+SECTION: Review of prompt learning methods
+In NLP, prompt learning offers a lightweight approach for tuning pretrained models for performing downstream tasks.
+Letdenote the pretrained language model
+anddenote the
+input language tokens.
+Traditionally, the model is trained to produce a latent language
+embedding for the given input as,
+where ‘;’ denotes concatenation andis the special token for classification.
+The latent embeddingcan be used for downstream tasks.
+In order to adapt the model on different tasks or different datasets,
+one would have to finetune the large-scale pretrained model,
+which is potentially very resource demanding and could be infeasible for models with billions of parameters.
+
+As its name suggests, prompt learning provides
+a set of learnable vectorscalled prompt vectors, that are fed to the pretrained model and
+encourage it to produce desirable outputs.
+Formally, the prompt learning process can be written as
+
+Due to the flexibility of the prompt learning method,
+one can adapt the model on new tasks or new datasets
+by only training the lightweight prompt vectors,
+rather than finetuning the heavy
+pretrained model.
+This method was originally proposed in the NLP community,
+and it was later used to prompt the language branch in pretrained visual-language models.
+
+Recently, the prompt learning technique has also been applied to
+large-scale pretrainedvisualmodels. A pretrained visual model, – typically a variant of the Vision Transformer, is adapted using prompt vectors, yielding an image embedding.
+Within the previous worksthat apply prompt learning
+in this way,apply these prompts deep within the internal computations of transformers, whereas those inare in the pixel space.
+
+SECTION: Prompt Generator Networks
+Although learning prompt vectors brings flexibility to the pretrained model,
+a key limitation of the classic prompt learning method
+is that the prompt vectors are shared within the dataset and task.
+In other words, the prompt vectors are conditioned on the domain.
+However,
+what exactly constitutes a domain is somewhat arbitrary,, ImageNet both contains fine-grained distinctions (such as 120 different dog breeds) and very coarse ones (such as a single mushroom class).
+Therefore, having a single set of learned vectors for adaptation results in modeling capacity being wasted on items that might already be well encoded.
+In this section we introduce our Prompt Generation Network as a more flexible alternative.
+
+shows an overview of our method.
+Given the input imageand the
+pretrained vision model,
+we first cut the image intopatches,
+where,and.
+Then, we encode the patches with a linear layer.
+To construct the visual inputs.
+Rather than introducing a set ofsharedprompt vectors as described in Section,
+we propose to use a set ofprompt vectors.
+Formally, we use a functionto learn the dependency
+
+where the functionis learned by a neural network.
+While it is possible to directly transform the inputs continuously to the prompt vectors, in practice this results in a high number of parameters. This is due to the size of the fully-connected layers, which is proportional to the large input dimensionalities of transformers.
+
+Instead, we propose to use a Token Librarythat consists oflearnable feature vectors with channel dimension.
+Compared to works that use memory,
+the Token Library’s purpose is not to learn characteristics of the dataset,
+but instead to steer the pretrained model towards a certain dataset,
+therefore saving modeling capacity.
+The prompt generation network learns to generateprompt vectors,
+each of which is a combination of the feature vectors from the Token Library.
+In detail,
+
+whereis a learned mapping,
+using a lightweight neural network parameterized by. Compared to some works in continual learning, the generated combination given byis independent of the pre-trained representation given by, enabling the PGN to learn features that are optimized for its task of providing input-dependent prompts.
+
+Finally all prompt vectors are fed into the frozen transformer encoder,
+
+SECTION: Prompt inversion for input-space prompting
+So far, the prompt vectors learned by a PGN were fed to the frozen pretrained model between the initial projection layer and the transformer blocks.
+Yet, if the first layer of the transformer cannot be modified,because it is being accessed via an API or is implemented in hardware, this is problematic.
+In order to solve this, we use a “Prompt Inversion” operation,
+a simple mechanism that transforms the learned prompts to input RGB patches, which can be simply attached to the bottom of the incoming image. This yields the same prompting capabilities, and is compatible with the recent emergence of inference APIs. In this setup, the PGN is first trained either in a local environment where the gradients of the frozen model are available, or remotely using an API that can return gradient information. Then, the trained PGN is deployed on the client-side and sends the adapted inputs to the remotely hosted model.
+
+Prompt inversion leverages the linearity of the first patch-projection layer and enables fast training by learning directly in prompt-space, while at the same time allowing forinput-only promptingduring inference and downstream applications.
+In detail, we can transform a single prompt vectorinto a patch by
+
+wheredenotes the positional embedding andis the pseudo-inverse of the linear projection weight matrix. Note that this matrix needs to be computed only once as it stays frozen.
+The inverted promptis a RGB patch and can simply be appended to the input image and then served to the frozen transformer.
+In practice, the number of prompts is kept divisible by the patch sizeto ensures that the images retain a rectangular format.
+An example of the result of this process for a ViT-B/32 is shown in– note that for ViTs with smaller patch-sizes the additional input patches occupy much less space.
+
+SECTION: Experiments
+In our experiments we cover 12 public image datasets:
+CIFAR100 & CIFAR10,
+Oxford Flowers,,
+EuroSAT,
+SUN397,
+UCF101,
+SVHN,
+Oxford-IIIT Pets,
+DTD,
+RESISCand CLEVR.
+Out of these, we chose CIFAR100 and SUN397 for ablations, as they vary in resolution, difficulty and the degree of spatial distribution of relevant image features.
+Please refer to the supplementary materials for the statistics for each dataset.
+
+We use the ViT-B/32 models and use CLIP pretrainingobtained weights as default but compare against supervisedand DINOself-supervised weights.
+The ViT weights are always kept frozen during our experiments.
+In the PGN,
+we experiment with the lightweight ResNet-based architectures,
+namely ResNet10 and ResNet18.
+We obtain the ResNet10 architecture by
+reducing the layers at each residual block from ResNet18
+and also reducing the depth of the first layer to only 16.
+More details are provided supplementary materials.
+
+We provide training details and additional experiments and analyses in the supplementary materials, including a qualitative analysis of the effect of PGNs on the computation within the Vision Transformer.
+
+SECTION: Motivational Analysis
+In this section we investigate the basic feasibility of our proposed method for generating input-dependent prompts via PGNs.
+For this, in, we compare the results of prompting a CLIP ViT-B/32 model to correctly select the right class in a “zero-shot” manner with text-embeddings automatically generated as “This is a photo of a [class name]”.
+We observe that the zero-shot baseline of CLIP approximately matches that of training the network underlying the PGN (in) in a standalone, supervised manner with accuracy around 63%.
+Despite this, the two models symbiotically increase the performance by +16% when combined in our PGN method – far outperforming its isolated variants.
+
+This is further demonstrated in, where we compare the similarities of the representations of the various components.
+For this we cluster the outputs of each visual encoder (PGN, CLIP and CLIP+PGN) unsupervisedly and measure the pairwise alignment using normalised mutual information (see the supplementary materials for details).
+We find that PGN+CLIP’s features are closest to the ground-truth (NMI of 70.1%) compared to both PGN (29.5%) and standalone CLIP (58.1%), in line with later results of.
+The low performance of only the PGN also demonstrates that it is not doing the “heavy-lifting”, as its outputs are least aligned to the ground-truth labels.
+Instead, PGN and CLIP’s outputs share the lowest similarity of only 27.5%. The superior performance of the combined model there results from the PGN learning features that are quite dissimilar and therefore more informative to the frozen CLIP model.
+
+SECTION: Ablation studies
+table. The configurations are evaluated on CIFAR100 (C100) and SUN397. We vary the
+number of prompts provided to the frozen model, the size of the Token Library and the PGN
+backbone. Default settings are in gray.
+
+Next, we ablate and analyze the various choices of the PGN architecture and setting.
+We conduct ablation studies on CIFAR100 and SUN397 in.
+Unless otherwise stated, we learnprompts and a Token Library of sizeto speed up computations.
+
+In(a), we vary the number of prompts that the PGN generates.
+We find that increasing the number of prompts generally yields a better performance until aroundprompts.
+This shows that even a modest number of 4-8 additional tokens – when added to the 49 spatial plus 1token – can yield significant benefits.
+
+In(b), we compare the size of the Token Library’s number of items.
+We find that larger Token Library generally leads to better performance, though no further improvement is observed beyondtokens.
+We conjecture the additional library items
+beyondtokens only learn redundant information and
+therefore do not improve.
+
+In(c), we ablate the backbone used for the PGN with input-independent prompts (IIP), a setup in which the prompts consists of learnable vectors that are constant for each input image.
+With this as a baseline, we compare against input-dependent prompting methods, including a 2-layer MLP operating on the centerpixels of an image, a ResNet10 at resolutions ofand, as well as a ResNet18 at resolutions of.
+First, we observe that the 2-layer MLP, a simple model with limited image modelling capability, obtains a small performance benefit over the IIP setup.
+This might be explained by IIP being a strict subset of the input-dependent methods, as these could zero-out the input and instead supply constant prompts.
+The benefits of input-dependency is further demonstrated by using convolutional neural networks as backbones with gains of up to +5.8% for CIFAR100 (77.9 vs. 72.1).
+Increasing input resolution from 64 to 224 also slightly improves (+1.4%) accuracy for CIFAR100.
+Finally, we observe that the overall performance saturates even when using a ResNet18 compared to the ResNet10, suggesting that the PGN can be lightweight and that the method automatically divides the labor between fine-grained recognition and providing prompts as cues.
+
+Inwe study the approach of obtaining the prompts.
+We compare our token library (TL) with
+the more direct approach that obtains the prompts through a linear transformation of the image features.
+While we observe that both methods can be made to achieve similar performances,clearly demonstrates the superiority of the TL in terms of parameter efficiency.
+
+Finally, we explore the use of different pretrained ViT backbones, from supervised trainingand from self-supervised training using DINO.
+First, we find that generally the performances are lower compared to those obtained from the CLIP backbone in.
+This means that adapting these models is more challenging, potentially owing to the vastly larger pretraining dataset of CLIP.
+Second, we find that both IIP and PGN struggle with adapting the backbones to the SUN397 dataset.
+This might be explained by: (i) the difference in image contents – while SUN contains scene images, the pretraining datasets of the supervised ViT and DINO are strongly object-centric– and (ii) the relatively small number of images per class (190).
+Third, we find that, as in the case of CLIP, the PGN approach vastly outperforms the baseline IIP approach in adapting these models to the datasets,, showing gains of 40% for CIFAR100.
+
+SECTION: Large-scale comparisons
+Next, we compare PGNs to other input-based adaptation techniques on a wide range of vision datasets.
+Based on the findings of our ablations, we choose the ResNet10 as the PGN’s backbone, outputtingprompts from a Token Library of size, feeding into a pretrained CLIP ViT-B/32.
+The results are shown inand are directly comparable to the concurrent work of Bahnget alon visual prompts (VP), from which we adapted the results of the first two rows.
+From, we first find that linear and full-finetuning and our method achieve the best performances on 4 out of 12 datasets each.
+However, when comparing the overall averaged accuracies, we find that our method achieves 86.9%, matching the performance of the full-finetuning adaptation, and surpassing both VP and linear finetuning by 8% and 3%, respectively.
+In the last column of, we show the number of additional parameters for adapting to each dataset.
+We find that our PGN method requires almost two orders of magnitude fewer parameters than full-finetuning, while retaining the same overall performance.
+
+figurevisualisation of PGN outputs. PGN trained on a mixture of datasets automatically allocates the tokens in a manner that recovers the individual training domains.
+
+SECTION: Efficient multi-dataset PGN
+Encouraged by the comparisons of the previous section, we investigate whether PGNs can be made even more efficient, by training a PGN on multiple datasets at the same time. The numerical results are shown in the supplementary materials.
+
+Inwe show a-SNE visualisation of PGN outputs for four datasets. The PGN was trained in the PGN+CLIP setup of, on the union of the four datasets.
+First, we find that the PGN learns features that are well-correlated with the domains, despite not having access to the individual item’s dataset origin.
+This means that such a procedure could be used for adapting to mixed domain or unsorted datasets.
+We also observe that some domains contain images that have similar PGN outputs, notably UCF and Pets.
+This discovery might be explained by overlaps in depicted objects,, UCF contains classes such as “walking a dog”, while Pets contains multiple dog classes.
+
+SECTION: Discussion and conclusion
+The increasing size of large-scale pretrained models have had a centralizing effect: only large companies and institutions have the resources to collect data and train on the required scale. One recently explored option to share the benefits of these models is to make them available for experimentation and inference through APIs.
+In this work, we aim to empower future users of foundation model APIs by addressing the key limitation of the restricted adaptability of models in this setting.
+However, we also recognize that our adaptation method could potentially be used by malicious actors for unintended purposes and vigilant monitoring of usages will remain important.
+
+We propose the Prompt Generation Network (PGN), a simple and effective framework for learning input-dependent visual prompts.
+Our method is parameter-efficient by leveraging a Token Library from which tokens are combined to yield the prompts using a lightweight network. Furthermore, it is compatible with recent developments that restrict access to model internals at inference, such as APIs or implementations on edge devices that require specialized hardware.
+We demonstrate that PGN can be used to adapt CLIP, surpassing previous methods and even matching and exceeding the results of full-finetuning of the visual encoder, despite requiring two orders of magnitude less number of adapted weights.
+Finally, we have demonstrated that PGN can be a scalable method for generic adaptation of frozen visual transformers by training them with a mixture of datasets.
+
+SECTION: References
+SECTION: Details of the datasets
+gives an overview of the downstream datasets used for the evaluation of our method, including the text prompt templates used to generate classifiers for CLIP.
+
+SECTION: Additional experimental settings
+In, we show the training details of the experiments in the main paper. We train the PGN with a learning rate ofand apply a cosine decay learning schedule ending at zero learning rate
+with a linear warmup for the firstepochs.
+We use an SGD optimizer withmomentum.
+Except when specified, we use a batch size ofimages on one Nvidia-1080TI GPU.
+Compared to theepochs of concurrent work, we train our network forepochs by default in the motivation and ablation sections and forin the large-scale comparisons (Table 3 of the main paper).
+
+In,
+we show the details of ResNet10 architectures.
+
+For Figure 3 in the main paper, we embed the validation set of CIFAR-100 using the three visual encoders of PGN (only), CLIP, and PGN+CLIP.
+For this we cluster the features into 100 clusters using k-means.
+After this, the representations can be easily compared with each other using the normalised mutual information score.
+
+SECTION: Qualitative analysis
+From Table 1 in the paper, we observed that the CLIP zero-shot and the PGN backbone model’s performance on their own are low with 63-64%.
+However, when combined, we reach performance increases of +15% yielding up to 79% on CIFAR100.
+In this section, we analyse how the simple mechanism behind PGN is allowing the combined model to achieve superior performances.
+
+To answer this question, we pass the validation sets through the trained PGN model and pick individual tokens that we wish to visualize.
+We then pick the top four input samples that have the highest softmax values for the selected item.
+The result is shown infor CIFAR100.
+We find that while some tokens are fairly category specific, such as those for a tree or an apple, some cover much broader categories such as lighting conditions or even geometric structures.
+Note however that the PGN is not doing the heavy-lifting in terms of classifying the images by itself, as its output is not well-aligned with the ground-truth, as demonstrated in Figure 3 of the main paper.
+It rather supplies the frozen transformer model with orthogonal information that helps the task. More examples are provided at the end of this document.
+
+Next, we analyse the effect of the PGN prompts to the internal computations of the frozen vision transformer.
+In, we visualize thetoken’s attention map at the final layer of the transformer with or without our PGN.
+Despite showing the effect of the prompts on thelayer’s attention map, we still find a strong effect of the PGN’s additionally supplied prompts.
+While the effect is not interpretable for low-resolution datasets such as CIFAR, for Pets and Resisc we observe an increased focus on the foreground.
+We also show the attention values of theto the 16 supplied prompts below the PGN-CLIP attention maps.
+A strong variance between images is seen, demonstrating that the method learns and leverages the input-dependency of the prompts that are supplied to the frozen model. More examples are provided at the end of this document.
+
+SECTION: Multi-dataset PGN
+We retain the same setting as in our large-scale experiments and train with batches that contain samples from the four datasets in.
+The model is thus forced to allocate the token library items in a manner that best supports this task, reducing the overall number of additionally adapted parameters by 75%.
+From, we find that despite this reduction in parameters, the overall performance only decreases by a small amount of 3.7%, despite the fact that the classification problem is now 193-way and thus much more difficult.
+
+SECTION: Details of the feature similarity analysis
+In the NMI analysis in Figure 3 and Sec. 4.1 of the main paper, we measure the pairwise alignment between the outputs of the visual encoders we use and the ground truth.
+These are:
+the frozen CLIP model’s visual encoder that outputsembedding,
+the trained PGN model that outputs prompts (thein Eqn. 4),
+and the combined CLIP+PGN model which uses PGN prompts to modify CLIP’s visual encoder’s outputs (that outputsembedding after CLIP).
+For this, we apply-means clustering to the set of embeddings generated by each encoder individually, settingequal to the number of ground-truth classes.
+For our experiment, we use the full CIFAR100 test split.
+This yields a set ofpseudo labelings of the dataset.
+After combination with the ground-truth labels, we can makepairwise comparisons and calculate the normalised mutual information, which measures a generalized correlation between labelings.
+The results are shown in.
+
+SECTION: Large-scale comparisons
+In Table 3 in the main paper, the results for linear finetuning are adopted from the original CLIP paper, whereas the results for full finetuning are taken from VP.
+
+SECTION: Additional experiments
+Inwe evaluate replacing the final linear layer ofwith a MLP with 1 hidden layer, which allows for a nonlinear mapping between image features and the logits that give rise to the combination coefficients in Eqn. 3. No significant performance gain is observed.
+
+So far, we have utilized CLIP’s text prompts (TP) to generate the fixed weights of a linear classifier. In, we compare this approach to a trainable classifier, which takes the TP weights as a starting point.
+
+We evaluate the robustness of PGNs by training for 100 epochs onf ImageNetand evaluating on four ImageNet variations (ImageNet-A, ImageNet-R, Imagenet-V2and Imagenet-Sketch). For these experiments, we use identical PGN settings as in Table 3 in the paper. The results are shown in Tableand compared to the case of linear finetuning on the same, frozen CLIP backbone (ViT-B/32).
+We see that the PGN outperforms linear finetuning on all robustness benchmark, despite being comparable in terms of its performance on the upstream dataset.

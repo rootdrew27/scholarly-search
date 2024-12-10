@@ -1,0 +1,373 @@
+SECTION: How Much Can Time-related Features Enhance Time Series Forecasting?
+
+Recent advancements in long-term time series forecasting (LTSF) have primarily focused on capturing cross-time and cross-variate (channel) dependencies within historical data.
+However, a critical aspect often overlooked by many existing methods is the explicit incorporation oftime-related features(e.g., season, month, day of the week, hour, minute), which are essential components of time series data.
+The absence of this explicit time-related encoding limits the ability of current models to capture cyclical or seasonal trends and long-term dependencies, especially with limited historical input.
+To address this gap, we introduce a simple yet highly efficient module designed to encode time-related features, Time Stamp Forecaster (TimeSter), thereby enhancing the backbone’s forecasting performance.
+By integrating TimeSter with a linear backbone, our model, TimeLinear, significantly improves the performance of a single linear projector, reducing MSE by an average of 23% on benchmark datasets such as Electricity and Traffic.
+Notably, TimeLinear achieves these gains while maintaining exceptional computational efficiency, delivering results that are on par with or exceed state-of-the-art models, despite using a fraction of the parameters.
+
+PVLDB Reference Format:PVLDB, 14(1): XXX-XXX, 2020.doi:XX.XX/XXX.XX††This work is licensed under the Creative Commons BY-NC-ND 4.0 International License. Visithttps://creativecommons.org/licenses/by-nc-nd/4.0/to view a copy of this license. For any use beyond those covered by this license, obtain permission by emailinginfo@vldb.org. Copyright is held by the owner/author(s). Publication rights licensed to the VLDB Endowment.Proceedings of the VLDB Endowment, Vol. 14, No. 1 ISSN 2150-8097.doi:XX.XX/XXX.XX
+
+PVLDB Artifact Availability:The source code, data, and/or other artifacts have been made available athttps://github.com/zclzcl0223/TimeLinear.
+
+SECTION: 1.Introduction
+
+Time series data(Bansal et al.,2021; Khayati et al.,2020; Paparrizos et al.,2022; Schmidl et al.,2022; Wenig et al.,2022; Zhong et al.,2024; Qiu et al.,2024)is a sequence of data collected at successive points in time, typically at uniform intervals.
+Unlike other types of sequence data, such as text, time series data is characterized by each data point being associated with a time-related feature or time stamp111We use the terms “time-related feature” and “time stamp” interchangeably.(e.g., season, month, week, hour, minute, etc), along with the corresponding value of the observed variable.
+In cases where multiple variables are recorded, the time series transitions from univariate to multivariate series.
+Given the ubiquity of multivariate time series data(Böse et al.,2017), accurate forecasting is essential across a broad range of fields, including transportation(Lv et al.,2015; Fang et al.,2021; Tran et al.,2020), finance(Xu and Cohen,2018; Shi,2024), and climate(Chen et al.,2024; Zhang et al.,2023).
+In response to this demand, recent years have seen the development of numerous neural network architectures that have achieved substantial advancements in time series forecasting(Zhou et al.,2021; Cui et al.,2021; Zeng et al.,2023; Wang et al.,2024c; Zhang and Yan,2023; Wu et al.,2021; Nie et al.,2023; Liu et al.,2024a; Wu et al.,2023; Luo and Wang,2024).
+
+As mentioned above, each time series data point consists of a time stamp and the observed values of the measured variables.
+However, most existing forecasting models primarily focus on modeling cross-time and cross-variate dependencies based on the historical observations of the variables, often overlooking the rich semantic information embedded in the associated time stamps.
+Time stamps inherently provide crucial contextual information, as they constrain or dictate the values of the observed variables.
+For instance, in weather forecasting, summer months typically correlate with higher temperatures, while winter is associated with lower temperatures.
+Similarly, in transportation, weekdays usually see heavier traffic, whereas weekends tend to have lower traffic volumes.
+In other words, the combination of different time stamps corresponds to certain variable observations in a multidimensional vector space, within which variables fluctuate due to random noise.
+
+To validate this claim, we conduct a case study using the Electricity dataset(Wu et al.,2021), where we encode the historical time stamps (hours, days, and seasons) to hidden space and make predictions based solely on this encoding using a single linear layer.
+As illustrated in Figure1(a), whereTimestamprefers to models that use time-related features as input andObservationrefers to models that use historical observations of the variables as input, both approaches leverage a single linear layer for predictions.
+Notably, under the setting of predicting the next 720 steps based on 96 historical data, forecasting based solely on time-related features outperforms all other baselines.
+This can be attributed to the cyclical stability and seasonal patterns present in residential electricity consumption.
+As depicted in Figure1(b), electricity consumption at noon and midnight on Mondays exhibits relatively stable behavior within the same season, especially in winter months, fluctuating around an average value, represented by the dotted line.
+In contrast, values at the same time point differ significantly between spring and winter.
+The association of these consumption patterns with specific time-related features highlights the potential of utilizing time stamps to enhance time series prediction.
+Predicting with time stamps is analogous to binding a time-related feature to a specific observation, as shown in Figure1(c).
+The combination of different time-related features produces different predictions accordingly.
+
+Based on the above discussion and the widespread existence of the relationship between observations and time stamps across various types of time series (e.g., weather, traffic, energy), we propose to predict with time-related features.
+However, given that we can only encode a limited number of time stamps (seasons, months, weeks, hours, minutes, etc.), while the future is unknown (such as years), relying solely on them would result in predictions that are invariant for all time points with the same time-related features.
+Therefore, while time stamps provide a robust foundation, historical observations are still needed to introduce variability and cope with noise in the predictions.
+Our proposed method consists of two key components to address multivariate time series forecasting with both time-related features and historical observations of variables.
+The first part, namedTime Stamp Forecaster(TimeSter), encodes historical time-related features into a hidden space and makes predictions with a single linear layer.
+The second part, namedBackbone Forecaster(BonSter), employs any other backbones (e.g., PatchTST(Nie et al.,2023), iTransformer(Liu et al.,2024a)) to predict the noise components based on historical observations of variables.
+The outputs of these two components are combined to yield the final prediction.
+A simple combination of TimeSter and a linear layer backbone, namedTimeLinear, can reduce the average MSE of a single linear projector on the Electricity and Traffic datasets by 23%.
+Technically, our contributions are summarized as:
+
+Realizing the relationship between time stamps and time series observations, we comprehensively study the potential of time stamps in enhancing time series forecasting.
+
+We introduce a lightweight and effective module to leverage time-related features, Time Stamp Forecaster (TimeSter), which can be easily integrated into various time series prediction models to boost their performance.
+
+We present a simple yet powerful model,TimeLinear, the combination of TimeSter and a linear layer, which achieves consistent state-of-the-art performance across seven real-world datasets with only100k1Mparameters.
+
+The rest of the paper will be organized as follows:
+We first introduce the preliminary knowledge in Section2and related works in Section3.
+Then we introduce our method in Section4. In Section5, we present our experimental results and some visualization results in detail.
+Finally, we conclude in Section6.
+
+SECTION: 2.Preliminary
+
+Multivariate Time Series Forecasting.Given historical observations ofvariables, wheredenotes the look-back window, multivariate time series forecasting aims to predict the future values, whereis the prediction horizon.
+Specifically, this work focuses on long-term time series forecasting, where the prediction lengthis greater than or equal to 96.
+In the following sections, we denote multivariate series at a time pointasand univariate series as.
+
+Time-related Features.Time-related features are auxiliary information that captures temporal information at the point when measurements are recorded.
+These features typically include components such as season, month, day of the week, hour, and minute.
+For instance, a time stamp like2024-07-15-14:10:00can be represented by the categorical features.
+In practice, these categorical features are numerically encoded (e.g.,,) and then normalized to a common range, such as, to facilitate training in machine learning models.
+In the following sections, we letdenote the time-related features corresponding to the historical data, anddenote the time-related features corresponding to the future data, whereis the number of selected time-related features.
+
+SECTION: 3.Related Works
+
+SECTION: 3.1.Predicting with Historical Observations
+
+The application of neural networks in time series forecasting has led to the development of numerous deep learning models tailored for this domain.
+These models span a variety of architectures, including CNN-based models like MICN(Wang et al.,2023), TimesNet(Wu et al.,2023), and ModernTCN(Luo and Wang,2024); Transformer-based models such as Crossformer(Zhang and Yan,2023), PatchTST(Nie et al.,2023), and iTransformer(Liu et al.,2024a); and models based on linear layers or MLPs, such as DLinear(Zeng et al.,2023), RLinear(Li et al.,2023), FITS(Xu et al.,2024), TimeMixer(Wang et al.,2024c), MSD-Mixer(Zhong et al.,2024), and SOFTS(Han et al.,2024a).
+Despite their architectural differences, these models share a common goal of enhancing the modeling of multivariate historical observations to improve forecasting accuracy.
+Some models, such as DLinear, RLinear, FITS, PatchTST, and TimeMixer, focus on capturing long-range temporal dependencies, while others, like Crossformer, ModernTCN, TimesNet, iTransformer, and SOFTS, emphasize modeling the interactions among variables.
+However, a common limitation across these models is the lack of explicit consideration for the relationship between time-related features and the corresponding observations, which reduces their sensitivity to temporal dynamics, such as seasonal patterns and cyclical trends.
+
+SECTION: 3.2.Predicting with Time-related Features
+
+Incorporating time-related features, such as seasonality, day of the week, and time of day, is essential to improve predictive accuracy in time series forecasting.
+Models like Autoformer(Wu et al.,2021)and TimesNet(Wu et al.,2023)simply add time stamps to historical series through position encoding.
+iTransformer(Liu et al.,2024a)treats different time-related features as different tokens and feeds them to the attention layer together with other time series variables.
+However, these models often treat time-related features as secondary, leading to suboptimal modeling of the interactions between these features and the target variables.
+This is further evidenced by empirical results(Wang et al.,2024b), which demonstrate that removing time-related features from these models has minimal impact on performance.
+Many other models simply ignore time-related information(Zeng et al.,2023; Nie et al.,2023; Xu et al.,2024; Luo and Wang,2024).
+With the advent of LLMs and time series foundation models(Goswami et al.,2024; Ansari et al.,2024), recent work(Jin et al.,2024; Liu et al.,2024b; Narasimhan et al.,2024; Wang et al.,2024a)has explored time-related features as prompts or metadata, yielding promising results.
+In smaller models, efforts have emerged to explicitly model time-related features and capture periodicity.
+GLAFF(Wang et al.,2024b)applies a transformer to model dependencies between time-related features across different time points and then generates adaptive weights to balance global and local information.
+However, GLAFF lacks precise alignment between time-related features and historical observations, and its computational demands are high.
+More importantly, these methods that utilize time-related features all ignore the selection of time stamps, which is proven to be crucial in our experiments.
+CycleNet(Lin et al.,2024)learns a periodic sequence for each time series to model repetition-based periodicity.
+Nonetheless, it focuses solely on static periodic patterns and overlooks dynamic, timestamp-driven variations such as seasonality.
+
+SECTION: 4.Method
+
+In this section, we present TimeSter, our proposed module that makes predictions based on time-related features, and describe how it integrates with various backbone models.
+An overview of the architecture is shown in Figure2.
+To evaluate the effectiveness of our approach, we consider the linear layer backbone and the resulting model,TimeLinear, as our main model.
+
+SECTION: 4.1.Time Stamp Forecaster
+
+Time Stamp Encoder.Given time-related featuresat a specific time point, wheredenotes the number of time-related features, the observation of a variable at this timeis assumed to follow the conditional distribution.
+As depicted in Figure3, we visualize the probability density distribution of a selected training variable across different datasets at noon every Monday.
+
+The results indicate a time-dependent distribution pattern for these variables, yet directly modeling this distribution remains challenging.
+Inspired by(Kingma and Welling,2014), we approximate this distribution with a learnable model.
+For generality, we consider the distribution ofvariables over an-step historical window:
+
+whererepresents historical time-related features andrepresents the generated time-related observations.
+As shown in Figure2(a) left, we treatas an encoder consisting of two nonlinear hidden layers, a one-dimensional convolution layer, and a linear projection layer.
+Each linear layer projects along time-related feature and multivariate observation dimensions.
+The convolutional layer fuses features in the same dimension as the above linear layers and mixes channels in the time dimension to generate diverse outputs.
+
+Time-related Observation Decoder.After generating the time-related multivariate observations, a single linear layer predicts the future observations, as depicted in Figure2(a) right:
+
+whereandare learnable parameters of the linear layer.
+The outputrepresents future predictions based on historical time-related observations.
+
+SECTION: 4.2.Backbone Forecaster
+
+Historical observations of time series are fundamental in time series modeling, as they directly capture the changing patterns of time series and provide a basis for accurate forecasting.
+To leverage both historical observations and time-related features, we incorporate other backbone models to process historical observations, complementing the TimeSter module.
+This integration allows TimeSter to be easily incorporated with various backbones.
+Technically, for the historical multivariate observations, predictions are made with a specified backbone model, such as PatchTST(Nie et al.,2023):
+
+whererepresents predictions based on historical observations.
+To isolate the effects of the backbone model and highlight the effectiveness of our time-related feature modeling, we use a single linear layer as our backbone in the following sections:
+
+Combining TimeSter, this model variant is referred to asTimeLinear.
+Finally, both predictionsandare weighted and combined to produce the final result:
+
+whereis the prediction,is a fixed coefficient that balances the contributions from each module.
+The full process is depicted in Figure2(b).
+
+SECTION: 4.3.Simplified Reversible Instance Normalization
+
+The Reversible Instance Normalization (RevIN)(Kim et al.,2021)is a widely used technique to mitigate distribution shifts in time series data.
+Since it was proposed, it has been widely used in almost all models(Li et al.,2023; Xu et al.,2024; Wu et al.,2023; Nie et al.,2023; Liu et al.,2024a; Luo and Wang,2024; Han et al.,2024a; Lin et al.,2024)in recent years and has played a significant role in improving their performance.
+To maintain consistent normalization across backbone models, we implement RevIN in all cases.
+For TimeLinear, we use a simplified RevIN variant without learnable affine parameters, as recent studies(Liu et al.,2024a; Lin et al.,2024)indicate it offers comparable performance with reduced parameters.
+Technically, we normalize historical observations with their respective means and standard deviations, and then denormalize the final forecasts using these same statistics.
+Note that we denormalize the final forecasts, not the output of the backbone network.
+Similar denormalization strategies also apply to other backbone networks.
+The process can be formulated as:
+
+where,are the means and standard deviations of the multivariate historical observations, andis a small constant to avoid division by zero.
+The entire prediction process of TimeLinear is shown in Algorithm1, where theLinearlayer could be replaced with any other backbone models.
+
+SECTION: 5.Experiments
+
+In this section, we conduct a series of experiments to comprehensively evaluate the validity and effectiveness of our proposed method.
+We begin by detailing the experimental settings.
+In Section5.1, we present the performance improvements achieved by the explicit incorporation of time-related features.
+Subsequently, in Section5.2, we perform ablation studies to systematically verify the soundness of our modeling approach for time-related features.
+Finally, in Sections5.3and5.4, we provide an in-depth analysis of why time-related features enhance performance, supported by additional insights and visualizations.
+
+Datasets.We evaluate TimeLinear on seven well-built real-world datasets: four ETT series (ETTm1, ETTm2, ETTh1, ETTh2), Electricity, Weather, and Traffic, as detailed in Table1.
+We adopt the dataset split and normalization approach used in previous studies(Wu et al.,2021,2023).
+
+Baselines.We compare TimeLinear with models spanning various architectures:
+(i) Linear-based: DLinear(Zeng et al.,2023), FITS(Xu et al.,2024), RLinear(Li et al.,2023), CycleNet(Lin et al.,2024);
+(ii) MLP-based: TimeMixer(Wang et al.,2024c), TiDE(Das et al.,2024), MSD-Mixer(Zhong et al.,2024), SOFTS(Han et al.,2024a);
+(iii) Convolution-based: TimesNet(Wu et al.,2023), ModernTCN(Luo and Wang,2024);
+and (iv) Transformer-based: Crossformer(Zhang and Yan,2023), PatchTST(Nie et al.,2023), iTransformer(Liu et al.,2024a).
+
+Linear-based models, including our TimeLinear backbone RLinear (consisting of a linear layer and the simplified RevIN), use a single linear layer for predictions, hence, they are simpler than MLP-based models that employ multi-layer perceptrons for encoding.
+Moreover, GLAFF(Wang et al.,2024b), which generates adaptive weights from time-related features to balance global and local dependencies, is included as a linear baseline with the same backbone as TimeLinear, denoted as GLAFFLinear.
+
+Implementation.All models use a historical window length ofand are trained using Adam(Kingma and Ba,2017)with MSE loss.
+We evaluate models with Mean Squared Error (MSE) and Mean Absolute Error (MAE) over four prediction horizons.
+Each experiment is repeated three times, and we report the mean values.
+All codes are implemented in Pytorch(Paszke et al.,2019).
+We conduct experiments on a single NVIDIA GeForce RTX 3090 24G GPU.
+
+SECTION: 5.1.Main Results
+
+In the main experiment, we start by comparing TimeLinear with state-of-the-art baseline models to validate the effectiveness of incorporating time-related features.
+Next, we integrate the TimeSter with various backbones to demonstrate the general applicability of our proposed method.
+
+Table2presents the multivariate long-term forecasting results across TimeLinear and other baselines.
+Most baseline results follow the original papers, except when experimental settings differ, in which case we rerun them (e.g., ModernTCN, PatchTST) under the official hyperparameters.
+The results show that TimeLinear achieves leading performance.
+On the one hand, TimeLinear is the best-performing Linear-based model, ranking top 1 in12out of 14 settings among all Linear-based models.
+On the other hand, TimeLinear is comparable to those models with complex encoders, ranking top 1 in7out of 14 settings among all methods.
+These outstanding performances are not only seen in datasets with a small number of variables, such as the ETT dataset (7 variables) but also in datasets with a large number of variables, such as the Electricity dataset (321 variables), where the complex correlations between variables have a great impact on the prediction results.
+
+More remarkably, TimeLinear achieves these with significantly fewer parameters and faster training speed than all non-linear models.
+Figure4shows that TimeLinear, with only100kparameters, outperforms other models and demonstrates superior efficiency.
+The results fully demonstrate the importance of time-related features and the effectiveness of our modeling.
+
+To further verify the versatility of TimeSter, we evaluate its integration with various backbones.
+In addition to RLinear (the backbone of TimeLinear), we analyze TimeSter on five more models across different architectures and domains: FITS (Linear-based model in the frequency domain), ModernTCN and TimesNet (Convolution-based), iTransformer and PatchTST (Transformer-based).
+For a fair comparison, all results are reproduced on the same machine under the optimal hyperparameters, so some results might be different from Table2.
+
+As shown in Table3and4, we can see that TimeSter generally enhances performance across different architectures, datasets, and domains.
+Especially, for datasets with strong periodicity and seasonality, such as Electricity, Weather, and Traffic, TimeSter can bring more significant improvements, which is consistent with the characteristics of these datasets.
+For these datasets, whether periodicity or seasonality, they are generally based on days, weeks, months, or seasons, which can be captured by time-related features.
+
+However, the performance improvement of iTransformer (Table4) on the Traffic dataset is minor after combining TimeSter with it.
+This may be caused by iTransformer’s channel-dependent strategy(Han et al.,2024b), where the correlations between different time series variables are modeled.
+In contrast, another strategy is the channel-independent strategy, in which models do not model the relationship between different variables, but only treat different variables as independent training samples.
+While the cross-variate dependencies between historical observations are modeled by iTransformer, those between historical time-related features are not modeled by TimeSter, which might result in discrepancies between predictions of historical observations and time-related features.
+This can also explain the difference in improvement rates between different models: channel-independent models, shown in Table3(RLinear, FITS, and PatchTST, whose improvement rates are 10.47%, 10.02%, and 4.02% in MSE, respectively), have higher improvement rates while channel-dependent models, shown in Table4(ModernTCN, TimesNet, and iTransformer, whose improvement rates are 4.13%, 1.62%, and 3.81% in MSE, respectively), have lower improvement rates.
+Although differences in improvement rates among models exist, the results still show the strong applicability of TimeSter.
+Nonetheless, considering the relationship between different variables in time-related feature modeling is still an explorable topic, and we regard it as a future research direction.
+
+SECTION: 5.2.Ablation Studies
+
+In ablation studies, we first evaluate the selection of time-related features.
+Then, we verify the rationality of the design of the TimeSter module, including the encoder and decoder.
+
+The selection of time-related features influences the correct time series pattern recognition, which is particularly important for data with different periodicity and seasonality.
+In TimeSter, we generally consider four primary time-related features:
+(i) Hour-of-day (H,);
+(ii) Day-of-week (D,);
+(iii) Month-of-year (M,);
+and (iv) Season-of-year (S,).
+
+Results, which are consistent with the analysis of dataset characteristics(Lai et al.,2018; Zhou et al.,2021; Lin et al.,2024), are illustrated in Table5.
+In general, ETTm1, ETTm2, and ETTh1 have strong daily cycles, while Traffic shows significant daily and weekly cycles.
+ETTh2, Electricity, and Weather exhibit more significant seasonality than other datasets.
+Notably, the Weather dataset, which is supposed to have strong seasonality, does not achieve significant gains in seasonal modeling (features M and S).
+This is because the time span of the Weather dataset is only one year, and the data used as the training set is only eight months, as shown in Table1.
+As a result, the model can not fully capture all seasonal characteristics.
+However, TimeSter still achieves performance improvement under this limitation, which proves that TimeSter has strong generalization ability.
+The above results also illustrate the importance of time-related feature selection, which is ignored by previous methods(Wang et al.,2024b; Liu et al.,2024b,a).
+
+To further validate the design of TimeSter, we conduct extensive experiments on the effectiveness of each module in the TimeSter encoder.
+Results are shown in Table6:
+(i) Removing ReLU significantly impacts datasets with more complex time-related feature dependencies, such as Electricity and ETTh2, where seasonality is considered.
+This highlights the importance of nonlinearity in learning intricate mappings.
+(ii) The Conv1d layer captures local feature correlations via convolution and global temporal dependencies via channel mixing.
+This not only enriches the semantic information of each feature but also enhances the temporal dependence of encoding.
+Therefore, compared to other modules, its removal will result in significant performance degradation.
+(iii) LayerNorm’s stabilizing effect could provide a subtle advantage by ensuring consistent scaling, which aids the model’s learning dynamics across varying time series patterns.
+(iv) Varying the hidden layer depth reveals that a deeper architecture achieves better performance, especially when compared to theZero Hidden Layermodel, which shows a substantial performance drop.
+This emphasizes the importance of model depth for capturing complex temporal patterns.
+TheOne Hidden Layervariant, while the performance is closer to the TimeSter, is still slightly inferior, indicating that additional depth enhances the model’s representational power.
+However, the benefits of increasing the number of layers gradually decrease.
+Hence, for efficiency and accuracy considerations, the final model only considers two hidden layers.
+Overall, the full architecture of the TimeSter encoder is rational, as each component contributes to performance improvement.
+
+Our TimeSter module leverages time-related features by projecting the time-related observations generated by the encoder to future observations and adding them to the results generated by the backbone model.
+However, there are other embedding modes, e.g., adding the historical time-related observations with historical observations or adding the future time-related observations with the results generated by the backbone model.
+To demonstrate the effectiveness of our mode, we make a comprehensive comparison with all these variants in this section, including:
+
+Variant 1:(i.e., RLinear), where we predict with historical observations using a single linear layer and simplified RevIN;
+
+Variant 2:, where we predict with the future time-related observations generated by TimeSter encoder;
+
+Variant 3:, where we predict with a linear projector that takes the historical time-related observations as the input;
+
+Variant 4:, where we add the output of the linear projector and the future time-related observations;
+
+Variant 5:, where we add the input historical observations and time-related observations;
+
+Variant 6:, our TimeLinear, where we predict with two linear layers (and) that take historical observations and historical time-related observations as input respectively and add the results up.
+
+The results are shown in Table7, where we can draw some interesting conclusions:
+(i) Predicting with time-related features surpasses predicting with historical observations in some datasets (Electricity and Weather), deriving from the comparison of Variant 1, 2, and 3.
+(ii) Historical time-related features and future time-related features exhibit similar effectiveness, deriving from Variant 2, 3 and Variant 4, 5.
+(iii) TimeLinear achieves the best overall performance.
+These findings not only prove the effectiveness of our time-related feature modeling but also verify the rationality of our dynamic projection strategy.
+Moreover, our experiments in the next section will show that as the historical window increases, our dynamic projection strategy is particularly more advantageous than others.
+
+SECTION: 5.3.More Analysis
+
+In this section, we begin with further experiments from the last section, evaluating the effectiveness of TimeSter under longer historical windows.
+Then, we explore the mechanism of time-related features visually.
+Furthermore, we use the quantitative indicator ACF to explore the relationship between time-related features and the characteristics of the corresponding time series.
+Finally, we conduct the robustness and hyperparameter analysis.
+
+In long-term time series forecasting, the historical window length is an important hyperparameter, which determines the richness of temporal information within input data.
+Both theory(Box and Jenkins,1968)and practice(Nie et al.,2023; Liu et al.,2024a; Lin et al.,2024)have proven that a longer historical window often leads to better forecasting performance.
+For time-related features, a longer historical window indicates richer time-related information, which is supposed to be useful for more accurate forecasting.
+Figure5illustrates the performance of CycleNet(Lin et al.,2024)and our variants in Table7under different historical window lengths, where some interesting findings could be drawn:
+(i) TimeLinear outperforms baselines and other variants at almost all historical window lengths.
+
+(ii) Variant 5 struggles to provide better prediction over a longer historical window.
+This is because longer historical windows also mean greater noise, and simply adding time-related observations with historical observations will lead to mutual interference of noise(Pereira et al.,2023; Wang et al.,2024b), which will eventually lead to worse prediction results.
+(iii) While Variant 4 is close to TimeLinear under shorter historical windows, it gradually loses ground as the historical window increases, for it only relies on future time stamps and cannot utilize richer input time stamp information.
+(iv) The growth of the historical window also leads to a weakening of the gain brought by the time stamp, as richer historical observation information contains more cycle and seasonal information, which dilutes the benefits of time-related information modeling.
+Such a phenomenon is worthy of further exploration.
+
+To reveal the relationship between time stamps and variable observations, we visualize the learned time-related embedding and the output of different modules, shown in Figure6, where the distribution is depicted.
+On the left figure, we find that the embedding of the TimeSter encoder tends to be more uniform, indicating that it pays more attention to learning diverse encoding.
+
+The next figure shows that TimeSter learns the shape of the data distribution well and corrects BonSter’s high prediction values.
+The right figure also proves this point.
+After combining TimeSter, the model can make predictions that are more in line with the characteristics of that time point, that is, they are distributed along the mean (shown by the dotted line).
+
+Different datasets have different periodicities and seasonalities, which in turn affect the selection of time-related features.
+For example, hour-of-day (H) often corresponds to daily periodicity, while season-of-year (S) corresponds to seasonality.
+To analyze the periodicity and seasonality of different datasets, and explain the relationship between these properties and time-related feature selection, we introduce the Autocorrelation Function (ACF)(Madsen,2007; Lin et al.,2024).
+
+The Autocorrelation Function (ACF) is a statistical tool used to measure the correlation of a time series with its lagged versions.
+It provides insight into the degree of similarity between values separated by lags, which helps identify patterns, seasonality, or periodicity in time series.
+The autocorrelation at lagis defined as the correlation between observations separated bytime steps.
+For a univariate time serieswith mean, the ACFat lagis computed as:
+
+whereis the number of observations,indicates the mean of the time series,denotes the value of the time series at time step, andis the value at time step, representing a lag of.
+The values ofrange fromto, wheredenotes perfect positive correlation at lag,indicates no correlation at lag, andmeans perfect negative correlation at lag.
+
+For an ACF curve, withas the horizontal axis, its periodic peaks indicate the period of the time series.
+For instance, a peak that occurs every 12 time steps means that the original sequence has a component with a period of 12.
+If we downsample the original time series, ACF can also be used to explore the seasonality of the original series.
+Figure7illustrates the ACF curve of the Electricity and Traffic dataset respectively, where the granularity is hour for the left figure and day for the right one.
+From the left figure, we can see that both datasets show strong daily periodicity, which is reflected in the peaks of the ACF curve that appear every 24 hours.
+In addition, both datasets also show a certain weekly periodicity, which is reflected in the larger peaks that appear every 168 hours (7 days).
+
+From the right figure, where the granularity is day, we can find that the Electricity dataset shows a strong partition distribution phenomenon, that is, there is a peak approximately every 90 days (3 months), and there are long-term similar distributions on both sides of the peak.
+In contrast, such a phenomenon does not occur in the Traffic dataset.
+This indicates that the Electricity dataset has more significant seasonality than the Traffic dataset.
+These characteristics correspond one-to-one with the selection of time-related features, which further proves the importance and effectiveness of time-related features for extracting the periodicity and seasonality of time series.
+
+In ablation studies, we evaluate the influence of time-related features under the hour granularity.
+However, the minute-of-hour (Min) feature for datasets with minute granularity (ETTm1, ETTm2, and Weather) needs further analysis.
+In Table8, we compare the results after adding the minute-of-hour (Min) feature with the original results in Table5.
+The results show that although the minute feature improves the best performance of ETTm1, in most cases, it not only does not bring improvement but deteriorates model performance.
+We attribute the reason to the fact that these time series are not strongly correlated with the minute.
+To prove this, we illustrate the Autocorrelation Function (ACF) of ETTm1, ETTm2, and Weather under different granularity in Figure8.
+We can see that these datasets clearly exhibit a stronger hourly periodicity, for the peak always occurs in a 24-hour cycle.
+ETTm1 exhibits a slightly different distribution, which explains why its performance improves after adding the minute feature.
+The above findings further demonstrate that our modeling of time stamps well reflects the intrinsic cyclical and seasonal characteristics of time series.
+
+Due to the differences in granularity and temporal characteristics of datasets and the prediction time span, the optimal time-related features are different for different datasets and prediction lengths.
+In Table9, we illustrate the optimal time-related features of each dataset and prediction length under TimeLinear.
+
+Generally, the choice of time-related features is consistent with the characteristics of the dataset itself, which are shown in both Figure7and Figure8.
+As the prediction length increases, time-related features with longer time spans (e.g., month-of-year and season-of-year) become more effective for time series with stronger seasonality, as shown in the ETTh2 and Electricity with 336 or 720 prediction length.
+The same phenomenon also exists for longer historical windows.
+It should be noted that the above results are only obtained from experiments under our TimeLinear model.
+For other architectures (e.g., PatchTST(Nie et al.,2023), ModernTCN(Luo and Wang,2024)), although the overall selection of time-related features is consistent with TimeLinear, due to the different abilities of models in capturing cross-time and cross-variate dependencies in historical observations, the optimal selection of time-related features might also vary slightly.
+
+Robustness is another important indicator to measure model performance.
+Table 10 shows the mean and standard deviation of TimeLinear under multiple random trainings.
+It can be seen that TimeLinear has strong stability as it shows a standard deviation close to 0 in almost all settings.
+This further indicates the practicality of our model.
+
+In addition to the basic learning rate, batch size, etc., various hyperparameters affect the performance of TimeLinear, mainly including the trade-off coefficient, convolution kernel sizeksize, and hidden layer size.
+In this section, we detail the sensitivity of TimeLinear to these hyperparameters on different datasets.
+Note that here we only consider the size of the first hidden layer, because the size of the second hidden layer is always set to the number of variables in the dataset.
+In addition, for the size of the first hidden layer, we express it as anreduction raterelative to the number of variables, e.g.,reduction ratefor Traffic with 862 variables means the hidden size is 431.
+
+The results in Figure9show thatandksizehave significant impacts on each dataset, for they directly affect the fusion of features and prediction results, which is crucial for effective time-related feature modeling.
+The size of the hidden layer determined by thereduction rateis related to the number of variables in the dataset, so its impact varies from dataset to dataset.
+
+Generally, a hidden layer that is too large not only reduces model efficiency but also leads to a certain degree of performance degradation, as shown in the results of the Traffic dataset.
+On the other hand, a hidden layer size that is too small will lead to insufficient modeling capabilities of the encoder.
+Therefore, this is a parameter that needs to be well controlled.
+
+SECTION: 5.4.Prediction Results Visualization
+
+In this section, we visualize the forecasting results of some datasets under TimeLinear, TimeSter, and BonSter.
+As shown in Figure10, we can see that the TimeSter, which forecasts with time-related features, captures the periodicity and seasonality associated with time stamps well.
+In contrast, the BonSter, predicting with historical multivariate time series observations, tends to make predictions that are trend-based but have large deviations from the ground truth due to the influence of historical information.
+Although the results of individual predictions are not satisfactory, the combination of the TimeSter and BonSter has a complementary effect, resulting in better prediction accuracy.
+The above results not only reflect the importance of time-related features for more accurate long-term predictions but also verify the effectiveness and rationality of our model and pipeline.
+
+SECTION: 6.Discussion and Future Work
+
+This paper explores the potential of time-related features in enhancing multivariate long-term time series forecasting.
+Methodologically, we propose Time Stamp Forecaster (TimeSter), a plug-and-play module for time series prediction using time-related features.
+Extensive experiments demonstrate the versatility of TimeSter on different architectures.
+Moreover, its combination with a simple linear layer, named TimeLinear, achieves better performance than state-of-the-art models on multiple datasets while maintaining efficiency.
+In addition, we also study the existing shortcomings of our method, including the lack of modeling the relationship between different variables and the decrease in gain brought by time-related features after the historical window is increased.
+In the future, we hope to address these deficiencies and explore the possibilities of time-related features in various time series tasks.
+
+SECTION: References

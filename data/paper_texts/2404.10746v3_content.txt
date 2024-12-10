@@ -1,0 +1,360 @@
+SECTION: Interpolation and differentiation of alchemical degrees of freedom inmachine learning interatomic potentials
+Machine learning interatomic potentials (MLIPs) have become a workhorse of modern atomistic simulations, and recently published universal MLIPs, pre-trained on large datasets, have demonstrated remarkable accuracy and generalizability.
+However, the computational cost of MLIPs limits their applicability to chemically disordered systems requiring large simulation cells or to sample-intensive statistical methods.
+Here, we report the use of continuous and differentiable alchemical degrees of freedom in atomistic materials simulations, exploiting the fact that graph neural network MLIPs represent discrete elements as real-valued tensors.
+The proposed method introduces alchemical atoms with corresponding weights into the input graph, alongside modifications to the message-passing and readout mechanisms of MLIPs, and allows smooth interpolation between the compositional states of materials.
+The end-to-end differentiability of MLIPs enables efficient calculation of the gradient of energy with respect to the compositional weights.
+With this modification, we propose methodologies for optimizing the composition of solid solutions towards target macroscopic properties, characterizing order and disorder in multicomponent oxides, and conducting alchemical free energy simulations to quantify the free energy of vacancy formation and composition changes.
+The approach offers an avenue for extending the capabilities of universal MLIPs in the modeling of compositional disorder and characterizing the phase stability of complex materials systems.
+
+SECTION: Introduction
+Atomistic simulations are a cornerstone of computational modeling of the dynamic behavior of materials.
+Achieving predictive and efficient simulations necessitates a balance between the quality and cost of the description of interatomic interactions and exhaustive sampling to achieve converged thermodynamic averages.
+Density functional theory (DFT) calculations are typically taken as a gold standard for accuracy in materials simulations.
+Ab initio molecular dynamics (AIMD) simulationspropagate dynamics using these high-quality DFT forces, but their high computational cost limits scalability.
+Machine learning interatomic potentials (MLIPs), trained on electronic structure calculation results, offer a low-cost alternative to DFT energies and forces in MD.
+Beginning from the seminal works of the Behler–Parrinello networkand GAP, various architectures of MLIP have been proposed to offer a selection within a trade-off between accuracy and speed, such as SchNet, PaiNN, NequIP, Allegro, MACE, and CACE.
+Recently, universal MLIPs, such as M3GNet, CHGNet, and MACE-MP-0, have emerged, providing atomistic modeling capabilities across a substantial portion of elements in the periodic table and their combinations.
+All these models are trained on DFT energies and gradients extracted from a large-scale materials database such as the Materials Project.
+The benchmark resultsdemonstrate that they offer high-fidelity modeling of atomic interactions and phonon dispersion, thereby serving as reliable “foundation models” in the context of downstream atomistic simulation applications.
+
+While interatomic potentials are primarily intended to operate on atomic positions with fixed elemental identities, it is intriguing to consider their alchemical degrees of freedom, wherein the elemental identities can be altered continuously.
+In the realm of electronic structure methods, von Lilienfeld and colleagues have pioneered the molecular grand-canonical ensemble DFT and have advanced subsequent lines of research on alchemical transformations, which enable the alteration and optimization of chemical compositions.
+From the standpoint of MLIPs, Ceriotti and colleagues introduced an alchemical compression scheme based on an atom-centered density framework and applied the approach to model high-entropy alloys.
+They demonstrated that compressing the representation of physical elements onto low-dimensional subspaces of pseudoelements enables efficient modeling of compositionally complex systems and interpolation to elements not encountered during training.
+Additionally, Chen et al.demonstrated that pre-trained materials property predictors can be applied to disordered crystals by using linear interpolation of low-dimensional elemental embeddings.
+While continuous representations of elements correspond to atomic embeddings in graph-based MLIPs, most universal MLIPs typically use much higher-dimensional atomic embeddings to ensure that the model is sufficiently expressive.
+Since models are only trained with discrete atom identities, it is challenging to identify meaningful submanifolds of elemental embeddings to interpolate elements or project gradients, as seen in the context of molecule design with pre-trained MLIPs.
+On the other hand, simple linear interpolation of embeddings for modeling compositions may lead to unphysical outputs.
+
+Alchemical changes are of particular importance in free energy simulations.
+Free energy simulations are widely used to characterize the finite-temperature stabilities of solid phases, and automatic protocols have been developed accordingly.
+However, while alchemical free energy calculations are widely used to study protein–small molecule interactions, their applications in materials systems are limited.
+This would be largely due to the challenge of parametrizing interatomic potentials for systems with three or more elements.
+Notably, Jinnouchi et al.introduced a thermodynamic integration (TI) method to compute the chemical potentials of liquid Si and LiF inH2O by smoothly turning on or off interactions between atoms in kernel-based MLIPs through alchemical switching.
+
+With the advent of universal MLIPs, the challenge of fitting potentials for systems containing multiple types of elements has been alleviated, and they provide reasonable accuracy for dynamics around equilibrium geometries.
+Thus, it is timely to consider the application of universal MLIPs to facilitate free energy simulations along alchemical pathways.
+In this work, building upon the prototypical construction of graph-based MLIPs, we access the hitherto hidden alchemical degrees of freedom inherent in MLIPs.
+Rather than altering the continuous embeddings of individual atoms, we augment the input graph structure by introducing alchemical atoms, each associated with its respective compositional weight.
+Through subsequent modifications to the message passing scheme and energy readout, our scheme provides smooth interpolation between different compositional states of materials.
+Moreover, given the end-to-end differentiability with respect to the alchemical weights, it facilitates the calculation of the alchemical gradient of the energyand subsequently the calculation of the free energy of the alchemical transformation.
+In addition, we explore the application of alchemical intermediate states with mixed compositions in creating a computationally efficient description of solid solutions.
+
+SECTION: Results
+SECTION: Alchemical graph and message passing
+Our objective here is to introduce modifications to the non-learnable parts of the MLIPs so that we can model the alchemical compositions of materials without further fine-tuning the models.
+First, we start by introducing the prototypical construction of graph-based MLIPs.
+An atomic system is represented as a graphwith an atom as a nodeand an atom pair within a defined cutoff distance as an edge.
+Each elementis embedded into a continuous vector, which is then used to initialize node features.
+Edge featuresare derived from the relative displacements.
+The input is then passed through the layers of the graph neural network with a message-passing mechanism.
+In layer, a messageis constructed by pooling the message contributions over the neighboring nodesas
+
+where each contribution is computed from the hidden node features and the edge feature by a message function.
+The messages are then used to update the node features:
+
+whereis an update function.
+Finally, a readout functiontransforms the final node featuresinto the node energies, which are summed over the entire node list to give an estimate of the potential energy as
+
+This is a minimal prototype of MLIPs, and the state-of-the-art models use various additional mechanisms to enhance the expressivity to improve the fit to the training data.
+Although the alchemical modifications introduced in this work are based on this prototype, it can easily be integrated with such additional mechanisms, as further detailed in Sec..
+
+We now introduce the modifications to the input graph and the architecture of the MLIP model to allow the modeling of compositionally mixed structures with partial occupancies of atoms.
+The main idea is to augment the original graph with alchemical parts, creating an extra group of atoms or nodes for each compositional state to be modeled, and to modify the message passing scheme to keep it consistent with the baseline MLIP.
+First, we define the alchemical weightsto assign the weights to each compositional state.
+For example, if we are modeling the mixed structure of LiCl, NaCl, and KCl with 20%, 30%, and 50% weights, respectively, the weights would be.
+
+Now, we define an alchemical graphas an extension of an original graph.
+For the previous example, we assume that we have an original graph representing the NaCl crystal structure.
+The construction is independent of the original elemental identities of the alchemical atoms, and only the atomic positions will be inherited.
+Each node in an alchemical graph is identified by a pair of indices, the original atom indexand the alchemical index, and denoted by.
+All non-alchemical atoms (e.g., Cl), for which the element remains the same for all compositional states, are assigned with, and the corresponding weight.
+Alchemical atoms are split into multiple nodes according to their compositional states (Fig.a).
+For example, the Na atomin the original graph is split into three nodes,, and, with elements.
+As such, the node features for alchemical atoms will be initialized with respective elemental embeddings.
+Then, we assign an alchemical weightto node.
+All other features, such as the positions of the atoms, are inherited from the original graph, e.g.,.
+
+Edges are connected between the alchemical graph nodes as in the original graph when either any the two endpoint nodes is non-alchemical (with weight index 0), or both nodes are in the same alchemical state (have the same weight index), i.e.,
+
+This is in line with the “dual topology” paradigm widely utilized in the alchemical free energy literature, in which the atoms in the different alchemical states geometrically coexist but do not interact directly with each other.
+To model the scaled interaction between atoms in the alchemical graph, we introduce edge weights to scale the message contributions.
+Aldeghi and Coleyhave proposed a similar idea in which they model the different topological assemblies of polymers by weighted (stochastic) edges between linkage atoms in monomers.
+Here, we use an asymmetrical weighting scheme given as
+
+i.e., only the message contributions from alchemical atoms to non-alchemical atoms are weighted by the alchemical weight of the source atom.
+This choice is based on the observation depicted in Fig.b.
+Since we are extending the original MLIP for alchemical compositions without modifying the learnable functions, we should ensure that the message passing is consistent with original graphs where all edge weights are implicitly 1.
+According to the expansion of alchemical atoms and the edge connection scheme, only the message passing from an alchemical atom to a non-alchemical atom is split into multiple pathways with respective alchemical node weights.
+Therefore, we utilize the alchemical node weights as the edge weights in this case, and the message aggregation scheme is modified from equation () as the weighted sum of the message contributions:
+
+Finally, the readout for energy prediction (equation ()) is modified as a weighted pooling of alchemical node contributions (Fig.c):
+
+Note that the sameandfunctions as in equations () and () are used, i.e., no trainable weights are modified.
+This modification scheme ensures two essential consistencies with the original MLIP scheme.
+First, when all of the alchemical elements are the same () for each original atom and the alchemical weights sum up to 1 (), the predicted potential energy is the same with the original graph.
+Second, when only one of the alchemical weights is 1 (), and the others are zero, the predicted potential energy is also the same as in the original graph with an elemental composition corresponding to.
+These two consistencies in the limiting cases ensure the correct interpolation between compositional states, and although the argument here is based on the prototypical MLIP, the consistencies still hold when adapted to other architectures, as detailed in Sec.and Supplementary Information.
+We additionally explore alternative interpolation methods, including embedding interpolation, and compare their ability to interpolate the MLIP energy output in Supplementary Information.
+
+SECTION: Representation of solid solution
+First, we investigate whether our representation of a mixture of compositional states can be used to model solid solutions and to optimize their properties with respect to composition.
+Although many crystal properties can be tuned by the design choice of solid solutions, here we will use lattice parameters to probe the modeling ability.
+Empirically, the lattice parameters of solid solutions can be approximated by linear interpolation of those of constituent pure crystals with the corresponding compositional weights, as stated by Vegard’s law.
+Nevertheless, there are systems that exhibit significant positive or negative deviation from this idealized linear behavior, and we assess whether the proposed method is able to predict such trend.
+
+First, the cell parameter for cubicCe_1-xM_xO2 solid solution exhibits linear behavior towhen M = Zr, but shows a positive deviation with a kink for M = Sn.
+We modeled this solid solution starting from theCeO2 structure (Fig.a), splitting the Ce atoms into two alchemical states, Ce with weightand Zr or Sn with weight, and optimizing the zero-temperature cell parameters by relaxing the unit cell.
+The alchemical scheme adapted for the universal MACE-MP-0 modelgives the correct linear behavior for M = Zr, and successfully identifies the positive deviation for M = Sn (Fig.b) although it fails to predict the kink.
+Further, we also model orthorhombicBiSX_1-xY_x (X, Y = Cl, Br, I) solid solutions, for which the lattice parameters(positive) and(negative with a local minimum) exhibit deviations from linearity.
+We start fromBiSBr structure (Fig.a) and split the Br atoms into two alchemical atoms of X and Y.
+The cell parameters are optimized with respective alchemical weights.
+For example, theBiSCl_1-xI_x structure will have alchemical atoms Cl and I with alchemical weights of.
+The alchemical scheme with the MACE model correctly identifies the positive and negative deviations forand, respectively, for X = Cl and Y = I (Fig.c).
+In particular, while the parameteris much larger than the experimental values (due to the inherent error in the original MLIP, itself likely arising from the underbinding nature of the PBE functional used to create the training data), the composition for the local minimum () is accurately predicted.
+Although there is no direct correspondence between the alchemical weights and the stoichiometry of the solid solution, these results indicate that the representation developed here offers greater predictive accuracy compared to the naive estimate from Vegard’s law.
+It is important to note that the current method assumes infinite disorder and thus neglects the effect of ionic ordering.
+In addition, because all the alchemical atoms are co-located in the position of the parent atom, the potential discrepancies among the fractional coordinates of substituent alchemical atoms are not taken into account.
+
+Most MLIPs are designed to be end-to-end differentiable in order to obtain atomic forces and stress as gradients of the potential energy with respect to the positionsand the strain tensor, i.e.,andwhereis the volume of the system.
+Gradient calculations are performed efficiently through the backward pass generated by automatic differentiation.
+With our additional continuous representation of compositional states, the alchemical weights, we can also compute the gradients of the energy with respect to the composition.
+Since the potential energy is defined up to constant, physically meaningful optimization targets are, in general, given by the energy difference or the gradient of the energy with respect to some system variables.
+
+First, we consider a simple model: a solid solution of three alkali metal chlorides, LiCl, NaCl, and KCl.
+We fix the fractional coordinates of each atom and consider the cubic lattice constant as a function of alchemical (or compositional) weights of Li, Na, and K.
+To find a composition that matches a target lattice constant, we can enumerate a grid of compositions and relax the cell dimensions at each fixed composition to probe lattice constants over the compositional space (Fig.a, left).
+However, instead of this direct method, we can consider that the stress is minimized for the optimized structure and composition.
+Since our scheme is end-to-end differentiable, we can calculate the gradient of absolute hydrostatic stresswith respect to the composition where the lattice constant is fixed to the target value (Fig.a, right).
+Then, the optimal composition could be found by performing a gradient descent on the compositional space, offering a different approach to the design problem.
+This is more efficient because only a single gradient-based compositional optimization is required.
+In this case, since the size of Na is between Li and K, multiple optimal compositions exist on the compositional space.
+
+Now, we apply this to a more realistic example, where we want to find the “lattice-matching” composition for solid solutionsAl_1-xSc_xN andAl_1-xY_xN withGaN.
+The lattice-matched composition would facilitate the epitaxial growth of such solid solutions on the GaN substrate.
+The objective is to determine a compositionfor each solid solution such that the cell parameterof the lattice matches the value for theGaN structure.
+Although GaN and AlN possess a hexagonal lattice (space group), pure YN and ScN have a cubic lattice (space group), which means that one cannot simply interpolate between the cell parameters of the constituent compounds to infer those of solid solutions.
+Here, we fix the cell parameterfor the hexagonal lattice, and we optimize the relevant stress components with respect to the cell parameteras well as the Al/Sc or Al/Y composition (see Sec.) because the doped AlN would result in differentratio.
+Results in Fig.b show that the optimized compositions are(Y) and(Sc), and are in good agreement with the forward scan result, where the relaxed cell parameters are measured while scanning for variousvalues.
+Furthermore, we created asupercell of AlN and randomly switched some Al atoms to Sc or Y atoms to match the target composition and measured the unit cell parameters.
+These results match well with the scan results over alchemical unit cell compositions, which indicates that the methodology in the current work can also be regarded as a computationally efficient compact representation of the supercell with compositional disorder.
+
+The high computational efficiency and accuracy of alchemically modified MLIPs for modeling disordered solid solutions are further validated by examining a dataset ofA2BBO6 multicomponent perovskites in our recent high-throughput studies.
+Notably, the thermodynamic preference of anA2BBO6 perovskite to adopt either cation-ordered or cation-disordered structures depends on the difference between formation energetics of various cation-ordered configurations and those of cation-disordered solid solutions.
+For ordered structures, the formation energetics across all possible symmetrically inequivalent cation arrangements can serve as physics-informed descriptors to predict the thermodynamic tendency towards experimental cation disorder.
+While DFT is computationally prohibitive for evaluating formation energetics of various enumerated cation-ordered atomic arrangements, we have shown that symmetry-aware equivariant graph neural networks, including equivariant MLIPs, provide efficient and accurate surrogates for assessing ordering-dependent thermodynamic stability in multicomponent perovskite oxides.
+
+Here, we extend our previous analysis to directly examine the formation energetics of fully cation-disorderedA2BBO6 solid solutions with partial B site occupancies of 0.5 Band 0.5 B.
+Traditionally, special quasirandom structures (SQS,), which optimize elemental placements within a supercell to mimic the cluster vectors of random alloys, have been widely used to study disordered solid solutions.
+While the SQS approach provides a systematic approach to model disordered structures, it requires large supercells to avoid correlations across periodic boundaries and relies on optimization routines such as Monte Carlo simulations, limiting its feasibility for high-throughput studies.
+Given the efficiency of alchemically modified MLIPs in representing disorder through partial elemental occupancies, we compare alchemical unit cell modeling of perovskite solid solutions to SQS cells using baseline MLIPs for disorder modeling.
+
+Starting from the base ordered perovskiteABO3 structure, we split the B atom into two alchemical species, Band B, each assigned an alchemical weight of 0.5.
+We then generate() alchemical supercells andSQS supercells (Fig.a), optimizing each cell using alchemically modified MACE-MP-0 and baseline MACE-MP-0 models.
+For alchemical supercells, the relaxed cell energy per atom pleateaus at thesupercell, while the unit cell () exhibits notably higher energy compared to larger supercells (Fig.b).
+The structural differences between unrelaxed and relaxed disordered cells, shown in Fig.c, quantified using cosine distances of local structural fingerprints, as done in, reveal that the alchemical unit cell relaxes only slightly, whereas larger alchemical supercells and SQS cells show more significant differences between their corresponding unrelaxed and MLIP-relaxed structures.
+As noted in our previous works, crystallographic sites undergo substantial distortion during relaxation, such as octahedral tilting and Jahn–Teller distortions, which are typically beyond the periodicity of a perovskite unit cell and thus can hardly be captured by modeling a single unit cell.
+Given that thesupercell yields results similar to those of larger alchemical supercells, we proceed with further analysis using the 40-atomalchemical supercell.
+
+As shown in Fig.d, the optimized single-point energies from the alchemicalsupercell align well with those from theSQS supercell, with a mean absolute error (MAE) of 0.032 eV/atom.
+Since the preference for cation-ordered and cation-disordered configurations depends on the relative formation energetics of each, we further compare energy values with all symmetrically inequivalent cation-ordered configurations in thesupercell, obtained by enumerating four Band four Bcations occupying eight B sites.
+The results in Fig.e show the relative energies of all considered structures, aligned with the ground-state (lowest-energy) cation-ordered structure energy as the reference.
+As previously discussed in, we observe that experimentally observed ordered compositions exhibit significant difference between the ground-state ordered configuration energy and other configurations, whereas experimentally cation-disordered compositions show similar energies among different configurations.
+The relative energy of the disordered SQS supercell provides a useful metric for characterizing experimental order/disorder, as seen by the separation of ordered and disordered compositions when sorting the oxide compositions by the SQS energy.
+Although thealchemical supercell energies show more stochasticity, they follow the same trend as the relative energies of the SQS.
+This is further supported by the receiver operating characteristic (ROC) curves for experimental order/disorder classification based on relative energy values (Fig.f) following our previous work, whereSQS cell energies provide excellent classification with an area under the curve (AUC) of 0.95, while the alchemicalcell energies achieve reasonably good experimental order/disorder classification with an AUC of 0.80.
+The likely source of this difference is that for ions of very different sizes, local structural distortions are related to local chemical ordering, but the use of an average structure imposed by the alchemical method fails to produce local distortions that SQS captures well.
+
+Hence, based on these results, we conclude that the alchemical modification of MLIPs offers a scalable approach for disorder modeling, as demonstrated with this multicomponent perovskite oxide dataset.
+The alchemicalsupercells provide reasonable accuracy for experimental disorder classification, while using onlyof the atoms in theSQS supercells.
+Unlike SQS, these alchemical supercells can be obtained without the need for additional annealing steps for configuration generation.
+The results were achieved by modifying off-the-shelf pre-trained MLIPs and could be further fine-tuned to improve energy prediction and order-disorder classification.
+They may also be adapted for other material systems, including compositionally complex alloys and ceramics.
+
+We also note that our approach shares similarities with the Virtual Crystal Approximation (VCA,), a traditional approach in modeling solid solutions with partial elemental site occupancy.
+VCA relies on two assumptions: (1): the solid solution is represented by an averaged structure where crystallographic sites are randomly occupied by different elements, disregarding local ordering; and (2): the random occupancy is approximated by compositionally weighted average of atomic pseudopotentials.
+Our method adopts the first assumption, making it subject to the same geometric limitations, such as the elements should be of similar size, occupy comparable positions, and local disorder effects should be minimal.
+However, the practical limitations of VCA mainly arise from what could be described as “pseudopotential alchemy,” where accuracy depends heavily on carefully tuning pseudopotential parameters like radial cutoffs and electronic configurations (core/valence).
+In contrast, our method sidesteps these challenges: MLIPs replace electronic structure calculations with iterative message-passing between node and edge features.
+Built-in regularization from training scheme and model architecture help ensure that results remain within a physically reasonable range, reducing the need for extensive manual parameter adjustments.
+
+SECTION: Free energy calculations
+Here, we utilize the nonequilibrium switching method, where the Hamiltonian depends on a progression parameterso that it interpolates between the initial Hamiltonianand the final Hamiltonian.
+Assuming the NVT ensemble, the reversible work is given via the TI equation:
+
+We now consider a finite-time process in whichis switched from 0 at timeto 1 at time.
+The irreversible work done by switching the Hamiltonian is
+
+whereis the dissipated energy.
+In a linear-response regime, it can be shownthat the dissipated energy for the forward and backward path is the same when averaged over the transition path ensemble, i.e.,
+
+Then, the free energy difference can be computed as
+
+Often, the Hamiltonian is parametrized by the linear interpolation of the two endpoints, i.e.,, to simplify the calculation of the gradient termin equations () and ():.
+However, we note that in our case, the system Hamiltonian can be parametrized by the alchemical weights, andcan be calculated straightforwardly using automatic differentiationon the MLIP.
+This method proves to be more efficient than linear interpolation as it obviates the need to repeat calculations for non-changing atoms.
+We compare computational efficiencies and the resultant free energy calculations in Supplementary Information.
+
+Accurate evaluation of the free energy of a point defect is important for characterizing its thermodynamic stability.
+Here, we calculate the Gibbs free energy of vacancy defined as
+
+whereandare the Gibbs free energies of crystal with and without a point defect, andis the number of atoms in the perfect crystal.
+Because the vacancy diffuses at high temperatures, it is common to first evaluate the Gibbs free energies at low temperatures in which the vacancy is fixed at one siteand extend the calculation by considering the temperature dependence of Gibbs free energy.
+Hence, we will focus on determining the Gibbs free energy of vacancy in BCC iron at low temperatures and compare the result with Gibbs free energies determined using the Frenkel–Ladd path, which is commonly used in nonequilibrium calculations.
+In the Frenkel–Ladd path, the crystal structure is switched from and to a system of independent harmonic oscillators with the same equilibrium positions (the Einstein crystal), for which we can calculate the exact free energy.
+See Sec.for more details on the reference calculation.
+
+We introduce a new alchemical path for determining the free energy of vacancy, as depicted in Fig.a.
+While the previous examples of our method were restricted to cases where, we can lift this restriction to create or annihilate atoms in a system alchemically.
+In this case, we assign alchemical weightto the atom in the vacancy site and switch the weight from 1 to 0 (from 0 to 1) over the simulation to make it continuously disappear from the system.
+At the same time, we add the harmonic oscillator term to the atom position with weight, so that through the alchemical conversion fromto 1 transforms the perfect crystal into a crystal with defect and a harmonic oscillator (Fig.b).
+Through nonequilibrium switching simulations, we can obtain the alchemical free energy difference(equation ()).
+We now compare the free energy of vacancy (equation ()) obtained from both Frenkel–Ladd calculations (and) and with alchemical free energy calculations (and).
+
+The results in Fig.c show thatcalculated by the proposed alchemical free energy method is comparable to that from the reference Frenkel–Ladd calculations, while offering more consistent results with much smaller standard deviations when using the same switching time steps.
+We further investigate the statistical efficiency of the switching paths at 100 K by evaluating the convergence of, taking the longest switching time result as its reference, as well as the dissipated energy(equation ()) in Fig.d.
+The alchemical pathway offers much faster convergence, with minimal average energy deviations (0.02 meV/atom) from the reference value, even at a very short switching time of 2 ps (1,000 MD steps).
+
+Now, we examine the effectiveness of the proposed alchemical scheme in the calculation of alchemical free energy difference associated with the change in the elemental identities of the atoms.
+We use halide perovskitesCsPbI3 andCsSnI3 as our model system, which have been studied using MLIPs (e.g.,) and classical force fields (e.g.,).
+BothCsPbI3 andCsSnI3 exhibit three photoactive perovskite phases,(cubic,),(tetragonal,), and(orthorhombic,), in decreasing order of temperature window of stability.
+However, they also possess a photoinactive non-perovskite polymorph,(orthorhombic,), which is the most stable phase at room temperature.
+Here, we analyze the difference in the relative stabilities of perovskite (P) and non-perovskite (N) phases as shown in the thermodynamic cycle in Fig.a.
+The direct computation of the free energy of phase transformation,and, may require enhanced sampling simulations with tailored collective variables or nonequilibrium simulations (the Frenkel–Ladd paths) with longer simulation time until convergence.
+The alchemical path enables the calculation ofand.
+Since the two types of free energy differences are linked by
+
+we can compute the difference in the relative stability of phases upon compositional changes, or we can calculate either of the free energies of phase transformation if another is already known.
+
+For the alchemical free energy simulation, starting from theCsPbI3 structure, the Cs and I atoms remain as non-alchemical atoms, and the Pb atoms are divided into alchemical atoms, Pb and Sn, with alchemical weightsand.
+Then, switchingfrom 0 to 1 continuously transforms theCsPbI3 structure into theCsSnI3 structure.
+Refer to Sec.for more details on the alchemical free energy calculation settings and result analysis required to obtain the Gibbs free energies.
+
+First, we compare the Gibbs free energy of compositional change from two methods:from the alchemical path andfrom the Frenkel–Ladd path for each composition.
+The results in Fig.b indicate that the two calculation results coincide well except for the slight deviation in the perovskite phase for temperatures lower than 400 K.
+The deviation may occur from the phase transformation between perovskite phases ofCsPbI3 (i.e.,).
+The Frenkel–Ladd path is simulated using a fixed cell (NVT), whereas the alchemical path is simulated in the more relevant NPT ensemble, in which phase transformations can occur.
+Given that thephase is more stable than thephase forCsPbI3 at low temperatures,is expected to be larger than, as in Fig.b.
+See Supplementary Information, Sec. III for further discussion.
+The calculation of(equation ()) also shows that the two results are well matched at higher temperatures, while the alchemical path provides smaller standard deviations from multiple runs.
+
+Similarly to the previous example, we analyzed the convergence of the Gibbs free energy and the energy dissipation for the alchemical path for the perovskite phase at 400 K by changing the switching time for nonequilibrium simulations.
+Fig.c shows that, similar to the previous result, the alchemical path provides much faster convergence than the Frenkel–Ladd path.
+This result confirms that the phase space overlap between the two same phase structures with different compositions is much more significant than that between the atomic structures and the Einstein crystals, which enables much more efficient free energy simulations.
+
+SECTION: Discussion
+The alchemical modification of MLIP introduced in this work allows a smooth interpolation between structures with two or more different compositions.
+Building upon a prototypical construction of MLIP, we modified the input graph, message passing scheme, and readout layers to alchemically weight the different compositional states.
+Although this modification can be generalized to various classes of MLIPs, it is particularly efficient when integrated with MACE because of its construction of many-body features from two-body messages (see Sec.).
+
+We first applied the scheme to the modeling of solid solutions.
+Although there is no theoretical relationship between the stoichiometry and the alchemical weights, the results showed that it could model the nonlinear deviations of cell parameters in some solid solutions.
+The end-to-end differentiability of the model with respect to the alchemical weights enabled the optimization of composition to match the desired cell parameters.
+The alchemical modification also provides a scalable, efficient method for characterizing order and disorder, as demonstrated in multicomponent perovskite oxides, achieving accuracy comparable to SQS with fewer number of atoms and no optimization needed for structure generation.
+Furthermore, the alchemical weights allow smooth creation or annihilation of atoms, or the change in atom types, enabling the calculation of free energy differences between two compositional states.
+We demonstrated that the free energy of vacancy in BCC iron and the relative phase stabilities of the perovskite and non-perovskite phases ofCsPbI3 andCsSnI3 could be calculated much more efficiently than the widely utilized Frenkel–Ladd path.
+It is worth noting that, unlike the modeling of solid solutions, alchemical free energy calculations conducted here are theoretically exact when reaching convergence.
+
+Overall, the proposed method enables efficient modeling of composition-related properties with sufficient consistency within the underlying MLIP.
+Beyond the aforementioned lack of theoretical ground on the connection between alchemical weights and stoichiometric coefficients and convergence questions that are universal to thermodynamic integration methods, inaccuracies emerge primarily from the MLIP.
+In particular, there are two sources of error: (1) the discrepancies between the MLIP and the DFT calculations and (2) the inaccuracy of the underlying DFT calculations.
+Since most universal MLIPs are trained on the energies and derivatives from the relaxation trajectory, the relative error around the energy minima would be small.
+This implies that the former error would also be small when performing free energy calculations for systems with a sufficient number of similar structures in the materials database.
+Fine-tuning the MLIP using the DFT data from relevant compositional space would alleviate the former error.
+One can also utilize free energy perturbation methodsto calculate the free energy from a more accurate Hamiltonian to reduce both types of errors.
+We also note that differentiable simulationscould be used to fine-tune the MLIP to match either the cell parameters resulting from the relaxation trajectory or the free energy differences from the MD simulations to their desired values, to mitigate both sources of errors.
+
+While we devised the alchemical scheme with fixed elemental identities andrepresenting the occupancies of different alchemical atoms to align with our goal of leveraging pre-trained MLIPs, we note that interpolating the elemental identities of atoms, i.e., couplingto atomic numbers, is also a promising direction that connects with the quantum alchemy literature.
+Although pre-trained embeddings may not be ideal for this, they could be fine-tuned by “alchemical force matching” withderived from quantum alchemy, possibly using analytical gradients, given that the baseline MLIP is end-to-end differentiable with respect to embeddings.
+Learning an MLIP-based representation consistent with quantum alchemy might offer a well-regularized approximation of the physical state for the TI calculation.
+While this alternative scheme could improve the physical relevance of alchemical degrees of freedom, it is incompatible with the current approach and remains a prospect for future work.
+Beyond the applications demonstrated in this work, we expect that the gradient of the physical observables with respect to the composition or elemental identities would hold particular importance to the generative modeling of molecules and materials systems.
+We envisage that further works, integrated with the discrete sampling literature, will utilize the alchemical degrees of freedom in MLIPs for such modeling applications.
+
+SECTION: Methods
+SECTION: Architecture-specific modifications
+In MACE, the atomic basisis constructed by pooling the two-body features over the neighbors as in equation () (equation (8) in the original paper).
+The modification to message passing in equation () is implemented by multiplying the edge weights(equation ()) to the summands of the message aggregation as in equation ():
+
+The original readout mechanism is the sum of site energies over all the outputs of readout layers(equation ()).
+We implement the alchemical readout in equation () as the weighted sum of alchemical site energies as in equation ():
+
+SECTION: Representation of solid solution
+We used the MACE-MP-0 medium modelfor the experiments in Sec..
+Fast Inertial Relaxation Engine (FIRE) algorithm, as implemented in the Atomic Simulation Environment (ASE), was used to conduct geometry relaxations under fixed composition.
+
+For the optimization for “lattice-matching” composition for solid solutionsAl_1-xSc_xN andAl_1-xY_xN withGaN, we usedas the optimization target to find the matching condition for cell parameter.
+We used gradient descent with learning rates 0.01 and 0.005 forand alchemical weights, respectively.
+We initializedwith the value from the optimized GaN structure andwith.
+The gradient ofwas projected onto the lineby subtracting the mean value at each optimization step.
+
+In general, when alchemical weightsrepresent the compositional states, the weights should add up to 1 and the individual weights should be non-negative, i.e., the weights are element of the compositional simplex.
+We can perform gradient-based constrained optimization for the minimization targeton the simplex by utilizing the exponentiated gradient descent methodwith the update rule given as
+
+whereis the learning rate.
+
+We obtainedcation-ordered arrangements and experimental order/disorder label from the dataset from our previous workon ordering of multicomponent perovskite oxidesA2BBO6.
+We used the ICET packageto optimize and generatecation-disordered SQS structures.
+Structural differences are identified by creating crystal-level feature vectors through pooling localized fingerprints, generated withfrom the Matminer package, across all atoms, as described in.
+These structural differences are quantified using cosine distances, defined as.
+
+SECTION: Free energy calculations
+We used the MACE-MP-0 small modelfor the experiments in Sec..
+MD integrations are performed with corresponding implementations in ASE, and a time step of 2 fs was used.
+The characteristic time scales offs andfs were used for all the thermostats and barostats, respectively.
+Each simulation was initialized with energy minimization (with or without the cell fixed) using the FIRE algorithmand sampling the momenta from the Maxwell–Boltzmann distribution at the given temperature.
+The center of mass of the system was fixed for all MD simulations.
+For all nonequilibrium simulations, we used the progress parameter scheduling of
+
+whereis the normalized switching time progress.
+Instead of linear, the scheme in equation () was used because the slopevanishes at both ends and reduces the energy dissipation.
+All free energy calculation results were averaged over four statistically independent simulations, and their standard deviations are reported as error bars in Figs.and.
+
+Here, we adapted the procedure arranged in Menon et al..
+First, the system was equilibrated for 60 ps under the NPT ensemble with the pressure ofatm by the Berendsen thermostat and barostat.
+The average cell volumewas calculated during the last 40 ps of the simulation.
+The spring constants for the Einstein crystal were estimated from the mean-squared displacement (MSD) of the atoms under the fixed system volume as.
+The fixed volume system was simulated for 100 ps under the NVT ensemble by the Langevin thermostat with, and the MSD values were computed over the last 60 ps of the simulation.
+The MSD values were averaged and reassigned to the symmetrically equivalent atoms to reduce the variance before determining the spring constants.
+Finally, a nonequilibrium simulation of the Frenkel–Ladd path with the determined spring constants was conducted under the NVT ensemble using the Langevin thermostat.
+The system was equilibrated atfor 40 ps, switched fromto 1 with the schedule in equation () for 60 ps, equilibrated again atfor 40 ps, and switched back fromto 0 for 60 ps.
+
+The Helmholtz free energy for independent harmonic oscillators (Einstein crystal) with angular frequenciesis given as
+
+Since the center of mass of the system is fixed, the following finite-size correction associated with the Frenkel–Ladd path was applied:
+
+whereandis the number of Wigner–Seitz cells in the system.
+Finally, the Gibbs free energy was determined as
+
+wherewas calculated by equation () from the nonequilibrium switching.
+
+We usedsupercell of BCC iron (250 atoms).
+The iron atom at the center of the supercell was removed to simulate the vacancy.
+We determined the spring constant from the NVT simulation of the perfect crystal and used the same spring constant for both Frenkel–Ladd paths of the perfect crystal and the crystal with vacancy and for the alchemical pathway of switching the atom into a spring.
+All NPT simulations were conducted under a pressure of 1 atm.
+Before the alchemical switching process, the initial system was equilibrated for 20 ps using the Berendsen thermostat and barostat (inhomogeneous) to reduce initial fluctuations in the cell volume.
+Then, the Nose–Hoover and Parrinello–Rahman dynamicswere used to simulate the switching process.
+The samescheduling for the Frenkel–Ladd path was used, with equilibration and switching times of 40 ps and 60 ps, respectively.
+The alchemical free energy changewas determined using equation (), and satisfy the following relationship:
+
+where the free energy of springcould be computed from equation () with.
+
+We started fromsupercell of-CsPbI3 for perovskite phase andsupercell of-CsPbI3 for non-perovskite phase.
+Both systems contain 1,080 atoms.
+For the alchemical pathway, we used the same simulation procedure as the alchemical pathway for the vacancy, under a pressure of 1 atm.
+Additionally, we set the masses of atoms as the weighted sum of masses of alchemical atoms, i.e.,, through the switching process.
+The alchemical free energy change was computed as
+
+whereis computed using equation ().
+The second term on the right-hand side accounts for the change in masses over the transformation and originates from kinetic energy contributions.
+
+SECTION: Data availability
+The initial structures used in this work are available in the Materials Project, with the material IDs of mp-20194 (CeO2), mp-23324 (BiSBr), mp-22851 (NaCl), mp-804 (hexagonal GaN), mp-661 (hexagonal AlN), mp-13 (BCC Fe), mp-1069538 (-CsPbI3), and mp-540839 (-CsPbI3).
+
+SECTION: Code availability
+The code to reproduce this work is available on GitHub:.
+The result files for the free energy calculations are also available on Zenodo:.
+
+SECTION: References
+See pages 1 ofSee pages 2 ofSee pages 3 ofSee pages 4 of

@@ -1,0 +1,557 @@
+SECTION: How Transformers Solve Propositional Logic Problems: A Mechanistic Analysis
+Large language models (LLMs) have shown amazing performance on tasks that require planning and reasoning. Motivated by this, we investigate the internal mechanisms that underpin a network’s ability to perform complex logical reasoning. We first construct a synthetic propositional logic problem that serves as a concrete test-bed for network training and evaluation. Crucially, this problem demands nontrivial planning to solve. We perform our study on two fronts. First, we pursue an understanding of precisely how a three-layer transformer, trained from scratch and attains perfect test accuracy, solves this problem. We are able to identify certain “planning” and “reasoning” mechanisms in the network that necessitate cooperation between the attention blocks to implement the desired logic. Second, we study how pretrained LLMs, namely Mistral-7B and Gemma-2-9B, solve this problem. We characterize their reasoning circuits through causal intervention experiments, providing necessity and sufficiency evidence for the circuits. We find evidence suggesting that the two models’ latent reasoning strategies are surprisingly similar, and human-like. Overall, our work systemically uncovers novel aspects of small and large transformers, and continues the study of how they plan and reason.
+
+SECTION: Introduction
+Language models using the transformer architecturehave shown remarkable capabilities on many natural language tasks. Trained with causal language modeling wherein the goal is next-token prediction on huge amounts of text, these models exhibit deep language understanding and generation skills. An essential milestone in the pursuit of models which can achieve a human-like artificial intelligence, is the ability to perform human-like reasoning and planning in complex unseen scenarios. While some recent works using probing analyses have shown that the activations of the deeper layers of a transformer contain rich information about certain mathematical reasoning problems, the question of what mechanisms inside the model enables such abilities remains unclear.
+
+While the study of how transformers reason in general remains a daunting task, in this work, we aim to improve ourunderstanding of how a transformer reasons through simple propositional logic problems. For concreteness’ sake, consider the following problem:
+
+: A or B implies C. D implies E.: A is true. B is false. D is true.
+
+: what is the truth value of C?
+
+An answer withproof is “A is true. A or B implies C; C is true.”
+
+The reasoning problem, while simple-looking on the surface, requires the model to perform several actions that are essential to more complex reasoning problems, all without chain of thought (CoT). Correctly writing down the first answer token alone takes multiple steps. It must first resolve the ambiguity of whichis being queried relying on the question: in this case, it is “A or B implies C”. Then, it needs to rely on the premise variables A and B to resolve the ambiguity of whichare relevant, and identify “A is true” and “B is false”. Finally, it needs to decide that “A is true” is the correct one to invoke in its answer due to the nature of disjunction.
+
+It follows that, to write down the first token “A”, the model must form a “mental map” of the whole context, including the variable relations, value assignments and query. Furthermore, it mustperform several intermediate “ambiguity-resolving” steps following the causal path “QuestionRelevant ruleRelevant factAnswer”. Therefore, we believe that this is close to the minimal setting to examine how a modelthe context of andfor solving a nontrivial mathematical reasoning problem, wherein possible answers to the question must be resolved through performing multiple intermediate reasoning steps.
+
+In this work, we are primarily interested in understanding how transformers solve simple reasoning problems of this form from the perspective of: we aim to understand how the transformer utilizes its internal components (attention heads, MLPs, etc.) to execute the causal path of “QuestionAnswer”.
+We perform two flavors of experiments. The first is on shallow transformers trained purely on the synthetic propositional logic problems, where we mainly rely on linear probing and causal interventions to understand the model’s reasoning strategy.
+The other set of experiments are on pre-trained LLMs (Mistral-7B and Gemma-2-9B), where we primarily rely on causal intervention techniques and examining the attention statistics to discover and verify the circuits for explaining the reasoning actions of the model.
+
+. At a high level, we make the following discoveries based on our two fronts of analysis:
+
+(§) We discover that small transformers, trained purely on the synthetic problem, utilize certain “” to significantly alter the information flow of the deeper layers when solving different sub-categories of the reasoning problem. We also characterize the different reasoning pathways: we find that problems querying for reasoning chains involving logical operators typically require greater involvement of all the layers in the model.
+
+(§) Of particular interest is our characterization of the circuit which the pretrained LLMs Mistral-7B-v0.1and Gemma-2-9Bemploy to solve the minimal version of the reasoning problem. We find that they both have four families of attention heads with surprisingly specialized roles in processing different sections of the context: queried-rule locating heads, queried-rule mover heads, fact-processing heads, and decision heads. We find evidence suggesting that these models follow the natural reasoning path of “QUERYRelevant RuleRelevant Fact(s)Decision”, without merging any of these steps.
+
+In particular, our analysis of Mistral-7B and Gemma-2-9B in §and §is, to our knowledge, the first to characterize the circuits employed by LLMsfor solving a nontrivial in-context logical reasoning problem (involving distracting clauses) that requires correctly executing a multi-step reasoning chain without chain of thought.
+Furthermore, we make concrete progress towards general techniques of verifying theandof a pretrained LLM’s reasoning circuit.
+
+Additionally, we define the scope of our analysis as follows. First, in the shallow transformer experiments, we focus on the variant which only has self-attention layers in addition to layer normalization, positional encoding, embedding and softmax parameters.
+While we could have also included MLP layers, we choose not to because the no-MLP models already achieve 100%accuracy on the problem, and adding MLPs would unnecessarily complicate the analysis.
+As a second way to focus the scope of paper, in the LLM experiments, we doseek to uncovermodel component that participates in solving the reasoning problems. Instead, we focus on those which have the strongest causal influence on the model’s reasoning actions. By doing so, we can fully justify the necessity of these key components for the model’s reasoning actions, without diluting the focus with less-impactful sub-circuits (for handling low-level text processing, for instance).
+
+SECTION: Related works
+. Our work falls in the area of mechanistic interpretability, which aims to understand the hidden mechanisms that enable language-modeling capabilities of the LLMs. In particular, our work belongs to the sub-area of circuit-based mechanistic interpretability. While the definition of a “circuit” varies across different works, in this paper, our definition is similar to the one in: it is a collection of model components (attention heads, neurons, etc.) with the “edges” in the circuit indicating the information flow between the components in the forward pass; the “excitation” of the circuit is the input tokens.
+
+. Our work is also related to the line of work which focus on empirically evaluating the reasoning abilities of LLMs across different types of tasks. While these studies primarily benchmark their performance on sophisticated tasks, our work focuses on understanding “how” transformers reason on logic problems accessible to fine-grained analysis.
+
+. There are far fewer studies that focus on providing fine-grained analysis ofLLMs reason. To the best of our knowledge, only a handful of works, such as, share similar goals of understanding how transformers perform multi-step reasoning through detailed empirical or theoretical analysis. However, none studies the [Variable relationships]+[Variable value assignment]+[Query] type problem in conjunction with analysis onsmall transformers trained purely on the synthetic problem, and large language models trained on a large corpus of internet data. Moreover, there is little study on the existence and properties ofemployed by LLMs (in the wild) for performing latent in-context multi-hop reasoning.
+
+. At its core, activation patching, a.k.a., uses causal interventions for uncovering the internal mechanisms or “circuits” of LLMs that enable them to perform certain tasks. Typically, the LLM is run on pairs of “original” and “altered” prompts, and we search for components inside the model that “alter” the model’s “original behavior” by replacing parts of the model’s activation with “altered activations” when running on the original prompts. The opposite “alteredoriginal” intervention can also be adopted.
+
+SECTION: Data model: a propositional logic problem
+In this section, we describe the synthetic propositional logic problem that shall be the data model of this paper.
+Our problem follows an implicit causal structure, as illustrated in Figure. The structure consists of two distinct chains: exactly one containing a logical operator at the end of the chain, and one forming a purely linear chain. The two chains doshare any proposition variable.
+
+We require the model to generate areasoning chain, consisting of “relevant facts”, proper rule invocations, and intermediate truth values, to answer the truth-value query. Consider an example constructed from the causal graph in Figure, written in English:
+
+: K implies D. D or E implies A. V implies E. T implies S. P implies T.
+
+: K is true. P is true. V is false.
+
+: A.
+
+: K is true. K implies D; D is true. D or E implies A; A is true.
+
+In this example, the QUERY token A is the terminating node of the OR chain. Since anyinput to an OR gate (either D or E) results in A being, the minimal solution chooses only one of the starting nodes from the OR chain to construct its argument: in this case, node K is chosen.
+
+. In general, the problem requires a careful examination of the rules, facts and query to correctly answer the question. First, the QUERY token determines the chain to deduce its truth value. Second, if it is the logical-operator (LogOp) chain being queried, the model needs to check the facts to determine the correct facts to write down at the start of the reasoning steps (this step can be skipped for queries on the linear chain). Third, the proof requires invoking the rules to properly deduce the truth value of the query token.
+
+. As discussed in §, correctly writing down the first answer token is central to the accuracy of the proof. First, it requires the model todue to the minimal-proof requirement of the solution. Moreover, it is the answer token position which demands thein the whole answer, making it the most challenging token for the model to resolve. Therefore, this token is the most interesting place to focus our study on, as we are primarily interested in how the modelandfor the reasoning problems in this work.
+
+SECTION: The reasoning circuit in a small transformer
+In this section, we study how small GPT-2-like transformers, trained solely on the logic problem, approach and solve it. While there are many parts of the answer of the transformer which can lead to interesting observations, in this work, we primarily focus on the following questions:
+
+How does the transformer mentally process the context and plan its answer before writing down any token? In particular,?
+
+How does the transformer determine the truth value of the query at the end?
+
+We pay particular attention to the first question, because as noted in §,. We delay the less interesting answer of question 2 to the Appendix due to space limitations.
+
+SECTION: Learner: a decoder-only attention-only transformer
+In this section, we study decoder-only attention-only transformers, closely resembling the form of GPT-2. We train these models exclusively on the synthetic logic problem. The LogOp chain is queried 80% of the time, while the linear chain is queried 20% of the time during training. Details of the model architecture are provided in Appendix.
+
+. We select a 3-layer 3-head transformer to initiate our analysis since it is the smallest transformer that can achieve 100%accuracy; we also show the accuracies of several candidate model sizes in Figurein Appendixfor more evidence. Note that a model’s answer on a problem is considered accurate only if every token in its answer matches that of the correct answer. Please refer to Appendixfor an illustration of the model components.
+
+SECTION: Mechanism analysis
+The model approximately follows the strategy below to predict the first answer token:
+
+(Linear vs. LogOp chain) At the QUERY position, the layer-2 attention block sends out a special “routing” signal to the layer-3 attention block, which informs the latter whether the chain being queried is the linear one or not. The third layer then acts accordingly.
+
+(Linear chain queried) If QUERY is for the linear chain, the third attention block focuses almost 100% of its attention weights on the QUERY position, that is, it serves a simple “message passing” role: indeed, layer-2 residual stream at QUERY position already has the correct (and linearly decodable) answer in this case.
+
+(LogOp chain queried) The third attention block serves a more complex purpose when the LogOp chain is queried. In particular, the first two layers construct a partial answer, followed by the third layer refining it to the correct one.
+
+We illustrate the overall reasoning strategy and core evidence for it in Figurein Appendix.
+
+The QUERY token is likely the most important token in the context for the model: it determines whether the linear chain is being queried, and significantly influences the behavior of the third attention block. The transformer makes use of this token in its answer in an intriguing way.
+
+. There exists a “routing” directionpresent in the embedding generated by the layer-2 attention block, satisfying the following properties:
+
+is present in the embedding when the linear chain is queried, andis present when the LogOp chain is queried, where the two’s are sample dependent, and satisfy the property that, and.
+
+The “sign” of thesignal determines the “mode” which layer-3 attention operates in at the ANSWER position. When a sufficiently “positive”is present, layer-3 attention acts as if QUERY is for the linear chain by placing significant attention weight at the QUERY position. A sufficiently “negative”causes layer-3 to behave as if the input is the LogOp chain: the model focuses attention on the rules and fact sections, and in fact outputs the correct first token of the LogOp chain!
+
+We discuss our empirical evidence below to support and elaborate on the above mechanism.
+
+. We first observe that, at the QUERY position, the layer-2 attention block’s output exhibits disentanglement in its output direction depending on whether the linear or LogOp chain is being queried, as illustrated in Figure.
+
+To generate Figure, we constructed 200 samples, with the first half querying the linear chain and the second half querying the LogOp chain. We then extracted the layer-2 self-attention block output at the QUERY position for each sample, and calculated the pairwise cosine similarity between these outputs.
+
+. When the linear chain is queried, the layer-3 attention heads predominantly focus on the QUERY position, with over 90% of their attention weights on the QUERY position on average (based on 1k test samples). In contrast, when the LogOp chain is queried, less than 5% of layer-3 attention is on the QUERY on average. Instead, attention shifts to the Rules and Facts sections of the context, as shown in Figurein Appendix.
+
+Observations 1a and 1b suggest that given a chain type (linear or LogOp), certain direction(s) in the layer-2 embedding significantly influences the behavior of the third attention block in the aforementioned manner. We confirm the existence and role of this special direction and reveal more intriguing details below.
+
+. Tothe instance-dependent information, wethe output of the second attention block over 1k samples where QUERY is for the linear chain. We denote thisaverage aswhich effectively preserves the sample-invariant signal. To test the influence of, we investigate its impact on the model’s reasoning process, and we observe two intriguing properties:
+
+(LinearLogOp intervention) We generate 500 test samples where QUERY is for the linear chain.the embeddingfrom the second attention block’s output causes the model to consistently predict the correct first token for theon the test samples. In other words, the “mode” in which the model reasons is flipped from “linear” to “LogOp”.
+
+(LogOplinear intervention) We generate 500 test samples where QUERY is for the LogOp chain.to the second attention block’s output causes the three attention heads in layer 3 to focus on the QUERY position: greater than 95% of the attention weights are on this position averaged over the test samples. In this case, however, the model does not output the correct starting node for the linear chain on more than 90% of the test samples.
+
+It follows thatindeed exists, and the “sign” of it determines the attention patterns in layer 3 (and the overall network’s output!) in the aforementioned manner.
+
+. At this point, it is clear to us that,, the third layer mainly serves a simple “message passing” role: it passes the information in the layer-2 residual stream at the QUERY position to the ANSWER position. One natural question arises: does the input to the third layer truly contain the information to determine the first token of the answer, namely the starting node of the linear chain? The answer is yes.
+
+. We train an affine classifier with the same input as the third attention block at the QUERY position, with the target being the start of the linear chain; the training samples only query for the linear chain, and we generate 5k of them. We obtain a test accuracy above 97% for this classifier (on 5k test samples), confirming that layer 2 already has the answer linearly encoded at the QUERY position. To add further contrasting evidence, we train another linear classifier with exactly the same task as before, except it needs to predict the correct start of thechain. We find that the classifier achieves a low test accuracy of approximately 27%, and exhibits severe overfitting with the training accuracy around 94%.
+
+. To predict the correct starting node of the LogOp chain, the model employs the following strategy:
+
+The first two layers encode the LogOp and only a “partial answer”. More specifically, we find evidence that (1) when the LogOp is an AND gate, layers 1 and 2 tend to pass the node(s) with FALSE assignment to layer 3, (2) when the LogOp is an OR gate, layers 1 and 2 tend to pass node(s) with TRUE assignment to layer 3.
+
+The third layer, combining information of the two starting nodes of the LogOp chain, and the information in the layer-2 residual stream at the ANSWER position, output the correct answer.
+
+We delay the full set of evidence for the above two claims to Appendixdue to space limits. Our argument mainly relies on linear probing and causal interventions at different layers and token positions in the model.
+
+SECTION: The reasoning circuit in LLMs
+We now turn to examine how pretrained LLMs, namely Mistral-7B-v0.1 and Gemma-2-9B, solves this reasoning problem. We choose these LLMs as they are amongst the smallest accessible models which achieves above 70% accuracy on (a minimal version of) our problem. Our primary focus here is the same as in the previous section: how does the model infer the first answer token without any CoT? We are interested in this question as the first answer token requires to model to process all the information in the context properly without access to any CoT, and demands the greatest number of latent reasoning steps out of all answer tokens.
+
+In the main text, we primarily focus on presenting the reasoning circuit discovery and verification results of Mistral-7B, and delay the results for Gemma-2-9B to Appendix. We illustrate the reasoning circuit inside Mistral-7B for this prediction task in Figure. At a high level, there are two intriguing properties of the reasoning circuit of the LLM:
+
+Compared to the attention blocks, the MLPs are relatively unimportant to correct prediction.
+
+There is a sparse set of attention heads that are found to be central to the reasoning circuit: the queried-rule locating heads, queried-rule mover heads, fact-processing heads, and decision heads. We discuss circuit discovery in §, and circuit verification in §. We summarize the high-level conclusions of our more involved experiments in §, and refer the reader to the respective sections in the Appendix from there.
+
+SECTION: Minimal problem description
+In our LLM experiments, the input samples have the following properties:
+
+Before asking for the answer, we give Mistral-7B 6 randomly chosen in-context examples, and 4 for Gemma-2-9B.
+
+The problem is length-2: only one rule involving the OR gate, and one linear-chain rule. Moreover, the answer is always true. In particular, the truth values of the two premise nodes of the OR chain always have one FALSE and one TRUE.
+
+The proposition variables are all (single-token) capital English letters.
+
+The design decision in the first point is to ensure fairness to the LLM which was not trained on our specific logic problem. As for the last two points, we restrict the problem in this fashion mainly to ensure that the first answer token is, which improves the tractability of the analysis. Note that these restrictions do not take away the core challenge of this problem: the LLMs still need toto determine the correct first answer token, and out of all answer token positions, the first token still requiresto resolve. We discuss concrete examples and finer details of testing the models on this problem in Appendix.
+
+SECTION: Causal mediation analysis
+We provide evidence in this part of the paper primarily relying on a popular technique in mechanistic interpretability:. Our methodology is as follows:
+
+Suppose we are interested in the role of the activations of certain components of the LLM in a certain (sub-)task. For a running example, say we want to understand what role the attention heads play in processing and passing QUERY information to the “:” position for inference. Let us denote the activations as, representing the activation of headin layer, at token position.
+
+Typically, the analysis begins by constructing two sets of prompts which differ in subtle ways. A natural construction in our example is as follows: define sets of samplesand, whereandhave exactly the same context, except in, QUERY is for the LogOp chain, while in, QUERY is for the linear chain. Moreover, denote the correct targetsandrespectively.
+
+We run the LLM onand, caching the attention-head activations. We also obtain the logits of the model. We can compute the model’s
+
+For a high-accuracy model,andshould befor most’s, since most of the time it must be able to clearly tell that on an, it is the LogOp chain which is being queried, not the linear chain (similarly on an).
+
+We now perform intervention for alland:
+
+Run the model on, however, replacing the original activationby the altered. Now let the rest of the run continue.Let us denote the logits obtained in this intervened run as.
+
+Now compute the intervened logit difference
+
+Average the’s overfor everyand(recall thatis the sample index).
+
+This procedure helps us identify components that are significant in processing the QUERY information for inference. Intuitively, an activation that result in a positive and large(with an ideal upper limit being) play a significant role in this subtask, because this activation helps “altering” the model’s “belief” from “QUERY is for the LogOp chain” to “QUERY is for the linear chain”..
+
+: due to the symmetry of this running example, it is perfectly sensible to performinterventions too, by mirroring the above procedures; we indeed adopt this mirrored procedure too in our experiments for efficient use of model computations.
+
+. To justify this claim, there are two points to emphasize first. (1) To solve the reasoning problem, the QUERY is critical tothe reasoning chain: without it, the rules and facts are completely useless; with it, the reasoner can then proceed to identify the relevant rules and facts to predict the answer. (2) The prompt pairs differby the QUERY token: there is complete information for the model to provide answer for both chains given the QUERY.
+
+If performing the aforementioned interventions on a model component leads to a large intervened logit difference (i.e. it alters the model’s “belief”), then this component must be integral to the reasoning circuit, because the component is now identified to be QUERY-sensitivehas causal influence on (parts of) the model’s reasoning actions. Furthermore, if on (most of) the prompt pairs, by patching all the circuit components insimultaneously while freezing the rest causes the intervened logit difference to approach the “maximal” altered logit difference, then we obtain evidence suggestingoffor explaining the LLM’s (QUERY-sensitive) reasoning actions.
+
+SECTION: Circuit analysis
+In this section, we discuss properties of the reasoning circuit of Mistral-7B. The order by which we present the results will roughly follow the process which we discovered and verified the circuit; we believe this adds greater transparency to the circuit analysis process. We delay the more involved (and complete) set of experimental results to Appendix.
+
+We initiate our analysis with QUERY-based patching, following the same procedure as detailed in §. In this set of experiments, we discover the main attention heads responsible for processing the context and performing inference as introduced in the beginning of this Section.
+
+. Figure(a) helps us locate a small set of attention heads which are central to the “belief altering” of the LLM. More specifically, only attention heads (12,9), (13,11;22), (14,24;26), (16,0;12;14), (17,25), (19,8;9;16), and (9,25;26)are observed with relatively high intervened logit differences. As for the MLPs, shown in Figure(b), play little role in this circuit, except for MLP-0. However, MLP-0 had been observed to act more as a “nonlinear token embedding” than a complex high-level processing unit. In the rest of this section, we primarily devote our analysis to the attention heads, and leave the exact role of the MLPs to future work.
+
+. In Figureand the rest, unless otherwise specified, we adopt a calibrated version of the logit difference (see Appendix): the closer to 1, the more significant the component is in “altering” the “belief” of the model on the selected subtask.
+
+We now aim to understand why the attention heads identified in the last sub-section are important. For now, we continue with QUERY altering in the prompt pairs. Through intervening on the sub-components of each attention head, namely their value, key, and query, and through examining details of their attention weights, we find that there are roughly four types of attention heads. We show the results in Figure.
+
+. Attention head (12,9)’sactivation has a large intervened logit difference according to Figure(a), therefore, its query and attention patterns are QUERY-dependent and contribute to altering the model’s “belief”. Furthermore, at the QUERY position, we find that, its attention weight is above 90% at the “conclusion” variable of the rule being queried. In other words, it is responsible forthe queried rule, and storing that rule’s information at the QUERY position.
+
+. Attention head (13,11)’sactivations have large intervened logit difference, and intriguingly, its query and key activations doshare that tendency. This already suggests that its attention pattern performs a fixed action on both the original and altered prompts, and only the value information is sensitive to QUERY. Furthermore, within the relevant context (excluding the 6 in-context examples given), (13,11) assigns above 50% attention weight to the QUERY position, and its attention weight at QUERY is about 10 times larger than the second largest one on average. Recalling the role of layer 12, we find evidence that (13,11) moves the QUERY and queried-rule information to the “:” position.
+
+. Attention heads (16,12;14) and (14,26)’sactivations have large intervened logit differences. Within the relevant context, at the “:” token position, their attention weights are above 56, 80 and 63% respectively in the fact section of the context (starting from “Fact” and ending on “.” before “Question”).
+
+. Attention head (19,8)’s query activations have large intervened logit differences. Its attention pattern suggests that it is a “decision” head: within the relevant context, when the model is, the head’s top-2 attention weights are always on the correct starting node of the queried rule and the correct variable in the fact section, and the two token positions occupy more than 60% of its total attention in the relevant context on average. In other words, it already has the answer.
+
+A natural question now arises: isto explain the (QUERY-sensitive) reasoning actions of the LLM? As explained in §, we quantify sufficiency by measuring the “belief” altering effect of the circuit, and testas follows. Given the original and altered prompt pairswhich differ only by QUERY, we aim to verify that, simultaneously patchingfor every attention head in the circuitat their functioning token positions, while freezing all the other attention heads to the original activations, lead to the averagelogit differenceapproaching or surpassing the average logit difference of the (un-intervened) model run on the altered prompts, namely. We confirm this hypothesis in Tablebelow.
+
+To be precise, the circuit which we perform verification on is the union of the four attention head families,on their respective functioning token positions:
+
+patched at token position QUERY;
+
+patched at the “:” position (the last position of context);
+
+patched at the “:” position;
+
+patched at the “:” position.
+
+We find that by patching all 14 attention heads in,is about 98% of the “maximal” average logit differenceon the altered samples. Moreover, removing any one of the four families of attention heads fromin the circuit interventions renders the “belief altering” effect of the intervention almost trivial. We present further discussions of the experimental procedure and results, and caveats of reasoning circuit verification in Appendix.
+
+In this subsection, we summarize the more involved experiments we performed in addition to the ones we presented so far, and refer the reader to their respective sections in the Appendix for further reading.
+
+. We performed a similar set of circuit discovery and verification experiments on Gemma-2-9B, and found that the set of attention heads in its circuit can also be divided into four families, closely resembling the attention patterns of the four families in Mistral-7B. In particular, Gemma-2-9B’s circuit is formed by the following families of attention heads, with:
+
+;
+
+;
+
+;
+
+.
+
+In particular, Gemma-2-9B also appears to faithfully implement each step in the latent reasoning chain “QUERYRelevant ruleRelevant fact(s)Decision” without merging any one of the steps. We wish to emphasize, however, that it is too early to draw precise conclusions on theof reasoning circuits in LLMs, as it is not even clear how one would rigorously quantify circuit similarity across LLMs: similarity in attention patterns does not necessarily imply similarity in precise functions and component interactions.
+
+. We present further validating evidence of the queried-rule locating heads in §, and the fact-processing and decision heads in §, by performing causal intervention experiments in different sections of the input context.
+
+For the queried-rule locating heads, we perform the following causal intervention experiments. In the original-altered prompt pairs, weswap theof the two rules in Rules section while keeping everything else the same. If these heads indeed perform their functions as we described, then when we run the model on the clean prompts, patching in theat these heads (within the Rules section) should cause “negative” change to the model’s output, since it will cause these heads to mistake the queried-rule location in the altered prompt to be the right one, consequently storing the wrong rule information at the QUERY position. In particular, the model’swith respect to the original target should increase.
+
+Indeed, we observe in Figurethat interventions at these heads cause significantly larger increase in the cross-entropy loss than the other attention heads.
+
+To further understand the fact-processing and decision heads, we construct original-altered pairs by only exchanging the truth value of the two nodes for the OR chain ([True, False][False, True]). We perform subcomponent patching (query, key and value) of all attention heads in the Facts section, and found that out of all the patching results,the fact-processing heads’exhibit strong “belief-altering” effects (large intervened logit difference). This indicates that, (1) the attention pattern of these heads are facts-sensitive, and (2) they perform (preliminary) filtering of the truth-value assignments, instead of blindly moving the truth-value assignments to the “:” position. These results are shown in Figure.
+
+Moreover, we also perform subcomponent patching at the “:” position, and found that only the decision heads’ query activations show nontrivial causal influence on the model’s correct output. This provides further evidence that these are the heads which relies on the embedding in the residual stream at the “:” position to send the correct answer tokens out. This result is shown in Figure.
+
+SECTION: Conclusion
+We studied the reasoning mechanisms of both small transformers and LLMs on a synthetic propositional logic problem. We analyzed a shallow decoder-only attention-only transformer trained purely on this problem as well as pretrained LLMs Mistral-7B and Gemma-2-9B. We uncovered interesting mechanisms the small and large transformers adopt to solve the problem. For the small models, we found the existence of “routing” signals that significantly alter the model’s reasoning pathway depending on the sub-category of the problem instance. For the pretrained LLMs, we characterized their reasoning circuits formed by four families of attention heads that implement the reasoning pathway of “QUERYRelevant RuleRelevant FactsDecision”, and make concrete progress towards evaluating the necessity and sufficiency of the reasoning circuit through carefully designed causal intervention experiments. These findings provide valuable insights into the inner workings of LLMs on in-context mathematical reasoning problems.
+
+SECTION: References
+Appendix
+
+SECTION: Propositional logic problem and examples
+In this section, we provide a more detailed description of the propositional logic problem we study in this paper, and list representative examples of the problem.
+
+At its core, the propositional logic problem requires the reasoner to (1) distinguish which chain type is being queried (LogOp or linear), and (2) if it is the LogOp chain being queried, the reasoner must know what truth value the logic operator outputs based on the two input truth values.
+
+Below we provide a comprehensive list of representative examples of our logic problem at length 2 (i.e. each chain is formed by one rule). We use [Truth values] to denote the relevant input truth value assignments (i.e. relevant facts) to the chain being queried below.
+
+Linear chain queried, [True]
+
+: A or B implies C..
+
+: A is true. B is true..
+
+: what is the truth value of C?
+
+: D true. D implies E; E True.
+
+Linear chain queried, [False]
+
+: A or B implies C..
+
+: A is true. B is true..
+
+: what is the truth value of C?
+
+: D false. D implies E; E undetermined.
+
+LogOp chain queried, LogOp = OR, [True, True]
+
+: AB implies C. D implies E.
+
+:D is true.
+
+: what is the truth value of C?
+
+: B true. A or B implies C; C True.
+
+In this case, the answer “A true. A or B implies C; C True” is also correct.
+
+LogOp chain queried, LogOp = OR, [True, False]
+
+: AB implies C. D implies E.
+
+:D is true.
+
+: what is the truth value of C?
+
+: A true. A or B imples C; C True.
+
+LogOp chain queried, LogOp = OR, [False, False]
+
+: AB implies C. D implies E.
+
+:D is true.
+
+: what is the truth value of C?
+
+: A false B false. A or B implies C; C undetermined.
+
+LogOp chain queried, LogOp = AND, [True, True]
+
+: AB implies C. D implies E.
+
+:D is true.
+
+: what is the truth value of C?
+
+: A true B true. A and B implies C; C True.
+
+LogOp chain queried, LogOp = AND, [True, False]
+
+: AB implies C. D implies E.
+
+:D is true.
+
+: what is the truth value of C?
+
+: B false. A and B implies C; C undetermined.
+
+LogOp chain queried, LogOp = AND, [False, False]
+
+: AB implies C. D implies E.
+
+:D is true.
+
+: what is the truth value of C?
+
+: A false. A and B implies C; C undetermined.
+
+In this case, the answer “B false. A and B implies C; C undetermined” is also correct.
+
+The length-3 case is a simple generalization of this set of examples, so we do not cover those examples here.
+
+SECTION: Length-3 small transformer study: experimental details
+SECTION: Data definition and examples
+As illustrated in Figure, the propositional logic problem always involve one logical-operator (LogOp) chain and one linear chain. In this paper, we study the length-3 case for the small-transformer setting, and length-2 case for the Mistral-7B-v0.1 case.
+
+The input context has the following form:
+
+and the answer is written as
+
+In terms the the English-to-token mapping,RULES_START,RULES_END,FACTS_START,FACTS_END,QUERY_START,QUERY_ENDANSWER,.and;are all unique single tokens. The logical operatorsandandorand the connectiveimpliesare unique single tokens. The proposition variables are also unique single tokens.
+
+The rules and facts are presented in aorder in the respective sections of the context in all of our experiments unless otherwise specified. This prevents the model from adopting position-based shortcuts in solving the problem.
+
+Additionally, for more clarity, it is entirely possible to run into the scenario where the LogOp chain is queried, LogOp = OR and the two relevant facts both have FALSE truth values (or LogOp = AND and both relevant facts are TRUE), in which case the answer is not unique. For instance, if in the above example, bothKandVare assignedFALSE, then both answers below are logically correct:
+
+and
+
+. In each logic problem instance, the proposition variables are randomly sampled from a pool of 80 variables (tokens). The truth values in the fact section are also randomly chosen. In the training set, the linear chain is queried 20% of the time; the LogOp chain is queried 80% of the time. We train every model on 2 million samples.
+
+. Figureindicates the reasoning accuracies of several candidate model variants. We observe that the 3-layer 3-head variant is the smallest model which achieves 100% accuracy. We found that 3-layer 2-head models, trained of some random seeds, do converge and obtain near 100% in accuracy (typically above 97%), however, they sometimesto converge. The 3-layer 3-head variants we trained (3 random seeds) all converged successfully.
+
+SECTION: Small-transformer characteristics, and training details
+The architecture definition follows that of GPT-2 closely. We illustrate the main components of this model in Figure, and point out where the frequently used terms in the main text of our paper are in this model.
+
+The following is the more technical definition of the model. Define input, a sequence of tokens with length. It is converted into a sequence of (trainable) token embeddings, where we denote the hidden embedding dimension of the model with. Adding to it the (trainable) positional embeddings, we form the zero-th layer embedding of the transformer
+
+This zero-th layer embedding is then processed by the attention blocks as follows.
+
+Let the model havelayers andheads. For layer indexand head index, attention headis computed by
+
+where.
+
+We explain how the individual components are computed below.
+
+Let us begin with how theterm is computed.
+
+, where LayerNorm denotes the layer normalization operator.
+
+are the key and query matrices of attention head, where. They are multiplied with the inputto obtain the query and key activationsand, both in the space. We then perform the “scaled dot-product” of the query and key activations to obtain
+
+which was introduced inand also used in GPT2.
+
+The causal mask operatorallows the lower triangular portion of the input (including the diagonal entries) to pass through unchanged, and sets the upper triangular portion of the input to, whereis a very large positive number (some papers simply denote thisas). In other words, given anyand,
+
+is the softmax operator, which computes the row-wise softmax output from the input square matrix. In particular, given a square input matrixwith its upper triangular portion set to(note that the causal mask operator indeed causes the input toto have this property), we have
+
+To recap a bit, we have now explained how to compute the first major term in equation, namely. It reflects the attention pattern (also called attention probabilities) of the attention headillustrated in Figure’s right half. Intuitively speaking, theentry of thisbymatrix reflects how much the attention head moves the information from the previous layerat the source token position ofto the current layerat the target token position.
+
+Now what about?is the value matrix of attention head. It is multiplied withto obtain the value activation.
+
+At this point, we have shown how the whole term in equation equationis computed.
+
+Having computed the output of the allattention heads in the attention block at layer, we find the output of the attention block as follows:
+
+The operators are defined as follows:
+
+is the concatenation operator, where.
+
+is the projection matrix (sometimes called output matrix) of layer. In our implementation, we allow this layer to have trainable bias terms too.
+
+Finally, having computed, layer by layer, the hidden outputsfor, we apply an affine classifier (with softmax) to obtain the output of the model
+
+This output indicates the probability vector of the next word.
+
+In this paper, we set the dimension of the hidden embeddings.
+
+In all of our experiments, we set the learning rate to, and weight decay to. We use a batch size of 512, and train the model for 60k iterations. We use the AdamW optimizer in PyTorch, with 5k iterations of linear warmup, followed by cosine annealing to a learning rate of 0. Each model is trained on a single V100 GPU; the full set of models take around 2 - 3 days to finish training.
+
+SECTION: High-level reasoning strategy of the 3-layer transformer
+We complement the text description of the reasoning strategy of the 3-layer transformer in the main text with Figurebelow. It not only presents the main strategy of the model, but also summarizes the core evidence for specific parts of the strategy.
+
+SECTION: Answer for the LogOp Chain
+. We train two affine classifiers at two positions inside the model (each with 10k samples):at layer-2 residual stream, andat layer-3 attention-block output, both at the position of ANSWER, with the target being the correct first token. In training, if there are two correct answers possible (e.g. OR gate, starting nodes are both TRUE or both FALSE), we randomly choose one as the target; in testing, we deem the top-1 prediction “correct” if it coincides with one of the answers. We observe the following predictor behavior on the test samples:
+
+predicts the correct answer 100% of the time.
+
+always predicts one of the variables assigned FALSE (in the fact section) if LogOp is the AND gate, and predicts one assigned TRUE if LogOp is the OR gate.
+
+. We train an affine classifier at the layer-2 residual stream to predict the LogOp of the problem instance, over 5k samples (and tested on another 5k samples). The classifier achieves greater than 98% accuracy. We note that training this classifier at the layer-1 residual stream also yields above 95% accuracy.
+
+. Attention heads (3,1) and (3,3), when concatenated, produce embeddings which we can linearly decode the two starting nodes of the LogOp chain with test accuracy greater than 98%. We also find that they focus their attention in the rule section of the context (as shown in Figure). Due to causal attention, this means that they determine the two starting nodes from the LogOp-relevant rules.. The above pieces of observations suggest the “partial informationrefinement” process.To further validate that the embedding from the first two layers are indeed causally linked to the correct answer at the third layer, we perform an activation patching experiment.
+
+. To provide further contrasting evidence for the linear decodability of the LopOp chain’s answer, we experimentally show that it is not possible to linearly decode the answer of thechain in the model. Due to the causal nature of the reasoning problem (it is only possible to know the answer at or after the QUERY token position), and the causal nature of the decoder-only transformer, we train a set of linear classifiers on all token positions at or after the QUERY token and up to the ANSWER token, and on all layers of the residual stream of the transformer. We follow the same procedure as in Evidence 3c, except in this set of experiments, for contrasting evidence, QUERY is for the LopOp chain, while the classifier is trained to predict the answer of the Linear chain. The maximum test accuracy of the linear classifiers across all aforementioned token positions and layer indices is only 32.7%. Therefore, the answer of the Linear chain is not linearly encoded in the model when QUERY is for the LopOp chain.
+
+. We verify that layer-3 attention does rely on information in the layer-2 residual stream (at the ANSWER position):
+
+Construct two sets of samplesand, each of size 10k: for every sampleand, the context of the two samples are exactly the same, except the LogOp is flipped, i.e. ifhas disjunction, thenhas the conjunction operator. If layer 3 of the model hasreliance on the(layer-2 residual stream) for LogOp information at the ANSWER position, then when we run the model on any, patchingwithat ANSWER shouldcause significant change to the model’s accuracy of prediction. However, we observe the contrary: the accuracy of prediction degrades from 100% to 70.87%, with standard deviation 3.91% (repeated over 3 sets of experiments).
+
+. We show that the output from attention heads (3,1) and (3,3) (before the output/projection matrix of the layer-3 attention block), namelyand, when concatenated, contain linearly decodable information about the two starting nodes of the LogOp chain. We frame this as a multi-label classification problem, detailed as follows:
+
+We generate 5k training samples and 5k test samples, each of whose QUERY is for the LogOp chain. For every sample, we record theas a 80-dimension vector, with every entry set to 0 except for the two indices corresponding to the two proposition variables which are the starting nodes of the LogOp chain.
+
+Instead of placing softmax on the final classifier of the transformer, we use the Sigmoid function. Moreover, instead of the Cross-Entropy loss, we use the Binary Cross-Entropy loss (namely thein PyTorch, which directly includes the Sigmoid for numerical stability).
+
+We train an affine classifier, with its input being the concatenated(a 512-dimensional vector) on every training sample, and with the targets and training loss defined above. We use a constant learning rate of, and weight decay of. The optimizer is AdamW in PyTorch.
+
+We assign a “correct” evaluation of the model on a test sample only if it correctly outputs the two target proposition variable as the top-2 entries in its logits. We observe that the classifier achieves greater than 98% once it converges.
+
+SECTION: Extra remarks
+. We simply frame the learning problem as a linear classification problem. The input vector of the classifier is the same as the input to the layer-3 self-attention block, equivalently the layer-2 residual-stream embedding. The output space is the set of proposition variables (80-dimensional vector). We train the classifier on 5k training samples (all whose QUERY is for the linear chain) using the AdamW optimizer, with learning rate set toand weight decay of. We verify that the trained classifier obtains an accuracy greater than 97% on an independently sampled test set of size 5k (all whose QUERY is for the linear chain too).
+
+. Evidence suggests that determining the truth value of the simple propositional logic problem is easy for the model, as the truth value of the final answer is linearly decodable from layer-2 residual stream (with 100% test accuracy, trained on 10k samples) when we give the model the context+chain of thought right before the final truth value token. This is expected, as the main challenge of this logic problem is not about determining the query’s truth value, but about the model spelling out the minimal proof with careful planning. When abundant CoT tokens are available, it is natural that the model knows the answer even in its second layer.
+
+SECTION: The reasoning circuit in Mistral-7B: experimental details
+SECTION: Problem format
+We present six examples of the propositional-logic problem in context to the Mistral-7B model, and ask for its answer to the seventh problem. An example problem is presented below.
+
+To ensure fairness to the LLM, we balance the number of in-context examples which queries the OR chain and the linear chain: each has 3 in-context examples. The order in which the in-context examples are presented (i.e. the order in which the examples with OR or linear-chain answer) is random. Please note that, in the six in-context examples, we do allow the truth value assignment for the premise variable of the linear chain to be FALSE when this chain is not being queried, however, the actual question (the seventh example which the model needs to answer) always sets the truth value assignment of the linear chain to be TRUE, so the model cannot take a shortcut and bypass the “QUERYRelevant Rule” portion of the reasoning path.
+
+Additionally, when reporting the accuracy of the model being above 70% in the main text, we are querying the model for the LogOp and linear chain with 50% probability respectively. More precisely, we test the model on 400 samples, and we find that the model has 96% accuracy when QUERY is for the linear chain, and 70% accuracy when QUERY is for the OR chain (so they average above 70% accuracy).
+
+SECTION: Causal mediation analysis: further explanations
+This subsection complements the causal mediation analysis methodologies we presented in §in the main text. In particular, we aim to visualize how the interventions are done in the circuit discovery and verification processes, by using a 2-layer 2-head transformer as an example for simplicity.
+
+Figureillustrates the activation patching procedure of circuit discovery. Recall that we are studying how a component inside the transformer causally influences the output of the model. In the specific example, we show how we would examine the causal influence of attention head (0,2)’s activations on the correct inference of the model.
+
+Circuit verification, on the other hand, goes through a somewhat more complex process of interventions, as illustrated in Figure. Recall our main procedure (discussed in the main text).
+
+We run the LLM on theprompts, and cache the activations of the attention heads.
+
+Now, we run the LLM on the correspondingprompts, however, weall the attention heads’ activations inside the model to their activations on theprompts,for those in the circuitwhich we wish to verify (i.e. only the attention heads inare allowed to run normally). We record the (circuit-intervened) altered logit differences on the altered prompts.
+
+We average the circuit-intervened altered logit differences across the samples, namely, and check whether they approach the “maximal” altered logit difference, namely.
+
+As the reader can observe, we dofreeze the MLPs in our intervention experiments. We note that the MLPs do not move information between the residual streams at different token positions, as they only perform processing of whatever information present at the residual stream. Therefore, similar to, we consider the MLPs as part of the “direct” path between two attention heads, and allow information to flow freely through them, instead of freezing them and disrupting the information flow between attention heads.
+
+SECTION: Finer details of query-based activation patching
+In this subsection, we present and visualize the attention heads with the highest average intervenes logit differences, along with their standard deviations (error bars).
+
+We rely on a calibrated version of the logit-difference metric often adopted in the literature for the QUERY-based activation patching experiments (aimed at keeping the score’s magnitude between 0 and 1). In particular, we compute the following metric for headat token position:
+
+where, and. The closer to 1 this score is, the stronger the model’s “belief” is altered; the closer to 0 it is, the closer the model’s “belief” is to the original unaltered one.
+
+Each of our experiments are done on 60 samples unless otherwise specified — we repeat some experiments (especially the attention-head patching experiments) to ensure statistical significance when necessary.
+
+We note thatused by Mistral-7B adds subtlety to the analysis of which attention heads have strong causal influence on the LLM’s correct output. (In Mistral-7B-v0.1, each attention layer has 8 key and value activations, and 32 query activations. Therefore, headstoshare the same key and value activation.) Patching a single head might not yield a high logit difference, since other heads in the same group (which possibly perform a similar function) could overwhelm the patched head and maintain the model’s previous “belief”. Therefore, we also run aexperiment which simultaneously patches the attention heads sharing the same key and value activations, shown in Figure(b). This experiment reveals that heads belonging to the group (9, 24 - 27) also have high intervened logit difference. Combining with the observation that (9,25;26) have somewhat positive scores in the single-head patching experiments, and by examining these two head’s attention patterns (which shall be discussed in detail in the immediate next subsection), we determine that they also should be included in the circuit.
+
+In this subsection, we provide finer details on the attention patterns of the attention heads we discovered in Section. Note that the attention weights percentage we present in this section are calculated by dividing the observed attention weight at a token position by the total amount of attention the head places in the relevant context, i.e. the portion of the prompt which excludes the 6 in-context examples.
+
+. Figurepresents the average attention weight the queried-rule locating heads place on the “conclusion” variable and the period “.” immediately after the queried rule at the QUERY token position (i.e. the query activation of the heads come from the residual stream at the QUERY token position) — (12,9) is an exception to this recording method, where we only record its weight on the conclusion variables alone, and already observe very high weight on average. The heads (12,9), (14,24), (14,26), (9,25), (9,26) indeed place the majority of their attention on the correct positionacross the test samples. The reason for counting the period after the correct conclusion variable as “correctly” locating the rule is that, it is known that LLMs tend to use certain “register tokens” to record information in the preceding sentence.
+
+We can observe that head (12,9) has the “cleanest” attention pattern out of the ones identified, placing on averageof it attention on the correct conclusion variable alone. The more diluted attention patterns of the other heads likely contribute to their weaker intervened logit difference score shown in §in the main text.
+
+. Figureshows the attention weight of the queried-rule mover heads. While they do not place close to 100% attention on the QUERY location consistently (when the query activation comes from the residual stream from token “:”, right before the first answer token), the top-1 attention weight consistently falls on the QUERY position, and the second largest attention weight is much smaller. In particular, head (13,11) placesattention on the QUERY position on average, while the second largest attention weight in the relevant context ison average (around 10 times smaller;).
+
+: it doesprimarily act like a “mover” head, as its attention statistics suggest that it processes an almost evenof information from the QUERY position and the “:” position. Therefore, while we present its statistics along with the other queried-rule mover heads here since it does allocate significant attention weight on the QUERY position on average, we do not list it as such in the circuit diagram of Figure..
+
+. Figurebelow shows the attention weights of the fact processing heads; the attention patterns are obtained at the “:” position, right before the first answer token, and we sum the attention weights in the Fact section (starting at the first fact assignment, ending on the last “.” in this section of the prompt). It is clear that they place significant attention on the Fact section of the relevant context. Additionally, across most samples, we find that these heads exhibit the tendency to assign lower amount of attention on the facts with FALSE value assignments across most samples, and on a nontrivial portion of the samples, they tend to place greater attention weight on the correct fact (this second ability is not consistent across all samples, however). Therefore, they do appear to perform some level of “processing” of the facts, instead of purely “moving” the facts to the “:” position.
+
+. Figureshows the attention weights of the decision heads. The attention patterns are obtained at the “:” position. We count the following token positions as the “correct” positions:
+
+In the Rules section, we count the correct answer token and the token immediately following it as correct.
+
+In the Facts section, we count the sentence of truth value assignment of the correct answer variable as correct (for example, “A is true.”).
+
+: the only exception is head (19,8), where we only find its attention on exactly the correct tokens (not counting any other tokens in the context); we can observe that it still has the cleanest attention pattern for identifying the correct answer token.
+
+An interesting side note worth pointing out is that, (17,25) tends to only concentrate its attention in the facts section, similar to the fact-processing heads. The reason which we do not classify it as a fact-processing head and instead as a decision head is that, in addition to finding that their attention patterns tend to concentrate on the correct fact, evidence presented in §below suggest that they are not directly responsible for locating and moving the facts information to the “:” position, while the heads (16,12;14) exhibit such tendency strongly.
+
+SECTION: Sufficiency tests for circuit verification
+In §, we presented a sufficiency test of the circuit. Here, we elaborate further on the experimental procedures and finer details of the experiment.
+
+The circuit which we perform verification on is the union of the four attention head families,, with
+
+patched at token position QUERY;
+
+patched at the “:” position (the last position of context);
+
+patched at the “:” position;
+
+patched at the “:” position.
+
+An exception is that the queried-rule locating headis also patched at the “:” position, as we observed that it tends to concentrate attention at the queried rule at this position: it does not locate the queried rule as consistently as it does at the QUERY position, however. We still chose to patch it at this position as we found that it tends to improve the altered logit difference, indicating that either the model relies on this head to pass certain additional information about the queried rule to the “:” position, or certain later parts of the circuit do rely on this head for queried-rule information. The exact function of this attention head remains part of our future study in the reasoning circuit of Mistral-7B. We likely need to examine this head’s role in other reasoning problems to clearly understand what its role is at different token positions, and whether there is deeper meaning behind the fact that, their apparently redundant actions at different token positions all seem to have causal influence on the model’s inference.
+
+. From what we can see, verifying the sufficiency of acircuit is a major open problem. Part of the root of the problem lies in what exactly counts as a circuit that is truly relevant to: attention heads and MLPs responsible for lower-level processing such as performing change of basis of the token representations, storing information at register tokens (such as the periods “.” after sentences), and so on, do not truly belong to a “reasoning” circuit in the narrow definition of the term. In our considerations, a “narrow” definition of a reasoning circuit is one which isand. The first condition of QUERY sensitivity is justified by noting that the QUERY lies at the root of the reasoning chain of “QUERYRelevant Rule(s)Relevant Fact(s)Decision”. We do not analyze through what circuit/internal processing the “QUERY”, “Relevant Rule(s)” and “Relevant Fact(s)” underwent from token level to representation level (notice that the reasoning circuit we identified starts at layer 9: it is entirely possible for the token embeddings of these important items to have undergone significant processing by the attention heads and MLPs in the lower layers). Simply setting the lower layers’ embeddings to the zero vector, to their mean activations or some fixed embeddings which erase the instance-dependent information could completely break the circuit.
+
+SECTION: Queried-rule location interventions: analyzing the queried-rule locating heads
+In this experiment, weswap theof the linear rule with the LogOp rule in thesection of the question, while keeping everything else the same (including all the in-context examples). As an example, we alter “Rules: A or B implies C. D implies E.” to “Rules: D implies E. A or B implies C.” while keeping everything else the same. The two prompts have the same answer.
+
+If the(with heads (12,9), (14,25;26), (9,25;26) being the QUERY-sensitive representatives) indeed perform their functions as we described, then when we run the model on the clean prompts, patching in theat these heads (within the Rules section) should cause “negative” change to the model’s output, since it will cause these heads to mistake the queried-rule location in the altered prompt to be the right one, consequently storing the wrong rule information at the QUERY position. In particular, the model’swith respect to the original target should increase. This is indeed what we observe.
+
+The average increase in cross-entropy loss exhibit a trend which corroborate the hypothesis above, shown in Figure. While the average cross-entropy loss on the original samples is 0.463, patching (12,9), (14,24;26) and (9,25;26)’s keys (with corresponding key indices (12,2), (14,6) and (9,6)) in the Rule section.
+
+Patching the otherattention heads’ keys in the Rule section, in contrast, show significantly smaller influence on the loss on average, telling us that their responsibilities are much less involved withfinding or locating the queried rule via attention.
+
+: this set of experiments was run on 200 samples instead of 60, since we noticed that the standard deviation of some of the attention heads’ loss increase is large.
+
+While attention heads with key index (15,5) (i.e. heads (15, 20-23)) did not exhibit nontrivial sensitivity to QUERY-based patching (discussed in Sectionin the main text), patching this key activation does result in a nontrivial increase in loss. Examining the attention heads belonging to this group, we find that they indeed also perform the function of locating the queried rule similar to head (12,9). We find them to be less accurate and place less attention on the exact rule being queried on average, however: this weaker “queried-rule locating ability” likely contributed to their low scores in the QUERY-based patching experiments presented in the main text.
+
+SECTION: Facts interventions: analyzing the fact-processing and decision heads
+In this section, we aim to provide further validating evidence for the fact-processing heads and the decision heads. We experiment with flipping the truth value assignment for the OR chain while keeping everything else the same in the prompt (we always query for the OR chain in this experiment). As an example, we alter “Rules: A or B implies C. D implies E. Facts:D is true. Query: please state the truth value of C.” to “Rules: A or B implies C. D implies E. Facts:D is true. Query: please state the truth value of C.”. In this example, the answer is flipped from A to B. The (calibrated) intervened logit difference is still a good choice in this experiment, therefore we still rely on it to determine the causal influence of attention heads on the model’s inference, just like in the QUERY-based patching experiments.
+
+If the(with (16,12;14) being the QUERY-sensitive representatives) indeed perform their function as described (moving and performing some preliminary processing of the facts as described before), then patching theof the problem’s context would cause these attention heads to obtain a nontrivial intervened logit difference, i.e. it would help in bending the model’s “belief” in what the facts are (especially the TRUE assignments in the facts section), thus pushing the model to flip its first answer token. This is indeed what we observe. In Figure, we see that only the key activations with index (16,3) (corresponding to heads (16, 12 - 15)) obtain a much higher score than every other key index, yielding evidence that only the heads with key index (16,3) rely on the facts (especially the truth value assignments) for answer. Moreover, notice that patching theactivations of thedoes not yield a high logit difference on average, telling us that the decision heads dorely on theof the variables for inference (we wish to emphasize again that, theof the variables in the Facts section are not altered, only the truth value assignments for the two variables of the OR chain are flipped).
+
+Finally, for additional insights on the decision heads (19,8;9;16) and (17,25), we find that by patching the query activations of these decision heads at the “:” position yields nontrivial intervened logit difference, as shown in Figure(c) ((19,8) has an especially high score of about 0.27). In other words, the query activation at the “:” position (which should contain information for flipping the answer from one variable of the OR chain to the other, as gathered by the fact-processing heads) being fed into the decision heads indeed have causal influence on their “decision” making. Moreover, patching the value activation of these heads at “:” does not yield nontrivial logit difference, further suggesting that it is their attention patterns (dictated by the query information fed into these heads) which influence the model’s output logits.
+
+SECTION: Early evidence of a similar reasoning circuit in Gemma-2-9B
+In this section, we present a preliminary analysis of the reasoning circuit of Gemma-2-9B in solving the same reasoning problem which Mistral-7B was examined on from before.: according to their highly specialized attention patterns, they can also be categorized into the four families of attention heads which Mistral-7B employs to solve the problem, namely the queried-rule locating heads, queried-rule mover heads, fact-processing heads, and decision heads. While it is too early to draw precise conclusions on how similar the two circuits in the two LLMs truly are, the preliminary evidence suggests that the reasoning circuit we found in this work potentially has some degree of universality.
+
+Additionally, we caution the reader that the experimental study in this subsection is less exhaustive in nature compared to our study of Mistral-7B, due to limitations in our computation budget.
+
+We perform activation patching of the attention head output of Gemma-2-9B, by flipping the QUERY in the prompt pairs. This is the same procedure we used to discover the attention head circuit for Mistral-7B as discussed in §and. We highlight the attention heads with the strongest causal influence on the model’s (correct) inference in Figure.
+
+. The queried rule locating heads inside Gemma-2-9B, namely, are very similar in their attention patterns to those in Mistral-7B. At the QUERY position, their attention concentrates on the conclusion token of the queried rule, and the “.” which follows. Interestingly, heads (21,7), (22,5) and (23,12) also tend to place some attention on the “implies” token of the queried rule. Another intriguing difference they exhibit is redundant behavior: these attention heads are often observed to have almost exactly the same attention pattern at the “.” and “Answer” token positions following the QUERY token. We visualize their attention statistics at the QUERY position in Figure.
+
+. When the query activations of the queried-rule mover headscome from the “:” residual stream, they have fixed attention patterns which focus a large portion of their attention weights on the QUERY token and two token positions following it, namely the “.” and “Answer” token. Their attention weights are slightly more diffuse compared to their counterparts in Mistral-7B, likely due to the queried-rule locating heads performing similar functions at the “.” and “Answer” positions. Furthermore, as shown in Figure(c), we note that these attention heads are the only ones where patching their value activations results in a large intervened logit difference, further suggesting their role in performing a fixed “moving” action. We record their attention weights in Figure.
+
+. The fact-processing heads’s attention patterns at the “:” position tend to place larger weight on the correct fact for the answer, similar to the fact-processing heads in Mistral-7B. An interesting difference does exist though: heads (24,5) and (25,7) also tend to place a nontrivial amount of weight on the QUERY and “:” token positions, indicating that these heads are relying on some form of mixture of information present at those positions for processing. While it is reasonable to hypothesize that these heads are likely relying on the queried-rule information present in the QUERY and “:” residual streams, we have not confirmed this hypothesis in our current experiments. We visualize the statistics of these heads in Figure.
+
+. The decision heads’s attention pattern are obtained at the “:” position. They bear strong resemblance to those in Mistral-7B: they place significant attention on the correct answer token (in both the rules and facts sections, same as Mistral-7B’s decision heads), and little attention weight anywhere else. This is shown in Figure.
+
+We perform a sufficiency test of the attention-head circuit, following the same methodology as in the Mistral case, as discussed in §and.
+
+The circuit which we perform verification on is the union of the four attention head families,, with
+
+;
+
+;
+
+;
+
+.
+
+The circuit verification is performed in amanner in this experiment, as we patch the output of the attention heads infrom the QUERY position to the “:” position, instead of clearly distinguishing the token positions which each head primarily focuses on.
+
+We find that by patching all 13 attention heads in,is about 94% of the “maximal” average logit differenceon the altered samples. Moreover, removing any one of the four families of attention heads fromin the circuit interventions renders the “belief altering” effect of the intervention almost trivial.
+
+We find it surprising that two LLMs (Mistral-7B and Gemma-2-9B) which are trained with different procedures and data ended up relying on attention-head circuits which bear strong resemblance to each other’s. In the current literature, it is unclear how one can rigorously quantify the similarity of two nontrivial circuits inside different LLMs, however, this subsection does yield preliminary evidence that, the reasoning circuit we discover potentially has some degree ofto it, and is likely an emergent trait of LLMs.

@@ -1,0 +1,296 @@
+SECTION: HLSFactory: A Framework Empowering High-Level Synthesis Datasets for Machine Learning and Beyond
+Machine learning (ML) techniques have been applied to high-level synthesis (HLS) flows for quality-of-result (QoR) prediction and design space exploration (DSE). Nevertheless, the scarcity of accessible high-quality HLS datasets and the complexity of building such datasets present great challenges to FPGA and ML researchers. Existing datasets either cover only a subset of previously published benchmarks, provide no way to enumerate optimization design spaces, are limited to a specific vendor, or have no reproducible and extensible software for dataset construction. Many works also lack user-friendly ways to add more designs to existing datasets, limiting wider adoption and sustainability of such datasets.
+
+In response to these challenges, we introduce HLSFactory, a comprehensive framework designed to facilitate the curation and generation of high-quality HLS design datasets. HLSFactory has three main stages: 1) a design space expansion stage to elaborate single HLS designs into large design spaces using various optimization directives across multiple vendor tools, 2) a design synthesis stage to execute HLS and FPGA tool flows concurrently across designs, and 3) a data aggregation stage for extracting standardized data into packaged datasets for ML usage. This tripartite architecture not only ensures broad coverage of data points via design space expansion but also supports interoperability with tools from multiple vendors. Users can contribute to each stage easily by submitting their own HLS designs or synthesis results via provided user APIs. The framework is also flexible, allowing extensions at every step via user APIs with custom frontends, synthesis tools, and scripts.
+
+To demonstrate the framework functionality, we include an initial set of built-in base designs from PolyBench, MachSuite, Rosetta, CHStone, Kastner et al.’s Parallel Programming for FPGAs, and curated kernels from existing open-source HLS designs. We report the statistical analyses and design space visualizations to demonstrate the completed end-to-end compilation flow, and to highlight the effectiveness of our design space expansion beyond the initial base dataset, which greatly contributes to dataset diversity and coverage.
+
+In addition to its evident application in ML, we showcase the versatility and multi-functionality of our framework through seven case studies: I) Building an ML model for post-implementation QoR prediction; II) Using design space sampling in stage 1 to expand the design space covered from a small base set of HLS designs; III) Demonstrating the speedup from the fine-grained design parallelism backend; IV) Extending HLSFactory to target Intel’s HLS flow across all stages; V) Adding and running new auxiliary designs using HLSFactory; VI) Integration of previously published HLS data in stage 3; VII) Using HLSFactory to perform HLS tool version regression benchmarking.
+
+Code available at.
+
+opacity=1, scale=1, angle=0, contents=
+
+SECTION: Introduction
+Machine learning (ML) techniques have been widely applied to different electronic design automation (EDA) flows including high-level synthesis (HLS)for quality-of-result (QoR) prediction, optimization, and design space exploration (DSE).
+A key enabler to the success of such ML techniques is high-quality datasets, most of which are developed for individual studies e.g.,. Some recent works have contributed open-source datasets that can be used by other reseachers, e.g.,.
+
+Despite the great benefits of these datasets,
+there are still fundamentalthat hinder their wider adoption for ML applications and FPGA research., these datasets are usually small or homogeneous, containing only a subset of previously published HLS benchmarks, and frequently consisting exclusively of designs that work with one HLS tool from a single vendor.
+For example, Spectorcontains only 9 Intel HLS designs, HLSDatasetcontains 34 AMD/Xilinx HLS designs, and Rosettacontains 6 AMD/Xilinx HLS designs., because of these separately developed HLS datasets, the designs and intermediate/final tool outputs, which serve as important ML model features, are often reported organized in non-standardways. Some datasets contain only source code, some datasets contain only resource usage and end-to-end throughputbut no clock frequency or power numbers,
+while some contain only post-implementation results. HLSynis a dataset for HLS designs targeted towards predicting design quality of FPGAs. It consists of a wider range of programs and compiler directives, enabling performance optimization of designs.
+However, existing datasets require huge manual effort and deep domain-specific knowledge for ML practitioners if they need a complete, unified, and larger dataset, where they must execute all related HLS tools on their own to re-collect and organize the needed information., it is challenging for external users who want to extend the existing datasets by contributing their own designs, primarily caused by ad-hoc data formats and missing details when building these datasets (e.g., tool version, target FPGA device, clock frequency, implementation flow settings).
+
+Therefore, in this work, we introduce, the first framework that takes a principled approach to HLS dataset generation, collection, expansion, and integration, aiming to facilitate a continuous and community-wide effort to contribute to the richest HLS dataset, which will keep expanding easily. HLSFactory boasts the following features:
+
+HLSFactory has an end-to-end compilation flow including three main stages: design space expansion stage to elaborate single HLS designs at the source-code level into large design spaces; design synthesis stage to execute HLS and FPGA tools; and data aggregation stage for extracting standardized data organization.
+HLSFactory uses a modular design that allows users to plug in their own designs and tool flows to the dataset with minimal effort at arbitrary stages.
+
+The initially included dataset covers a wide variety of HLS designs, containing both simple designs synthesized with AMD/Xilinx and Intel tool flows and complex designs using Xilinx-specific features.
+In addition, HLSFactory has a novel design space expansion and sampling approach, allowing the generation of many design points from a single HLS design, improving overall design space coverage.
+Further, HLSFactory has comprehensive data metrics from synthesis to implementation, e.g., HLS synthesis reported resource and latency, and post-implementation resource, timing, power, etc.
+
+HLSFactory features push-button ease-of-use to run the entire end-to-end dataset generation workflow, allowing anyone to replicate our generated results, and to easily contribute to the framework and the dataset.
+Specifically, our framework makes it extremely easy for researchers in the FPGA community to contribute data for various FPGA devices.
+
+Beyond simply being used for ML training, as demonstrated with a post-implementation QoR prediction ML model (case study in §), HLSFactory is useful for any task where a large, diverse set of HLS runs is needed, like HLS tool version regression testing (case study in §).
+
+HLSFactory maximizes parallelism for fast dataset generation of large numbers of designs. HLSFactory is open-source and available on GitHub, including both the end-to-end framework and a large set of sample designs.
+
+In Sec., we first provide background on the prior works in existing HLS benchmarks and datasets. Sec.introduces our HLSFactory framework detailing the three stages. Sec.dives into the implementation of HLSFactory, including how it is configured and extended, and our fine-grained parallelism technique to speed up dataset generation. We then perform several case studies in Sec.that demonstrate the multi-purpose of the proposed framework.
+
+SECTION: Related Work
+HLS community has multiple standard benchmarks for assessing HLS tools including PolyBench, CHStone, and MachSuite,
+which in total provide around 67 benchmark designs and are far from sufficient for ML training.
+Rosetta, Dai, MLSBench, DB4HLS, HLSDataset, and Spectorare all recently proposed HLS datasets, where the former four use AMD/Xilinx tools and the last uses Intel tools.
+MLSBench provides a sampling from different combinations of directives (pragmas) on top of CHStone and MachSuite. DB4HLS provides exhaustive design exploration on 39 designs from MachSuite with a domain-specific language (DSL) for DSE and parallelized synthesis runs.
+HLSDataset aims to cover all four commonly used benchmarks (PolyBench, CHStone, MachSuite, Rosetta) with a DSL for specifying the design space to sample from. They also illustrate two ML-based case studies for post-implementation resource and power prediction.
+HLSynuses control data flow graphs (CDFGs) of compiled HLS kernels for QoR prediction using graph neural network approaches; their designs are sampled from PolyBench and MachSuite. The features of selected prior works and HLSFactory are shown in Table.
+
+While existing HLS datasets serve as a solid foundation for empowering ML in HLS, they are inherently limited. First, each dataset covers only a subset of commonly used HLS benchmarks, employing ad-hoc data organization, synthesis tools, configurations, and reported metrics, lacking standardization. This fragmentation makes it exceedingly difficult for ML practitioners to effectively utilize all available datasets for training without significant efforts in data reorganization and tool re-execution. Consequently, the quality of ML models is compromised, impeding the advancement of ML in HLS. Second, the lack of standardized data organization and metric reporting poses challenges to dataset extensibility and long-term sustainability, hindering broader user contributions to HLS datasets.
+
+Therefore, rather than introducing yet another HLS dataset, the ML for HLS community urgently requires a standard, extensible, and user-friendly. Such a framework would streamline the collection, generation, elaboration, synthesis, and organization of HLS designs and data from diverse sources and community users. This would facilitate the long-term maintenance and expansion of HLS datasets. The pressing need for such a solution is the driving force behind our proposed HLSFactory.
+
+SECTION: HLSFactory Framework
+.98
+
+SECTION: HLSFactory Overview
+As depicted in Fig., HLSFactory is composed of threein its end-to-end synthesis and data extraction flow; before each stage, there is anwhere users can submit designs and data.
+
+Stage ➊ is, aiming at expanding a single HLS design into multiple designs by enumerating different combinations of optimization directives (pragmas), which can significantly increase the number of data points for ML applications.
+In this stage, users can submit one or more HLS designs with possible design space configurations and HLSFactory will extrapolate and expand the complete design space via a frontend.
+Note that the presented design spacestage is explicitly different than traditional design space(commonly abbreviated as DSE). Design space expansion is not optimization guided (as detailed in §), so suboptimal designs are included, broadening design space coverage needed to building robust, accurate ML models.
+This frontend features multi-vendor support and allows for random sampling of generated designs to reduce the number of designs to be synthesized by HLS and implementation tools (e.g., Vivado), if needed for large design spaces, to shorten the execution time.
+
+We will showcase this usage in Section.
+
+Stage ➋ isstage, where vendor-specific HLS and implementation tools are invoked to synthesize HLS designs into RTL code and then placed and routed.
+In this stage, users can submit their HLS designs to be directly synthesized without extrapolating. We will showcase this usage in Section.
+
+Stage ➌ is, where statistics and artifacts are collected from the implemented designs and compiled into a tool-agnostic format for use by downstream tasks such as ML training and benchmarking.
+In this stage, users can submit their synthesized post-implementation results or datasets to be merged. We will showcase this usage in Section.
+
+SECTION: Stage 1: Design Space Expansion and Sampling
+This stage aims at expanding a single HLS design into multiple by enumerating combinations of optimization directives (either inline or in a separate file), such as loop unroll factors, array partitioning schemes, and whether to pipeline loops.
+Such expansion is critical for ML usage because of two reasons. First, the original HLS designs and benchmarks are far from sufficient for ML training, and obtaining additional HLS designs is challenging.
+Second, a key application of ML for HLS is to help designers choose the best optimization directives for their HLS designs by predicting post-HLS-synthesis and post-implementation metrics from HLS source code and directives (e.g.,). Therefore, an ML-ready HLS dataset must provide wide coverage of how different choices of optimization directives can impact a design.
+Note that the design space expansion is expected to be across.
+
+On the other hand, the expanded design space can be huge, and synthesizing and implementing each design may be prohibitively time-consuming. Therefore, design space sampling is needed.
+
+We define the concept of apass, whichan HLSto a certain number of.
+An HLS abstract design is not directly synthesizable but contains parameterized directives that require preprocessing.
+An HLS concrete design is a copy of the abstract HLS design and is augmented with one possible combination of optimization directives from the design space.
+
+For design space expansion, all possible combinations of optimization directives for a certain HLS design must be explicitly specified.
+We propose a frontend using a domain-specific language (DSL), named OptDSL, to specify the design space using a DSE configuration file.
+Fig.shows an example of the OptDSL syntax, which specifies the choices for how to pipeline or unroll two loopsand.
+
+OptDSL is vendor-agnostic but based on a modified version of a Vitis HLS Tcl script, minimizing the learning curve for designers already accustomed to writing scripts for Vitis HLS.
+The main feature of OptDSL is the bracket notation that parameterizes an optimization directive with multiple choices.
+The overall design space is the Cartesian product of the choices for each parameterized directive.
+
+While abstract designs can be vendor-agnostic, concrete designs are vendor-specific. I.e., different vendor tools have different HLS syntax and directive formats;
+therefore, during the lowering process, the frontend needs vendor-specific logic to target different tool flows, as depicted in Fig.stage 1.
+HLSFactory currently provides support for AMD/Xilinx and Intel flows, while other vendors can be easily supported.
+
+The OptDSL file is provided within the abstract design as a file named. To lower the abstract design for AMD/Xilinx tools, we generate, a version ofwith bracketed parameters replaced with different concrete values for each design point.
+Once these bracketed parameters are substituted, the OptDSL script becomes a valid Tcl script that can be used directly with Vitis HLS.
+
+To support other vendors, the frontend can parse the OptDSL file and identify the specific optimization directives used within it together with their parametrizations.
+If the provided OptDSL is not sufficient to describe a desired DSE, HLSFactory provides the necessary infrastructure to allow users to specify their own entirely custom frontend as Python code, as long as it conforms to the specified API interface (to be discussed in Sec.). For instance, a new frontend pass can easily be introduced to parameterize constants in the HLS source code itself: simply copy the existing OptDSL frontend and modify the templating logic and syntax to work with files other than.
+
+The design space created by the parameterized optimization directives may be extremely large for even a single design, growing exponentially with the addition of each directive. Therefore, it is almost impossible to enumerate every possible design point in the specified design space and execute synthesis and implementation.
+
+HLSFactory natively supports random sampling of design points from the Cartesian product of all combinations of optimization directives. Users can specify the number of sampled design points, trading off design space coverage for dataset build time and storage.
+
+, HLSFactory’s enumeration and random sampling approaches are not guided or optimization-driven. The focus is solely on collecting a wide range of designs, including suboptimal designs, which are important for building ML datasets and training ML models that can interpolate to as many unseen designs during evaluation and deployment, not just optimal designs.
+
+In the future, HLSFactory can be extended to support user-customizable heuristics for selecting design points, utilizing expert knowledge to determine which combinations of optimizations are more useful to sample from and which combinations may result in invalid or redundant designs.
+For example, the sampling stage can be combined with active learning to determine meaningful design points to be synthesized.
+
+SECTION: Stage 2: Design Synthesis
+The second stage of HLSFactory synthesizes and implements each concrete HLS design, a process we collectively refer to as the design synthesis. This stage also has an entry point for user input—vendor-specific concrete designs can be provided directly at this point without going through design space expansion. This is useful for easy integration of third-party HLS designs where parametrization of the design space may be difficult or unnecessary.
+
+Design synthesis is broken down into two steps: (1), where an HLS design is synthesized to RTL code, and (2), where the resulting RTL code is implemented, resulting in a fully placed-and-routed design. For AMD/Xilinx designs, Vitis HLS is used forand Vivado for. However, any vendor tool can easily be integrated into the HLSFactory framework, for example, Yosysor Intel HLS (to be demonstrated in Sec.), by providing Python code for the desiredsubclasses.
+
+SECTION: Stage 3: Data Extraction and Aggregation
+Once all the frontends and tool flows have been executed on a pool of designs, relevant design data must be extracted and aggregated into structured formats.
+HLSFactory providesclasses to package HLS synthesis data (estimated latency, resource usage), post-implementation data (timing, resource, and power data), tool execution metadata (version, runtime), and build artifacts (LLVM IR, IP blocks) into shareable datasets.
+
+Furthermore, as in stage 2, users may want to provide input directly at this stage, e.g., when integrating pre-generated data from prior works, where the build process is not reproducible and thus an earlier entry point cannot be used. Therefore, HLSFactory provides an entry point to the data aggregation stage. This entry point can accept fully synthesized and implemented designs, from which HLSFactory’s built-in data aggregators can extract the relevant data, or pre-generated metrics in whatever form is available, which can be used with a customsubclass to adapt such metrics into HLSFactory’s standard output format.
+
+SECTION: Implementation and Usage
+SECTION: Vendor Agnostic User API
+HLSFactory is implemented as a Python library and provides a simple user API that allows the framework configuration to be expressed easily as a short Python script (while still allowing for full Python programming if complex configuration is desired).
+
+An example is shown in Fig.. The source HLS designs are located and copied to the desired work directory, and theis invoked to sample 10 random design points from each design. Theandare then be invoked to synthesize and implement each design point, followed by data aggregation using theto gather data from each implemented design in a standardized format. A full list of the available APIs is available in Table.
+
+The API also includes abstract base classes (s) that users can subclass to implement their own frontends and tool flows for HLSFactory, for instance, to support another vendor’s HLS tools.
+HLSFactory abstracts away the complexities of integrating custom user subclasses into the overall dataset generation process, including the use of fine-grained parallelism (to be discussed in Sec.).
+
+SECTION: Directory Structure
+Fig.depicts a simple example of the directory structure accepted as input and produced as output of the HLSFactory workflow. As described throughout Sec., we first sample the design space for each source abstract design and then run tool flows and data aggregation on the sampled concrete designs. The figure presents the directory structure for the inputs to this process: an abstract design specified in terms of HLS kernel code, anfile to be used by the OptDSL frontend (described in Sec.), and auxiliary scripts for the AMD/Xilinx tool flows.
+
+During dataset generation, each abstract design is enumerated into multiple concrete designs, shown in the figure under the newly generated directory. Each concrete design is identified by the concatenation of the name of the original abstract design and a unique hash determined by the combination of optimization directives chosen for that design. This unique combination of optimization directives is generated as the concrete design’sfile.
+
+Tool flows and data aggregation run directly within these concrete design directories. After HLS projects are created, synthesized, and implemented (within thedirectory, as depicted), the data aggregation stage collects information from these projects into standardized JSON-formatted files. These JSON files are stored alongside the HLS project directory within each concrete design, making it clear exactly which combination of optimization directives were used to generate the data.
+
+0.95
+
+SECTION: Parallel Build Backend
+To build datasets with hundreds and thousands of data points, an efficient backend is needed to dispatch and execute multiple frontend and tool flows in parallel. In the case of HLS, the bottleneck of constructing such datasets is the runtime of the vendor tools themselves. The runtime for synthesizing an HLS design can range from minutes to hours. We may also want to run trial FPGA implementation flows, which can take hours.
+
+To address these needs, every frontend and tool flow component is automatically augmented in a fine-grained parallel build backend based on multiprocessing. Since all frontend and tool flows are based on the abstract base class, we can easily provide this facility to the user. We take advantage of Python’s. We also provide the option to pin each task to its own dedicated CPU core.
+This approach appears to be a good default to distribute design build workloads on many-core systems.
+
+We also provide a way for users to pool parallelism across dataset collections rather than a single dataset. Users are able to describe a collection of datasets, each with their own set of designs. Instead of dispatching each dataset’s build workloads in its own parallel pool (i.e., naive parallelism), we aggregate all designs into a single parallel pool (i.e., fine-grained parallelism). This feature is automatic for every frontend and tool flow and transparent to the end user.
+
+SECTION: Evaluations
+We evaluate our work through a series of seven case studies which demonstrate HLSFactory’s multifunctionality and ease of use.
+
+SECTION: Case Study 1: ML Prediction of Post-Implementation QoR
+HLS vendor tools provide resource usage estimates (e.g., #LUTs, #FFs, #DSPs, #BRAMs) and timing information (e.g., II violations, clock speed) for designs based on scheduling and binding results. However, HLS-estimated results often deviate significantly from post-implementation resource usage and may not correlate well with critical timing metrics (e.g., worst negative slack and worst hold slack). Previous works, such as S. Dai et al., address this issue by using ML-based models to predict post-implementation quality-of-results (QoR) metrics based on HLS-reported metrics.
+
+We demonstrate that HLSFactory can replicate the approach used by S. Dai et al.to build ML models for post-implementation QoR predictions targeting Vitis HLS and Vivado. We use HLSFactory built-in Polybench, MachSuite, and CHStone design datasets which providebase designs; using the the OptDSL frontend, design space expansion is performed resulting infinal designs. HLSFactory’s APIs are also used run tool synthesis and implementation as well as bundle the HLS post-implementation data into a tabular dataset. A histogram-based gradient boosting regression model is then trained to predict post-implementation reported resources and timing metrics using HLS-reported resources, latency, clock speed, and arithmetic/logic operation counts as model inputs. We train our model on an 80%/20% train-test split, as well as a 25% subset of the training data to demonstrate the utility of design space expansion in improving ML model performance.
+
+Our results, shown in Fig., indicate that thevalue and mean relative error are better for the larger training set achieved through design space expansion. We highlight that generating more data points using HLSFactory’s design space expansion will result in higher prediction accuracy, even when randomly sampling from the entire design space and including suboptimal, i.e. “bad”, designs (in terms of QoR metrics). For most resource prediction targets, our ML model also has a lower relative error than the HLS-reported values, showing improvement over the HLS tool itself. These results highlight the utility of HLSFactory applied to ML for EDA and the importance of design space expansion, even with a smaller sample size, for robust ML dataset construction and model training.
+
+SECTION: Case Study 2: Design Space Coverage
+We evaluate how the use of design space expansion in HLSFactory quantitatively and qualitatively improves the overall design space of generated datasets in terms of latency (HLS-reported) and resource usage (post-implementation). In the context of ML, improved design space coverage for these metrics is important for robust model training on downstream tasks, such as ML-based QoR prediction. Thus we perform a case study comparing metrics of the base designs in Polybench, MachSuite, and CHStone () with the designs sampled from them (); this is the same dataset used in §.
+
+We start with a quantitative evaluation. Fig.illustrates the cumulative distributions of these metrics as a stacked histogram representing only base designs (), half the sampled designs (), and all the sampled designs (). We highlight that the sampled designs cover a wider range of average-case latency, LUT usage, and FF usage, with denser coverage asincreases. In the case of DSP and BRAM usage, most base designs use none of these resources while sampled designs do.
+
+We then illustrate the qualitative coverage of the design space in Fig.. This space is the 2-D embedding space of HLS-reported and post-implementation metrics generated using a PacMAPdimensional reduction.
+Each of the base designs is depicted as large emphasized points within this embedding space; sampled designs from the same base design (top panel) or the same benchmark (bottom panel) have matching colors. The convex hulls around same-colored points show the portion of the embedding space covered by design space expansion from each base design or benchmark. This clearly shows that sampling from the expanded design space results in non-overlapping coverage that otherwise would not appear in the final dataset.
+
+SECTION: Case Study 3: Speedup of Fine-Grained Design Parallelism
+We evaluate our fine-grained parallelism strategy described in Sec.using a case study synthesizing designs sampled from Polybench, MachSuite, and CHStone using Vitis HLS across 32 CPU cores.
+
+Results are shown in Fig., showing that fine-grained parallelism achieves more than 20% speed up compared with the naive parallelism approach.
+Such fine-grained parallelism is especially beneficial given the user-specified timeout threshold (annotated as gray bars).
+
+SECTION: Case Study 4: Targeting Different Vendors
+To demonstrate the extensibility of the first stage of HLSFactory, we show how to add support for Intel’s i++ HLS flow.
+
+As described in Sec., HLSFactory includes an OptDSL parser that recognizes Vitis HLS optimization directives in, such as theandcommands. We can therefore build our Intel-lowering frontend on top of this functionality.
+
+Because i++ does not support specifying optimization directives in a separate file, our frontend instead transforms the HLS source code directly to add i++-compatible versions of each directive parsed from thefile.
+
+While our frontend can often generate exact equivalents for the specified directives, in some cases, i++ has no exact equivalent for a particular directive used by Vitis HLS, such asdirectives. In these cases, we substitute similar directives—in this case, a combination of Intel directivesandthat achieve a similar memory partitioning result.
+
+Since HLSFactory is agnostic to the specific directives being used and does not correlate specific AMD/Xilinx concrete designs with specific Intel concrete designs, directives need not match one-to-one. There is no impact on correctness; substituting similar directives still improves the diversity of the dataset.
+
+In total, our end-to-end Intel flow extends the HLSFactory user APIs in Tablewith three Intel equivalents:as described above,to invoke i++ for HLS, andto invoke Quartus for implementation. We run this flow on designs sampled from PolyBench and MachSuite and plot the resulting metrics in Fig.. Intel’s HLS tool does not report overall latency estimates, but it optimizes each kernel’s throughput by maximizing clock speed, which we use as a proxy for performance.
+
+SECTION: Case Study 5: Adding Auxiliary Design Collections
+Third-party researchers may have existing, synthesizable, vendor-specific HLS designs to integrate into HLSFactory, but they may not want or need to create an OptDSL specification for them.
+For instance, the authors of LightningSimcollect 33 synthesizable open-source designs for AMD/Xilinx Vitis HLS to evaluate their simulation tool, including designs from AMD/Xilinx sample code repositories, algorithm implementations from Kastner’s, and graph neural network implementations from FlowGNN. These designs are all provided in a standard format, each having a Tcl scriptto set up a Vitis HLS project for synthesis.
+
+Using the entry point at the design synthesis stage, one graduate student was able to integrate all of these designs into HLSFactory in less than one hour. To match the input directory structure in Fig., we only needed to copytowithappended (HLSFactory’sexpects it to setup the projectrun synthesis) and add a four-line scriptto invoke implementation from Vitis HLS.
+Since we used the entry point after design space expansion, these were concrete designs, not abstract designs, so nowas required.
+
+Many other workswere also easily integrated with HLSFactory in a similar fashion; the code is available online.
+
+SECTION: Case Study 6: Integrating Released Data from Other Works
+We may still want to incorporate previously published data have published to build a more comprehensive HLS dataset. HLSFactory’s data aggregation step provides an entry point to incorporate external data sources into our dataset with ease.
+
+We illustrate how HLSFactory can integrate pre-generated data from prior works—in this case, HLSyn. HLSyn provides both the source code (with places to template optimization directives) of their selected kernels, as well as associated metrics for HLS-reported resource usage and latency for sampled designs.
+We write asubclass to integrate this data into HLSFactory.
+
+The results are illustrated in Fig., showing the distributions of reported HLS metrics sourced from the listed valid designs of HLSyn and a small sampled subset of designs from our base PolyBench, CHStone, and Machsuite datasets.
+
+The HLSyn flow is built on top of AutoDSEand the Merlin compiler, both of which are open-source software tools aimed at optimized design space exploration (DSE) and source-to-source translation. These tools suggest future work to integrate AutoDSE and the Merlin compiler as custom flows in HLSFactory, allowing designs to be built from the design space specifications defined in AutoDSE and synthesized with the Merlin compiler.
+
+SECTION: Case Study 7: Regression Benchmarking HLS Synthesis Tools
+New versions of HLS vendor tools are periodically released and improve both the tool performance (e.g., faster synthesis) and the QoR of synthesized designs (e.g., less resource usage). However, quantifying such improvements across different tool versions is difficult without a way to benchmark a wide range of designs, similar to the regression testing used in traditional software development.
+
+We demonstrate that HLSFactory streamlines regression testing on HLS tools. We compare Vitis HLS versions 2021.1 and 2023.1 using designs sampled from Polybench, Machsuite, and CHStone (with 16 samples per base design). We collect paired samples by synthesizing the same design with both tool versions.
+
+This experiment was set up in a fully self-contained Python script and HLSFactory enabled this initial study to be completed by one graduate student in three hours.
+
+The results are shown in Fig.. We show distributions of the tool runtime, HLS-estimated latency, LUT usage, and FF usage across tool versions. We also report the-value for a paired two-tailed Wilcoxon signed-rank testand indicate cases with a-value less thanwith an asterisk, indicating a statistically significant difference. Note that for certain metrics, the mean and median shift in opposite directions between tool versions.
+
+SECTION: Conclusion
+HLSFactory brings a much-needed principled approach to generating datasets of HLS designs. Our case studies show a small sample of what can be done when a flexible, reproducible way to generate data from HLS designs is available.
+We demonstrate that there is substantial untapped potential for future research into how ML can be applied to HLS.
+
+We also consider directions for future extensions of HLSFactory. Our framework currently has no support for collecting post-simulation metrics like vector-based power analysis or simulated latency. Introducing simulation to HLSFactory, particularly for designs where only a high-level C testbench is available rather than an RTL testbench, is a valuable direction for future work.
+
+We hope that, through open-source, this work invites the research community to collaborate and contribute more designs and tool flows and accelerate ML research for EDA applications.
+
+SECTION: Acknowledgements
+This research was supported in part by National Science Foundation (NSF) Grant #2326894, NVIDIA Applied Research Accelerator Program Grant, and the Texas Advanced Computing Center (TACC). Any opinions, findings, conclusions, or recommendations are those of the authors and not of the funding agencies. We also thank Georgia Tech Research Institute for direct funding of selected authors.
+
+SECTION: References
+SECTION: Artifact Appendix
+SECTION: Abstract
+The HLSFactory  framework includes multiple software and dataset components, which are available as public open-source releases and artifacts. We briefly outline these components and how to access them. We plan to expand many aspects of our work in the future (e.g., more built-in HLS benchmarks and designs, additional tool flow integrations, enhanced design frontends) and openly encourage contributions and use of HLSFactory.
+
+For users strictly interested in running the artifact evaluation to reproduce data and results for various reported case studies, details can be found in §and at the following repository:.
+
+The HLSFactory  Python library,, provides APIs and logic for various features including loading HLS designs (locally on disk or from built-in common HLS benchmarks and designs), expanding designs through design space sampling, running parallel tool flows for HLS vendor tools, and extracting+serializing+archiving structured HLS and FPGA tool data (including reports and build artifacts).
+
+Source code repository:
+
+Archived at()
+
+Documentation:
+
+Archived as part of the source code repository
+
+Install via:
+
+Install via:
+
+Install via:
+
+We highly encourage users to review the documentation for details on the framework, walkthroughs of various demos and case studies with accompanying code and Jupyter Notebooks, and information on how to extend and add new datasets and built-in designs.
+
+One core contribution of this work is the collection of source code for common HLS benchmarks and other open-source and academic HLS designs. We have created design space descriptions and entry point scripts for each design, necessary for the various tool flows supported by our work, and tested our flow on each design.
+
+Our initial release includes designs from the following sources: Polybench, MachSuite, Rosetta, CHStone, the ”Parallel Programming for FPGAs” textbook, AMD/Xilinx sample HLS designs, and various HLS accelerators from Sharc Lab. These designs can be found in the HLSFactory  Python library itself under the repository path.
+
+A notable feature is that these designs are built into the packaged Python library, available viaand. Users who installcan load designs locally without additional downloads. Additionally, users can still load custom designs locally at runtime.
+
+While running our case studies, we ran various end-to-end dataset generations flows. The pre-generated datasets include design sources (with sampled optimization directives if design space sampling is used), HLS synthesized designs (including HLS reports, generated hardware IP, and HLS scheduling and binding data), and, in some runs, FPGA post-implementation reports. These datasets can save users and researchers significant time by providing a dataset fully synthesized and implemented HLS designs with important intermediate artifacts.
+
+We include the following pre-generated datasets:,,,,.
+
+We archive and host these datasets on Zenodo:()
+
+We provide Python scripts to reproduce the results of various case studies, including figures and numerical results. This includes scripts to generate design datasets from scratch and perform the case study analyses. Generating design data requires HLS and FPGA vendor tools and can take over 24 hours for the largest datasets used in this work. Therefore, users can also use the pre-generated datasets from §and only run the required analysis scripts.
+
+The code for running these scripts as an artifact evaluator, along with detailed instructions, is available at the GitHub repository:.
+
+This repository is archived at().
+
+SECTION: Artifact Check-List (meta-information)
+SECTION: Description
+The main artifact evaluation code for reproducing results presented in the paper is hosted at this GitHub repository:.
+
+No specialized hardware is needed. We recommend a desktop workstation or server with as many cores as possible (for faster parallel dataset generation) and a common Linux-based distrobution (such as Ubuntu).
+
+HLSFactory  and the artifact evaluation scripts are implemented in Python and require version 3.10 or higher. Thelibrary depends on,,,, and. The artifact evaluation scripts additionally require,,,, and.
+
+To run Xilinx-based dataset generation flows, AMD/Xilinx’s Vitis HLS and Vivado are required, with most design runs using version. The regression testing case study requires version. For Intel-based flows, Intel’s HLS Compiler and Quartus Prime are needed, with versionrequired for the Intel design run.
+
+All the required HLS designs (source code, tool scripts, design space descriptions) are built into thepackage itself. For more details, refer to §.
+
+SECTION: Installation
+Installation of thepackage (as described in §) and Python requirements can be done usingorbased tools.
+
+SECTION: Experiment Workflow
+For details on running and generating case study results, please refer to the artifact evaluation repository (§). The process involves obtaining an HLS dataset either by running a dataset generation script or by sourcing a pre-generated dataset from Zenodo. After obtaining the dataset, the user runs a specific case study analysis or visualization script to generate the relevant figures and results. We also specify which case study analyses require which datasets to be run or sourced.
+
+SECTION: Evaluation and Expected Results
+The analysis scripts should produce figures and numerical results similar to those in the paper. The entire workflow is designed to be deterministic, assuming the vendor tools are deterministic. While we have identified most sources of randomness that we allow users to control with a random seed (e.g., random sampling in design space expansion), some elements remain beyond our control, such as’s fitting, which is not fully deterministic even withset.
+
+SECTION: Experiment Customization
+Users and evaluators can modify hardcoded parameters in the dataset generation runs or analysis scripts (e.g., random samples for design space expansion, dimensionality reduction parameters). As “proof-of-concept” demos, our case studies allow for modification and extension ofto support new data and tools, both locally at runtime and as contributions to the published Python package.
+
+SECTION: Notes
+For more detailed and complete instructions, please refer to thein the artifact evaluation code repository.
+
+SECTION: Methodology
+Submission, reviewing and badging methodology:,,.

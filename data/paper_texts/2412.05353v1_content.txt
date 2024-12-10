@@ -1,0 +1,283 @@
+SECTION: Incremental Sentence Processing Mechanisms in Autoregressive Transformer Language Models
+Autoregressive transformer language models (LMs) possess strong syntactic abilities, often successfully handling phenomena from agreement to NPI licensing. However, the features they use to incrementally process language inputs are not well understood. In this paper, we fill this gap by studying the mechanisms underlying garden path sentence processing in LMs. We ask: (1) Do LMs use syntactic features or shallow heuristics to perform incremental sentence processing? (2) Do LMs represent only one potential interpretation, or multiple? and (3) Do LMs reanalyze or repair their initial incorrect representations? To address these questions, we use sparse autoencoders to identify interpretable features that determine which continuation—and thus which reading—of a garden path sentence the LM prefers. We find that while many important features relate to syntactic structure, some reflect syntactically irrelevant heuristics. Moreover, while most active features correspond to one reading of the sentence, some features correspond to the other, suggesting that LMs assign weight to both possibilities simultaneously. Finally, LMs do not re-use features from garden path sentence processing to answer follow-up questions.
+
+max-action=1000, max-input=1000, max-output=1000#1#4
+
+SECTION: Introduction
+Syntactic ambiguities abound in natural language. For example, given the fragment “After the woman drank the water…”,could be either the object ofdrank(in which case one could end the sentence here), or the subject of the main clause (in which case “was all gone” would be a valid continuation). Despite LMs’ impressive performance on syntactic tasks, the mechanisms that underlie their processing of syntactic structure—and temporary ambiguities therein—are not well understood.
+Past work has found LM attention heads dedicated to processing certain syntactic relationsand used LMs’ representational structure to predict dependency relations;
+nonetheless, these results only show that structural information can be extracted from LM representations—and not that these representations are causally implicated in LM processing. It thus remains unclear whether LMs rely on structure-related features, represent the multiple possible completions to an incomplete ambiguous utterance, or revise representations in light of new disambiguating evidence.
+
+In the psycholinguistics literature, similar questions have been studied in humans using, which initially appear to have one structure, but which are later revealed to have another. When humans encounter the unexpected resolution of these sentences, their reading is delayed. Different theories of human sentence processing predict different delays; by recording reading times on carefully designed test materials, one can thus empirically test such theories. While prior work on LMs has used garden path sentences as a testbed for the psychometric fit of LM surprisals to predict human reading times, we propose to instead use them to understand how LMs incrementally process sentences.
+
+In this study, we present a mechanistic investigation of how LMs incrementally process sentences and how they handle temporary ambiguities using garden path (GP) sentences as a case study. Using sparse autoencoders and causal interpretability methods, we uncover the causally relevant features (and mechanisms composed thereof) that explain why LMs assign higher probabilities to particular completions. With these methods, we investigate 3 research questions (RQs), and find the following:
+
+:Do LMs use syntactic features or spurious heuristics to incrementally process sentences?Many of the most important features LMs use are interpretable and syntax-related; however, some uninterpretable or spurious features exist.
+
+:Do LMs hold on to multiple interpretations of the sentence simultaneously, or commit to the most likely one?LMs’ representations encode multiple interpretations.
+
+:Given disambiguating evidence, do LMs repair or reanalyze their initial structural predictions?LMs do not repair or rely on their prior structural predictions; however, they also do not generate new structural features via reanalysis.
+
+SECTION: Background
+SECTION: Incremental Sentence Processing
+Many linguistic theories posit that humans parse their linguistic input, mapping from sentences to a representation with information about its structure. We do soincrementally, building up representations prior to the end of the sentence.
+
+How humans perform incremental parsing is hotly debated. Of particular interest is how we handle the fact that partial sentences often have multiple valid parses. Do we parse sentences serially, considering one parse at a time, or in parallel, considering many at once? And upon encountering evidence that rules out specific parses, do we repair our representations, or reanalyze the input entirely?
+
+Psycholinguists often test theories of incremental parsing withgarden path sentences, which suggest one parse, but ultimately have another. Consider the incomplete sentence “The guitarist knew the song…”. A reader could either interpretsongas an object of the verbknew, or the subject of a sentential clause (i.e., “The guitarist knew (that) the song…”). A period would be a valid completion in the former case but not the latter, where a verb phrase like “…was too long” would be more fitting. Most readers find the first reading more likely, so observing a completion consistent with the second typically results in significant spikes in reading times.
+
+SECTION: Sentence Processing in LMs
+How LMs process and represent sentences is similarly well-studied. Work on structural probes has attempted to reconstruct parses from LM representations using learned similarity functions or probes. Others have found attention heads whose attention corresponds to syntactic relations, though no general parsing head exists. Researchers have also trained probes to extract features like coreference relations or part of speech from LM representations.
+
+However, these analyses can yield only limited insights into LMs’ incremental processing mechanisms.
+Most study LMs with bidirectional attention, which do not performincrementalsentence processing. Moreover, few causally verify their mechanisms’ relevance to model processing, even though probes often capture functionally irrelevant information. While causal techniques have been used in other settings, they have rarely been applied to questions of ambiguity in syntactic structure and incremental processing;do so, but using a probe which assumes a specific mechanism unlikely to be encoded by the LM itself.
+
+With this in mind, we use garden path sentences as a case study in LMs’ incremental sentence processing mechanisms. Prior work using LM behavior on such sentences to model human reading timesfinds that LMs do exhibit garden-path effects, though they underpredict human effects. Less work has used garden path sentences to observehowLMs arrive at these probabilities and surprisals.attempt this, but study masked LMs without causal methods. We ask: how can we find and causally verify the mechanisms that LMs use to incrementally process garden path sentences?
+
+SECTION: Locating Interpretable Mechanisms with Sparse Feature Circuits
+To understand how LMs incrementally process sentences, we must understand the features that they use to represent their input. Earlier work did so by studying individual LM neuronsand searching for the inputs that cause them to activate the most strongly. A neuron that activates on the subjects of sentences might thus be inferred to implement a subjecthood feature.
+
+However, feature representations in neural networks are often distributed. Neurons are thus oftenpolysemantic, representing multiple unrelated features at once, which makes them challenging to interpret; for example,find a neuron that activates on sentences about song meanings, objects in containers, and historical dates.
+
+We thus opt to interpret the features of sparse autoencoders (SAEs;), autoencoders trained on the output activations of LM submodules. Letbe the submodule’s output activation; the SAE computes
+
+whereis the feature vector, andis the reconstructed activations. Henceforth, we refer to a single dimension ofas afeature. SAEs are trained to reconstructwith sparse regularization on; the regularizer and bias terms lead a feature’s activation to be non-only when it causes parts ofto differ from their mean value. This makes SAE features moremonosemanticthan LM neurons, and therefore more interpretable.
+
+In order to assemble SAE features into entire model mechanisms, we usecircuitanalysis. A circuit is the minimal subset of the language model’s computation graph that recovers the whole LM’s performance on a given task. In this case, each node in the graph is an SAE feature, and each edge represents a cause-effect relationship. The first node in the graph is the embeddings, the final node is the model’s output logits, and all intermediate nodes are features from SAEs trained on neurons from the model’s residual stream or attention head / MLP outputs.
+
+Circuits can be conceptualized as a causal abstraction of the language model. If a node is in the graph, it is causally relevant to the LM’s task abilities. Moreover, if a node has an edge to another, this implies that the activation of the second crucially depends on the activation of the first.
+
+We follow’s () approach to finding suchsparse feature circuits. We say a featureis causally relevant if, given a metricthat measures the language model’s behavior, setting’s value to 0 causes a large change in;the magnitude of this change is’s(IE;) on. We aim to find features with high IE.
+
+Computing each feature’s IE is expensive, so we compute a linear approximation. Attribution patching (AtP;) is one such approximation, estimating the indirect effectof a feature with activationon inputas
+
+is computed by backpropagation from. Conceptually, the slope of the metricwith respect to the feature’s activationis multiplied by the change in the feature’s activation upon being zeroed (, which simplifies to). In practice, AtP can often be inaccurate, so we use the improvement of: attribution patching with integrated gradients (AtP-IG). Inspired by integrated gradients for input attribution, AtP-IG computes an averageacross several intermediate activations ofbetweenand 0, leading to better estimates of the IE. See App.for details on AtP-IG.
+
+After estimating theof each feature, we select all features and edges whoseis over a chosen threshold; this yields a circuit. By verifying that’s value remains the same when the features outside our circuit are ablated, we verify that the mechanism captured by the circuit is faithful to that of the full model.
+
+SECTION: Models
+To analyze incremental parsing in LMs, we must study autoregressive LMs.We analyze Pythia-70m-deduped, and Gemma-2-2b, as these have publicly available SAEs. We focus primarily on Pythia-70m in the main text due to its smaller size; results for Gemma-2-2b are in App..
+
+SECTION: Do LMs use syntactic features to process garden path sentences?
+In this study, we use garden path sentences to investigate incremental processing in LMs. Garden path sentences are useful objects of study because they contain temporary structural ambiguities that are eventually resolved. The sentences we study must be ambiguous such that we may determine if one or many possible readings are represented (RQ2). Moreover, this ambiguity must eventually be resolved such that we may study how incorrect representations might be handled (RQ3). Thus, garden path sentences are ideal stimuli with which to answer our RQs; indeed, they are often used for this purpose in psycholinguistics (§).
+
+SECTION: Behavioral Analysis
+Before finding the features that underlie LM garden path sentence processing, we first verify that the LMs we study exhibit garden path effects.
+
+We probe LMs’ readings of garden path sentences using an adaptation of’s () dataset of 72 garden path sentences. This contains 3 structures (NP/Z, NP/S, and MV/RR) with 24 sentences each. Each structure name refers to the garden path/actual interpretations of the sentence’s ambiguous material, respectively. For example, inNP/Z, “signed” could take either an NP complement (“the bill”) or a zero complement. InNP/S, “the song” could be the NP complement of “knew” or the start of a sentential complement. Finally, inMV/RR, “brought” could be the main verb or part of a reduced relative clause.
+
+For each ambiguous sentence, we craft two unambiguous versions, which permit only one reading. For example, inNP/Z, we replace the ambitransitive “signed”, with the strictly transitive “rejected” (forcing the garden-path reading) or the intransitive “arrived” (forcing the opposite).
+
+For each sentence, we record the probability given by the LM to next tokens consistent with the garden path or non-garden-path reading; we denote theseGPandnon-GP, respectively. For NP/Z sentences, we defineGPas,; for NP/S and MV/RR, we defineGPas.. For all sentence structures, we definenon-GPas
+the probability of “ was”. This roughly measures the LM’s reading of the sentence: continuing “After the politician signed the bill” with a comma implies that “signed” took “the bill” as a complement, as in the GP reading. Continuing it with “ was” implies that “signed” took no complement, as in the non-GP reading.
+
+Our results () show that Pythia-70m correctly up- and downweights garden path tokens in contexts that do and do not license them. Given GP inputs, the model gives more probability to GP tokens, and less to non-GP tokens, compared to when it receives ambiguous inputs; this trend holds across garden path structures. For non-GP inputs, this trend is reversed.
+
+For ambiguous inputs, the model prefers garden-path continuations in the NP/Z and MV/RR cases, but non-garden-path in the NP/S case. This agrees with prior evidence from both humans and LMs showing lower reading times and surprisals for non-garden-path continuations to inputs with NP/S ambiguities, compared to NP/Z.
+
+In the NP/Z and MV/RR cases, non-GP inputs only manage to reduce the model’s bias for GP continuations to near 0, not eliminate it. We hypothesize that this has two causes. First, although NP/Z sentences are common objects of study in the psycholinguistics literature, their non-GP readings are somewhat unnatural; this also applies to our non-GP versions. In normal text, these sentences would include a comma after the verb if the non-GP reading were intended (and modelsdoprefer the non-GP reading given a comma).
+
+Second, our operationalization ofGPandnon-GPhas limitations. For non-GP MV/RR sentences,andare both low; the model gives the most probability toto, which does not definitively distinguish between the two readings. For non-GP NP/Z sentences,andare higher, but measuringalone may miss much of the probability assigned to non-GP continuations more generally. Ideally, we would measure the probability of all full GP and non-GP-implying continuations (which might span multiple tokens), rather than measuring the probability two single next tokens. Unfortunately, this is computationally infeasible, but see App.for more discussion of this issue and §for another way to determine an LM’s reading of ambiguous input, yielding similar results. Because MV/RR sentences have lowGPandnon-GP, we exclude them from all following analyses.
+
+SECTION: Feature Circuit Analysis
+Now, we identify and analyze the feature circuits responsible for Pythia-70m’s garden path effects.
+
+We investigate circuits composed of causally relevant features from the Pythia-70m SAEs of; these SAEs have 32,768 features each. We use AtP-IG (§) to find the features that most influence the difference in probabilities assigned to garden-path and non-garden-path continuations of ambiguous sentences,-. We keep features with> 0.1, and edges with> 0.001. We then manually annotate each feature in the circuit, using Neuronpediato visualize feature activations on text from The Pileon which each feature activates strongest.
+
+Running AtP-IG yielded circuits containing 155 (NP/S) and 65 (NP/Z) sparse features; we manually annotate all of these.To measure how well these features capture the behavior of the full model, we measure faithfulness, following the definition in. These circuits have faithfulness 0.20 (NP/S) and 3.48 (NP/Z).Significant deviations from 1.0 imply that there are important features we have not captured; thus, while we cannot claim to have annotated the full mechanism, we can nonetheless still analyze the most highly influential features, which provide sufficient evidence to address our RQs. See App.for the metric definition, implementation details, and a deeper discussion of these faithfulness values.
+
+displays a simplified circuit for NP/Z, where we manually group similar features together. The simplified NP/S circuit and the oversized full circuits are in App..
+We present selected features’ activations on highly-activating sentences in Tableto support our annotations.
+
+Many lower-layer features detect word-level attributes, rather than high-level sentence-specific syntactic information. The vast majority of our circuit’s features are word detectors that activate only on one specific word, located in the model’s embeddings or first two layers. For example, Feature 0/8234 activates only on the wordthe(). Other features are slightly higher-level, activating on nouns or past tense verbs. Notably, while most such features have no obvious syntactic relation with either reading (e.g. the presence of the word “the” should be neutral with respect to which reading it suggests), they have a non-zero impact on the preferred reading.
+
+The features in Pythia-70m’s upper layers often encode sentence-level syntactic information that distinguishes between different readings of garden path sentences. For example, the final layers of the model’s circuit for NP/Z sentences () include features that detect subjects, objects, and ends of subordinate clauses. Reading the final noun as an object and part of the subordinate clause corresponds to the GP reading; reading the final noun as a subject outside of the subordinate clause corresponds to the opposite. The scores assigned to features match their semantics: non-GP feature scores are positive; pro-GP are negative.
+
+shows each feature’s activations. Feature 4/14907, for example, detects ends of subordinate clauses; every position at which it activatesbe a valid end to the subordinate clause containing it, given no information about the following tokens. It precisely distinguishes the two readings of NP/Z sentences: in the garden path reading of “After the politician signed the bill”, the clause might end at, while in the non-GP reading, it ends at.
+
+Feature 3/835 distinguishes the readings of NP/S sentences, activating on subjects of sentential complements. In an NP/S sentence such as “The guitarist knew the song”,can either be the object of(the GP reading) or the subject of a new phrase (non-GP); this feature clearly corresponds to the latter reading. Finally, Feature 4/8505 activates primarily on object nouns and nouns in prepositional phrases. This corresponds not only to the GP reading in NP/Z and NP/S sentences, but also to the accusative case, hinting that the model may have learned a general linguistic concept.
+
+Although many SAE features are interpretable, some activate seemingly at random, or across almost all text. The latter could be interpreted as a prior, which always influences the model’s prediction, but most have no clear interpretation. These features have a non-zero effect on model predictions, though their effect direction is inconsistent. We omit these features from our analysis, but we hope they will be interpretable as SAEs or interpretability methods improve.
+
+SECTION: Causal Analysis
+Though many high-importance features encode syntactic attributes, this is no guarantee that the model relies on them. To confirm this, we causally intervene on the discovered interpretable features, and verify that model output changes as we expect. See App.for a large-scale version of this experiment.
+
+We focus on three groups of model features, which detect: 1) subjects, 2) objects, and 3) either ends of clauses (NP/Z) or sentential-clause verbs (NP/S). For NP/Z sentences, we attempt to induce the dispreferred non-GP reading by setting the subject detectors’ activation to a high value (2.0) at the final noun of each sentence, while clamping object detectors off (to 0). End-of-clause detectors are set to 2.0 at the verb position, and 0 on the final noun. For NP/S sentences, we induce the GP reading: at the final noun, we set the subject and object detectors to 0 and 2.0 respectively; we also turn the sentential-clause-verb detectors off. As a control, we choose 3 groups of random features (equal in number to the original groups) to clamp on or off. In all settings, we intervene during the forward pass, and computeGPandnon-GP.
+
+Our results () suggest that the features we find are causally relevant. Turning the subject and object features on and off respectively, and altering the end-of-clause features, reverses the model’s typical preference for the GP reading in the NP/Z scenario; ablating the same number of randomly chosen features does nothing. The analogous NP/S intervention causes the model to prefer the GP reading, while performing no interventions or random ones yields the opposite.
+
+SECTION: Do LMs consider one or multiple readings of garden path sentences?
+Here, we investigate whether LMs consider multiple readings of garden path sentences simultaneously. We reason that, althoughGPandnon-GPare non-zero in all cases, the model may not explicitly represent both alternatives. We thus say that a model considers just one reading if, given an ambiguous input, it activates only features corresponding to one reading of the input, as opposed to multiple. A model considers multiple if it activates features that correspond to multiple readings of the input—e.g., if both subjectandobject detectors fire on the final noun of an NP/Z or NP/S sentence.
+
+SECTION: Evidence from model feature analysis
+We can test if LMs consider one or multiple readings of garden path sentences by checking if ambiguous inputs cause features corresponding to both readings to activate. We thus run the model on our ambiguous data and record the activations of the interpretable pro-GP and anti-GP features that we identified in layers 3-5 of the model, in §.
+If the model only considers one reading, only features corresponding to one reading should activate; if features corresponding to both activate, we conclude that the model considers multiple. Recall that as features are inactive on almost all inputs, non-zero activations are meaningful.
+
+We find that in both the NP/Z and NP/S cases, pro- and non-GP features have non-zero average activations, ranging from 0.27 to 0.41. Similarly, the percent of features active is above 50% for both categories, and both NP/Z and NP/S sentences. This suggests that models explicitly represent both readings of a garden path sentence.
+
+SECTION: Evidence from structural probes
+We can also directly assess if the model considers both readings using structural probes (§), which map from LM representations to a distribution over parses of the LM’s input. The two readings of NP/Z and NP/S sentences have distinct parses, so parse probes can measure the probability of each.
+
+We base our structural probes on’s () MLP action probes, as these are compatible with autoregressive models and incomplete inputs; most such probes are not. These probes take in the residual-stream representations of two words (from a fixed layer) and use a MLP to map them to one of three possible dependency relations: 1) the first word is a dependent of the second (); 2) vice-versa (); or 3) no relation (). Following, we train probes to predict parser actions using parse-annotated data from the Penn TreeBank. As in, our trained probes achieve high performance; see App..
+
+With these probes, we evaluate our model’s reading of ambiguous garden path sentences.Crucial here is the dependency relation between each sentence’s verb and final noun. The garden path reading of the sentence “After the politician signed the bill” would leaveas a dependent (object) of; in the non-GP case, there is no dependency relation. We record the probability of each relation,
+averaged across all NP/Z and NP/S sentences.
+
+Our results () show that while probes favorfor NP/Z sentences, andfor NP/S, they assign moderate probability to both readings. This trend holds for all layers but the last, where probe performance is poor. This further supports the hypothesis that LMs consider both readings of garden-path sentences, as found in the feature analysis; in App.we run AtP-IG on the probe and find the same features are responsible.
+
+SECTION: Do LMs reanalyze, repair, or neither?
+In humans, the semantics of garden-path readings can linger even after the sentence is complete: given “The boy fed the chicken smiled.”, people often respondyesto “Did the boy feed the chicken?”. “The boy” is the recipient offed, but the garden-path reading suggests that it is the agent.
+
+What happens to LM representations after receiving such disambiguating information? If the LM relies on its original syntactic features, we might observe features at later token positions that adjudicate between different readings, analogous to a-based strategy. The later features could also upweight the correct reading independently of the original representations, analogous to.
+
+We concretely operationalize these two hypotheses as follows. A model engages in repair if, at positions at or after the disambiguating token, it relies on previously-computed reading-specific syntactic features (e.g. subject or object detectors) to compute its output. The model may choose to select or ignore some of these previous features as part of the repair process. In contrast, a model engages in reanalysis if, at positions at or after the disambiguating token, it does not rely on previously-computed reading-specific syntactic features, and instead only relies on reading-agnostic features (e.g. word or part-of-speech detectors) to compute its output. The model might compute new reading-specific features at positions after the disambiguating token.
+
+SECTION: Behavioral Analysis
+We evaluate how models respond to garden path reading comprehension (GPRC) questions; past work suggests fine-tuned masked LMs exhibit lingering garden path effects. Correct answers to GPRC questions indicate a correct (non-garden-path) reading of the sentence. For example, given “The boy fed the chicken smiled.”, we ask “Did the boy smile?” (Yes) or “Did the boy feed the chicken?”(No). We craftYesandNoquestions for each sentence, so models whose answers are random or constant will obtain 50% accuracy.
+
+We first verify whether our models can do question answering (QA) on less tricky binary QA datasets. Good performance here is a prerequisite for the following analyses to be valid. We evaluate on a binary version of multiple choice question answering (MCQA) from, where questions are of the form “Question: Boxes are brown. What color are boxes?A. greenB. brown\nAnswer:”, and the model must answer “ A” or “ B”. We also evaluate on BoolQ, a naturalistic QA dataset consisting of context passages followed by a yes/no question. For all tasks, we use a zero-shot setup: the model is prompted only with the question, context, and answer options. We measure accuracy as the frequency with which the model prefers the correct answer token to the incorrect one.
+
+Our results () indicate that only Gemma-2-2b performs well on all tasks;it also answers GPRC questions with above-chance accuracy, so we focus the rest of our analysis on it.
+
+SECTION: Feature and Causal Analysis
+Ideally, a model answering GPRC questions should rely on features indicative of the input’s parse. To verify this, we can measure the overlap between the features from §and those obtained via AtP-IG on the GPRC questions. We can also ablate the features from §and measure the performance of the model on GPRC questions.
+
+We discover sparse feature circuits for GPRC questions using AtP-IG, as in §. The prompts consist of complete sentences and questions,, and our score threshold is 0.05. We measure the overlap between the circuits from §(denoted) and the GPRC circuits (denoted) as the intersection-over-union (IoU) ofand’s features.
+
+We also check if’s features causally influence the GPRC task. As in §, we annotatefeatures and place them in groups, like subject or object detectors (we causally verify these groups’ relevance in App.). Then, we manipulate these features as in prior experiments, and record model accuracy: we upweight subject detectors and zero ablate object detectors to promote the non-garden-path reading, aiming to increase model accuracy; we do the reverse to decrease it.
+
+There is little feature overlap across circuits: the IoU is 0% for NP/S, and 0.2% for NP/Z. Accordingly, Gemma 2 does not rely extensively on features fromto answer follow-up questions: performance changes little when intervening on these features. Indeed, the top GPRC features are unrelated to either parse; many are not syntax-sensitive, but are instead spurious features that promoteor.-promoting features often activate on phrases related to agreement, such as “Certainly” or “Of course”. Given that the effect of’s syntax-sensitive features is not exactly 0, the model does use them to a non-zero extent; nonetheless, they explain little of the model’s GPRC behavior.
+
+This suggests that the Gemma 2 does not repair its previously constructed representations when answering follow-up questions about garden-path sentences; however, it does not appear to generate new syntactic features via reanalysis, either. While this behavior is more akin to reanalysis than repair, as features are not reused, we hypothesize that it reflects a process that is fundamentally different from that of reanalysis in humans. Namely, reanalysis in humans assumes that humans will construct new syntactic representations to answer follow-up questions; in contrast, although Gemma 2 constructs new features when answering follow-up questions, these features are not syntactic. Thus, while both models and humans rely on syntactic features when predicting the disambiguating word in garden path sentences, the same may not be true for predicting the answer to garden-path follow-up questions.
+
+SECTION: General Discussion and Conclusions
+When conducting behavioral analyses, one must be cautious in (but not entirely averse to) imposing human-like cognitive abstractions onto LMs. Despite high performance on syntactic evaluations, we have observed that LMs rely on both human-like syntactic abstractions as well as spurious features. Indeed, many influential features activated on tokens before relevant syntactic information foreitherreading of the sentence had appeared. This underscores the importance of mechanistic investigations of LM behaviors: even when models perform well, it may not always be for the reasons that an informed researcher would anticipate.
+
+We have seen that LMsrepresentambiguities, holding on to multiple interpretations of partial sentences. However, it remains unclear if LMs deploy mechanisms thatrecognizeor adjudicate between mutually exclusive possibilities. The representation–recognition distinction is crucial: ambiguity has many functions (e.g., humor and politeness), but detecting these requires recognizing ambiguity as a meaningful signal. We leave the question of ambiguity recognition to future work.
+
+LMs did not rely on prior features when answering garden path follow-up questions, indicating a lack of repair, but also did not generate any new syntactic features as might be expected via reanalysis. While we cannot definitively rule out the existence of syntactic reanalysis circuits, such features appear uninfluential in the GPRC circuits. We hope that future advances in sparse autoencoders and automated interpretability methods will enable us to more deeply understand sophisticated and large sparse feature circuits at scale.
+
+SECTION: Acknowledgments
+We thank Hadas Orgad for helpful feedback on an earlier version of this paper. M.H. is supported by an OpenAI Superalignment Fellowship. A.M. is supported by a postdoctoral fellowship under the Zuckerman STEM Leadership Program.
+
+SECTION: Limitations
+Our study has focused primarily on individual features. While we do make use of edges between features in our qualitative analysis, we have not causally verified what these edges signify. For example, are these AND or OR relations, NOT relations, or some more sophisticated type of feature combination? A deeper investigation could yield greater insights into how repair/reanalysis happens, and how past features remain relevant at later positions (or are made irrelevant).
+
+We have analyzed two language models of significantly differing scales and slightly differing architectures/training setups. While we are confident in concluding that Transformer-based autoregressive language models are generally likely to encode the mechanisms we have discovered, the results could still be strengthened by extending the analysis to a models with more diverse training setups, scales, and architectures. It would be particularly interesting—and helpful in linking our results to the learnability literature—to observe whether these results hold for more cognitively plausible language models, such as those trained on more human-sized datasets.
+
+While this study was motivated by the study of incremental sentence processing in LMs, we study only garden path sentences to facilitate answering RQ2 and RQ3. Further work could investigate incremental sentence processing in more typical partial sentences; this would clarify whether different mechanisms are used for unambiguous sentences.
+
+SECTION: Author Contributions
+Conceptualization: A.M., M.H.
+
+Experimentation:
+
+Behavioral analysis: M.H.
+
+Feature circuit discovery: A.M., M.H.
+
+Feature annotation: M.H., A.M.
+
+Causal feature analyses (RQ1, RQ2): M.H.
+
+Structural probing: M.H.
+
+Reading comprehension questions: A.M.
+
+Causal feature analysis (RQ3): A.M.
+
+Writing: M.H., A.M.
+
+SECTION: References
+SECTION: Attribution Patching with Integrated Gradients (AtP-IG)
+As described in §, computing the indirect effect of all features in exact form is computationally expensive, as the number of required forward passes scales linearly with respect to the number of features in the model. Thus, we employ a linear approximation,, where the number of required forward and backward passes scales in constant time with respect to the number of features. AtP is defined in Eq.. Here, we describe how this is extended to AtP-IG for more accurate estimations.
+
+The primary difference between AtP and AtP-IG is that we average the gradient acrossintermediate values ofbetweenand a baseline value. In our experiments, the baseline is always.We usein our experiments. The procedure is defined as follows:
+
+That is, given inputand a pre-computed baseline value, we computeatintermediate points. At each intermediate point, we intervene on, replacing its activation with what it would have been at that intermediate point. Using this new activation, we recompute, and backpropagate from that to obtain a new gradient value. We take the mean over these gradient values to obtain a more accurate estimate of the slope ofw.r.t.. This average slope is then multiplied by the change inas before.
+
+SECTION: Notes on Behavioral Experiments
+In this paper, we measure the probability assigned by the model to the garden-path and non-garden-path readings viaGPandnon-GP, the probability of two individual tokens. Using this sort of naturalistic setup, instead of e.g. prompting the model to explicitly choose one of the garden path sentence’s readings is a way to reduce task demands and more accurately judge pre-trained models’ performance. However, past work also indicates that setups that pit two alternatives against each other can yield inconsistent results if alternatives are chosen poorly.
+
+Our reasons for choosing this setup are twofold. First, the most robust setup, which would involve summing the probabilities of all garden-path and non-garden-path continuations, is very both computationally and technically infeasible. Second, while we could instead measure GP and non-GP via sets of tokens, rather than individual tokens, doing so did not change our experimental results in early trial runs. This is due to the fact that our pre-defined GP and non-GP tokens are already the most probable tokens. While there are some tokens that could be used to expand the non-GP token set, e.g.is, does, should, could, defining precisely which tokens should be included is challenging: tokens must be third-person verbs that cannot be interpreted as past participles. With all of this in mind, we stick with a simpler setup.
+
+SECTION: Faithfulness
+Faithfulness is a metric commonly employed in circuit analysis studies. The metric aims to capture the proportion of model behavior on datasetexplained by the circuit. More concretely, given target metric, full model, and circuit, we followin defining faithfulnessas the average normalized ratio ofgivenovergiven the full model:
+
+We defineas the logit difference between the garden-path completion and the non-garden-path completion given.refers to the logit difference when ablatingallfeatures. Here, an ablation entails setting a feature’s activation tobefore reconstructing the activations. The intuition is that the circuit should capture the same proportion ofabove its prior (i.e., in the absence of any input-specific information) than the full model captures for as many examples as possible.
+
+Note that when computing faithfulness, we include all nodes whoseabsolutevalues surpass the threshold. This means that we include positive-components that increase the difference in favor of non-garden-path continuations, and negativecomponents that increase the difference in favor of garden-path continuations. This is because, in ambiguous settings, both readings are possible, and we would like to recover features that are sensitive to both readings.
+
+When computing faithfulness,give approximately the firstof the layers in the model for free—that is, all features in the embedding layer and through the end of layer 1 for Pythia. In other words, all features in these layers are implicitly included in the circuit, regardless of whether they passed the effect threshold. The reasoning is that these features are generally only responsible for detecting that certain tokens have appeared in the inputs; thus, without them, the model would not be aware that these tokens have appeared, and it would therefore not be possible to perform the task. Unlike in their setting, we do not have a distinction between the circuit discovery setting and the evaluation setting,but we do find that many embedding and layer-0 features still do not appear in the circuits that should. These generally correspond to word detectors for tokens that only appeared in one example in. Thus, for Pythia, we give the model only the embedding and layer-0 features for free when computing faithfulness. For Gemma 2, we find that layers 0–2 contain word detector features, so we give all features layers 0, 1, and 2 for free when computing faithfulness.
+
+Our faithfulness results for Pythia-70m in §are either much lower or much higher than 1.0. For NP/S, we obtain a faithfulness of, which means that we have recovered 20% of the logit difference between the non-garden-path and garden-path continutions as compared to the full model. For NP/Z, we obtain a faithfulness of, meaning that our circuit’s logit difference is over 300% higher than the full model’s. For Gemma-2-2b (circuits in App.), the NP/S circuit has faithfulness, whereas the NP/Z circuit has faithfulness.is on par with the faithfulness values offor subject–verb agreement, butis very high, and likely means that we have not captured many of the importantnegative-effect(garden-path-upweighting) features. Indeed, when we lower the effect threshold, we observe that faithfulness slowly (but non-monotonically) approaches 1. The Gemma NP/S circuit’s low faithfulness ofsuggests that we must include many more features to capture the full mechanism. This is unsuprising, given that this model is significantly larger than Pythia and should therefore require more features to achieve the same behavior.
+
+In follow-up analyses, we find that achieving close to a faithfulness of 1 requires many hundreds of features for Pythia-70m—and thousands for Gemma-2-2b.Currently, this number of features is not tractable to annotate manually, and our initial experiments revealed that automated feature labeling methods such as those oftend to not be sensitive to syntactic distributions, instead preferring purely lexical or semantic interpretations of feature activation patterns. Future work could enable new mechanistic analyses by improving the ability of automated neuron/feature explanation techniques to detect syntactic distributional features.
+
+SECTION: Causal Experiments on a Larger Dataset
+The dataset fromthat we adapt for feature circuit finding is small. This is important, because we manually adapt it to be compatible with our methods. In particular, we craft the unambiguous examples described in §, and also force every example to have the same token length. The latter is key, because, if we wish to estimate the importance of a featureat a given positionover a number of different examples, each example must have the same token length, and the type of token at each position (e.g. verb, final noun, etc.) must be the same. For this reason, it is currently infeasible to run these experiments (or any other feature experiments) on a larger, non-handcrafted dataset.
+
+These same restrictions do not apply to the causal experiment. In that experiment, as long as we know where the verb and final noun are located in the sentence, our sentences may have different lengths, and different semantic content at each position. Taking advantage of this, we run our causal experiment (see §) again on a larger dataset. We use the syntactic ambiguity benchmark (SAP Benchmark,), of which’s dataset is a subset. This dataset has 7952 NP/Z sentences and 7948 NP/S sentences. We follow the methods from §exactly, taking special care to accommodate the different lengths and positions in this dataset. We perform this analysis only on Pythia-70m-deduped; performing this on Gemma-2-2b would be rather slow.
+
+Our results () show that the features we found in §generalize to this larger dataset as well, even though they were found on a very small subset thereof. Our ablations successfully induce the model to produce non-GP continuations for NP/Z sentences, and GP continuations for NP/S sentences, reversing its initial preferences, exactly as in §. Again, the random ablations are ineffective, leaving performance close to the no-intervention baseline.
+
+SECTION: Results for Gemma-2-2b
+To ensure our findings are not merely a function of model size or the Pythia SAEs, we also replicate the experiments for Gemma-2-2b. We first present results for the behavioral analysis (App.). Then, after discovering feature circuits for NP/S and NP/Z (shown in App.), we causally verify the labels we assign to these features (App.). We use’s () Gemma-2-2b SAEs with 16,384 features.
+
+SECTION: Behavioral experiments
+Here, we present behavioral results for Gemma-2-2b (Figure). The experimental setup is the same as that described in §. For all sentence structures, findings are largely consistent as those for Pythia: Gemma 2 upweights and downweights garden-path tokens in appropriate contexts. For ambiguous inputs, the model gives more probability to garden-path continuations in NP/Z, but non-garden-path continuations in NP/S. For MV/RR, Gemma-2-2b assigns higher probability to non-GP continuations than GP continuations in contexts that license non-GP continuations only. This is distinct from what was observed in Pythia, where probabilities for both continuations were closer to each other, with GP continuations being slightly more probable.
+
+SECTION: Causal verification
+Having shown that Gemma 2 prefers the GP reading for NP/Z, we aim to induce the dispreferred non-GP reading by clamping subject detectors to high activations (100.0) at the final noun, and clamping object detectors to low activations (0.0). Note that the artificial high activation here is much larger (100.0) for Gemma 2 than what we used for Pythia (2.0). This is because the activations are generally much larger in the Gemma 2 SAEs; indeed, activations of 100.0 are not necessarily out of distribution. For NP/S, Gemma 2 prefers to non-GP reading, so we attempt to induce the dispreferred GP reading by doing the opposite—namely, setting the subject detector and object detector features to 0.0 or 100.0, respectively, and by clamping the sentential-clause-verb detectors to 0.0 at the verb position. As in §, we compare to a baseline where we clamp the same number of randomly sampled features to high or low activations.
+
+Our findings () suggest that the features we find are causally relevant, and in the way we expect. For NP/Z, we can change the model’s probabilities such that. For NP/S, we can decrease the originally preferred. The increases inis difficult to visualize, but present:is increased fromto, and because the newis, we have induced a relative preference for the originally dispreferred reading. Nonetheless, it is likely that other continuations outside of the GP and non-GP tokens we consider have now become more probable than either of these two possibilities.
+
+SECTION: Feature Circuits
+Here, we present the full sparse feature circuits for NP/S and NP/Z. We include feature circuits for both Pythia-70m and Gemma-2-2b. For both Pythia circuits, we set the node threshold toand the edge threshold to. To keep the feature circuit a size that will fit onto a page (and to keep the number of features we must manually annotate reasonable), we slightly increase the node threshold towhen discovering the Gemma 2 circuits.
+
+Because we include any node where theabsolute valueof theis over the node threshold, we include positive- and negative-effect features. Positive-effect features increase the relative probability of the non-garden-path continuation over the garden-path-continuation, whereas negative-effect features increase the garden-path continuation probability relative to the non-garden-path continuation. We manually annotate all features in these circuits by observing their activation patterns and the tokens whose probabilities are most affected when the feature is ablated.
+
+The sparse feature circuits for NP/Z (and) are similar across models. Both contain primarily spurious or word-level features in the lower layers, and more syntax-sensitive features in the upper layers. See Figurefor a condensed version of Pythia’s NP/Z circuit, where we summarize the main categories of features and their effects on the model’s preferred continuation. Pythia’s NP/Z circuit contains 65 features, and Gemma 2’s contains 182.
+
+The sparse feature circuits for NP/S (and) show similar trends. See Figurefor a condensed version of Pythia’s NP/S circuit. Note that more of the features have negative effects in the NP/Z circuits than in the NP/S circuits, as both models more strongly prefer the garden path continuations for NP/Z inputs. Pythia’s NP/S circuit contains 155 features, and Gemma 2’s contains 179.
+
+SECTION: Structural Probe Training and Results
+SECTION: Probe Details
+We use’s () MLP action probes to probe Pythia-70m’s internal parse information. These probes take in the representations of two words,and compute the probability of a given parse actionas
+
+whereandare the hidden representations of the words whose relation you wish to predict, andandare learned weight and bias terms respectively.
+
+While we consider the parse probes in isolation,use them as part of a larger parsing architecture. Specifically, they rely on the arc-standard dependency formalism, which parses the input into subtrees which are placed on a stack and repeatedly combined with each other via parse actions in order to obtain a full (incremental) parse of the input.
+
+There are three parse actions:, which pops the first two subtreesoff the stack and draws an arc fromto;, which does the same, but draws the opposite arc; and, which indicates no relation, and moves the parsing process forward by generating another token.
+
+Notably,andrefer not to the position of words in the sentence, but to the direction of the arc between popped subtrees. This is why the non-garden-path reading corresponds to theaction; during normal parsing of our garden path fragments, the final noun heads, while the verb heads, so arcs are reversed with respect to their appearance on paper.
+
+SECTION: Probe Training
+Following, we train our probes on the training split of the Penn Treebank;we use essentially the same hyperparameters as in their work, modified to work with Pythia-70m-deduped, rather than GPT-2. Then, we also record unlabeled attachment score (UAS) and undirected unlabeled attachment score (UUAS) on the test split, in order to verify that our probes are effective.
+
+Our results () show that the probes are indeed effective. The probes’ UAS and UUAS are similar to the values. The UAS for the last layer is unusually low, even considering the last layer’s lower performance in, indicating that the direction of dependency relations is not captured, but this tracks with the probes’ poor performance on garden path sentences using representations from that layer.
+
+SECTION: Probe Evaluation on Unambiguous Garden-Path-Derived Stimuli
+In §, we found that the probes’ judgments on regarding the parse of the sentence matched with our observations based on features and behavior. But do these probes also behave sensibly on stimuli whose parse is known? To test this, we evaluate the probes on the unambiguous stimuli from our dataset (), and record their action probabilities. Ideally, the probes should preferon GP sentences, andon non-GP sentences.
+
+Our results () show that this is generally the case: GP sentences elicit primarily; non-GP sentences elicit. However, the model struggles on NP/Z non-GP sentences, perhaps because these are the least plausible ones; such sentences are generally written with a comma after the verb, and read strangely. Moreover, both readings do have non-zero probability in most cases, even though their construction should preclude the alternative reading. The probes thus seem somewhat less attuned to syntactically in/valid readings than LM probabilities are.
+
+SECTION: Feature Consistency
+We can test the consistency between whole-model and probing methods by performing feature analysis with our structural probe. Each probe takes as input residual stream activations, for which we have SAEs; we can thus use AtP-IG to find features that influence the quantity-, just as we previously found model features that influencedGP-non-GP. For each structure (NP/Z and NP/S) and layer of the model, we take, the set of features in that layer of the circuit, and, the set containing the top-features for the probe. We quantify the sets’ overlap via recall,. The expected recall for random features would be very near 0; however,shows that the probe features’ recall is quite high. This overlap is highest (0.6-0.8) in the embeddings, but there is also high overlap (0.35-0.45) in layers 3 and 4, which contain interpretable, high-level syntactic features. Thus, even though these probes were trained and attribution performed in very ways, the same underlying features are responsible.
+
+SECTION: Reading Comprehension Questions: Performance under ablations
+Here, we assess the extent to which we can influence model performance in garden path reading comprehension questions by ablating the GP-promoting or non-GP-promoting features. Using the same dataset as in §, we ablate the top 10 and bottom 10 features discovered from §and then remeasure performance. We hypothesize that ablating the positive features (those promoting the non-garden-path reading) will cause performance to drop, whereas ablating the negative features (those promoting the garden-path reading) will cause performance to increase.
+
+Our results (Table) indicate that the ablations are largely ineffective at changing behavior. In some cases, performance does decrease or increase, but typically not to a significant extent. Where differences are significant, it is generally not for the structure from which the features were discovered. For example, ablating positive MV/RR features causes a significant increase in performance for NP/Z questions, and ablating negative MV/RR features also increases performance on NP/Z questions.
+
+SECTION: Data Artifacts, Experimental Details, and Risks
+In this paper, we mainly use’s () garden path sentence dataset, which is in turn a subset of the syntactic ambiguity benchmark (SAP, now published as), a larger garden path sentence dataset. The latter uses an MIT license, and our use case (intepretability and psycholinguistic research) is appropriate for the license. The other datasets—BoolQand MCQA—are released with licenses (CC BY-SA 3.0 and Apache 2.0) compatible with research use. All datasets are entirely in English.
+
+We also craft two follow-up sentences per NP/Z and NP/S sentence in the aforementioned dataset. These follow-up sentences, and code for our experiments, will be released upon acceptance.
+
+We perform our experiments using an Nvidia A100 (80GB) GPU and Nvidia RTX 6000 Ada GPU. The former is helpful for finding Gemma feature circuits with a low threshold. In total, running all experiments should take no more than 5 GPU-days on the former (perhaps less). Most of the runtime comes from running the Gemma experiments and training parse probes.
+
+All experiments are implemented in PyTorchusing the NNsight interpretability framework. All LMs used were accessed via HuggingFace.
+
+Because our study only attempts to interpret pre-trained models, we believe that it poses few risks; similarly, the basic follow-up questions carry with them few risks.

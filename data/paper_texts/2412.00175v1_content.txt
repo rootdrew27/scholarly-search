@@ -1,0 +1,399 @@
+SECTION: Circumventing shortcuts in audio-visual deepfake detection datasets with unsupervised learning
+
+Good datasets are essential for developing and benchmarking any machine learning system. Their importance is even more extreme for safety critical applications such as deepfake detection—the focus of this paper. Here we reveal that two of the most widely used audio-video deepfake datasets suffer from a previously unidentified spurious feature: the leading silence. Fake videos start with a very brief moment of silence and based on this feature alone, we can separate the real and fake samples almost perfectly. As such, previous audio-only and audio-video models exploit the presence of silence in the fake videos and consequently perform worse when the leading silence is removed. To circumvent latching on such unwanted artifact and possibly other unrevealed ones we propose a shift from supervised to unsupervised learning by training models exclusively on real data. We show that by aligning self-supervised audio-video representations we remove the risk of relying on dataset-specific biases and improve robustness in deepfake detection.
+
+SECTION: 1Introduction
+
+Manipulated videos represent a threat to society as they have the potential of misleading people into believing actors with malicious intents.
+By spreading misinformation on social media platforms, people may be exposed to scams (e.g., identity theft operations), conspiracy theories and political misinformation.
+Therefore, deepfake detection methods are essential tools on a global scale.
+
+The progress in automated deepfake detection is fueled
+by the datasets developed by the research community.
+Good quality data is essential for both training and benchmarking the progress of these methods.
+Over the last years, numerous datasets have been proposed.
+Among the audio-video deepfake datasets,
+there have been released datasets that alter both streams[22,6]or only one[54,33,43]; datasets
+with full-video[22]or only local[6,4]manipulations.
+
+However, care has to be taken to ensure a good deepfake detection dataset.
+Any asymmetry in the preparation of fakes and reals can result in biases that correlate spuriously with the groundtruth label.
+For example, in the image domain, different preprocessing pipelines[8]or
+types of resizing[40]between real and fake samples
+paint an overly optimistic picture.
+In the audio domain, the very popular ASVSpoof19 dataset[54]has been shown to leak information about the labels in the form of silence duration[32]or bitrate information[3].
+Since many of the deepfake detection models are high capacity,
+they can easily use such artifacts as shortcuts for learning,
+consequently greatly impacting their ability to generalize in a real case scenario.
+
+In this work, we first expose a bias present in two widely-adopted audio-video deepfake detection datasets,
+FakeAVCeleb[22]and
+AV-Deepfake1M[6]:
+a short moment of silence present at the beginning
+of manipulated videos (see Figure1).
+Based on this information, a very simple silence classifier can reach a near-perfect performance of over 98% on both FakeAVCeleb and AV-Deepfake1M.
+Moreover, we observe that the silence distribution is similar across datasets,
+implying that prior methods may have potentially over estimated the generalization performance based on this shortcut.
+
+Introducing
+such
+biases
+when creating the datasets is unavoidable and there might be others that are more subtle and harder to reveal.
+To circumvent this problem, we show that one solution is a shift in learning paradigm, from the more common supervised setup to the unsupervised one[16,41].
+Removing fake samples from training eliminates the focus
+on the asymmetries induced by spurious artifacts.
+Moreover, this also has the potential to improve generalization among different manipulation techniques,
+since supervised detection methods tend to over-rely on generator-specific fingerprints[31,58].
+By limiting to real data, we can also naturally leverage self-supervised representations, which have been shown to improve generalization[35].
+
+To this end, we propose an approach, named AVH-Align,
+that learns a frame-level audio–video alignment score on top of AV-HuBERT features[46].
+Since tampered videos are expected to have greater audio-video desynchronizations, this alignment score can effectively differentiate fake and real videos. We show that this approach is robust with respect to the identified shortcut of leading silence,
+and also outperforms other methods that do not use the silence bias, while not seeing any fake samples at training time.
+
+To summarize, our work makes the following contributions:
+1. We expose a previously unknown spurious feature in two of the most widely adopted deepfake detection datasets.
+2. We analyze the impact of this shortcut on various state-of-the-art models.
+3. We show that a way to mitigate such shortcuts is by training on real data only and we introduce a new method in this direction.
+
+SECTION: 2Related work
+
+Audio-video deepfake detection.Many approaches for deepfake detection on videos have focused on the visual stream of information only[1,17,60,18,20,47,5].
+But with the recent introduction of audio-visual datasets,
+(FakeAVCeleb[22],
+Deepfake TIMIT[24,44],
+KODF[26],
+LAV-DF[4],
+AV-Deepfake-1M[6]),
+more research has shifted towards models that exploit both audio and video cues[16,36,45,19,57].
+An emerging trend in this direction is the use of pretrained representations in a self-supervised way[16,36].
+But, different from our approach,
+these methods train the representations from scratch and use them as a first step in a more elaborated pipeline:
+supervised classification[36]or anomaly detection[16].
+There are also works that similarly to us exploit the pretrained audio-video AV-HuBERT model[46]to extract representations[45,19], but all of those methods are trained in the fully supervised learning paradigm.
+
+Unsupervised deepfake detection.To make detection more generalizable across generators,
+a new direction is to depart from the supervised paradigm and resort only on real data.
+There are two main classes of such unsupervised approaches:
+methods that rely on consistency checks and
+methods that treat the problem as an anomaly detection one.
+Among the first class,
+prior work proposed to verify that the audio and visual streams align at a semantic level, for example from the point of view of spoken content[28,2],
+or at a representation level, based on the alignment of audio and video features[16,41].
+Consistency checks have also been used with respect to the identity of a speaker (comparing a query sample against real audio[38]or real images[41]of the target speaker) or between image and text modalities[41].
+For the second class, deepfake detection as anomaly detection,
+recent work in the image domain has used the reconstruction loss of the query image to tell whether it is anomalous[42,14];
+for example, Rickeret al.[42]make the observation that images generated by a latent diffusion model (LDM) are easier to reconstruct by the LDM than real images.
+For the audio-visual domain, Fenget al.[16]use both classes of approaches:
+they use consistency checks to estimate synchronization between the two streams and
+then flag anomalies using density estimation.
+
+SECTION: 3Silence bias in audio-video datasets
+
+In this section,
+we show that two popular datasets (Sec.3.1) have a silence bias.
+We analyze its behavior and show that a simple classifier based on the leading silence can obtain almost perfect separation between fake and real samples (Sec.3.2).
+This implies that the performance of prior work is susceptible to have been overestimated.
+For this reason we analyze its impact on various audio and audio-visual methods (Sec.3.3).
+
+SECTION: 3.1Datasets
+
+We consider two audio-visual datasets in our analysis:
+FakeAVCeleb[22]and AV-Deepfake1M[6].
+They distinguish mainly in the fact that
+the first contains fully-generated video sequences,
+while the second contains partially-manipulated sequences.
+Both are based on the VoxCeleb2 dataset[11],
+which consists of YouTube audio-video of celebrities.
+Apart from the real samples—real video real audio (RVRA)—both datasets include three types of fake videos:
+real video fake audio (RVFA),
+fake video real audio (FVRA), and
+fake video fake audio (FVFA).
+
+FakeAVCelebcontains 500 real videos from VoxCeleb2
+and 19.5k fake videos (10k FVFA, 9k FVRA, 500 RVFA).
+The fake visual content was generated with
+face swapping methods (Faceswap[25]and FSGAN[34])
+or the Wav2Lip lip syncing approach[39].
+The fake audio content was generate with the voice cloning tool SV2TTS[21].
+The dataset is diverse across age groups, genders, races,
+as well as with respect to the number of subjects in a single video, their placement, the visual and audio quality.
+
+AV-Deepfake1Mis a large scale dataset,
+which consists of over one million videos and 2k subjects.
+As opposed to the FakeAVCeleb dataset, here the manipulations are local and consists of
+word-level replacements, insertions and deletions.
+The text manipulations are generated with the ChatGPT large language model.
+The fake video content is generated with the lip syncing method TalkLip[53],
+while the fake audio content is generated with the VITS[23]or YourTTS[7]methods.
+The authors ensure that the synthesized words share the same background noise with the full audio, by first extracting the audio noise with the Denoiser method[15]and then adding it to the synthesized words.
+The dataset is split into train, validation and test, with the test having a different set of speakers than those encountered at the train and validation splits.
+
+SECTION: 3.2Analysis of leading silence
+
+We start by analyzing the silence distribution of the real and fake samples in the two considered datasets.
+We define the duration of the leading silence as the moment when the magnitude of the audio exceeds a certain threshold.
+For this experiment, we select this threshold to be, but as we will shortly see, the results are robust to its choice.
+We carry this analysis only on the real (RVRA) and fully fake (FVFA) videos.
+For the AV-Deepfake1M dataset we use the the validation split, while for the FakeAVCeleb dataset we pick 30% random videos (since this dataset does not have a standard split).
+
+The results are shown in Figure2.
+We observe that the real videos start with noise,
+while the fake samples have a leading silence of around 25–30 ms.
+The duration of silence of fake sample is similar for both datasets,
+although the distribution is much sharper for the AV-Deepfake1M dataset.
+If we were to rank the samples based on this feature we would obtain an area under curve
+of the receiver operating characteristic curve (AUC) of over 98% for either datasets.
+
+What counts as silence?For the previous experiment we have considered that silence is the signal that has an amplitude lower than.
+We investigate how sensitive the performance is to this threshold.
+We varyacross a grid of values and
+show the results in Figure3(left).
+We observe that the results are strong as long as this threshold is small enough.
+
+A different perspective: Maximum amplitude.Instead of looking at the silence duration,
+we can alternatively measure the maximum amplitude in the firstseconds of the audio.
+Figure3shows the AUC obtained by ranking the samples based on this feature for various leading durations.
+We observe that this alternative measure also yields strong results (over 98% AUC),
+and that the optimum is obtained for aof around 30 ms, in line with the previous experiment.
+As we extend the window, the performance gets closer to random chance, AUC of 50%.
+
+Other biases: Volume and trailing silence.If we extend the durationto cover the entire audio,
+we get an estimate of the maximum volume of the audio.
+This feature yields an AUC of 67.6% on FakeAVCeleb,
+which is much less than 98.4%, but still over random chance (50% AUC).
+Similarly, we have also investigated the trailing silence (the silence at the end of the audio) and have obtained AUC of over 99% for FakeAVCeleb.
+AV-Deepfake1M is less sensitive to these other biases, with values closer to 50%.
+While these biases are not as consistent as the leading silence, they are still problematic.
+
+Why do fake samples have a leading silence?Given that we do not have access to generation process of the two datasets,
+it is challenging to pinpoint the exact reason for the occurrence of the leading silence bias.
+However, we speculate that this happens when the audio may be slightly shorter than the video counterpart.
+Note that this is a different reason from the silence observed in audio only datasets[32].
+There the real audios had a leading silence, while the synthesized speech was silence-free.
+In the case of audio-video datasets it might be challenging to completely avoid this problem,
+but an easy solution (for this particular bias) is to trim the start of both the real and fake samples.
+This is what we do in the next experiments.
+
+SECTION: 3.3Impact on prior work
+
+We have shown that real and fake samples differ in terms of the leading silence.
+This is a simple feature which could be learned by the high-capacity neural networks.
+Here we investigate whether that is indeed the case for three existing methods:
+
+RawNet2[50], which is
+an audio-only method that operates on the raw waveform.
+Its architecture sequences sinc layers, convolutions, gated recurrent units and fully connected layers.
+
+MDS[10](modality dissonance score), which is
+an audio-visual method that estimates the mismatch between audio and video segments along a video.
+The score is computed as the distance between audio and visual features.
+The audio features are extracted with a CNN from Mel-frequency cepstral coefficients (MFCCs),
+while the visual features use a 3D ResNet.
+
+AVAD[16](audio-visual anomaly detection), which is
+an audio-visual method trained on real data only.
+The approach has two steps:
+first, it estimates the desynchronization between audio and video;
+then it estimates whether these patterns are typical of real data or anomalous (indicating a fake).
+The method employs a 2D3D ResNet-18 on the vision side and a VGG-M on Mel spectrograms on the audio side.
+
+We train the RawNet2 and MDS methods on both datasets using the code provided by the authors.
+For the AVAD we use the provided checkpoint (trained on LRS[49]) and do not retrain it since training code is not available. We evaluate the methods in two settings:
+on the corresponding evaluation set and
+on a trimmed version of the same evaluation set.
+The trimming is done by removing the first 40 ms from all samples.
+Since the datasets use 25 frames per second,
+the trimming process removes the first frame.
+For training we do not perform trimming, but use the original dataset.
+As a baseline we include our silence classifier described in the previous section.
+
+The results are shown in Table1.
+First, we observe that the audio-based RawNet2 is the top performing method.
+Moreover, we see that the silence classifier is better than two other approaches: MDS and AVAD.
+The relatively worse performance of AVAD indicates that this method dose not latch on the silence information.
+
+In terms of the impact of the leading silence,
+we see that when removing this information by trimming, the methods are affected differently.
+As expected, the silence classifier is affected the most and
+its performance drops down to random chance on the trimmed data.
+RawNet2 is not as affected on the FakeAVCeleb,
+presumably because there is still enough information throughout the signal,
+but it suffers a larger hit on the more challenging AV-DeepFake1M,
+which has only partially-manipulated samples. MDS is affected by the leading silence bias on both FakeAVCeleb and AV-Deepfake1M, though significantly stronger on AV-Deepfake1M.
+AVAD is the most robust method,
+since this approach does not explicitly model the silence information.
+Finally, we notice that the RawNet2 audio-only method is best even on the trimmed settings.
+This is noteworthy since it is the first time an audio-only method has been applied to these datasets.
+This suggests that the audio information is an important source of information that is often overlooked by prior work.
+
+SECTION: 4Modeling real data for deepfake detection
+
+The previous section indicated that audio-visual datasets exhibit a silence bias which can easily be exploited.
+We want to develop a method that is robust to this bias (and possibly other uncovered ones) and still performs well.
+We have seen that models trained only on real data[16]are promising in being robust to the silence shortcut, but the performance was modest.
+To further improve them we propose to build on top of audio-focused self-supervised features. Self-supervised features have shown strong generalization for both visual[35,13]and audio[37,38]deepfake detection.
+We choose audio-focused self-supervised features because they showed strong performance (as indicated the previous section). Note that we cannot rely on audio-only models because there are cases where manipulations appear only in the visual domain (the fake video, real audio case).
+
+SECTION: 4.1Method
+
+We propose a method that aligns AV-HuBERT[46]features on real data.
+First, we extract audio and visual frame-level features with a pretrained AV-HuBERT model.
+Then, on top of these features we learn a network to better align them.
+The alignment network is learnt on real samples by matching each video frame to its corresponding audio frame[16].
+We call our method AVH-Align (AV-Hubert Aligned) and
+show its depiction in Figure4.
+
+Self-supervised features.We use AV-HuBERT to represent both the audio and visual content of a video.
+AV-HuBERT is a Transformer network trained in a self-supervised way to predict iteratively refined centroids from masked inputs.
+The features extracted by AV-HuBERT encode audio information as proved by its strong performance on tasks such lip reading or noisy audio-visual speech recognition.
+We extract the audio and visual representations independently:
+to extract audio features we mask the visual input,
+to extract visual features we mask the audio input.
+For a video we obtain audio featuresand visual featuresfeatures for each time step.
+Both representations are 1024 dimensional and have a temporal resolution of 25 frames per second.
+
+Alignment network.To tell how well the audio and visual features match each other, we first independently L2 normalize the feature vectors and then feed them into a network.
+This is implemented as a multi-layer perceptron (MLP) over the concatenated normalized audio and visual features:
+
+The MLP has four layers,
+which progressively reduce the feature dimensionality,
+with layers mapping from the AV-HuBERT feature size of 1024 to 512, 256, 128, and finally to a single output.
+Each hidden layer includes Layer Normalization and ReLU activation.
+
+Loss function.To learn the alignment networkwe maximize the probability of an audio frameto match the corresponding video frame;
+this probability is defined as:
+
+whererepresents the temporal neighborhood around the frame;
+in our case we choose the 30 neighboring frames around frame.
+We define the loss across the entire video as the average:
+
+The final loss is similar to the contrastive loss InfoNCE[51]which was also used for deepfake detection[16,36].
+
+Inference.Onceis learned, we can estimate the alignment scorefor each audio-video frame pair in a video. Then we compute an overall alignment score for the entire video by pooling the per-frame scores using log-sum-exp. We estimate the fakeness score as the complement of the alignment probability (Eq.2).
+
+Supervised variant.To understand the impact of the silence bias on the standard supervised learning paradigm,
+we design a supervised variant, AVH-Align/sup, that uses the
+same features and alignment network as AVH-Align, but a classification loss.
+In this setup we assume that apart from the real videos,
+we also have access to fake videos in the training set, with corresponding labels.
+We obtain a per-video alignment score by pooling the per-frame scoresusing the log-sum-exp function and optimize the binary cross-entropy (CE) loss:
+
+SECTION: 4.2Experimental setup
+
+Datasets and metrics.We conducted our experiments on the two previously introduced datasets (see Sec.3.1): FakeAVCeleb and AV-Deepfake1M.
+For both of them, we evaluate video-level detection.
+Consistent with prior work and in line with official evaluation protocol for AV-Deepfake1M, we use the area under the receiver operator characteristic curve (AUC) for evaluation.
+For FakeAVCeleb we split the dataset in 70(train and validation) and 30(test).
+For AV-Deepfake1M, to train AVH-Align/sup we randomly select 45k (fake and real samples) for training and 5k for validation, both drawn from training split. To train AVH-Align we also selected 45k (real only) samples for training and 5k (real only) for validation from the training split.
+The evaluation is performed on the official validation split,
+but for the best performing models,
+we also show results on the official withheld test set.
+
+Implementation details.For AVH-Align we use a learning rate scheduler with a patience of 5 epochs and a factor of 0.1, with a starting learning rate of. The training is stopped if there is no loss improvement on the validation set for 10 consecutive epochs. AVH-Align/sup is learned using an Adam optimizer with a learning rate of.
+For the AV-HuBERT feature extractor
+we use the checkpoint pretrained on LRS3 and VoxCeleb2 and finetuned on LRS3 for visual speech recognition.
+
+SECTION: 4.3Experimental results
+
+We train our method, AVH-Align, as well as its supervised variant, AVH-Align/sup, on the two datasets, FakeAVCeleb and AV-Deepfake1M, and evaluate on either of them (that is, both in-domain and out-of-domain).
+For each evaluation, in addition to the original set, we also consider the trimmed version of the validation dataset (trim:✓).
+The trimmed variant is obtained by removing the starting 0.40 ms of audio and first video frame. We always use the untrimmed, original data for training. Results are shown in Table2.
+
+Impact of leading silence bias.We observe that AVH-Align is not impacted by removing the leading silence. In particular, AVH-Align shows even performance for FakeAVCeleb (AUC) and its trimmed version (AUC), as well as for AV-Deepfake1M (AUC) and its trimmed version (AUC).
+The supervised variant, AVH-Align/sup, shows a different behavior:
+on AV-Deepfake1M the performance drops byandin the trimmed case depending on the training dataset.
+On FakeAVCeleb removing the leading silence has a more negligible impact.
+Since FakeAVCeleb has only full manipulations,
+we hypothesize that there are other signals throughout the video that the classifier can pick up during learning,
+making it less prone to rely on the silence bias.
+
+Comparison with other unsupervised methods.We compare our results with those of AVAD[16]which is also an usupervised method, trained on real data only.
+Similar to AVH-Align it is not impacted by the spurious leading silence, showing nearly identical results for trimmed and untrimmed datasets.
+However, AVAD’s overall performance is considerably worse on both datastes.
+
+Score visualization.Figure5shows the per frame scores obtained by the two methods, AVH-Align and AVH-Align/sup,
+together with the groundtruth manipulated interval.
+For the AVH-Align method, the scores represent the misalignment probability between the audio and visual streams at each time frame;
+for the AVH-Align/sup method, the scores represent the probability of an audio-video frame of being fake.
+We see that AVH-Align/sup always predicts the first frame as being fake,
+confirming once again that it has learned to associate the spurious leading silence with a video being fake.
+When detected, the actual fake region is given a considerable lower fakeness probability than that assigned to the leading silence.
+On the other hand, AVH-Align is not affected by the presence of leading silence.
+In this case the manipulated areas have higher misalignment scores,
+a frame-level evaluation yielding 77.7% AUC.
+We do notice that there are other regions in the video that get a high misalignment score.
+This happens because the operations that introduce fake regions can introduce desynchronizations between the audio video streams even in areas that were not intentionally manipulated.
+
+SECTION: 4.4Comparison on the official AV-Deepfake1M test
+
+To further verify our conclusions,
+we evaluate our approach on the official test set of the AV-Deepfake1M dataset for which the labels are witheld.
+The main difference between the validation set, used in the previous section, and the test set are the subject identities:
+the test subjects are unseen at train time.
+We obtain the results by submitting our prediction to the official competition server.
+Our results are compared against those of other methods based on the values reported in the AV-Deepfake1M paper[6].
+
+The results shown in Table3are in line to those obtained on the validation split (Table2).
+Compared to the rest of the methods, AVH-Align has the highest performance (85.24AUC) even if has seen only real data at training.
+The silence classifier described in Sec.3obtains again a performance of overAUC, indicating that the test set suffers from the same spurious feature as the training and validation splits.
+Other methods that are trained at video level do not have access to the silence bias,
+and hence show only modest performance.
+Instead, we expect audio-based methods to use the bias and return over optimistic results.
+This is indeed the case for the supervised variant, AVH-Align/sup, which returns an AUC ofon the official test set.
+
+SECTION: 4.5Further analysis
+
+Ablation of AVH-Align components.Here we analyze the impact of various design choices on the performance of the AVH-Align method.
+Specifically, we investigate the following:
+i) removing feature normalization;
+ii) reducing the training set size from 45,000 to 8,782 samples (the real ones from the AVH-Align/sup train set);
+iii) using mean score pooling instead of log-sum-exp;
+iv) extracting features with the AV-HuBERT checkpoint pretrained on LRS3 only instead of LRS3 and VoxCeleb2; v) using a linear layer instead of MLP.
+Results are shown in Table4.
+All ablations lead to a decrease in performance with the exception of mean score pooling for FakeAVCeleb.
+This is expected, however, since fake videos in FakeAVCeleb are manipulated at every frame,
+while AV-Deepfake1M has only locally-manipulated fake videos.
+
+Analysis of AVH-Align/sup architecture.We investigate how a simpler architecture impacts the supervised model.
+To this end, we train a linear layer on top of AV-HuBERT representations instead of the MLP network.
+We see in Table5that this modification has little impact on both FakeAVCeleb and AV-Deepfake1M.
+Unlike the unsupervised case, when a linear layer was too weak to learn, in the supervised case, a linear layer performs almost on par with the MLP.
+The largest difference between the MLP and the linear layer can be observed when training on FakeAVCeleb and testing on AV-Deepfake1M.
+With a linear layer, the performance drop from untrimmed to the trimmed AV-Deepafake1M is(fromto), while with a MLP, the drop is(fromto).
+
+SECTION: 5Discussion
+
+We discuss how our conclusions fit into the broader scope of deepfake detection.
+
+A different evaluation paradigm.We observed near-perfect performance on datasets such as FakeAVCeleb and AV-Deepfake1M.
+The reasons are that the same generative models were used in both train and test,
+as well as the unintentional leakage of spurious features.
+The latter also affects cross-dataset performance,e.g., training on FakeAVCeleb and testing on AV-Deepfake1M still yields strong performance.
+In a realistic scenario, however, we are not given access to the generators,
+nor to the pre-processing or post-processing steps,
+which introduce unintentional alterations. Each deepfake released in the wild may be created through a different set of tools, unknown apriori. As such, we believe that another way of gauging the progress of deepfake detection
+is by refraining the training to real data only.
+
+Circumventing shortcuts through alignment.Modeling real data is a way to avoid shortcuts in the data.
+A different direction is taken in the very recent work of Rajanet al.[40].
+The idea is to generate fake samples by reconstructring real samples through a generator of choice.
+This approach ensures that fakes and reals are aligned,
+avoiding spurious features. On the other hand, this forces the model to focus on the fingerprint of the generator,
+hindering generalizability.
+Moreover, by equating fake to a fingerprint,
+we become susceptible to laundering[29],
+lose the ability to localise[30,48]and distinguish benign fakes (e.g., superresolution images[56]).
+We believe that both directions (alignment and real data)
+are complementary perspectives that should be considered to tackle the multi-faceted problem of deepfake detection.
+
+SECTION: 6Conclusions
+
+In this paper we exposed a previously unknown bias in two widely adopted audio-video deepfake detection datasets—a leading silence in fake videos.
+We showed that models exposed to this bias during training are prone to rely on it when deciding the authenticity of a video, thus displaying overly optimistic results.
+As an alternative, we propose to shift the learning paradigm towards unsupervised learning on real data only.
+Specifically, we find that
+self-supervised audio-video representations coupled with an alignment network trained on real videos produce more robust and consistent results.
+Our work raises awareness regarding dataset design and evaluation of deepfake detection.
+
+SECTION: References

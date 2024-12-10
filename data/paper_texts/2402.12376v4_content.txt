@@ -1,0 +1,241 @@
+SECTION: :lexible Vsionransformer for Diffusion Model
+.
+In the context of this reality, existing diffusion models, such as Diffusion Transformers, often face challenges when processing image resolutions outside of their trained domain.
+To overcome this limitation, we present the Flexible Vision Transformer (FiT), a transformer architecture specifically designed for generating images with.
+Unlike traditional methods that perceive images as static-resolution grids, FiT conceptualizes images as sequences of dynamically-sized tokens. This perspective enables a flexible training strategy that effortlessly adapts to diverse aspect ratios during both training and inference phases, thus promoting resolution generalization and eliminating biases induced by image cropping.
+Enhanced by a meticulously adjusted network structure and the integration of training-free extrapolation techniques, FiT exhibits remarkable flexibility in resolution extrapolation generation.
+Comprehensive experiments demonstrate the exceptional performance of FiT across a broad range of resolutions, showcasing its effectiveness both within and beyond its training resolution distribution.
+Repository available at.
+
+SECTION: Introduction
+Current image generation models struggle with generalizing across arbitrary resolutions.
+The Diffusion Transformer (DiT)family, while excelling within certain resolution ranges, falls short when dealing with images of varying resolutions.
+This limitation stems from the fact that DiT can not utilize dynamic resolution images during its training process, hindering its ability to adapt to different token lengths or resolutions effectively.
+
+To overcome this limitation,
+we introduce the, which is adept at generating images at.
+The key motivation is a novel perspective on image data modeling:
+rather than treating images as static grids of fixed dimensions, FiT conceptualizes images as sequences of variable-length tokens.
+This approach allows FiT to dynamically adjust the sequence length, thereby facilitating the generation of images at any desired resolution without being constrained by pre-defined dimensions.
+By efficiently managing variable-length token sequences and padding them to a maximum specified length, FiT unlocks the potential for resolution-independent image generation.
+FiT represents this paradigm shift through significant advancements in,, and.
+
+FiT uniquely preserves the original image aspect ratio during training, by viewing the image as a sequence of tokens.
+This unique perspective allows FiT to adaptively resize high-resolution images to fit within a predefined maximum token limit, ensuring that no image, regardless of its original resolution, is cropped or disproportionately scaled.
+This method ensures that the integrity of the image resolution is maintained, as shown in, facilitating the ability to generate high-fidelity images at various resolutions.
+To the best of our knowledge, FiT is the first transformer-based generation model to maintain diverse image resolutions throughout training.
+
+The FiT model evolves from the DiT architecture but addresses its limitations in resolution extrapolation.
+One essential network architecture adjustment to handle diverse image sizes is the adoption of 2D Rotary Positional Embedding (RoPE), inspired by its success in enhancing large language models (LLMs) for length extrapolation. We also introduce Swish-Gated Linear Unit (SwiGLU)in place of the traditional Multilayer Perceptron (MLP) and replace DiT’s Multi-Head Self-Attention (MHSA) with Masked MHSA to efficiently manage padding tokens within our flexible training pipeline.
+
+While large language models employ token length extrapolation techniquesfor generating text of arbitrary lengths, a direct application of these technologies to FiT yields suboptimal results. We tailor these techniques for 2D RoPE, thereby enhancing FiT’s performance across a spectrum of resolutions and aspect ratios.
+
+Our highest Gflop FiT-XL/2 model, after training for only 1.8 million steps ondataset, outperforms all state-of-the-art CNN and transformer models by a significant margin across resolutions of,,,, and. The performance of FiT-XL/2 significantly advances further with our training-free resolution extrapolation method. Compared to the baseline DiT-XL/2 training for 7 million steps, FiT-XL/2 lags slightly at the resolution ofbut significantly surpasses it at all other resolutions.
+
+In summary, our contributions lie in the novel introduction of FiT, a flexible vision transformer tailored for diffusion models, capable of generating images at any resolution and aspect ratio.
+We present three innovative design features in FiT, including
+a flexible training pipeline that eliminates the need for cropping,
+a unique transformer architecture for dynamic token length modeling,
+and a training-free resolution extrapolation method for arbitrary resolution generation.
+Strict experiments demonstrate that the FiT-XL/2 model achieves state-of-the-art performance across a variety of resolution and aspect ratio settings.
+
+SECTION: Related Work
+Denoising Diffusion Probabilistic Models (DDPMs)and score-based modelshave exhibited remarkable progress in the context of image generation tasks. The Denoising Diffusion Implicit Model (DDIM), offers An accelerated sampling procedure. Latent Diffusion Models (LDMs)establishes a new benchmark of training deep generative models to reverse a noise process in the latent space, through the use of VQ-VAE.
+
+The Transformer model, has successfully supplanted domain-specific architectures in a variety of fields including, but not limited to, language, vision, and multi-modality.
+In vision perception research, most effortsthat focus on resolution are aimed at accelerating pretraining using a fixed, low resolution. On the other hand, NaViTimplements the ’Patch n’ Pack’ technique to train ViT using images at their natural, ’native’ resolution.
+Notably, transformers have been also explored in the denoising diffusion probabilistic modelsto synthesize images. DiTis the seminal work that utilizes a vision transformer as the backbone of LDMs and can serve as a strong baseline. Based on DiT architecture, MDTintroduces a masked latent modeling approach, which requires two forward-runs in training and inference. U-ViTtreats all inputs as tokens and incorporates U-Net architectures into the ViT backbone of LDMs. DiffiTintroduces a time-dependent self-attention module into the DiT backbone to adapt to different stages of the diffusion process. We follow the LDM paradigm of the above methods and further propose a novel flexible image synthesis pipeline.
+
+RoPE (Rotary Position Embedding)is a novel positional embedding that incorporates relative position information into absolute positional embedding. It has recently become the dominant positional embedding in a wide range of LLM (Large Language Model) designs. Although RoPE enjoys valuable properties, such as the flexibility of sequence length, its performance drops when the input sequence surpasses the training length. Many approaches have been proposed to solve this issue. PI (Position Interpolation)linearly down-scales the input position indices to match the original context window size, while NTK-awarechanges the rotary base of RoPE. YaRN (Yet another RoPE extensioN)is an improved method to efficiently extend the context window. RandomPEsub-samples an ordered set of positions from a much larger range of positions than originally observed in training or inference. xPosincorporates long-term decay into RoPE and uses blockwise causal attention for better extrapolation performance. Our work delves deeply into the implementation of RoPE in vision generation and on-the-fly resolution extrapolation methods.
+
+SECTION: Flexible Vision Transformer for Diffusion
+SECTION: Preliminary
+is a type of position embedding that unifies absolute and relative PE, exhibiting a certain degree of extrapolation capability in LLMs. Given the m-th key and n-th query vector as, 1-D RoPE multiplies the bias to the key or query vector in the complex vector space:
+
+whereis rotary frequency matrix withand rotary base. In real space, given, the rotary matrixequals to:
+
+The attention score with 1-D RoPE is calculated as:
+
+is a training-free length extrapolation technique in LLMs. To handle the larger context lengththan maximum training length, it modifies the rotary base of 1-D RoPE as follows:
+
+where the scale factoris defined as:
+
+introduces the ratio of dimensionas, and modifies the rotary frequency as:
+
+whereis the aforementioned scale factor, andis a ramp function with extra hyper-parameters:
+
+Besides, it incorporates a 1D-RoPE scaling term as:
+
+where.
+
+SECTION: Flexible Training and Inference Pipeline
+Modern deep learning models, constrained by the characteristics of GPU hardware, are required to pack data into batches of uniform shape for parallel processing.
+Due to the diversity in image resolutions, as shown in Fig., DiT resizes and crops the images to a fixed resolution.
+While resizing and cropping as a means of data augmentation is a common practice, this approach introduces certain biases into the input data.
+These biases will directly affect the final images generated by the model, including blurring effects from the transition from low to high resolution and information lost due to the cropping (more failure samples can be found in Appendix).
+
+To this end, we propose a flexible training and inference pipeline, as shown in Fig.(a, b)., we avoid cropping images or resizing low-resolution images to a higher resolution. Instead, we only resize high-resolution images to a predetermined maximum resolution limit,., FiT first encodes an image into latent codes with a pre-trained VAE encoder.
+By patchfiying latent codes to latent tokens, we can get sequences with different lengths.
+To pack these sequences into a batch, we pad all these sequences to the maximum token lengthusing padding tokens.
+Here we setto match the fixed token length of DiT.
+The same as the latent tokens, we also pad the positional embeddings to the maximum length for packing.
+Finally, we calculate the loss function only for the denoised output tokens, while discarding all other padding tokens., we firstly define the position map of the generated image and sample noisy tokens from the Gaussian distribution as input. After completingiterations of the denoising process, we reshape and unpatchfiy the denoised tokens according to the predefined position map to get the final generated image.
+
+SECTION: Flexible Vision Transformer Architecture
+Building upon the flexible training pipeline, our goal is to find an architecture that can stably train across various resolutions and generate images with arbitrary resolutions and aspect ratios, as shown in(c).
+Motivated by some significant architectural advances in LLMs, we conduct a series of experiments to explore architectural modifications based on DiT, see details in.
+
+The flexible training pipeline introduces padding tokens for flexibly packing dynamic sequences into a batch.
+During the forward phase of the transformer, it is crucial to facilitate interactions among noised tokens while preventing any interaction between noised tokens and padding tokens.
+The Multi-Head Self-Attention (MHSA) mechanism of original DiT is incapable of distinguishing between noised tokens and padding tokens.
+To this end, we use Masked MHSA to replace the standard MHSA.
+We utilize the sequence maskfor Masked Attention, where noised tokens are assigned the value of, and padding tokens are assigned the value of negative infinity (), which is defined as follows:
+
+where,,are the query, key, and value matrices for the-th head.
+
+We observe that vision transformer models with absolute positional embedding fail to generalize well on images beyond the training resolution, as inand. Inspired by the success of 1D-RoPE in LLMs for length extrapolation, we utilize 2D-RoPE to facilitate the resolution generalization in vision transformer models. Formally, we calculate the 1-D RoPE for the coordinates of height and width separately. Then such two 1-D RoPEs are concatenated in the last dimension. Given 2-D coordinates of width and height as, the 2-D RoPE is defined as:
+
+where, anddenotes concatenate two vectors in the last dimension. Note that we divide the-dimension space into-dimension subspace to ensure the consistency of dimension, which differs from-dimension subspace in 1-D RoPE. Analogously, the attention score with 2-D RoPE is:
+
+It is noteworthy that there is no cross-term betweenandin 2D-RoPE and attention score, so we can further decouple the rotary frequency asand, resulting in the decoupled 2D-RoPE, which will be discussed inand more details can be found in Appendix.
+
+We follow recent LLMs like LLaMA, and replace the MLP in FFN with SwiGLU, which is defined as follows:
+
+wheredenotes Hadmard Product,,, andare the weight matrices without bias,. Here we will use SwiGLU as our choice in each FFN block.
+
+SECTION: Training Free Resolution Extrapolation
+We denote the inference resolution as (,). Our FiT can handle various resolutions and aspect ratios during training, so we denote training resolution as.
+
+By changing the scale factor into, we can directly implement the positional interpolation methods in large language model extrapolation on 2D-RoPE, which we call vanilla NTK and YaRN implementation. Furthermore, we propose vision RoPE interpolation methods by using the decoupling attribute in decoupled 2D-RoPE. We modifyto:
+
+whereandare calculated separately. Accordingly, the scale factor of height and width is defined separately as
+
+whereis the same with
+
+whereis the same with.
+
+It is worth noting that VisionNTK and VisionYaRN are training-free positional embedding interpolation approaches, used to alleviate the problem of position embedding out of distribution in extrapolation. When the aspect ratio equals one, they are equivalent to the vanilla implementation of NTK and YaRN. They are especially effective in generating images with arbitrary aspect ratios, see.
+
+SECTION: Experiments
+SECTION: FiT Implementation
+We present the implementation details of FiT, including model architecture, training details, and evaluation metrics.
+
+We follow DiT-B and DiT-XL to set the same layers, hidden size, and attention heads for base model FiT-B and xlarge model FiT-XL.
+As DiT reveals stronger synthesis performance when using a smaller patch size, we use a patch size p=2, denoted by FiT-B/2 and FiT-XL/2.
+FiT adopts the same off-the-shelf pre-trained VAEas DiT provided by the Stable Diffusionto encode/decode the image/latent tokens.
+The VAE encoder has a downsampling ratio ofand a feature channel dimension of.
+An image of sizeis encoded into latent codes of size.
+The latent codes of sizeare patchified into latent tokens of length.
+
+We train class-conditional latent FiT models under predetermined maximum resolution limitation,(equivalent to token length), on thedataset.
+We down-resize the high-resolution images to meet thelimitation while maintaining the aspect ratio.
+We follow DiT to use Horizontal Flip Augmentation.
+We use the same training setting as DiT: a constant learning rate ofusing AdamW, no weight decay, and a batch size of.
+Following common practice in the generative modeling literature, we adopt an exponential moving average (EMA) of model weights over training with a decay of 0.9999.
+All results are reported using the EMA model.
+We retain the same diffusion hyper-parameters as DiT.
+
+We evaluate models with some commonly used metrics,Fre’chet Inception Distance (FID), sFID, Inception Score (IS), improved Precision and Recall.
+For fair comparisons, we follow DiT to use the TensorFlow evaluation from ADMand report FID-50K with 250 DDPM sampling steps.
+FID is used as the major metric as it measures both diversity and fidelity.
+We additionally report IS, sFID, Precision, and Recall as secondary metrics.
+For FiT architecture experiment () and resolution extrapolation ablation experiment (), we report the results without using classifier-free guidance.
+
+Unlike previous work that mainly conducted experiments on a fixed aspect ratio of, we conducted experiments on different aspect ratios, which are,, and, respectively.
+On the other hand, we divide the experiment into resolution within the training distribution and resolution out of the training distribution.
+For the resolution in distribution, we mainly use(1:1),(1:2), and(1:3) for evaluation, with,,latent tokens respectively.
+All token lengths are smaller than or equal to 256, leading to respective resolutions within the training distribution.
+For the resolution out of distribution, we mainly use(1:1),(1:2), and(1:3) for evaluation, with,,latent tokens respectively.
+All token lengths are larger than 256, resulting in the resolutions out of training distribution.
+Through such division, we holistically evaluate the image synthesis and resolution extrapolation ability of FiT at various resolutions and aspect ratios.
+
+SECTION: FiT Architecture Design
+In this part, we conduct an ablation study to verify the architecture designs in FiT. We report the results of various variant FiT-B/2 models at 400K training steps and use FID-50k, sFID, IS, Precision, and Recall as the evaluation metrics.
+We conduct experiments at three different resolutions:,, and.
+These resolutions are chosen to encompass different aspect ratios, as well as to include resolutions both in and out of the distribution.
+
+This improvement is evident not only within the in-distribution resolutions but also extends to resolutions out of the training distribution, as shown in Tab..is the original DiT-B/2 model only with flexible training, which slightly improves the performance (FID) compared with DiT-B/2 with fixed resolution training atresolution.demonstrates a significant performance improvement through flexible training. Compared to DiT-B/2, FID scores are reduced byandat resolutionsand, respectively.
+
+is the FiT-B/2 flexible training model replacing MLP with SwiGLU.
+Compared to,demonstrates notable improvements across various resolutions.
+Specifically, for resolutions of,, and,reduces the FID scores by,, andin Tab., respectively.
+So FiT uses SwiGLU in FFN.
+
+is the FiT-B/2 flexible training model replacing absolute PE with 2D RoPE.
+For resolutions within the training distribution, specificallyand,reduces the FID scores by, andin Tab., compared to.
+For resolution beyond the training distribution,,shows significant extrapolation capability (FID) compared to.retains both absolute PE and 2D RoPE.
+However, in a comparison betweenand, we observe thatperforms worse.
+For resolutions of 256x256, 160x320, and 224x448,increases FID scores of,, and, respectively, compared to.
+Therefore, only 2D RoPE is used for positional embedding in our implementation.
+
+FiT has achieved state-of-the-art performance across various configurations.
+Compared to DiT-B/2, FiT-B/2 reduces the FID score byon the most common resolution ofin Tab..
+Furthermore, FiT-B/2 has made significant performance gains at resolutions ofand, decreasing the FID scores byand, respectively.
+
+SECTION: FiT Resolution Extrapolation Design
+In this part, we adopt the DiT-B/2 and FiT-B/2 models at 400K training steps to evaluate the extrapolation performance on three out-of-distribution resolutions:,and. Direct extrapolation does not perform well on larger resolution out of training distribution. So we conduct a comprehensive benchmarking analysis focused on positional embedding interpolation methods.
+
+PI (Position Interpolation) and EI (Embedding Interpolation) are two baseline positional embedding interpolation methods for resolution extrapolation. PI linearly down-scales the inference position coordinates to match the original coordinates. EI resizes the positional embedding with bilinear interpolation. Following ViT, EI is used for absolute positional embedding.
+
+We set the scale factor toand adopt the vanilla implementation of the two methods, as in. For YaRN, we setin.
+
+These two methods are defined detailedly inand. Note that when the aspect ratio equals one, the VisionNTK and VisionYaRN are equivalent to NTK and YaRN, respectively.
+
+We present in Tab.that our FiT-B/2 shows stable performance when directly extrapolating to larger resolutions. When combined with PI, the extrapolation performance of FiT-B/2 at all three resolutions decreases. When combined with YaRN, the FID score reduces byon, but the performance onanddescends. Our VisionYaRN solves this dilemma and reduces the FID score byonand byatcompared with YaRN. NTK interpolation method demonstrates stable extrapolation performance but increases the FID score slightly atandresolutions. Our VisionNTK method alleviates this problem and exceeds the performance of direct extrapolation at all three resolutions. In conclusion, our FiT-B/2 has a strong extrapolation ability, which can be further enhanced when combined with VisionYaRN and VisionNTK methods.
+
+However, DiT-B/2 demonstrates poor extrapolation ability. When combined with PI, the FID score achievesatresolution, which still falls behind our FiT-B/2. Atandresolutions, PI and EI interpolation methods cannot improve the extrapolation performance.
+
+SECTION: FiT In-Distribution Resolution Results
+Following our former analysis, we train our highest Gflops model, FiT-XL/2, for 1.8M steps.
+We conduct experiments to evaluate the performance of FiT at three different in distribution resolutions:,, and.
+We show samples from the FiT in Fig, and we compare against some state-of-the-art class-conditional generative models: BigGAN, StyleGAN-XL, MaskGIT, CDM, U-ViT, ADM, LDM, MDT, and DiT.
+When generating images ofandresolution, we adopt PI on the positional embedding of the DiT model, as stated in. EI is employed in the positional embedding of U-ViT and MDT models, as they use learnable positional embedding. ADM and LDM can directly synthesize images with resolutions different from the training resolution.
+
+As shown in Tab., FiT-XL/2 outperforms all prior diffusion models, decreasing the previous best FID-50K ofachieved by U-ViT-H/2-G toatresolution.
+Forresolution, FiT-XL/2 shows significant superiority, decreasing the previous SOTA FID-50K ofto.
+The FID score of FiT-XL/2 increases slightly atresolution, compared to other models that have undergone longer training steps.
+
+SECTION: FiT Out-Of-Distribution Resolution Results
+We evaluate our FiT-XL/2 on three different out-of-distribution resolutions:,, andand compare against some SOTA class-conditional generative models: U-ViT, ADM, LDM-4, MDT, and DiT. PI is employed in DiT, while EI is adopted in U-ViT and MDT, as in. U-Net-based methods, such as ADM and LDM-4 can directly generate images with resolution out of distribution. As shown in, FiT-XL/2 achieves the best FID-50K and IS, on all three resolutions, indicating its outstanding extrapolation ability. In terms of other metrics, as sFID, FiT-XL/2 demonstrates competitive performance.
+
+LDMs with transformer backbones are known to have difficulty in generating images out of training resolution, such as DiT, U-ViT, and MDT. More seriously, MDT has almost no ability to generate images beyond the training resolution. We speculate this is because both learnable absolute PE and learnable relative PE are used in MDT. DiT and U-ViT show a certain degree of extrapolation ability and achieve FID scores ofandrespectively at 320x320 resolution. However, when the aspect ratio is not equal to one, their generation performance drops significantly, asandresolutions. Benefiting from the advantage of the local receptive field of the Convolution Neural Network, ADM and LDM show stable performance at these out-of-distribution resolutions. Our FiT-XL/2 solves the problem of insufficient extrapolation capabilities of the transformer in image synthesis. At,, andresolutions, FiT-XL/2 exceeds the previous SOTA LDM on FID-50K by,, andrespectively.
+
+SECTION: Conclusion
+In this work, we aim to contribute to the ongoing research on flexible generating arbitrary resolutions and aspect ratio.
+We propose Flexible Vision Transformer (FiT) for diffusion model, a refined transformer architecture with flexible training pipeline specifically designed for generating images with arbitrary resolutions and aspect ratios.
+FiT surpasses all previous models, whether transformer-based or CNN-based, across various resolutions.
+With our resolution extrapolation method, VisionNTK, the performance of FiT has been significantly enhanced further.
+
+SECTION: References
+SECTION: Experimentin Setups
+We provide detailed network configurations and performance of all models, which are listed in Tab..
+
+We use the same ft-EMA VAEwith DiT, which is provided by the Stable Diffusion to encode/decode the image/latent tokens by default. The metrics are calculated using the ADM TensorFlow evaluation Suite.
+
+SECTION: Detailed Attention Score with 2D RoPE and decoupled 2D-RoPE.
+2D RoPE defines a vector-valued complex functioninas follows:
+
+The self-attention scoreinjected with 2D RoPE inis detailed defined as follows:
+
+where 2-D coordinates of width and height as, the subscripts ofanddenote the dimensions of the attention head,.
+There is no cross-term betweenandin 2D-RoPE and attention score, so we can further decouple the rotary frequency asand, resulting in the decoupled 2D-RoPE, as follows:
+
+So we can reformulate the vector-valued complex functioninas follows:
+
+SECTION: Limitations and Future Work
+Constrained by limited computational resources, we only train FiT-XL/2 for 1800K steps. At the resolution of 256x256, the performance of FiT-XL/2 is slightly inferior compared to the DiT-XL/2 model.
+On the other hand, we have not yet thoroughly explored the generative capabilities of the FiT-XL/2 model when training with higher resolutions (larger token length limitation).
+Additionally, we only explore resolution extrapolation techniques that are training-free, without delving into other resolution extrapolation methods that require additional training.
+We believe that FiT will enable a range of interesting studies that have been infeasible before and encourage more attention towards generating images with arbitrary resolutions and aspect ratios.
+
+SECTION: More Model Samples
+We show samples from our FiT-XL/2 models at resolutions of,and, trained for 1.8M (generated with
+250 DDPM sampling steps and the ft-EMA VAE decoder).
+Fig.shows uncurated samples from FiT-XL/2 with classifier-free guidance scale 4.0 and class label “loggerhead turtle” (33).
+Fig.shows uncurated samples from FiT-XL/2 with classifier-free guidance scale 4.0 and class label “Cacatua galerita” (89).
+Fig.shows uncurated samples from FiT-XL/2 with classifier-free guidance scale 4.0 and class label “golden retriever” (207).
+Fig.shows uncurated samples from FiT-XL/2 with classifier-free guidance scale 4.0 and class label “white fox” (279).
+Fig.shows uncurated samples from FiT-XL/2 with classifier-free guidance scale 4.0 and class label “otter” (360).
+Fig.shows uncurated samples from FiT-XL/2 with classifier-free guidance scale 4.0 and class label “volcano” (980).
+
+We also show some failure samples from DiT-XL/2, as shown in Fig..

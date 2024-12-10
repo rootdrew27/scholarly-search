@@ -1,0 +1,570 @@
+SECTION: FuseMoE: Mixture-of-Experts Transformers for Fleximodal Fusion
+As machine learning models in critical fields increasingly grapple with multimodal data, they face the dual challenges of handling a wide array of modalities, often incomplete due to missing elements, and the temporal irregularity and sparsity of collected samples. Successfully leveraging this complex data, while overcoming the scarcity of high-quality training samples, is key to improving these models’ predictive performance. We introduce “FuseMoE”, a mixture-of-experts framework incorporated with an innovative gating function. Designed to integrate a diverse number of modalities, FuseMoE is effective in managing scenarios with missing modalities and irregularly sampled data trajectories. Theoretically, our unique gating function contributes to enhanced convergence rates, leading to better performance in multiple downstream tasks. The practical utility of FuseMoE in the real world is validated by a diverse set of challenging prediction tasks.
+
+SECTION: Introduction
+Multimodal fusion is a critical and extensively studied problem in many significant domains, such as sentiment analysis, image and video captioning, and medical prediction. Previous research has shown that embracing multimodality can improve predictive performance by capturing complementary information across modalities, outperforming single-modality approaches in similar tasks. However, an ongoing challenge lies in the creation of scalable frameworks for fusing multimodal data under a variety of conditions, and in creating reliable models that consistently surpass their single-modal counterparts.
+
+Handling a variable number of input modalities remains an open challenge in multimodal fusion, due to challenges with scalability and lack of unified approaches for addressing missing modalities. Many existing multimodal fusion methods are designed for only two modalities, rely on costly pairwise comparisons between modalities, or employ simple concatenation approaches, rendering them unable to scale to settings with a large number of input modalities or adequately capture inter-modal interactions. Similarly, existing works are either unable to handle missing modalities entirelyor use imputation approachesof varying sophistication. The former methods restrict usage to cases where all modalities are completely observed, significantly diminishing their utility in settings where this is often not the case (such as in clinical applications); the latter can lead to suboptimal performance due to the inherent limitations of imputed data.
+In addition, the complex and irregular temporal dynamics present in multimodal data have often been overlooked, with existing methods often ignoring irregularity entirelyor relying on positional embedding schemesthat may not be appropriate when modalities display a varying degree of temporal irregularity. Consequently, there is a pressing need for more advanced and scalable multimodal fusion techniques that can efficiently handle a broader set of modalities, effectively manage missing and irregular data, and capture the nuanced inter-modal relationships necessary for robust and accurate prediction. We use the termto capture several of these key aspects, which haven’t been well-addressed by prior works:
+
+FlexiModal data is most evident in clinical scenarios, where extensive monitoring results in the accumulation of comprehensive electronic health records (EHRs) for each patient. A typical EHR encompasses diverse data types, including tabular (e.g., age, demographics, gender), images (X-rays, magnetic resonance imaging, and photographs), clinical notes, physiological time series (ECG and EEG), and vital signs (blood chemistry, heart rate).
+In this setting, we observe a variety of modalities, sampled with varying irregularity and a high degree of missingness and sparsity.
+
+In this paper, we introduce a novel mixture-of-experts (MoE) framework, which we call, specifically designed to enhance the multimodal fusion of FlexiModal data.incorporates sparsely gated MoE layers in its fusion component, which are adept at managing distinct tasks and learning optimal modality partitioning. In addition,surpasses previous cross-attention-based methods in scalability, accommodating an unlimited array of input modalities.
+Furthermore,routes each modality to designated experts that specialize in those specific data types. This allowsto effectively handle scenarios with missing modalities by dynamically adjusting the influence of experts primarily responsible for the absent data, while still utilizing the available modalities.
+Lastly,integrates a novel Laplace gating function, which is theoretically proven to ensure better convergence rates compared to traditional Softmax functions, thereby enhancing predictive performance. We have conducted comprehensive empirical evaluations ofacross a range of application scenarios to validate its effectiveness.
+
+SECTION: FuseMoE: Enhance Predictive Performance for FlexiModal Data
+In this section, we delve into the fundamental components of, illustrated in Figure. We focus on two critical elements: the modality and irregularity encoder, and the MoE fusion layer.
+
+SECTION: Sparse MoE Backbone
+The main components of a sparse MoE layer are a networkas a sparse gate and an expert network.proposed a Top-gating function that takes as an input a token representationand then routes it to the Top-experts out of the set. The gating network parameterproduces logits, which are normalized via Softmax:
+
+Each expert network () contains a feed-forward layer (FFN) and its parameters are independent of other models. The final output of the expert networkis the linearly weighted combination of each expert’s output on the token by the gate’s output:.
+
+The gating network’s advantage lies in its capacity to be concurrently trained with FFNs, facilitating the learning of an optimal sparse combination of experts. Essentially, by evaluating the similarity between the input token and the experts, the gating network/router optimally matches the input partition with the most suitable experts. In many cases, variations in the routing mechanism can greatly influence performance across diverse applications. The Softmax gating is the most widely adopted across domains.
+We introduce a novel Laplace gating function that offers enhanced convergence guarantees and delivers superior predictive performance, particularly in FlexiModal applications. The function is formulated as follows:
+
+The Laplace gating function, characterized by its Euclidean term, is less prone to converge towards extreme weight distributions due to the bounded nature of this term. In subsequent sections, we will illustrate how this gating function facilitates faster parameter estimation rates compared to Softmax gating. Moreover, our empirical findings indicate that the Laplace gating exhibits enhanced performance in managing FlexiModal data.
+
+SECTION: Modality and Irregularity Encoder
+To encode the irregularity of sampling in each modality, we utilize a discretized multi-time attention (mTAND) module, which leverages a time attention mechanismto discretize irregularly sampled observations into discrete intervals. Specifically, given a set ofcontinuous time points,, corresponding to thedimensionality of a given modality,
+we employembedding functionsto embed eachin adimensional vector space (detailed definition and examples can be found in Appendixand).
+Thedimension of theembedding is defined as
+
+whereare learnable parameters. By performing this for each continuous time point in, we create adimensional representation of each time point indifferent embedding spaces. We then leverage these embeddings to discretize the irregularly sampled observations into discretized bins. Specifically, we seek to discretize(withcorresponding observation times) intoregularly sampled intervals.
+We do this via an attention mechanism, which, for each embedding function, takesas queries,as keys, andas values and producesembeddings for each sequence. Formally,
+
+whereandare learnable parameters. This formulation allows us to discretize univariate observationsintoregularly-sampled bins. To model irregularity across a multivariate set of observations for a given modality withdimensions, we repeat this process for each dimension of the input. This allows us to obtain an interpolation matrixfor each of theembedding functions.
+We then concatenate the interpolation matrices across allembedding functions (i.e.,) and employ a linear projection to achieve a final, discretized embedding for each modality,, wheredenotes the desired dimensionality of each modality’s representation. The discretization procedure offers a standardized approach to managing irregularly sampled time series across various input types; however, it can inevitably result in information loss. On the other hand, relying solely on the mTAND module may yield suboptimal performance due to the potentially varying sampling rates of different variables, especially in scenarios where the sample sizes are small. To mitigate this, we combine discretized outputs with continuous representations learned through the mTAND module.
+
+The process described above allows us to discretize an arbitrarily long irregular, multivariate sequence into a regularly sampled, discretized embedding with lengthand dimensionality. We repeat this for each of themodalities, to createembeddings,, which are then combined to generate predictions.
+
+SECTION: MoE Fusion Layer
+Upon obtaining embeddings from each of themodalities, we propose multiple complementary approaches for processing multimodal inputs. Figureillustrates a range of router design options. The most straightforward strategy involves employing a common router that handles the concatenated embeddings of allmodalities, without imposing any gating constraints. As the complexity increases with additional modalities, we consider more sophisticated alternatives: deploying separate routers for each modality’s embedding and assigning these embeddings to a shared pool of experts. This allows for distinct processing while maintaining a unified expert framework. Additionally, we further segregate these common expert pools, allowing each router to direct its respective embedding to dedicated experts skilled in handling such specific inputs. These varied router design choices offer users enhanced flexibility, enabling more fine-grained control of both inter-modal and intra-modal relationships. Details of the respective advantages and challenges of these router design mechanisms can be found in Appendix.
+
+We implement an entropy regularization loss to ensure balanced and stable expert utilization, a concept supported by various previous studies. It maximizes the mutual information between modalities and experts and serves as an auxiliary loss function in addition to task-specific loss. Given a total ofmodalities, and denotingas the entropy, we define the loss functionas
+
+whereis the distribution over the expertsfor themodality. This distribution can be approximated by, whereis the number of observations of themodality. Intuitively, we actively encourage the input embeddings to diminish the uncertainty in selecting experts. By incorporating the loss, we aim to stabilize the experts’ preferences within each modality, while promoting a diverse range of expert selections across different modalities.
+
+In scenarios where certain modalities are missing throughout the data trajectories, we substitute the original embeddingwith a learnable embedding, acting as a generic “missing indicator”. This strategy is facilitated by employing per-modality routers, which, in conjunction with entropy regularization, guidepredominantly toward a specific group of less-utilized experts. The new embeddingsare dynamically adjusted throughout the model training process to minimize the task-specific loss and the entropy regularization loss. As a result, the router will assign lower weights to the experts responsible for processing these embeddings.
+
+SECTION: Theoretical Contribution
+In this section, we provide a theoretical guarantee of the benefits of the Laplace gating over the standard Softmax gating in MoE. In particular, we conduct a convergence analysis for maximum likelihood estimation (MLE) under the Lapace gating Gaussian MoE, and demonstrate that the MLE under this model has better convergence behaviors than that under the softmax gating Gaussian MoE.
+
+Since the convergence analysis of MLE under the Top-K sparse gating MoE has been studied in, we will focus on examining the Laplace gating solely in the sequel. Assume thatare i.i.d. samples drawn from the Laplace gating Gaussian MoE of orderwhose conditional density functionis
+
+where we define for any vectorsthat.
+Above,denotes a univariate Gaussian density function with meanand variance. For ease of the presentation, we denoteas a true but unknownmixing measureassociated with unknown parametersfor. In the paper, we specifically consider two settings of the true number of experts: (i)Exact-specified setting: whenis known; (ii)Over-specified setting: whenis unknown, and we over-specify the model in equationby a Laplace gating MoE model withexperts. However, due to the space limit, we present only the latter setting, and defer the former setting to Appendix.
+
+We use the maximum likelihood method to estimate the unknown mixing measure.
+In particular, the MLE is given by
+
+wheredenotes the set of all mixing measures with at mostcomponents.
+Given the MLE defined in equation, we are ready to present the main results. Before that, let us introduce some necessary notations for our analysis.
+
+We denotefor any. For any vector,stands for its-norm value. Additionally, the notationindicates the cardinality of a given set, whiledenotes the Dirac delta measure. Finally, for any two probability densitiesdominated by the Lebesgue measure, we denoteas their Total Variation distance.
+
+Firstly, we demonstrate in Theoremthat the convergence rate of density estimation under the Laplace gating Gaussian MoE is parametric on the sample size.
+
+Proof of Theoremis in Appendix. The parametric rateof the conditional density functionindicates that if there exists a loss function among parameterssuch that, then we will achieve the parameter and expert estimation rates via the bound.
+
+Following the above implication, we now define a loss function among parameters based on a notion of Voronoi cells as in. Given some mixing measure, we distribute its componentsto the following Voronoi cells, which are generated by the componentsof the true mixing measure:
+
+for any. Note that, the cardinality of the Voronoi cellis exactly the number of fitted components approximating.
+For ease of the presentation, let us denote, for any.
+Then, the Voronoi loss functionused for our analysis under the over-specified setting is given by:
+
+The notationstands for the minimum value ofsuch that the following system of polynomial equations does not have any non-trivial solutions for the unknown variables:
+
+A solution to the above system is regarded as non-trivial if at least among variablesis different from zero, whereas all the variablesare non-zero. It is worth noting that the functionwas previously studied into characterize the convergence behavior of parameter estimation under the location-scale Gaussian mixture models.also gave some specific values of that function, namelyand. Meanwhile, they claimed that it was non-trivial to determine the value ofwhen, and further techniques should be developed for that purpose. Since Gaussian MoE models are generalization of the Gaussian mixture models, we also involve the functionin our convergence analysis. Now, we provide in the following theorem the convergence rate of parameter estimation under the over-specified setting of the Laplace gating Gaussian MoE model (see also Figurefor the empirical convergence rates justifying the theoretical rates in Theorem).
+
+Proof of Theoremis in Appendix. The results of Theoremtogether with the formulation of the loss functionin equationreveal that (see also Table):
+
+The parameterswhich are fitted by exactly one component, i.e., enjoy the same estimation rate of order(up to some logarithmic factor), which match those in.
+
+The rates for estimating the parameterswhich are fitted by more than one component, i.e., are no longer homogeneous. On the one hand, the estimation rates for the parametersandare of ordersand, respectively, both of which are determined by the functionand vary with the number of fitted components. Those rates are comparable to their counterparts in. On the other hand, the estimation rates for the gating parametersand the expert parametersare all of order, which remains constant with respect to the number of fitted components. Meanwhile, those rates independ on a different system of polynomial equations from that in equation, which are significantly slower.
+
+In the standard Softmax gating, the similarity score is computed as the inner product of a token’s hidden representation and an expert embedding. However, this approach can lead to, where a subset of experts dominates the decision-making process, resulting in the redundancy of other experts. This issue likely contributes to the slow rates of estimating expert parametersin this setting (see Table). By contrast, the Laplace gating function partially alleviates this problem by computing the similarity score as the-distance between token representations and expert embeddings. This approach does not inherently favor any expert based on magnitude, unlike inner product which can be biased towards experts with larger norms. The Laplace gating ensures that all experts have a more balanced opportunity to be selected based on how close they are to the token representation. Therefore, Laplace gating is beneficial when dealing with heterogeneous inputs, such as multimodal data, where its feature distributions can be very different across modalities. This is because it can handle these differences without being overly sensitive to the scale and variance of the input features. In addition, it can gracefully degrade in the presence of missing data, rather than causing abrupt changes in gating probabilities that might occur with inner product-based measures. The improved estimation rates for expert parametersunder the Laplace gating Gaussian MoE, along with our empirical results on multiple large-scale datasets, substantiate these insights.
+
+SECTION: Experiments
+We demonstrate thatcan provide accurate and efficient predictions when applied to the FlexiModal setting. We testedon a diverse set of benchmarks, including MIMIC-IIIand MIMIC-IV, CMU-MOSI and MOSEI, the Physical Activity Monitoring (PAM) dataset, and CIFAR-10. Compared to CMU-MOSI and MOSEI, the MIMIC ecosystem exhibits irregular and missing modality patterns and includes distinct modalities unlike PAM and CIFAR-10. Evaluatingacross these diverse datasets provides various empirical insights into critical aspects of our model’s performance. Comprehensive details on the datasets, metrics, parameters, and additional results are thoroughly presented in the Appendices.
+
+SECTION: Main Results
+We first apply our method to the CMU-MOSI and MOSEI datasets, which utilize visual, acoustic, and textual data for sentiment analysis and emotion recognition tasks. Our methodology employs pre-trained T5for text encoding, librosafor audio feature extraction, and EfficientNetfor video feature encoding. Tabledetails the performance of various router design mechanisms within our MoE architecture, utilizing the Laplace gating function, compared against representative baselines. The baselines include (1) the early fusion method, Tensor Fusion Network (TFN); (2) the Multimodal Transformer (MulT), which fuses modalities by modeling their interactions; (3) the Multimodal Adaptation Gate (MAG), which focuses on the consistency and differences across modalities; and (4) multimodal fusion using standard MoE with the Softmax gating function. Results indicate that employing an MoE backbone—regardless of the gating function chosen or whether utilizing per-modality routers or a joint experts & router configuration—significantly enhances performance on the multimodal task. This improvement is attributed to the MoE’s ability to effectively allocate specific components to handle distinct input modalities, thus better addressing both inter- and intra-modal relationships.
+
+Subsequently, we evaluate our method using the Vision-MoE frameworkon the CIFAR-10 classification task, with results illustrated in Figure(a). In this experiment, we selectively replace the FFN layers with an even number in the Vision Transformer (ViT) models with MoE layers. These results, along with Tableon the CMU-MOSI and MOSEI datasets comparing Softmax-gating MoE, indicate that the Laplace gating function surpasses the standard Softmax gating function in performance. This outcome is consistent with our theoretical claims.
+
+We then conduct comprehensive evaluations ofon MIMIC-IV, and the Physical Activity Monitoring (PAM) dataset. These datasets feature multiple input modalities, each. Our tasks of interest for MIMIC datasets include the 48-hour in-hospital mortality prediction (48-IHM), 25-type phenotype classification (25-PHE), and length-of-stay (LOS) prediction. In addition to the previously mentioned baselines, we have incorporated the HAIM method, a data pipeline specifically designed for integrating multimodal data from the MIMIC-IV dataset. We also include the cross-attention combined with irregular sequences modeling approach (MISTS). Tableshows the outcomes of combining irregular vital signs and clinical notes from the MIMIC-IV dataset. In addition to the commonly used Softmax gating function, we also evaluated the Gaussian gating functionas a comparative benchmark. The-based methods surpass baselines in most scenarios, often by a non-trivial margin. Furthermore, we observe that HAIM shows considerable efficacy in extracting features from time series, resulting in a strong performance in the 48-IHM and LOS tasks, which are heavily reliant on such data. However, its performance appears more moderate on the 25-PHE task. The PAM dataset captures daily living activities through 17 sensors, with data from each sensor treated as a separate modality. These modalities are individually processed through time-series and irregularity encoders before being integrated into the FuseMoE framework. Our baselines include the Transformer, GRU-D, SeFT, a mTAND-only configuration, and IP-Net. We use the Laplace gating and its joint experts & router structure in these experiments. The results in Figure(b) have again shown the efficacy of integrating the irregularity encoder with the MoE fusion layer.
+
+SECTION: Ablation Studies
+Tablepresents the revised outcomes of the MIMIC-IV dataset after integrating CXR and ECG of corresponding patients, employing the per-modality router and the entropy losswithin. This setup was chosen as it slightly outperformed the joint router with an increase in modalities. Relative to their two-modality versions,has effectively harnessed additional information (notably from CXR), resulting in a significant enhancement in performance. Conversely, the addition of new modalities did not benefit the HAIM method, possibly due to its reliance on vital signs and clinical notes without adequately addressing the dynamics between different modalities. Furthermore, HAIM’s notably high F1 scores on the 25-PHE task can be attributed to XGBoost’s proficiency in managing missing minority classes. Note that, except for HAIM, other baselines were not designed to be agnostic to the quantity and variety of input modalities. Therefore, adapting them to manage extra and missing modalities requires considerable model changes, which might compromise their performance.
+
+Figure(c) illustrates the effectiveness of utilizing per-modality routers and the entropy lossin addressing missing modalities. Initially, we compare the performance ofon patients with fully available modalities against those with missing components, employing a joint router mechanism with the importance loss function, to ensure load balancing. The inclusion of datasets with missing modalities, while expanding the sample size, resulted in a decrease in performance due to the compromised data quality. However, a performance enhancement was observed upon integrating per-modality or disjoint routers with. Notably, the outcomes for the 48-IHM and LOS tasks with missing modalities surpassed those obtained from datasets without any missingness. This is because the per-modality approach can better separate the present and missing modalities, reducing the influence of experts responsible for processing the absent inputs. Therefore, this leads to a more efficient exploitation of a broader array of samples.
+
+SECTION: Discussions and Limitations
+In this paper, we introduced, a model adept at
+managing multimodal data characterized by random missingness or irregularity—a crucial yet relatively unexplored
+challenge.integrates MoE fusion layers with
+modal embeddings and offers multiple router configurations to adeptly handle multimodal inputs across different
+complexity levels.also employs an innovative
+Laplace gating function, which provides better theoretical
+results. Through empirical evaluation,has demonstrated superior performance across diverse scenarios. However, our current approach to encoding irregularities may potentially lead to over-parameterization when the input size is small.
+In our future work, we aim to identify simpler and more efficient methods to handle the irregularities of input samples while preserving the model’s overall performance.
+
+SECTION: Acknowledgement
+Xing Han and Suchi Saria acknowledge support from the National Science Foundation (NSF) and the Gordon and Betty Moore Foundation. Carl Harris acknowledges support from the NSF Graduate Research Fellowship under Grant No. DGE 2139757. Nhat Ho acknowledges support from the NSF IFML 2019844 and the NSF AI Institute for Foundations of Machine Learning. Any opinion, findings, and conclusions or recommendations expressed in this material are those of the authors(s) and do not necessarily reflect the views of the NSF, Gordon and Betty Moore Foundation.
+
+SECTION: References
+SECTION: Related Works
+Initial approaches to multimodal fusion incorporated techniques such as kernel-based methods, graphical models, and neural networks. With the diverse evolution of deep learning models, numerous advanced methods have now been employed in the fusion of multimodal data. In the realm of sentiment analysis,employ a low-rank Tensor Fusion method that leverages both language and video content. Attention-gating mechanisms are used byto generate displacement vectors through cross-modal self-attention, which are then added to the input vectors from the primary modality.takes an alternative approach by integrating multiple layers of cross-modal attention blocks in a word-level vision/language/audio alignment task.
+
+In the context of clinical prediction,adopt a late fusion approach to combining vital sign and text data by concatenating embeddings from pre-trained feature extractors.developed a generalizable data preprocessing and modeling pipeline for EHR encompassing four data modalities, albeit through a direct concatenation of existing feature embeddings for each modality followed by an XGBoost classifier. Recently,expanded on the work ofby introducing a discretized multi-time attention (mTAND) moduleto encode temporal irregularities in time series and text data. Their fusion approach involves layering sets of self- and cross-modal attention blocks. However, this approach is limited to just two modalities and is not easily extendable to include additional modal components or handle missing modalities.
+To the best of our knowledge, existing works are tailored to application-specific settings that necessitate the computation of pairwise cross-modal relationships, which are not scalable to more general settings with arbitrary modalities. Moreover, these studies typically do not account for scenarios where modalities are missing, or rely on imputation approaches based on observed data.
+
+MoEhas gained significant popularity for managing complex tasks since its introduction three decades ago. Unlike traditional models that reuse the same parameters for all inputs, MoE selects distinct parameters for each specific input. This results in a sparsely activated layer, enabling a substantial scaling of model capacity without a corresponding increase in computational cost. Recent studies have demonstrated the effectiveness of integrating MoE with cutting-edge models across a diverse range of tasks. These works have also tackled key challenges such as accuracy and training instability. Given its ability to assign input partitions to specialized experts, MoE naturally lends itself to multimodal applications. This approach has been explored in fields such as vision-language modelingand dynamic image fusion. However, the application of MoE in complex real-world settings, such as those involving FlexiModal Data, remains largely unexplored. This gap presents an opportunity to leverage MoE’s potential in handling its intricate and multifaceted nature such as multimodal EHR, where reliable multimodal integration is crucial.
+
+While MoE has been widely employed to scale up large models, its theoretical foundations have remained nascent. Recently,provided convergence rates for both density and parameter estimation of Softmax gating Gaussian MoE. They connected these rates to the solvability of systems of polynomial equations under Voronoi-based loss functions. Later,extended these theories to the top-K sparse softmax gating Gaussian MoE. Their theories further characterize the effect of the sparsity of gating functions on the behaviors of parameter estimation and verify the benefits of using top-1 sparse softmax gating MoE in practice. Other theoretical results for MoE include estimation rates of parameters and experts for multinomial logistic MoE, for dense-to-sparse gating MoE, for Gaussian gating MoE, and for input-independent gating MoE.
+
+SECTION: FlexiModal Data and Tasks of Interest
+We provide a generic definition for the FlexiModal Data as we used throughout the paper.
+Letto be the FlexiModal dataset withunits, whererepresents the input sequence from theunit of themodality,denotes the corresponding time points, andis the task-specific outcome. Take multimodal EHR as an example, eachmodality, which may vary from time-series data like heart rate, blood pressure, and glucose levels to high-dimensional inputs such as clinical notes and X-rays, containsobservations. Figureis a more specific illustration of the FlexiModal example.
+
+SECTION: MIMIC-IV and MIMIC-III Datasets
+In the ICU, where rapid and informed decisions are crucial, accurate mortality prediction is essential to provide clinicians with advanced warnings of patient deterioration, aiding in critical decision-making processes. Similarly, the prediction of patient length-of-stay is indispensable for optimizing treatment plans, resource allocation, and discharge processes. Further, phenotyping of critical care conditions is highly relevant to comorbidity detection and risk adjustment and presents a more challenging task than binary classification, due to the heterogeneous presentation of conditions and the larger number of prediction tasks. We concentrate on three critical care tasks as highlighted in, performing extensive empirical analysis on each building block of the proposed framework.
+
+In this binary classification task, we predict in-hospital mortality based on the first 48 of the ICU stay for patients who stayed in the ICU for at least 48 hours.
+
+We formulate our length-of-stay task similar to that of 48-IHM: for patients who spent at least 48 hours in the ICU, we predict ICU discharge without expiration within the following 48 hours.
+
+In this multilabel classification problem, we attempt to predict one of 25 acute care conditions(e.g., congestive heart failure, pneumonia, shock, etc.) at theeach each patient’s ICU stay. Because the original task was designed for diagnoses based on ICD-9 codes, but MIMIC-IV includes both ICD-9 and ICD-10 codes, we map patients with diagnoses coded using ICD-10 using the conversion database provided by.
+
+We implement an in-hospital mortality prediction () task to evaluate our method’s ability to predict short-term patient deterioration. Similarly, an accurate determination of patient discharge times is crucial for optimizing patient outcomes and hospital resource allocation, which motivates our length-of-stay () task. We frame 48-IHM and LOS as binary classification problems and use a 48-hour observation window (for patients who spent at least 48 hours in the ICU) to predict in-hospital mortality (48-IHM) and discharge (without expiration) within the 48 hours following the observation window (LOS). Lastly, identifying the presence of specific acute care conditions in patient records is essential for various clinical objectives, including the construction of cohorts for clinical studies and the detection of comorbidities. Traditional methods, often reliant on manual chart reviews or simple billing code-based definitions, are increasingly being supplemented by machine learning techniques; automating this process requires high-fidelity classifications, motivating our 25-type phenotype classification () task. In this multilabel classification problem, we attempt to predict one of 25 acute care conditions using data from the entire ICU stay.
+
+In our initial analysis, we focused on patients with no missing modalities, resulting in a dataset comprised of 8,770 ICU stays for the 48-IHM and LOS tasks, and 14,541 stays for the 25-PHE task. For our analysesmissing observations, we include a total of 35,129 stays for 48-IHM and LOS, and 71.173 for 25-PHE.
+To evaluate the single-label tasks, 48-IHM and LOS, we employ the F1-score and AUROC as our primary metrics. In line with previous studies, we use macro-averaged F1-score and AUROC to assess the 25-PHE task.
+
+We leveraged data from MIMIC-IV, a comprehensive database with records from nearlypatients admitted to a medical center from 2008 to 2019, focusing on the subset of 73,181 ICU stays. We were able to link core ICU records (containing lab results and vital signs) to corresponding chest X-rays, radiological notes, and electrocardiogram (ECG) datataking place during a given ICU stay. We allocated 70 percent of the data for model training, with the remaining 30 percent evenly split between validation and testing.
+
+The total number of samples for each of our three tasks (i.e., those in whichvital sign was recorded in the specified observation window), along with the total number of observations per-modality, are shown in Table.
+
+SECTION: MOSI and MOSEI Datasets
+We focus on the multimodal sentiment analysis (MSA) task which aims to predict sentiment polarity{positive, negative, and neutral} and sentiment intensity, which is a real number ranging from -3 to +3 under a multimodal setting.
+
+Following previous work such as, we adopt mean absolute error
+(MAE), Pearson correlation (Corr), binary classification
+accuracy, F1 score computed for non-negative/negative class as evaluation metrics.
+
+The CMU-MOSI dataset contains 1284/229/686 train/validation/test samples, and the CMU-MOSEI dataset contains 16326/1871/4659 train/validation/test samples. They are the largest dataset of multimodal sentiment analysis and emotion recognition to date. The datasets contain utterance videos from numerous online YouTube speakers, which are transcribed and properly punctuated, leading to multimodal input consisting of video frames, text, and audio signals.
+
+SECTION: PAM Dataset
+Physical Activity Monitoring (PAM) dataset measures the daily living activities of 9 subjects with 3 inertial measurement units. PAM is labeled into 8 classes where each class represents an activity of daily living.
+
+We choose common classification accuracy as the evaluation metric for this task.
+
+The processed PAM dataset
+contains 5,333 segments (samples) of sensory signals. Each sample is measured by 17 sensors and contains 600 continuous observations with the sampling frequency 100 Hz. PAM does not include static attributes and the samples are approximately balanced across all 8 categories.
+
+SECTION: CIFAR-10 Dataset
+CIFAR-10is an established computer-vision dataset used for object recognition. It consists of 60,000 32x32 color images containing one of 10 object classes (”plane”, ”car”, ”bird”, ”cat”, ”deer”, ”dog”, ”frog”, ”horse”, ”ship”, ”truck”), with 6000 images per class.
+
+SECTION: Mechanisms of Different Router Designs
+SECTION: Joint Experts & Routers
+In this approach, a concatenated embedding of all modalities is created, and this combined input is directed to selected experts by the router. This method allows the model to capture interactions between modalities at the input level, as the concatenated embedding provides a unified representation that includes all modalities. The router and experts work with this comprehensive view, enabling the model to learn correlations and interactions directly from the fused data. However, this approach might not fully capture modality-specific nuances since the characteristics of each modality are blended into a single representation.
+
+Captures inter-modal relationships by considering all modalities together.
+
+Simplifies the routing mechanism by treating the concatenated embedding as a single input.
+
+May overlook modality-specific features due to the blending of all modalities into one representation.
+
+Could be less efficient if some modalities are irrelevant for certain tasks or experts.
+
+SECTION: Modality-Specific Router
+Each modality’s embedding is independently assigned to a shared pool of experts by modality-specific routers. This setup allows the model to maintain the distinctiveness of each modality while still leveraging a common pool of expertise. By doing so, it can better capture modality-specific nuances and how they contribute independently to the overall task. However, this approach might be less effective in capturing complex inter-modal interactions since the initial routing is done independently for each modality.
+
+Preserves modality-specific information by routing each modality independently.
+
+Flexible in directing modalities to the most relevant experts, potentially improving efficiency.
+
+Captures interactions between modalities to some extent, but may not be as effective as joint routing approaches.
+
+needs additional coordination between independent routes to leverage cross-modal insights.
+
+SECTION: Disjoint Experts & Routers
+In this configuration, modality-specific routers assign each modality’s embedding to separate pools of experts, with each pool uniquely tailored to process a specific modality type. This method maximizes the ability of the model to capture and exploit modality-specific features and relationships, as each pool of experts is optimized for a particular type of data. However, this setup might limit the model’s ability to learn from the interactions between modalities, as each is processed in isolation.
+
+Allows for highly specialized processing of each modality, potentially improving performance on modality-specific tasks.
+
+Modality-specific experts can develop deeper insights into the characteristics and patterns within their designated data type.
+
+Inter-modal relationships might be underutilized due to the segregated processing of each modality.
+
+Requires additional coordination or subsequent integration stages to combine insights from different modality-specific experts.
+
+Each router type offers unique benefits and faces specific challenges in capturing the subtle relationships between modalities. The choice among them depends on the specific requirements of the application, including the importance of preserving modality-specific information versus capturing inter-modal interactions, and the computational efficiency of managing multiple experts and routers. For example, we found that modality-specific routers are more effective in ameliorating the effect of missing modality in our experiments.
+
+SECTION: Data Preprocessing
+SECTION: MIMIC-IV
+In the preprocessing stage, we focused on 30 pertinent lab and chart events from each patient’s ICU record for vital sign measurements. For chest X-rays, we utilized a pre-trained DenseNet-121 model, which was fine-tuned on the CheXpert dataset, to extract 1024-dimensional image embeddings. For radiological notes, we obtained 768-dimensional embeddings using the BioClinicalBERT model. ECG signals were processed using a convolutional autoencoder, adapted from, to generate a 256-dimensional embedding for each ECG.
+
+We selected 30 time series events for inclusion, following. Nine of these were vital signs: heart rate, mean/systolic/diastolic blood pressure, respiratory rate, oxygen saturation, and Glascow Coma Scale (GCS) verbal, eye, and motor response. We also included 21 lab values: potassium, sodium, chloride, creatinine, urea nitrogram, bicarbonate, anion gap, hemoglobin, hematocrit, magnesium, platlet count, phosphate, white blood cell count, total calcium, MCH, red blood cell count, MCHC, MCV, RDW, platlet count, neutrophil count, and vancomycin. We standard scale each time series value to have meanand standard deviation, based on the values in the training set.
+
+To incorporate a medical imaging modality into our analyses, we use the MIMIC-CXR-JPGmodule available from Physionet, which includes 377,110 JPG format images derived from the DICOM-based MIMIC-CXR database. Following, for each image, we resize each JPG image to 224224 pixels and then extract embeddings from the last layer of the Densenet121 model. We identify X-rays taken while the patient was in the ICU by first matching subject IDs in MIMIC-CXR-JPG with the core MIMIC-IV database, then limiting these matched X-rays to those with a chart time occuring between an ICU admission and discharge.
+
+To incorporate text data, we use the MIMIC-IV-Note module, which contains 2,321,355 deidentified radiology reports for 237,427 patients that can be matched with patients in the main MIMIC-IV via a similar approach to chest X-rays. We note that we were unable to obtainclinical notes (i.e., notes made by clinicians throughout a patient stay), as those have not yet been publicly released. We extract note embeddings using Bio-Clinical BERT.
+
+To include ECGs as an additional modality in our models, we utilize the MIMIC-IV-ECGmodule, which includes approximately 800,000 ECGs (10 seconds, sampled at 500 Hz) collected from nearly 160,000 unique patients. To transform the ECGs so that they are suitable for input to our model, we adopt a convolutional autoencoder approach, adapted from, that compresses each ECG into a 256-dimensional vector. Specifically, each diagnostic ECG contains adimensional vector (5000 time points12 ECG leads). To prepare the ECG for input to the autoencoder, we only include the firsttime points. We then train the autoencoder to compress the ECG into a 256-dimensional latent vector, and then reconstruct the original ECG using upsampling layers, using mean squared error as our loss function. The architecture is shown in Figure.
+We train the autoencoder with 90% of the ECGs available in the MIMIC-IV-ECG projection and use the rest for validation. We selected a batch size of 2048, and reduced the learning rate by a factor ofif the validation loss had plateaued forepochs. Training stopped if the validation loss had not decreased forepochs. For our encoder, we use filter numbers of, kernel widths ofand a dropout rate of. For the decoder, we use the same filter numbers and kernel widths in reverse, and maintain a dropout rate of.
+
+SECTION: PAM Dataset
+We follow the preprocessing procedure fromas published from their official GitHub repository.
+
+SECTION: Modeling Irregularity
+SECTION: Unified Temporal Discretization Embeddings
+Unlike the embeddings in chest X-rays, clinical notes, and ECGs, vitals/lab/time-series values present temporal irregularity. That is, for the former three modalities, each dimension of the corresponding is observed at each irregular time point. By contrast, the sampling for vitals/labs is irregular in bothanddimensions. For example, we might observe heart rate values sampled at timesand glucose values sampled at time. Given this unique challenge present in vitals/labs, we adapt the Unified Temporal Discretization Embedding (UTDE) approach described in, which combines the mTAND approach described in Sectionwith a simpler imputation-based discretization scheme. Specifically, given a set ofobservationsobserved at irregular times, we a simple imputation scheme to discretizeinto target bins(e.g.,. Specifically, given bin value, we apply the following rules:
+
+If there exists a previously observed value of(i.e.,), we set the imputed value ofat time,, to the closest previously observed value.
+
+If no previously observed value exists, we set the value ofto the global mean of.
+
+We do this for each possible vitals/lab, to generate a matrix of imputation embeddings, wereis the number of vitals/labs. We then input this embedding into a 1D causal convolutional layer with stride 1 to obtain our final imputation embeddings with hidden dimension,.
+
+SECTION: Unifying imputation and mTAND embeddings
+We combined simple imputation and mTAND embeddings via a gating function. Following, we letdenote the mTAND embeddings for vitals/labs derived from the process described in Sectionand letdenote the simple imputations from the process described above. We use each of these discretization embeddings to derive a final set of embeddings for vitals/labsvia a one-layer MLP gating function. Specifically, we let, wheredenotes the concatenation operator. We then calculateas
+
+wheredenotes point-wise multiplication.
+
+SECTION: Baseline Comparison
+SECTION: MISTS
+This approach, from, casts time series and clinical notes as multivariate, irregularly-sampled time series (MISTS) and uses layers of self- and cross-attention to fuse modalities. The method uses a Time2Vecencoding scheme to represent the irregularity of observation times. We use the same hyperparameters as in the original paper (e.g.,self- and cross-attention blocks,-dimensional time embedding, etc.).
+
+SECTION: MulT
+This model fromrelies on multiple stacks of pairwise and bidirectional cross-modal attention blocks (without a self-attention mechanism) to attend to low-level features. The results of cross-modal attention are then sent to modality-specific transformers, concatenated, and used to make predictions.
+
+SECTION: MAG
+This method introduces the Multimodal Adaptation Gate (MAG) as an extension to BERT and XLNet, allowing these pre-trained models to incorporate visual and acoustic data during fine-tuning. By generating a modality-conditioned shift in their internal representations, MAG enables enhanced sentiment analysis performance on multimodal datasets, achieving human-level accuracy in the field.
+
+SECTION: TFN
+The proposed Tensor Fusion Network approach (TFN) integrates three core components: Modality Embedding Subnetworks for generating rich embeddings from unimodal inputs, a Tensor Fusion Layer for capturing all levels of modality interactions through a 3-fold Cartesian product, and a Sentiment Inference Subnetwork tailored to perform sentiment analysis based on the fusion layer’s output.
+
+SECTION: HAIM
+The multimodal fusion approach detailed byextracts a single set of features for each ICU stay, and uses this to predict the outcome of interest (in-hospital mortality, etc.). For vitals/lab values, the authors extract a set of 11 generic time series features: signal length, maximum, minimum, mean, median, SD, variance, number of peaks, and average time-series slope and piece-wise change over time of these metrics. This is done independently for each of the 30 events, leading tovital/lab features per ICU stay. To provide a fair comparison with our method, we only include the most recent five notes andvitals measurements in calculating embeddings.
+We only include entries for which all modalities are observed. For note/X-ray/ECG embeddings, we compute the mean embedding across all observations occurring during the specified time frame (i.e., the first 48 hours of 48-IHM and LOS, the entire stay for PHE). As with our method, we standardize scale values based on the training set.uses an XGBoostclassifier to predict the outcomes of interest. We follow the hyperparameter optimization approach described in the paper. Specifically, we conduct a grid search across the following sets of hyperparameters: max depth, number of estimators, learning rate. Hyperparameters are selected based on the maximum AU-ROC from five-fold cross-validation.
+
+SECTION: Implementation
+We integratethroughinto our workflow using the implementation provided by. For, we adapt the time series (e.g., series variance, mean, etc.) feature extraction and model fitting code from the repository released by the corresponding paper. The original paper doesn’t use ECG waveforms, so we adopt a similar approach to ECG embeddings as with image and note embeddings, and take the mean value of the latent vector across all included observations.
+
+SECTION: Computational Resources and Hyper-Parameters
+SECTION: Computational Resources
+We train models using a Lambda Workstation with four A550 GPUs with 24 GB of memory. We are able to train models using a single GPU. An analysis of computation time and memory requirements is shown in Figure.
+
+SECTION: Hyper-Parameters
+The set of parameters we used for experiments can be found in Table.
+
+SECTION: Additional Results
+SECTION: FlexiModal Experiments
+We present additional results comparingto baselines using the MIMIC-III dataset, which includes only vital signs and clinical notes (Table), and the MIMIC-IV dataset, featuring vital signs and CXR (Table). All experiments utilize the “joint experts and router” configuration. In these settings,demonstrates noticeable advantages.
+
+SECTION: Ablation Study on FuseMoE Building Blocks
+In Figure, we evaluate the impact of various irregularity encoders on the performance of the FuseMoE framework. Our baseline approaches include the following methods:
+
+employing only the imputation (discretization) module from the time-series irregularity encoder, as detailed in Appendix
+
+utilizing solely the mTAND modulewithin the time-series irregularity encoder
+
+implementing the SeFT methodas an irregularity encoder
+
+adopting the RAINDROP methodas an irregularity encoder
+
+In Figure, we evaluate the impact of various time-series encoders on the performance of the FuseMoE framework. The original FuseMoE framework feeds time-series embeddings obtained from the irregularity encoder into the Transformerand extracts the last hidden states of the Transformer output to pass through fully connected layers to make predictions. Our baseline approaches include CNNand LSTMto encode time-series embeddings from the irregularity encoder.
+
+In Figure, we assess the effect of different CXR encoders on the FuseMoE framework. Currently, the FuseMoE framework incorporates DenseNet-121 as the feature extractor for CXR images before their integration into the mTAND module. This setup is compared with the application of the state-of-the-art vision transformer (ViT-B)as an alternative CXR encoder.
+
+In Figure, we evaluate the influence of text encoders on the FuseMoE framework. Currently, FuseMoE incorporates Clinical-Longformeras the text encoder before integrating it into the mTAND module. This setup is compared with other state-of-the-art text encoders: GRU-D, FT-LSTM, and HierTrans.
+
+Finally, in Figure, we investigate the effect of the mTAND module on each modality, while we removed mTAND for a particular modality, the rest of FuseMoE’s components remained constant.
+
+SECTION: Ablation Study on MoE Architecture
+We then conducted ablation studies to explore the efficiency and effectiveness of MoE architecture on model performance. We mainly use MIMIC-IV as our test bed. Figure(a) examines the computational efficiency and resource utilization, positioningapproximately in the middle of the comparison. Despite the increase in model parameters due to the incorporation of the MoE layer, its sparse nature does not significantly escalate the computational load. Figure(b) illustrates the correlation between the number of experts and task performance across different modalities. Generally, performance improves with the addition of more experts, plateauing once the count exceeds 16. To achieve a compromise between performance and computational expense, we opted to utilize the top 4 experts out of 16 in our experiments.
+Figure(c) and Figurestudy the influence of each modality on the top-chosen experts. For every expert selected, we calculate the number of samples that include a specific modality, weighted by corresponding weight factors from the gating functions. The outcomes are subsequently normalized across modalities. The analysis of Figure(c) reveals that predictions across all tasks heavily depend on vital signs and clinical notes. This reliance is attributed to the abundant samples in these two modalities. Despite the notably smaller quantity of CXR, they play more significant roles in the 25-PHE and 48-IHM tasks, which aligns with our findings in Table. The results in Figuredemonstrate that the modality weight distribution in the MOSI and MOSEI datasets is more “spread out”, with the audio component carrying a greater weight in the MOSEI dataset.
+
+SECTION: Details on Numerical Experiments
+We conduct multiple numerical experiments to illustrate the theoretical convergence rates of the MLEto the true mixing measureunder both exact-specified and over-specified settings.
+
+SECTION: Experimental Setup
+Assume that the true mixing measureis of order. The true parameters for the router,, are drawn independently from an isotropic Gaussian distribution with zero mean and variancefor, and otherwise are set to zero. Similarly, the true parameters of the experts,, are drawn independently of an isotropic Gaussian distribution with zero mean and variancefor all experts. For the variances, we also sample from the Gaussian distribution, and then take the absolute value of the sample.
+These parameters remain unchanged for all experiments.
+
+Then, we generate i.i.d samplesby first sampling’s from the uniform distributionand then sampling’s from the true conditional densityof the Laplace gating Gaussian mixture of experts (MoE) given in equation.
+
+A popular approach to determining the MLEfor each set of samples is to use the EM algorithm. However, since there are not any closed-form expressions for updating the gating parametersin the maximization steps, we have to leverage an EM-based numerical scheme, which was previously used in. In particular, we utilize a simple coordinate gradient descent algorithm in the maximization steps. Additionally, we select the convergence criterion ofand run a maximum of 2000 EM iterations.
+
+For each, we randomly distribute elements of the setintodifferent Voronoi cells, each contains at least one element. Moreover, we repeat this process for each replication. Subsequently, for each, we initialize parametersby sampling from a Gaussian distribution centered around its true counterpartwith a small variance, where. Other parametersare also initialized in a similar fashion.
+
+SECTION: Exact-specified Setting
+Under the exact-specified settings, we
+conduct 5 sample generations for each configuration, across a spectrum of 10 different sample sizesranging fromto. It can be seen from Figure(left) that the MLEempirically converges to the true mixing measureunder the Voronoi metricat the rate of order, which matches the theoretical parametric convergence rate established in Theorem.
+
+SECTION: Over-specified Setting
+Under the over-specified settings, we continue to generate 5 samples of sizefor each setting, given 10 different choices of sample size. From Figure(right), we observe that the MLEempirically converges tounder the Voronoi metricat the rate of order, which aligns with the theoretical parametric convergence rate established in Theorem.
+
+SECTION: Exact-Specified Setting
+In this appendix, we study the theoretical behaviors of the MLE under the exact-specified setting, i.e.,, of the Laplace gating Gaussian MoE. We demonstrate that under the exact-specified setting, the rate of estimated conditional density functiontois parametric(up to some logarithmic factor).
+
+The proof of Theoremcan be done similarly to that of Theoremin Appendix. The result of Theoremindicates that as long as we can establish the lower bound of the total variation distance betweenandbased on certain loss function between the MLEand the true mixing measure, we directly achieve the rate of the MLE under that loss function.
+
+We now define that loss function between the MLE and the true mixing measure
+for the exact-specified setting:
+
+Above, for any, we definefor anyand. We demonstrate in the following theorem that the rate of MLE to the true mixing measure under the Voronoi loss functionis(up to some logarithmic factor).
+
+Proof of Theoremis in Appendix. The convergence rate of MLE under the Voronoi loss functionimplies that the rates of estimating the true parametersare also(up to logarithmic factors). These rates are comparable to those under the exact-specified setting of softmax gating Gaussian MoE (cf. Theorem 1 in).
+
+SECTION: Proof of Theoretical Results
+In this appendix, we provide proofs for all theoretical results in the paper. Throughout this appendix, for any vectorand, we denote,and.
+
+SECTION: Proof of Theorem
+First of all, we need to establish the following bound:
+
+For that sake, it is sufficient to demonstrate two following inequalities:
+
+;
+
+,
+
+for some constant.
+
+: The inequality A is equivalent to
+
+Assume that the above inequality is not true, then, there exists a sequence of mixing measuresuch that bothandgo to zero as. Now, we define
+
+for anyas Voronoi cells with respect to the mixing measure, where we denoteand. In this proof, since our arguments are assymptotic, we can assume without loss of generality (WLOG) that these Voronoi cells does not depend on, that is,. Next, it follows from the hypothesisasthat each Voronoi cell contains only one element. Therefore, we may assume WLOG thatfor any, which implies thatandas. Then, the loss function betweenandis given by
+
+where we denote,,and.
+
+Now, we break the rest of our arguments into three steps:
+
+:
+
+In this step, we aim to decompose the term, which can be represented as follows:
+
+where we denoteand. By applying the first-order Taylor expansion, we can rewriteas
+
+whereis a Taylor remainder that satisfiesasand. Recall thatis the univariate Gaussian density, then by denoting, we can verify that
+
+Consequently, we get
+
+where we denote.
+
+Subsequently, we also apply the first-order Taylor expansion to the termdefined in equationand get that
+
+whereis a Taylor remainder such thatas.
+
+From the above results, the termcan be rewritten as
+
+in which we respectively define for eachthat
+
+for anyand. Otherwise,.
+
+:
+
+Moving to the second step, we will show that not all the ratiosandtend to zero as. Assume by contrary that all of them approach zero when, then for, it follows that
+
+Additionally, for tupleswherewith,and, we get
+
+Forwhere,and, we have
+
+Forwhereand, we have
+
+Forwhereand, we have
+
+As a result, we achieve that
+
+Due to the topological equivalence between norm-1 and norm-2, the above limit implies that
+
+Combine equationwith equation, we deduce that, which is a contradiction. Consequently, at least one among the ratiosanddoes not vanish astends to infinity.
+
+:
+
+In this step, we use the Fatou’s lemma to point out a contradiction to the results achieved in Step 2. In particular, we denote bythe maximum of the absolute values ofand. Since at least one of the previous ratios does not converge to zero, we deduce that.
+
+Recall from the hypothesis thatas. According to the Fatou’s lemma, we have
+
+This result indicates thattends to zero asgoes to infinity for almost surely. As a result, it follows that
+
+Next, let us denoteandwith a note that at least one among them is non-zero. From the formulation ofin equation, we deduce that
+
+for almost surely. The above equation is equivalent to
+
+for almost surely. It is worth noting that parametersare pair-wise distinct, thus, the setis a linearly independent, which implies that
+
+for any,for almost surely. Moreover, sincehave pair-wise distinct values, those ofare also pair-wise different. Therefore, the set
+
+is also linearly independent.
+Consequently, we obtain thatfor any,,and, which contradicts the fact that at least one among those terms is different from zero.
+
+Hence, we can find some constantsuch that
+
+: Assume by contrary that the inequality B does not hold, then there exists a sequence of mixing measuressuch thatand
+
+This result leads toas. Recall thatis a compact set, therefore, we can replace the sequenceby one of its subsequences that converges to a mixing measure. Since, this result induces that.
+
+Subsequently, by means of the Fatou’s lemma, we achieve that
+
+It follows thatfor almost surely. According to Lemma, the noisy top-K sparse softmax gating Gaussian mixture of experts is identifiable, thus, we obtain that. As a consequence, we obtain that, which contradicts to the fact that.
+
+Hence, the proof is completed.
+
+SECTION: Proof of Theorem
+In this appendix, we employ results for M-estimators into establish the density estimation rate under the Laplace gating Gaussian mixture of experts (MoE).
+
+Firstly, we introduce some necessary notations and fundamental results. In particular, letbe the set of all conditional density functions w.r.t mixing measures in. Next, we denote bythe covering number of metric space. Meanwhile,stands for the bracketing entropy ofunder the Hellinger distancewherefor any probability densitiesdominated by the Lebesgue measure. Then, we provide in the following lemma the upper bounds of those terms.
+
+Proof of Lemmais in Appendix. Subsequently, we denote
+
+In addition, for each, we define a Hellinger ball centered around the conditional density functionand intersected with the setas
+
+To capture the size of the above Hellinger ball,suggest using the following quantity:
+
+where. Given those notations, let us recall a standard result for density estimation in.
+
+Proof of Lemmacan be found in. Now, we are ready to provide the proof for convergence rate of density estimation in Theoremin Appendix.
+
+It is worth noting that for any, we have
+
+Then, the integral in equationis upper bounded as follows:
+
+where the second inequality follows from part (ii) of Lemma.
+
+As a result, by choosing, we can verify thatis a non-increasing function of. Furthermore, the inequality in equationindicates that. Next, let us consider a sequencedefined as. This sequence can be validated to satisfy the conditionfor some universal constant. Therefore, by Lemma, we reach the conclusion of Theorem:
+
+for some universal constantdepending only on.
+
+In this part, we will derive the following upper bound for the covering number of metric spacefor anygiven the bounded set:
+
+To start with, we denote. Asis a bounded set, the setis also bounded. Therefore, we can find an-cover of, denoted by. Additionally, we also define, andbe an-cover of. Then, it can be validated that
+
+Next, for each mixing measure, we take into account two other mixing measures. The first measure is, whereis the closest points toin this set for all. The second one isin whichfor any.
+Next, let us define
+
+then it is obvious that. Now, we will show thatis an-cover of metric spacewith a note that it is not necessarily the smallest cover. Indeed, according to the triangle inequality, we have
+
+Since the softmax function is no greater than one, the first term in the right hand side can be upper bounded as follows:
+
+Subsequently, we bound the second termas follows:
+
+It follows from the results in equation, equationand equationthat. This result indicates thatis an-cover of the metric space. As a consequence, we obtain that
+
+which leads to the conclusion of this part:.
+
+In this part, we provide an upper bound for the bracketing entropy ofunder the Hellinger distance:
+
+Sinceandare bounded sets, there exist positive constantssuch thatand. Let us define
+
+Then, it can be validated thatfor any.
+
+Next, letwhich will be chosen later andbe an-cover of metric spacewith the covering number. Additionally, we also consider brackets of the formwhere
+
+Then, we can check thatand.
+
+Let, we have for anythat
+
+whereis some positive constant. This inequality indicates that
+
+By setting, we obtain that. Finally, due to the inequality, we reach the conclusion of this part:
+
+Hence, the proof is completed.
+
+SECTION: Proof of Theorem
+In order to establish the following Total Variation lower bound under the over-specified settings, i.e. whenis unknown:
+
+we need to prove two following inequalities:
+
+;
+
+,
+
+for some constant. As the inequality B can be achieved in the same fashion as in Appendix, we concentrate on showing the inequality A in this proof. For that purpose, it suffices to prove that
+
+Assume that the above claim does not hold true, then there exists a sequence of mixing measuressuch that both the termsandgo to zero as.
+Let us recall the formulation of the loss:
+
+Since, we deduce thatandfor alland.
+
+Now, we reuse the three-step framework in Appendix.
+
+:
+
+Firstly, by abuse of notations, let us consider the quantity
+
+Similar to Step 1 in Appendix, we can express this term as
+
+Next, we proceed to decomposebased on the cardinality of the Voronoi cells as follows:
+
+By applying the Taylor expansions of order 1 andto the first and second terms of, respectively, and following the derivation in  equation, we get that
+
+whereis a Taylor remainder such thatasfor.
+Next, we apply the Taylor expansions of order 1 and 2 to the first and second terms of, respectively, and following the derivation in equation, we get that
+
+whereandare Taylor remainders such that their ratios overapproach zero as. Subsequently, let us define
+
+for anyand. Otherwise,.
+As a consequence, it follows that
+
+:
+
+In this step, we demonstrate that not all the ratiosandconverge to zero as. Assume by contrary that all these terms go to zero. Then, by employing arguments for deriving equationand equation, we get that
+
+Taking the summation offor allwhere,and, we have
+
+Taking the summation offor allwhere,and, we have
+
+Combine the above limit with the formulation ofin equation, we have that
+
+This result implies that we can find some indexthat satisfies
+
+For simplicity, we may assume that. Sincevanishes asfor any, we divide this term by the left hand side of the above equation and achieve that
+
+for any.
+
+Subsequently, we defineand. As a result, the sequenceis bounded, which indicates that we can substitute it with its subsequence that admits a positive limit. Therefore, at least one among the limitsequals to one. Furthermore, we also denote
+
+From the above definition, it follows that at least one among the limitsandequals to either 1 or. By dividing both the numerator and the denominator of the term in equationby, we arrive at the following system of polynomial equations:
+
+for all. Nevertheless, from the definition of, we know that the above system does not admit any non-trivial solutions, which is a contradiction. Consequently, not all the ratiosandtend to zero as.
+
+:
+
+Recall thatas. Then, by applying the Fatou’s lemma, we get
+
+which implies thatasfor almost surely.
+
+Next, we defineas the maximum of the absolute values of. It follows from Step 2 that. Moreover, by arguing in the same way as in Step 3 in Appendix, we receive that
+
+as. By abuse of notations, let us denote
+
+Here, at least one amongis non-zero. Then, by putting the results in equationand equationtogether, we get
+
+Arguing in a similar fashion as in Step 3 of Appendix, we obtain thatfor any,,and. This contradicts the fact that at least one among them is non-zero. Hence, the proof is completed.
+
+SECTION: Identifiability of the Laplace Gating Gaussian MoE
+First, we assume that two mixing measuresandtake the following forms:and. Recall thatfor almost surely, then we have
+
+Due to the identifiability of the location-scale Gaussian mixtures, we get thatand
+
+for almost surely. WLOG, we may assume that
+
+for almost surelyfor any. Since thefunction is invariant to translations, it follows from equationthatandfor some. Notably, from the assumption of the model, we have, which implies that. As a result, we obtain thatfor any. Then, equationcan be rewritten as
+
+for almost surely. Next, we denoteas a partition of the index set, where, such thatfor anyand. On the other hand, whenanddo not belong to the same set, we let. Thus, we can reformulate equationas
+
+for almost surely. This results leads to, for almost surelyfor any. Therefore, we have
+
+for any. As a consequence,
+
+Hence, we reach the conclusion of this lemma.
+∎
+
+SECTION: Broader Impact
+This paper presents research aimed at propelling advancements in the broad domain of machine learning. The implications of our findings are wide-ranging, with potential applications in sectors including healthcare, autonomous driving, and recommendation systems. Based on our current understanding, this research does not warrant an ethics review, and a detailed discussion of the potential societal impacts is not required at the current stage.

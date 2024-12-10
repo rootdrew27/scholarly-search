@@ -1,0 +1,155 @@
+SECTION: Homeostasis and Sparsity in Transformer
+Keywordstransformersparse distributed representationshomeostasisnatural language processingmachine translation
+
+SECTION: Introduction
+In 2017, a new architecture was proposed, marking the beginning of a class of architectures named "transformer". The transformer has significantly improved machine translation quality. Subsequently, this model developed into the LLMs known today. Additionally, researchers have found that models based on the transformer idea can achieve high results in imageand audioprocessing tasks. The high efficiency results of this architecture are due to the self-attention mechanism, which allows to assess the influence of tokens on each other. In other words, consider the sequence in context. Another significant feature is the encoding of token positions in the sequence using harmonic functions, which serves as the primary function of token location. Furthermore, it is noteworthy that both the encoder and decoder utilize the principle of ResNet residual networks, making connections not only with the lower layer but also with layers two levels below. This allows for the construction of a network with a high number of layers, thereby avoiding a well-known issue such as a vanishing gradient during training.
+
+At the same time, the transformer architecture enables parallelization to be carried out much more efficiently compared to well-known recurrent models such as LSTMand GRU. This feature, coupled with significant advances in GPU performance, has made it possible to develop models with billions of parameters and train them on trillions of tokens, which in turn has led to a qualitative breakthrough in language modeling.
+
+Due to its flexibility and universality, the transformer has become an important component in modern ML and is finding increasing application in a variety of tasks.
+
+On the other hand, in recent years, there has been discussion within the scientific community regarding the Thousand Brains Theory ideas. This theory is based on research into the neocortex and the development of biologically likelihood models. These differ significantly from more traditional machine learning approaches, offering an alternate perspective on the creation of artificial intelligence systems. At the same time, a number of ideas can be applied within traditional INS. In particular, these include:
+
+Sparse distributed representations.
+
+Self-organization of cells.
+
+Sparse distributed representations can be defined as a tensor with a large number of zero elements. In their papers, the authors demonstrate that the use of SDR leads to:
+
+Increasing the capacity of the neural network.
+
+Noise resistance.
+
+The use of local and global inhibition in the spatial grouping of hierarchical temporal memoryis inspired by the properties of inhibitory neurons in the neocortex. The use of inhibition properties allows, on the one hand, to obtain the sparse distributed representations, and on the other hand, to implement the mechanism of unsupervised learning in HTM. Experimental modeling has shown that the use of these approaches significantly enhances the efficiency of the model.
+
+Previously, inhibition mechanisms were employed in Fukushima’swork on neocognitrons. This model, similar to HTM, exhibits the property of self-organization.
+
+In this study, we aim to combine the ideas of classical machine learning and the model of the biological neocortex into a unified model based on the classical transformer. Despite the high efficiency of the transformer architecture, we propose an improvement in the self-attention mechanism with the introduction of sparsity by the kWTA methodwith a statistical enhancement of rare activations, which we called Rare Features Boosting kWTA or RFB-kWTA. Subsequently, we demonstrate that integrating this mechanism into the self-attention layer of the transformer allows for improved generalization of the model compared to.
+
+SECTION: Methods and Materials
+The proposed method is primarily based on two principles: sparsity and self-organization. We achieve sparsity by using kWTA, suppressing the smallest features.
+
+On the other hand, we hypothesize that the discarded features with the lowest values may contain information that helps the model to generalize patterns in the data, therefore, we propose a homeostatic mechanism that enhances rarer features over time before applying kWTA. This way, the distribution of features is controlled by the model itself, thereby improving its ability to generalize. RFB-kWTA is essentially a simplified representation of the biological self-regulation process of cells in the neocortex.
+
+SECTION: kWTA
+The essence of kWTA is to discard (zeroing) all values except for a certain proportion of the largest values. Consider a vectorof size. We introduce the sparsity coefficient- the proportion of non-zero elements in the vector. Let us assume that a higher sparsity corresponds to a lower value of. The result of kWTA’s work is a vector, whereis a binary vector:
+
+is a set consisting ofof the largest elements of the vector. Next, we will callthe kWTA activation mask. After calculation, the resulting vectorhas zero values at the places whereof the smallest elements are located
+
+SECTION: Application of kWTA in the self-attention layer
+In the paper, one of the main mechanisms is self-attention. The calculation of self-attention can be written as:
+
+Thetensor has a size, whereis the size of the batch,is the length of the sequence,is the number of attention heads,is the size of the representation of each head.
+
+kWTA is applied to the last measurement of SA:
+
+The output is thetensor, which has the same size as, while the proportion of non-zero elements iniswith an accuracy of rounding error.
+
+SECTION: RFB-kWTA algorithm
+The mechanism we propose contains another side: the strengthening of those positions in vector, that were statistically less likely to be activated. In order to implement such a mechanism, we will collect activation statistics at each step of training in a tensorhaving size. At each step of the training, activation statistics are calculated by batch for each head, that is, the elements of the tensor-:
+
+is the tensor of masks of the same size as,is the self-attention head index,is the cache position index,is the position of the embedding element,is the batch index,is the index of the sequence position.
+
+Tensoris a cache operating on the FIFO (First in First out) principle with size. At each step of calculating self-attention with kWTA, we use these statistics to calculate the maskas follows: calculate the total activation statistics forsteps, that is, the vector, the elements of which are calculated:
+
+Let the input tensor for the attention block be, with dimensions. We will calculate the tensor of enhanced activations as follows:
+
+whereis the maximum element of activation statistics for thehead,is the minimum element of activation statistics for thehead. Let the statistics values for each head be sorted in descending order, thenis an element with index.
+
+Note that the calculation of the kWTA remains unchanged, with the result still equal to, Only the vector for which the maskis applied changes.
+
+SECTION: "Smart" Inhibition
+In addition, we have implemented a method that incorporates stochastic (similar to dropout) and statistical inhibition of activations. The idea is similar to the RFB-kWTA method: we accumulate activation statistics over time, and then sample the mask randomly with probabilities depending on activation statistics.
+
+Similarly to the previous paragraph, we accumulate activation statistics, the size of which is, if applied in self-attention, or, when applied in the output of the transformer block.
+
+Next, we get a vector (matrix) of probabilities for sampling the mask:
+
+Hereis the maximum possible probability,is the minimum possible probability.is the aggregated activation statistics, which is calculated as in.
+Next, to maintain constant thinning, we change the probabilities as follows:
+
+Next, we use tiling (tile function in PyTorchor Numpy), adjusting the size ofto. After that, using the Bernoulli distribution, a binary mask is formed, of the same size as. The output of the layer is,is the sampled mask.
+
+SECTION: Memorization speed estimation
+In the section with the results, we will pay attention to the speed of memorization of training data by the model. To numerically estimate this value, we introduce the characteristic:
+
+is the metric value for the-th epoch,is the number of training epochs.
+This value is the ratio of the area under the curve of the metric trained by the model to the area under the curve of the ideal model - a model that remembers the entire training sample for the first epoch.
+
+SECTION: Method of conducting the experiment
+To test the effectiveness of the proposed algorithm, we used the Multi30k en-de dataset. The tokenizers was taken from the dataset itself. The training set contains 29k pairs of sentences, and the test and validation sets each contain 1,024 pairs.
+
+We trained the models for 181k steps on the RTX 4090 and 3080Ti, the parameters of the models and training will be given later in the results section.
+
+To train the model, we used Adam optimizerwithand Cross-Entropy as a loss function.
+
+To evaluate the result of the model, the BLEU metric was chosen, which was calculated on the lines generated by the token-by-token transformer. To get the best results, 5 checkpoints were saved every 30 epochs: the best loss and BLEU values for train and validation, as well as the checkpoint from the last epoch.
+
+SECTION: Results
+In this section, we will first demonstrate the effect of kWTA compared to a classic transformer. We will analyze the memorization and generalization abilities of both models and provide training schedules, on which we will compare the differences between the models.
+
+Then we investigate the behavior of the RFB-kWTA and "Smart" Dropout algorithms on the same data. We will compare their results with those of models based on Attention Is All You Need, in order to demonstrate the benefits of our proposed methods.
+
+SECTION: Parameters of the tested models
+In this section, we will present three types of tested models, which for simplicity are called small (23.1M), base (68.3M) and big (224.6M). All parameters are given in Table. The models given are models reproduced from workwith the same parameters, except for the small model, which was not in the original work.
+
+During the experiments, we implemented the proposed mechanisms at two points of the model: in the self-attention and after the residual connection at the output of the encoder and decoder blocks. In addition to the proposed mechanisms, we also used dropout at these points.
+
+SECTION: The influence of kWTA on memorization and generalization
+We assume that the use of exclusively kWTA on the one hand leads to an improvement in memorization by the model, and on the other - to a deterioration in generalization. The improvement of memorization occurs due to the selection of the strongest features while simultaneously removing the weak ones. The deterioration of generalization occurs due to the loss of some of the features.
+
+To confirm the hypothesis of improved memorization by a model using kWTA in the self-attention layer without using time-rare feature boosting, we conducted an experiment in which we trained a model fromand a model with kWTA in the self-attention layer with different coefficients.
+
+The training was conducted over 45k steps. The graph of the BLEU metric for the small model in training and validation samples is shown in Figureand Figure.
+
+Figureshows that the curve for the kWTA model with a coefficientis higher than the model fromthroughout the training. The results are shown in Table.
+
+From all the above results, we can conclude that when using kWTA in the self-attention layer, there is an increase in the ability of the model to memorize training data and a deterioration in generalization.
+
+SECTION: RFB-kWTA Testing
+In this experiment, we implemented RFB- kWTA in self-attention and dropout in the interblock connection. We will compare small models with each other: small, small RFB-kWTA with a coefficientand small RFB- kWTA with a coefficient. The BLEU graph on validation is shown in Figure.
+
+It can be seen from Figurethat the introduction of sparsity by the RFB-kWTA method can significantly improve the generalization of the model.
+
+We also present a comparison with models with a larger number of parameters, that is, with the base and big models. This comparison is shown in Figure.
+
+Figureshows that the big model, containing almost 10 times more trainable parameters, has a lower generalization quality compared to the small RFB-kWTA.
+
+SECTION: Results of other tests
+In this section, we present a summary table of all the results obtained during the study. The following experiments were conducted:
+
+Models from.
+
+RFB-kWTA in self-attention and Dropout in the interblock connection.
+
+Dropout in self-attention and Dropout in the interblock connection.
+
+RFB-kWTA in self-attention and "Smart" Inhibition in the interblock connection.
+
+"Smart" Inhibition in self-attention and "Smart" Inhibition in the interblock connection.
+
+Due to the large number of possible experiments, we were able to consider a limited number of combinations, so we present the results of all the tests in a single summary table.
+
+The BLEU score based on test data was built in token-by-token mode. All experimental results are shown in Table. The best test results are shown in color.
+
+SECTION: Discussion
+During the study, we saw two important effects:
+
+Thinning the representation in self-attention using kWTA improves the model’s memorization of training data, but worsens generalization. The memorization effect is observed due to the selection of the most "bright" features, allowing the model to memorize the training sample faster. At the same time, the extraction of less "bright" signs leads to the loss of information, which contains "subtle" patterns leading to generalization.
+
+The RFB mechanism in combination with Dropout has a positive effect on the generalizing ability of the model. In order to allow "subtle" patterns to periodically appear among the signs, we introduced a mechanism of homeostasis based on activation statistics. This mechanism makes it possible to enhance signs that are rare in time, which may contain those very "subtle" patterns. However, substituting dropout with “smart” inhibition allows for further improvement in the quality of the model.
+
+The mechanisms proposed by us, due to their self-regulation, outperform the classical transformer in the task of machine translation. At the same time, all models incorporating a homeostasis mechanism, even those withhave proven to be superior to the classic transformer model.
+
+Due to limited computing resources and a large number of experiments, we have not established a dependence of quality on the size of the. In the future, we plan to conduct such a study.
+
+The results obtained can be useful for constructing models with attention blocks and classical models consisting of an encoder and a decoder, however, there is a need to verify the applicability of the mechanism for other tasks (for example, image processing). We assume that the method is generalizable to any other tasks.
+
+The proposed model showed a significantly higher result than the classic transformer, however, we did not see the expected victory of the large model over the smaller ones. We attribute this to the redundancy of the large model for this task, since the dataset contains a total of 30k samples. Nevertheless, the base model performs better than the small one, and this allows us to conclude that the method is applicable in architectures with a large number of parameters.
+
+SECTION: Conclusion
+In this study, we proposed a self-regulation method that allows the model to significantly improve the quality of generalization. In particular, we have shown that the small model, which has about 10 times fewer trainable parameters compared to the big model of the classical transformer, significantly outperforms it as a generalization - 0.3025 BLEU versus 0.2751 BLEU. We believe that such an increase was obtained due to the self-regulating strengthening of insignificant signs in self-attention, which are nevertheless important for the formation of rules by the model. At the same time, we got the maximum result from the base model with a combination of "Smart" Inhibition in both cases.
+
+We have also identified an important correlation between the sparsity of the kWTA and the quality of memorization and generalization. At a certain level of sparsity, the quality of memorization is achieved better than in the classical transformer with small losses of generalization. Next, we intend to test the proposed mechanism in other tasks and models of architectures. Additionally, an interesting experiment may be to combine multiple attention heads with a single activation statistic.
+
+SECTION: References

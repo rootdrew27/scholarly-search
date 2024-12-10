@@ -1,0 +1,213 @@
+SECTION: TurboFFT: Co-Designed High-Performance and Fault-Tolerant Fast Fourier Transform on GPUs
+GPU-based fast Fourier transform (FFT) is extremely important for scientific computing and signal processing. However, we find the inefficiency of existing FFT libraries and the absence of fault tolerance against soft error. To address these issues, we introduce TurboFFT, a new FFT prototype co-designed for high performance and online fault tolerance. For FFT, we propose an architecture-aware, padding-free, and template-based prototype to maximize hardware resource utilization, achieving a competitive or superior performance compared to the state-of-the-art closed-source library, cuFFT. For fault tolerance, we 1) explore algorithm-based fault tolerance (ABFT) at the thread and threadblock levels to reduce additional memory footprint, 2) address the error propagation by introducing a two-side ABFT with location encoding, and 3) further modify the threadblock-level FFT from 1-transaction to multi-transaction in order to bring more parallelism for ABFT. Our two-side strategy enables online correction without additional global memory while our multi-transaction design averages the expensive threadblock-level reduction in ABFT with zero additional operations. Experimental results on an NVIDIA A100 server GPU and a Tesla Turing T4 GPU demonstrate that TurboFFT without fault tolerance is comparable to or up to 300% faster than cuFFT and outperforms VkFFT. TurboFFT with fault tolerance maintains an overhead of 7% to 15%, even under tens of error injections per minute for both FP32 and FP64.
+
+SECTION: Introduction
+The Fast Fourier Transform (FFT) is a core computation in a wide range of applications. For example, FFT is employed extensively in science and engineering, such as exascale projects like LAMMPS, quantum simulations like QMCPACK, molecular dynamics like HACC. A significant portion, e.g. 70%, of processing time in scientific applications is consumed by FFT, showcased by a space telescope project. However, those applications are increasingly vulnerable to transient faults caused by high circuit density, low near-threshold voltage, and low near-threshold voltage. Oliveira et al.demonstrated an exascale
+system with 190,000 cutting-edge Xeon Phi processors
+that still suffer from daily transient errors under ECC protection. Recognizing the importance, the U.S. Department of Energy has named reliability as a major challenge.
+
+Since Intel Corporation first reported a transient error and the consequent soft data corruption in 1978, both the academic and industry sectors have recognized the significant impact of transient faults. In 2003, Virginia Tech broke down and sold online its newly-built Big Mac cluster of 1100 Apple Power Mac G5 computers because it lacked ECC protection, leading to unusability due to cosmic ray-induced crashes. Despite ECC protection, transient faults remain a threat to system reliability. For instance, Oliveira et al. simulated an exascale system with 190,000 cutting-edge Xeon Phi processors, finding it still vulnerable to daily transient errors under ECC. Such faults have not only been a concern in simulations; Google has encountered transient faults in its real-world production environment, resulting in incorrect outputs. In response to the persistent challenge posed by transient faults on large-scale infrastructure services, Meta initiated an investigation in 2018 to find solutions.
+
+Transient faults can result in fail-stop errors, causing crashes, or fail-continue errors, leading to incorrect results. Checkpoint/restart mechanismsor algorithmic methodscan often mitigate fail-stop errors, whereas fail-continue errors pose a greater risk by silently corrupting application states and yielding incorrect result. These errors can be especially challenging in safety-critical scenarios. In this paper, we concentrate on fail-continue errors occurring in computing logic units, such as incorrect outcomes, and assume that memory and fail-stop errors are addressed through error-correcting codes and checkpoint/restart. We describe them as soft errors.
+
+To protect FFT against soft errors, a variety of fault tolerance methods have been proposed. Jou and Abraham suggested an algorithm-based fault tolerance (ABFT) method for FFT networks that provides full fault coverage and throughput with a hardware overhead of. Pilla et al. proposed a specific software-based hardening strategy to lower failure rates. Fu and Yang implemented a fault-tolerant parallel FFT using MPI. Xin et al. integrated a fault tolerance scheme into FFTW.
+
+However, the fault tolerance for FFT on modern GPUs is absent. Besides, we find that offline FT-FFT suffers from significant overhead due to high kernel launch overhead and redundant memory operations. To hide the fault tolerance memory footprint, we fuse the ABFT operation at thread and threadblock levels. During our development at an FFT baseline for fused ABFT, we surprisingly characterized the inefficiency within the existing GPU-based FFT libraries, including the state-of-the-art closed-source cuFFT and the popular open-source VkFFT. Their sub-par performance mainly comes from underutilization due to poor kernel parameters and shared memory padding. After developing a high-performance FFT baseline, we further reduce the fused ABFT by assigning more than one global memory transaction for each threadblock. To address these issues, we propose TurboFFT, a high-performance FFT implementation equipped with a two-sided fault tolerance scheme that detects and corrects silent data corruptions at computing units on-the-fly. More specifically, our contributions include:
+
+We develop TurboFFT, a new FFT prototype co-designed for high performance and online fault tolerance. TurboFFT has:performance comparable to or faster than state-of-the-art closed-source library, cuFFT, andon-the-fly error correction with low overhead.
+
+Our design maximizes hardware utilization by 1) architecture aware optimizations such as memory coalescing, reorganizing global memory accessing in the last FFT stage, avoid FP64 triangular function with twiddling factor table, 2) replacing shared memory padding with swizzling access to avoid bank conflict, and 3) zero-cost kernel parameter tunning with template-based code generation for a wide range of problem sizes.
+
+We: 1) address the exponential error propagation by introducing a new two-side ABFT with location encoding, 2) explore ABFT with kernel fusion at the thread, warp, and thread block levels to avoid additional memory transaction, 3) further reduce the ABFT threadblock-level reduction overhead by changing FFT from 1-transaction to multiple transactions. Transaction means a round trip of.
+
+Experimental results of single precision and double precision on an NVIDIA A100 server GPU and a Tesla Turing T4 GPU show that TurboFFT without fault tolerance offers a competitive or superior performance compared to the state-of-the-art closed-source library cuFFT. TurboFFT only incurs a minimum overhead (7% to 15% on average) compared to cuFFT, even under tens of error injections per minute for FP32 and FP64.
+
+SECTION: Background
+SECTION: Inefficiency of Existing FFT Libraries
+According to our benchmark of TurboFFT and VkFFT against cuFFT in Figure, we find the following performance issues:
+
+VkFFT focuses on FP64, lacks optimizations on FP32, as well as small problem size, e.g., as shown in Figure(b) (d). In contrast, TurboFFT provides architecture-aware optimizations for both FP32 and FP64. Besides, we also present a padding-free store from register to shared memory by swizzling the store order between different threads.
+
+The state-of-the-art closed library fails to fully utilize the SMs on A100 for problem sizes less thanMB, demonstrated by the many green squares at the lower triangular area in Figure(a) and (c). TurboFFT outperforms cuFFT with better kernel parameters. The kernel parameters are manually searched with a cost-friendly template-based code generation strategy.
+
+SECTION: Absence of Fault Tolerant FFT
+FFT accelerates discrete Fourier transform (DFT) computation through factorization, as shown in Figure. The forward DFT maps a complex sequenceto, where. The inverse discrete Fourier transform is defined as. DFT can be treated as a matrix-vector multiplication (GEMV) between the DFT matrixand the input sequence. Given the expensive O() operations of GEMV, FFT factorizes the DFT matrix into a sparse factors product and achieves a complexity of O().
+
+The butterfly operation doubles the number of corrupted data. As shown in Figure, one corrupted data in a 64-point FFT will spread to all other data in 6 iterations. Existing ABFT schemes detect errors by utilizing a perspective of GEMV in DFT, namely, as shown in Eqn. () and ().
+
+whereis the input signal,is the output signal,is the DFT matrix, andis the encoding vector. The correctness is verified by comparingand. Ifexceeds an error threshold, it indicates that an error occurred during the computation. The selection ofis widely discussed because the 1’s vector misses the opposite errorandby addition. Jousuggestswhile requiring a variant input, leading to additional computation overhead. Next, Wangproposesallowingto be unchanged. The computation ofis not trivial and introduces addition computation or memory overhead. Due to the error propagation, existing fault tolerance schemes not only necessitate a checksum computation for each signal and a time-redundant recompute under error correction. In contrast, TurboFFT employs a column vectorto linearly combine a batch of signals, as shown in Eqn. (). The composite signal can recover the corrupted signal given the SEU assumption and the linearity of FFT, enabling batched detection and delayed correction without recomputation. The main contribution of our two-side ABFT is the performance improvement by amortizing one ABFT checksum transaction along a batch.
+
+The work closest to ours is the offline FT-FFT presented in. However, this method demonstrates high overhead. Hence, we further explore the kernel fusion of two-side ABFT on GPU to hide the memory footprint of checksum operations.
+
+TurboFFT focuses on the detection and correction of errors at computing units that can affect the results of the final output. We assume memory errors are protected by ECCand the reliability issue of communication is protected by FT-MPI. To address the compute errors at the run-time, we adopt a fault-tolerant scheme under a single-event upset (SEU) assumption, i.e., there is only one soft error in each error detection and correction period. The SEU assumption is validated by the low occurrence rate of multiple soft errors caused by short fault detection intervals, widely used in many works.
+
+SECTION: TurboFFT without Fault Tolerance
+A high-performance fault-tolerant FFT implementation necessitates fusing the memory costs of fault detection with the original FFT operations. Hence, an efficient FFT framework serves as the foundation for memory operations of fault detection. As cuFFT is closed-source, implementing a high-performance FFT from scratch becomes inevitable. In this section, we present the step-wise optimizations of FFT. The optimizations include avoiding bank conflict, maximizing the L1 cache hit rate, reducing triangular operations, and a template-based code generation for parameter selection.
+
+SECTION: Architecture-Aware Optimizations
+TurboFFT architecture-aware optimizations including common tiled FFT, twiddling factor optimization, and global memory access optimizations. Figuredemonstrates an overview of our optimized TurboFFT pipeline for FFT with large inputs, utilizing the step-wise optimizations mentioned above. Starting from the application level, the input signal is first tiled into acube to fit into the shared memory maximum size of a threadblock. Next in the kernel level, three stages of FFTs are performed step by step along each axis. For each stage, the FFT workload will be executed by threadblock, and each threadblock is assigned to a batch of FFT along the axis. Then at the threadblock level, the batched FFT loaded from global memory will first be arranged into a cube as the kernel level did. The cube size is equal to the thread-level radix. After that, warp-level FFT will load the input from shared memory into thread-level registers layer by layer. The shared memory access is coalesced to avoid bank conflicts and maximize the shared memory bandwidth. Once the thread-level inputs have been loaded into registers, the thread-level FFT macro kernel will perform the FFT computations. Within each level, the workflow goes from left to right. If a particular level’s workload is completed, the tasks are then pop back to the higher level.
+
+SECTION: Padding-Free Store: Register to Shared Memory
+Figuredemonstrates how our padding-free design swizzles the order of register to shared memory between different threads to avoid conflict without wasting shared memory. GPU-based FFT typically adopts the Stockham variant. In the Stockham variant, continuous thread access contiguous memory. For example, Figureshows a 128-point FFT decomposed into size. First, a batch of-point FFT is performed. Assuming the column-major store and data type is FP32, continuous elements in the-point signals (row with the same color) have a stride of. The loading from shared memory to register has zero bank conflict because the continuous access among threads naturally occupies the 128-byte bandwidth of the shared memory bank. After each thread finishes the FFT computation, the output signals should be stored back to shared memory for synchronization and adaptation to next step. However, each output signal will occupy a contiguous memory array, resulting in bank conflicts. To avoid bank conflict, VkFFT adds an 8-byte padding of every 128-byte data. Despite this method only introducing a low overhead of, the irregular shared memory size with padding results in up to 40% overhead due to the undividable shared memory capacity of a streaming processor, as shown in Figureand Figuresupport our statement.
+
+SECTION: Template-based Codegen
+A hard-coded FFT kernel can degrade performance when applied to different input sizes. However, rebuilding an FFT kernel with different parameter settings from scratch each time is not practical due to the high development cost. Generally, each FFT kernel in TurboFFT has around 2000 to 3000 lines of code (LOC) while an FFT with a large input size requires 3 different FFT kernels as mentioned above. To mitigate the increment of development cost, we propose a template-based code generation scheme to generate a series of input-size specific kernels. The code generation strategy we’ve developed involves utilizing semi-empirically chosen kernel parameters, tailored to input shapes, to generate highly efficient, parameterized kernels in real time.
+
+Besides following the step-wise TurboFFT optimization, the code generation scheme takes 7 parameters as input and generates a corresponding high-performance FFT kernel. The kernel parameters are,and.are the cube size of the kernel-level input signal.are the cube size of the threadblock-level input signal.denotes the number of FFT signals a thread will take for one computation. In the code generation template, the memory operations are strategically designed to sidestep bank conflicts. Additional parameters, such as the data type for vectorized load/store operations, are determined directly by threadblock-level input sizes and batch size. Figureshows our code generation template.
+
+We generated FFT kernels with various parameters using the code generation template. Through empirical analysis, we identified a series of best kernels for input shapes fromtoand batch size fromto, respectively. For input size in,, and, we adopt one, two, and three FFT kernel launches, respectively. Tableshows kernel parameters of 3 kernels.
+
+SECTION: TurboFFT with Fault Tolerance
+SECTION: Two-sided Checksum
+Figuredetails our motivation and algorithm designs. Previous FT-FFT, either offline or online, requires, namely applying the encoding vector to each input. Other than that, previous work states that a time-redundant recomputation is necessary. Motivated by the error propagation issue, we find the single error in FFT, although it corrupts hundreds of elements, the errors in the output are proportional to the initial error, as shown in the blue region in Figure. To avoid frequent checksum encoding, we employ another encoding vectortoa batch of inputs within each thread and encode those thread-local variables withat a fixed interval. The corrupted input can be located using the location encoding as shown in the green region of Figure.
+
+There are two checksums being computed in the two-sided ABFT, namely the left-sideand the right-side. The checksum along the individual signal, namely one column in, is used to detect the location of the error. Once a mismatch between the checksum before and after one FFT process, it is treated as an error. If an error is detected, then the divergence of the checksum along different signals between before and after the FFT is added back to the detected signal to perform the correction. According to Figure, both two-sided ABFT and one-sided ABFT compute the checksum on the left side, i.e., eWX. In one-sided ABFT, this checksum is used to detect whether an error has occurred, and if an error is detected, the process reverts to a previously saved state for recalculation. In two-sided ABFT, while using this left-side checksum, the sum is also taken along the row direction of the current data X. If we perform an FFT operation on this checksum vector and subtract it from the checksum of the output result, we can then obtain the correction value for the entire column of erroneous data. Next, we just need to add this correction value back to correct the error.
+
+The biggest difference between one-sided ABFT and two-sided ABFT is whether there is an immediate need for recalculation. From Fig., we understand that two-sided ABFT requires the calculation of an additional set of checksums, and correction also involves performing an FFT operation on the checksum vector. So, compared to one-sided ABFT, where does the advantage of two-sided ABFT lie? This work points to the advantage, namely delayed batched correction.
+
+Under the assumptions of ABFT, a single checksum can correct one error. Therefore, for two-sided ABFT, it is only necessary to note the position of the error, i, and then continue processing the data for position i+1, until the operation ends or a new error occurs. In those cases, we need to correct the contents of the checksum at the erroneous position. As a result, there is an opportunity for batch-processing operations among different threads, which enhances parallelism. Moreover, since there is no need to stop and execute immediately, the running pipeline of the program is not affected, thereby avoiding stalls.
+Figureillustrates the difference between one-sided ABFT and two-sided ABFT. Any fault tolerance mechanism is essentially a tradeoff between resources. Compared to one-sided ABFT, two-sided ABFT actually uses additional computation to reduce memory overhead. If one-sided ABFT chooses not to recalculate immediately, it will need to reload data from the storage device during the next computation. In contrast, two-sided ABFTthe data already read into local registers in the form of checksums. Therefore, before a new error occurs, the error information can be decompressed at any time by the checksum and used to correct previous errors.
+
+Figuredemonstrates the capability of batch delay correction. The 22 grid in the figure represents a warp. When thread 1 in a warp encounters an error, the entire warp can continue to operate normally until the program terminates or a new error occurs. In contrast, one-sided ABFT requires immediate re-execution, otherwise it would need to reload data from memory. When an error occurs, a thread can note that an error has occurred at this point. Error correction operations are only carried out when the next error occurs or when the program terminates. Placing the right-side checksum at the end of the loop is to prevent a potential second error from contaminating the checksum that has already recorded one error.
+
+SECTION: Fused ABFT at Thread and Threadblock levels
+The lightweight, high-performance TurboFFT provides us with an efficient framework to build lightweight fault-tolerant schemes from silent data corruption. This section introduces how we optimize the two-sided ABFT schemes in 4 steps. In summary, we first implemented an offline version based on cufft and cuBLAS. We then realized that SGEMV requires a single thread to traverse all batches or every element of a single signal. As shown in Figure, offline ABFT, due to the need for the checksum of all the data, actually doubles the memory transactions. Therefore, the overhead for both one-sided and two-sided ABFT is very close to 100%. To avoid such a huge memory overhead, we decided to reduce the workload of each thread. This meant dividing the original signal into certain batch sizes so that each thread’s task shifted from computing the checksums of all batches to just a small part of them. Next, we connected our customized kernel with TurboFFT. However, the additional checksum still brought significant extra memory access. Ultimately, we found that we could fully fuse the ABFT checksum within a single thread, thereby reducing the additional memory operations to zero. Since the initial steps merely involve calling library functions and are quite straightforward, we proceed directly to the discussion of kernel fusion.
+
+In Figure, we present how to use the two-sided ABFT to protect TurboFFT at the thread level. As shown in Figure(a), right-side checksums of the radix-2 DFT matrix and input signals are encoded while the batched FFT is being computed. Next in Figure(b), the row and column checksums of output signals are computed through the matrix-vector multiplication between DFT matrix/input signals and their encoded checksums. If there is an errorin Figure(c), then the row and column checksums of output signals from reduction will hold a disagreement ofwith the previous checksums. After that, the error can be further located in Figure(d) and corrected with the disagreement value in Figure(e). Utilizing the ABFT scheme, the in-register computation will be protected from silent error. Figuredemonstrates the pseudocode of the computation fault-tolerant scheme. Although it does not introduce additional memory overhead, the redundant computation leads to significant overhead.
+
+In the following, we detail the threadblock-level two-sided ABFT. We protect the FFT at the threadblock level, as shown in Figure. In TurboFFT, the input of threadblock-level FFT is batched of signals, and then each thread first performs the right-side ABFT, namely a vector addition, where the vector is the input signals from the global memory. No additional memory transaction is required. The encoding vector of the left-side checksumis precomputed outside the FFT application and loaded into the threadblock from global memory into the shared memory, as shown in(a). The input signal encoding is performed through register reuse, which is in conjunction with loading input signals from global memory. After that, the DFT checksum is obtained using CUDA warp shuffle primitives. Each thread then keeps a checksum of the DFT result in Figure(b), (c). Next, the register stores the original inputs into the shared memory to wait for the execution of warp-level FFT. When the output signals are returned from warp level, one ABFT encoding is performed again to verify the correctness of the output signals. The access to the encoding vector does not occupy additional memory bandwidth while only requiring a minimal overhead of warp shuffling, as shown in Figure(d), (e). If an error is detected in Figure(f), the corresponding thread will record the location (batch ID of the input signal). Then the output signals will be uploaded back to global memory for subsequent workloads.
+
+SECTION: Multi-Transaction Threadblock-level ABFT
+We further increase the batch size of threadblock-level ABFT by extending the workload of each threadblock from one transaction to multiple transactions. One transaction is a round-trip starting with reading input from global memory, then performing a threadblock-level FFT, and finally storing the data back to the global memory. In original FFT plans, a threadblock finishes once its transaction finishes. However, we extend the number of transactions from 1 to 2, 4, 8, 16, and 32. By switching to a multi-transaction plan, the workload of ABFT remains the same, namely a threadblock-level reduction at the end of transactions. A minimal thread-level accumulation is introduced to aggregate the input signals. The location encoding still applies, e.g. each thread aggregates the product of its share of the threadblock-level signal and the global ID for the signal. With the encoding, we can decode which signal is corrupted during error detection and then add the corrected value back to get the correct result.
+
+SECTION: Performance Evaluation
+We evaluate TurboFFT on two NVIDIA GPUs, a Tesla Turing T4 and a 40GB A100-PCIE GPU. The Tesla T4 GPU is connected to a node with two 16-core Intel Xeon Silver 4216 CPUs, whose boost frequency is up to 3.2 GHz. The associated CPU main memory system has a capacity of 512 GB at 2400 MHz. The A100 GPU is connected to a node with one 64-core AMD EPYC 7763 CPU with a boost frequency of 3.5 GHz. We compile programs using CUDAwith theoptimization flag on the Tesla T4 machine, and using CUDAon the A100 machine.
+
+SECTION: TurboFFT without Fault Tolerance
+TurboFFT is faster than VkFFT and performs comparable or better than the state-of-the-art closed-source library cuFFT, as shown in Figure,,,,, and.
+We first analyze TurboFFT performance from the overhead overview in Figure. Then we detail our efforts on architecture-aware optimizations, padding-free design, and parameter tuning with Figureand Figure. Figureand Figurepresent a close observation of TurboFFT, VkFFT, and cuFFT from the perspective of fixed batch size and fixed signal length. Figurebenchmark TurboFFT with VkFFT and cuFFT from the perspective of fixed problem size,GB for FP32 andGB for FP64.
+
+Figuredemonstrates the overhead compared to cuFFT with a heatmap. The heatmap includes overhead against cuFFT of problem size withinGB for FP32 andGB for FP64. Each square represents a data point (,), whereis the signal length. Red means the method is slower than cuFFT. Green means the method is faster than cuFFT. Grey means the method is close to cuFFT. As shown in Figure, the grey and green region of TurboFFT exceeds 90%. For both FP32 and FP64, TurboFFT is faster than cuFFT for problem sizes within 2 MB. TurboFFT outperforms cuFFT by 40% to 200% on signal length. For FP64, TurboFFT outperforms cuFFT for signal lengthtoas well. In contrast, VkFFT has more than 60% red area (slower) compared to cuFFT.
+
+As shown in
+Figureand Figure, TurboFFT achieves 90% peak memory bandwidth. The memory bandwidth is measured byproblem size divided by execution time. The bandwidth degradation at signal lengthsis due to multiple kernel launches, typically two kernel launches for, and three kernel launches for. Hence the memory bandwidth is divided by the number of kernel launches. Our architecture-aware optimizations address the performance bottlenecks in computation and global memory transactions. Below is a detailed analysis of computation and global memory transaction bottleneck.
+
+The computation bottleneck is primarily due to slow clock cycles caused by trigonometric functions or double-precision operations. Therefore, we pre-calculate and store the required trigonometric function values in global memory. The workload for each thread can be configured in our code generation strategy.
+
+Although for smaller FFT sizes, each thread block only needs to launch a small number of threads, when the batch size increases, each thread block should also increase the number of threads launched correspondingly to enhance throughput. For instance, as shown in the diagram, whenranges from 0 to 5, the throughput of the FFT kernel rapidly rises to over 80% efficiency with the increase in batch size. Global memory demands high cache efficiency. We found that inefficient access methods on the A100 can lead to up to a 100% loss in L1 cache hit rate, resulting in nearly 10,000 cycles of stall time for each thread block launch. This is especially noticeable in larger FFT computations, such as when. Due to the need for three launches, the kernel in the final launch requires an additional transposition operation, changing the storage in memory from the originalto. Although allocating thread blocks along thedirection maximizes data locality, it leads to writing back along the direction with the largest stride, resulting in a significantly high rate of L1-cache misses and a 30% overhead.
+
+The performance gain of TurboFFT against VkFFT in Figure(c) and Figure(c) benefits from the padding-free design. Our padding-free design avoids the bank conflict. The issue of shared memory bank conflict primarily originates from the first twiddling process, where each thread needs to access a continuous memory region, an operation that easily causes different threads within the same warp to access the same memory bank. VkFFT uses padding, namely skipping one bank per 8 or 16 threads. Although this method can avoid bank conflicts, it wastes a significant amount of shared memory, leading to decrement of threadblocks per SM and performance loss in cases with larger N. Padding can be replaced with swizzling. This is feasible thanks to the unit memory transaction size for a single thread of C2C and Z2Z FFTs being 8 bytes or 16 bytes. We observed that this operation yields a 20% performance improvement when N is small. For FFT sizes that require more than two kernel launches, it’s unnecessary to consider bank conflicts. This is because a single warp’s threads can be assigned to different batches. By setting the batch_id as an offset, threads within the same warp can completely avoid the possibility of bank conflicts. In Figure(c) and Figure(c), TurboFFT maintains a comparable or superior performance compared to cuFFT. In contrast, VkFFT shows an overhead of more than.
+
+The superior performance of TurboFFT against cuFFT in Figure(b)(d) and Figure(b)(d) benefits from better kernel parameters. The sub-par performance of cuFFT is mainly due to a poor kernel parameter selection. The inefficient kernel parameter cannot fully utilize all 108 streaming multiprocessors in a A100 GPU. In contrast, we manually search for better parameters using template-based code generation. For example, for signal length fromto, each threadblock only performs FFT for one signal, instead of a batch, to maximize streaming processor utilization. Regarding to signal length of, TurboFFT showstospeedup compared to cuFFT for both FP32 and FP64. Our code generation strategy offers flexibility to support a wide range of input shapes and datatypes.
+
+Figureillustrates the impact of architecture-aware optimizations, padding-free design, and parameter tuning. The performance is measured with GFLOPS (bar plot, the left y-axis) and the performance ratio with respect to cuFFT (line chart, the right y-axis). For the most basic version, TurboFFT-v0, each thread handles a radix-2 FFT, and atimes of kernel launches are required. Without using any optimizations, the TurboFFT-v0 obtains a performance of 49 GFLOPS. Next TurboFFT-v1 employs architecture-aware optimizations and improves the performance from 49 GFLOPS to 110 GFLOPS. Then, TurboFFT-v2 adopts the padding-free design and achieves a performance of 334 GFLOPS. Finally, tuning the kernel parameter accelerates the FFT 565 GFLOPS. By employing the above strategies, we finally obtained an FFT baseline comparable or faster than cuFFT.
+
+SECTION: TurboFFT with Fault Tolerance
+Figuredemonstrates our fault tolerance solution achieves an average overhead of 10% to 15% compared to the significant overhead of 30% to 300% in offline FT-FFT. Figurealso presents the stepwise optimization of our fused fault tolerance in TurboFFT. The overhead value is documented at each square as well. Figuredemonstrates the comparison chain for FP64 on A100. For better understandability, Tablelists the method and the comparison base in Figure,.
+
+As shown in Figure, the red area decreases substantially, demonstrating the efficiency of our ABFT design. The red area means the fault tolerance cause high overhead compared to cuFFT. TurboFFT with fault tolerance achieves negligible overhead with the help of kernel fusion. Next, we detailed how the negligible overhead is achieved.
+
+Thread-level ABFT performs ABFT for thread-level FFTs. The thread-level FFT handles signals with length. Thread-level ABFT only increases computation but introduces zero memory overhead. Figure(c) highlights most data points with green because our thread-level ABFT outperforms the offline FT-FFT with kernel fusion. However, the thread-level ABFT results in redundant computation in all threads. Because FFT requires 2 to 4 threadblock-level synchronizations in each kernel launch, the redundancy in computation will introduce substantial overhead in some cases. Hence, we propose threadblock-level ABFT to decrease the computation overhead.
+
+Threadblock-level ABFT protects the FFT computation at threadblock-level. Those FFTs typically have lengths fromto. The input and output are assigned to different threads. Hence synchronous reductions are required to compute the checksum. The advantage is the redundant computation in Thread-level ABFT can be removed. Although FFT is typically a memory-bound application, Threadblock-level ABFT still demonstrates performance gain at signal lengthand, as shown in Figure(d). To further hide the memory footprint, we require each threadblock to continuously perform more than one transaction of.
+
+As discussed before, Threadblock-level ABFT results in additional memory overhead. Typically, each threadblock dies once it finishes a threadblock-level FFT transaction, namely. This threadblock dispatching pattern results in the checksum that can only be applied to one transaction with a limited parallelism. We can further increase the parallelism of ABFT by requiring one threadblock to perform more than one transaction. Multi-transactions ABFT requires the same number of threadblock-level reductions compared to the original 1-transaction threadblock-level ABFT. Hence the reduction overhead is averaged by the number of transactions. Furthermore, no inter-transaction communication is required! It is because each thread exactly maps to the same ABFT encoding workload, so no additional synchronizations or memory operations are required. The additional computation is only a register-level accumulation of input signals and output signals, which is marginal compared to the FFT original computation. As shown in Figure(e)(f), a 2-transaction threadblock-level ABFT brings a significant improvement compared to 1-transaction threadblock-level ABFT. 4-transaction threadblock-level ABFT is able to further improve the optimal combination of thread-level, threadblock-level, and 2-transaction threadblock-level ABFT. From our experiments, {8, 16, 32}-transaction threadblock-level ABFTs bring marginal improvements because the multi-transaction hurts the original FFT global memory access pattern and results in high L1-cache miss rate.
+
+Figurereplicates the experiment for double precision values. Similarly, we observe a sequential decrease in the area covered by red from left to right. Figureprovides a comparison of the performance of TurboFFT in single precision, both without fault tolerance and with fault tolerance, and includes the performance metrics for cuFFT and VkFFT.
+
+SECTION: Benchmarking TurboFFT under Error Injection
+Figureillustrates that, by selecting an appropriate fault detection threshold, the proposed detection scheme is capable of identifying injected faults with a high degree of reliability and a negligible false alarm rate. 2000 random test signals are generated with normal distribution. Faults are injected in half of these runs (1000 of 2000) by first choosing a signal to affect, and then flipping exactly one bit of its 32-bit representation for float-precision and 64-bit representation for double-precision. A checksum test with thresholdis used to attempt to identify the affected computations. Characteristics of the proposed fault detection scheme are demonstrated using the standard receiver operating characteristic (ROC) curve in Figure(a). For a given fault threshold, a proportion of False Alarms (numerical errors greater thantagged as data faults) and Detections (injected data faults correctly identified) will be observed. The ROC curve parametrically maps these two proportions as the tolerance level adjusts. Figure(b) presents the detection rate and false alarm rate versus the fault detection threshold.
+
+Figuresextends the analysis to include the performance of TurboFFT under error injection scenarios, and introduces the Offline method for comparison. The figure reveals that TurboFFT when subjected to error injection, incurs a negligible overhead of 3% for FP32 and 2% for FP64 compared to scenarios without error injection. Using cuFFT as a baseline, the overhead for TurboFFT with error injection stands at 13%, whereas the Offline method exhibits a significantly higher overhead of 35% relative to cuFFT.
+
+SECTION: Performance Evaluation on T4
+TurboFFT shows competitive performance for both with or without fault tolerance, as shown in Figureand. Figuredetails the comparison of TurboFFT under error injection on T4, and Offline FT-FFT is included. TurboFFT under error injection incurs a negligible overhead of 3% for FP32 compared to TurboFFT without error injection.
+
+SECTION: Conclusion
+In this paper, we introduce, an FFT prototype codesigned for high-performance and fault tolerance, which not only provides architecture-aware, padding-free and template-based design on FFT side but also presents fused, two-side, multi-transactional ABFT to minimize the fault tolerance overhead. Experimental results on an NVIDIA A100 server GPU and Tesla Turing T4 GPUs show that TurboFFT holds a competitive performance compared to the state-of-the-art closed-sourced library, cuFFT. The fault tolerance scheme in TurboFFT maintains a low overhead (7% to 15%), even under hundreds of error injections per minute for both single and double precision. In the future, we would like to extend the fault-tolerant FFT into the scientific compressionand signal processing.
+
+SECTION: References
+SECTION: Artifact Description
+SECTION: Paper’s Main Contributions
+outperforms the popular open-source library VkFFT, and is comparable to the state-of-the-art closed-source library, cuFFT.
+
+efficiently fuses the checksum computation into the FFT kernel, minimizing the fault tolerance overhead compared to exisiting offline fault-tolerant FFT (FT-FFT).
+
+protects FFT computation on-the-fly, obataining lower error correction overhead compared to the time-redundant recomputation in offline FT-FFT under error injections.
+
+SECTION: Computational Artifacts
+Tableillustrates the relation between TurboFFT’s contributions and the experimental figures presented in the paper.
+
+SECTION: Artifact Evaluation
+This document demonstrates how to reproduce the results in the paper:.
+
+All supplementary files are available on Zenodo.
+The repositoryconsists of all code, including twoandto reproduce all result figures list in Table.
+
+We executed all benchmarks in the paper using the hardware in Tableand software in Table in.
+
+SECTION: Getting started
+This section guides you through the necessary steps to setup your machine. Please follow these steps before starting to reproduce the results.
+
+SECTION: Extract code repositories
+Start by downloading. Extract the archive into an empty directory
+and change into this directory using the following commands. Make sure that the absolute
+path to this directory contains no spaces.
+
+[bgcolor=bgcolor, fontsize=
+
+Now, the folder reproduce contains all the necessary code to produce all results shown
+in the paper. The code consists of the, andrepositores.includes the source code of high-performance FFT library shown in the paper, and the directorycontains the cuda helper functions from.
+
+SECTION: Install host machine compilation prerequisites
+Please install a recentversion (11.2.0).
+
+Please install aversion (3.24.3).
+
+Please install CUDA Toolkit 12.0 for A100 machine or CUDA
+11.6 for the T4 machine.[bgcolor=bgcolor, fontsize=
+
+SECTION: Install host machine codegen & plot prerequisites
+Please install a recent version (3.9).
+
+Please install a recent version (2.4).
+
+Please install a recent version (2.0.2).
+
+Please install a recent version (3.8.4).
+
+Please install a recent version (0.13.2).[bgcolor=bgcolor, fontsize=
+
+SECTION: Reproducing Results
+Theandallow you to regenerateon NVIDIA A100 GPUs (Figures 1, 10-14, and 16-20) andon NVIDIA T4 GPUs (Figures 21-22).
+
+SECTION: How to Run
+(see Section).
+
+:
+
+On NVIDIA A100 Machine:[bgcolor=bgcolor, fontsize=
+
+On NVIDIA T4 Machine:[bgcolor=bgcolor, fontsize=
+
+:
+
+Experimental data will be available in thedirectory.
+
+Figures will be saved in thedirectory.
+
+SECTION: Workflow Overview
+The scriptsandexecute the following steps:
+
+: Configures environment variables.
+
+: Generates required CUDA kernels.
+
+: Builds TurboFFT and related binaries.
+
+: Runs benchmarks for TurboFFT.
+
+: Produces figures matching the paper’s results.
+
+SECTION: Runtime Details
+Tableshows the estimated execution time ofand. The scripttakes approximatelyon a machine with an AMD EPYC 7763 64-Core Processor and a NVIDIA A100 40GB GPU. The scripttakes approximatelyon a machine with an Intel(R) Xeon(R) Silver 4216 CPU and a NVIDIA T4 GPU.

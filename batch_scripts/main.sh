@@ -24,7 +24,7 @@
 
 #SBATCH --nodes=1               # How many nodes do you need to use at once?
 
-#SBATCH --gpus=2               # How many GPUs do you need (max 3)? Remove first "#" to enable.
+#SBATCH --gpus=1               # How many GPUs do you need (max 3)? Remove first "#" to enable.
 
 
 
@@ -36,4 +36,4 @@
 
 # ---- YOUR SCRIPT ---- #
 
-python3.9 ./py_code/main.py "test.txt"
+python3.9 ./py_code/main.py "andrew_root.txt"

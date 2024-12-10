@@ -1,0 +1,317 @@
+SECTION: ViTGuard: Attention-aware Detection against Adversarial Examples for Vision Transformer
+The use of transformers for vision tasks has
+challenged the traditional dominant role of convolutional neural networks (CNN) in computer vision (CV).
+For image classification tasks, Vision Transformer (ViT) effectively establishes spatial relationships between patches within images, directing attention to important areas for accurate predictions.
+However, similar to CNNs, ViTs are vulnerable to adversarial attacks, which mislead the image classifier into making incorrect decisions on images with carefully designed perturbations. Moreover, adversarial patch attacks, which introduce arbitrary perturbations within a small area (usually less than 3% of pixels), pose a more serious threat to ViTs.
+Even worse, traditional detection methods, originally designed for CNN models, are impractical or suffer significant performance degradation when applied to ViTs, and they generally overlook patch attacks.
+
+In this paper, we propose ViTGuard as a general detection method for defending ViT models against adversarial attacks, including typical attacks where perturbations spread over the entire input (norm attacks) and patch attacks.
+ViTGuard uses a Masked Autoencoder (MAE) model to recover randomly masked patches from the unmasked regions, providing a flexible image reconstruction strategy.
+Then, threshold-based detectors leverage distinctive ViT features, including attention maps and classification (CLS) token representations, to distinguish between normal and adversarial samples. The MAE model does not involve any adversarial samples during training, ensuring the effectiveness of our detectors against unseen attacks.
+ViTGuard is compared with seven existing detection methods under nine attacks across three datasets with different sizes. The evaluation results show the superiority of ViTGuard over existing detectors. Finally, considering the potential detection evasion, we further
+demonstrate ViTGuard’s robustness against adaptive attacks for evasion.
+
+SECTION: Introduction
+The attention-based transformer modelshave emerged as the foundational cornerstone across a diverse spectrum of applications in the field of natural language processing (NLP), such as Pathways Language Model (PaLM)developed by Google and Generative Pre-trained Transformer (GPT)developed by OpenAI. Motivated by the applications of transformers in the realm of NLP, researchers have extended their utilization to the computer vision (CV) domain, which was traditionally dominated by Convolutional Neural Networks (CNN). Transformers have demonstrated notable success in diverse CV applications, such as image classification, segmentation, image generation, and so on. For instance, for image classification tasks, vision transformers (ViT) have proven their ability to achieve state-of-the-art or superior accuracy on large datasets
+compared to CNNs, while requiring reduced computational resources.
+However, despite their empirically demonstrated robustness compared to CNNs, ViTs are still prone to adversarial (evasion) attacks, resulting in the misclassification of inputs with visually imperceptible perturbations. Moreover, it has been proven that ViTs are more vulnerable to patch attacks than CNNs by misdirecting attention to adversarial patches.
+While a majority of prior work focused onnorm attacks, recent research has identified patch attacks as a more practical problem in real-world scenarios, such as attaching an adversarial patch to a stop sign.
+This vulnerability limits the adaptation of transformers in security-sensitive applications, such as face recognition and self-driving cars.
+
+Countermeasures against adversarial examples in the context of CNN models have been extensively studied. These defenses can be broadly divided into two categories: (1) detecting adversarial examples and removing them during testing, and (2) enhancing the model’s robustness to thwart adversarial attempts. In terms of ViT models, current efforts mainly focus on enhancing ViTs’ robustness via data augmentation, adversarial training, attention mechanism modification, or ensemble strategies, these methods typically require architecture modifications or retraining. Moreover, applying existing detection methods designed for CNNs to ViTs is either infeasible or results in severely degraded detection performance given the distinct architectures. Additionally, CNN detection methods typically ignore patch attacks that are more prevalent against ViTs. Therefore, a general mechanism for detecting bothnorm and patch attacks, tailored for the ViT architecture and capable of being applied in tandem with the ViT model without the need to modify or retrain it, is in great demand but still missing.
+
+The ViT modelhas a significantly different architecture from CNNs. It begins by dividing input images into patches, subsequently sending patch embeddings to the transformer encoder, which serves as the backbone of ViT. As depicted in Figure, instead of being built upon convolutional layers, the transformer encoder relies on multi-head self-attention to establish a global correlation (attention map) between patches. This design allows ViT to focus on the most important areas with high attention scores for accurate classification.
+Additionally, a distinctive feature of ViT is the appending of a classification (CLS) token to input patches (see Figure(a)).
+As the CLS token and embedded patches pass through the transformer layers shown in Figure(b), the learnable CLS token is updated with information from other patches. A final decision can be made using only the CLS token.
+Therefore, given this revolutionary attention-based transformer architecture, we aim to design a detection mechanism that leverages the unique intrinsic features within the ViT model
+to identify adversarial samples.
+
+In this paper, we propose a novel detection method, named ViTGuard, for ViT models to counter adversarial examples by utilizing the features ofand(i.e., the latent representation of the CLS token). The attention map captures the global correlation among different patches, while the CLS representation encapsulates crucial information learned from image patches for classification. Our key idea is to compare attention maps and CLS representations
+of the reconstructed image by Masked Autoencoder (MAE)with those of the original image (i.e., the test example before reconstruction).
+MAE is a self-supervised learning approach that randomly masks out a portion of input images and then predicts the masked information from the unmasked regions. It employs an encoder-decoder design similar to traditional autoencoders, but it is constructed using self-attention-based transformer blocks. Compared to other adversarial image recovery methods, such as denoising autoencoders (DAE) and generative adversarial networks (GAN), MAE has three main advantages: (1) it randomly reconstructs a part of the input image, resulting in lower reconstruction loss for normal images, (2) its attention-based architecture accurately recovers the relationships between image patches, and (3) it provides a more flexible approach by employing various image recovery strategies and masking ratios to balance detection effectiveness and efficiency.
+
+A larger discrepancy in attention maps and CLS representations implies a greater likelihood that the input is adversarial.
+As shown in Figure, the workflow of our detection is: (1) using the MAE model to reconstruct inputs that are partially masked; (2) forwarding both the original and reconstructed images to the target ViT model and extracting their corresponding attention maps and CLS representations from a specified transformer layer;
+(3) employing two detectors to compute thedistance for both extracted features between the original and reconstructed images. Eventually, for each detector, if thedistance is larger than a tuneable threshold, the input is identified as adversarial; otherwise, it is identified as normal.
+Thresholds are set based on acceptable false positive rates (FPR) of 1% and 5% in this study.
+
+Our detectors do not need prior knowledge of attacks launched in the testing phase, and they can be applied in conjunction with different ViT models. Additionally, by automating the intermediate layer selection used to extract attention maps and CLS representations, our detection method is easy to use and does not need any complex parameter adjustments. Our detectors are evaluated using ViT models with patch sizes of 1616 and 3232. The evaluations are conducted on three datasets: CIFAR-10, CIFAR-100, and Tiny-ImageNet. For our detectors, the Area Under the ROC Curve (AUC) scores (ranging from 0 to 1), approach 1 or reach 1 with the superior detector.
+Overall, our major contributions are summarized as follows.
+
+(1)
+We propose ViTGuard, an adversarial sample detection mechanism for ViT models, which is effective for detecting bothnorm attacks and patch attacks.
+Our method’s effectiveness is validated against a broad spectrum of adversarial attacks, including four typical white-boxnorm attacks, two ViT-specific white-box patch attacks, a transfer-based attackusing a CNN source model, and two transfer-based attacksemploying a ViT source model.
+
+(2) In the absence of an advanced detection method capable of addressing both types of attacks for ViTs, we compare our approach with six typical detection methods designed fornorm attacks, as well as a state-of-the-art adversarial patch detection method.
+
+(3) By studying intermediate layer choices for feature extraction,
+we reveal that the deep layer representations commonly utilized in detection for CNN are not necessarily effective for ViT models.
+
+(4) We demonstrate ViTs’ robustness against possible evasion by
+developing an adaptive attack, assuming that
+attackers are aware of the detection and attempt to evade it.
+
+SECTION: Background & Related Works
+In this section, we present the background on the ViT architecture and adversarial attacks, and we also survey existing defenses.
+
+SECTION: Vision Transformer
+Similar to typical machine learning (ML) models for image classification, ViTprovides a functionto map from the input to its label. The architecture of ViTis illustrated in Figure. The workflow of ViT involves: (1) splitting the input image into patches, flattening the patches, and applying linear embeddings to them; (2) appending a CLS token at the beginning of the patch embeddings; (3) adding position embeddings; (4) feeding sequences into the transformer encoder; (5) forwarding the representation of the CLS token to a multilayer perceptron (MLP) head for final classification. In addition, variants of ViT have emerged with the development of transformers in the CV domain, such as Data-efficient image Transformer (DeiT), Class-Attention in Image Transformers (CaiT), Shifted Windows (Swin) Transformer, Tokens-to-Token ViT (T2T-ViT), and Pyramid Vision Transformer (PVT).
+
+There are several important components and mechanisms within the ViT model that distinguish it from conventional Deep Neural Network (DNN) models. The Self-Attention Mechanism captures the relationship between tokens by weighting the importance of each token relative to others. The attention mechanism is shown in Figure(c), where Q, K, and V represent the Query, Key, and Value vectors, respectively, which are projected by linear transformations of the input embeddings. The Multi-Head Self Attention (MSA) Layer gets richer representations from different feature subspaces. As shown in Figure(b), each transformer block consists of two sub-layers that incorporate an MSA and an MLP, respectively. Additionally, each sub-layer has a residual connection around it. The CLS token, inherited from NLP transformers, is appended to the patches before being fed into the encoder and is ultimately utilized in the MLP head for the final classification.
+
+SECTION: Adversarial Attacks on CNNs
+Adversarial attacks fall into two categories based on the attacker’s knowledge of the classifier’s architecture and parameters: white-box (complete knowledge) and black-box (no knowledge). Additionally, according to the perturbed areas, the attacks are categorized intonorm attacks and patch attacks.
+
+The Fast Gradient Sign Method (FGSM), Projected Gradient Descent (PGD) attackand Auto PGD (APGD) attackadd perturbations into images with the objective of maximizing the loss function. The Jacobian-based Saliency Map Attack (JSMA)selectively alters salient pixels based on an adversarial saliency map. DeepFooliteratively adjusts samples to cross the decision boundary. The Carlini and Wagner (CW) attackformulates the adversarial attack as an optimization problem, with an objective function comprising two terms: the perturbation magnitude and a criterion indicating misclassification of the adversarial sample. Furthermore, Liu et al.and Karmon et al.investigated patch attacks on CNN models, creating transferable adversarial patches that occupy just 2% of the image area.
+
+Black-box adversarial attacks can be categorized into transfer-basedand query-based.
+Transfer-based attacks leverage adversarial transferability to generate adversarial examples by using a substitute target model.further improved the transferability of adversarial examples by modifying gradient calculations or increasing the diversity of input patterns.
+Query-based attacks, on the other hand, rely on the target model’s outputs. By iteratively sending queries and analyzing the feedback from the model, the query-based attacker can generate adversarial examples based on the estimated model information, such as gradients.
+
+SECTION: Adversarial Attack on ViTs
+ViTs remain vulnerable to the aforementioned adversarial attacks originally designed for CNNs, which we will not detail again here. Instead, we describe attacks that have gained significant attention within the domain of transformer models.
+
+Fu et al.and Lovisotto et al.proposed the patch attacks Patch-Fool and Attention-Fool, respectively. Both perturb a small number of patches using attention-aware losses, with Patch-Fool utilizing post-softmax attention scores and Attention-Fool employing pre-softmax attention scores.
+
+To improve adversarial transferability, Naseer et al.introduced two methods, Self-Ensemble (SE) and Token Refinement (TR), for the unique architecture of ViTs. SE is designed to deceive a model ensemble, where each transformer block is followed by the final MLP head. TR mitigates feature misalignment by inserting intermediate layers into the model ensemble.
+Wei et al.proposed ignoring the gradients of attention and enhancing input diversity by randomly sampling perturbed patches to improve adversarial transferability. Zhang et al.proposed the Token Gradient Regularization (TGR) method, which selects tokens with extreme gradients and eliminates these gradients to reduce gradient variance.
+Regarding query-based attacks, Shi et al.observed the varying noise sensitivities among patches and developed a technique called Patch-wise Adversarial Removal (PAR), which selectively reduces noise across these patches.
+
+SECTION: Existing Detection and Defense Methods for CNNs
+We categorize current detection methods into supervised and unsupervised detection based on whether adversarial samples are involved in the training dataset for detectors. In this paper, our goal is to develop an unsupervised approach. It is important to note that detection methods for CNNs are primarily focused onnorm attacks and do not address patch attacks.
+
+Feinman et al.and Ma et al.proposed different methods, such as Kernel Density (KD) estimates, Bayesian Uncertainty (BU) estimates, and Local Intrinsic Dimensionality (LID), to characterize the properties of adversarial and normal samples. These methods have shown limited effectiveness against advanced adversarial attacks.
+Yang et al.introduced a method called ML-LOO, which uses variations in feature contributions to detect adversarial examples. However, scaling ML-LOO to datasets with a large feature space is impractical because images with each feature masked are treated as separate inputs for detection. Given that pre-trained ViT models typically resize inputs toor, ML-LOO is not suitable for protecting ViTs.
+Moreover, Kherchouche et al.used the mean subtracted contrast normalized (MSCN) coefficients to extract feature statistics directly from input samples.
+Overall, the drawback of these methods is their reliance on involving adversarial samples during the detectors’ training process.
+
+Xu et al.proposed to useeaturequeezing (FS)techniques to compress the unnecessarily large input feature spaces.
+However, in practice, we observe that the feature squeezers require complex parameter adjustments for different datasets.
+Meng et al.and Liao et al.utilized CNN-based denoising autoencoders to map adversarial examples onto the normal manifold and used reconstruction errors and deep layer outputs to detect adversarial samples.
+Instead of relying solely on the output of a single layer,(Deep Neural Rejection)leverages representations from three deep layers to construct Support Vector Machines (SVM) classifiers.
+Ma et al. proposed NICto leverage two channels: the activation value distribution channel and the provenance channel. The former deals with activation instability in a single layer due to input perturbations, while the latter focuses on instability in the activation output of the next layer caused by perturbations in the current layer’s activation. However, ViT does not follow the layer-by-layer architecture, where each layer consists of a CNN layer followed by an activation function. Thus, the properties utilized by NIC, i.e., activation instabilities in each layer and between layers, do not exist in ViT, making this method impractical for application to ViT.
+
+In addition to the aforementioned detection mechanisms, various defenses have been developed to enhance the robustness of target models against adversarial attacks, ensuring correct classifications on adversarial examples. (1) Fornorm attacks, adversarial traininginvolves adversarial examples with true labels into the training dataset of the target classifier. The effectiveness of this approach is significantly compromised if adversarial examples are not generated from the identical adversarial attack conducted in the testing phase. Another defense mechanism is to introduce randomnessto the target model by adding noise to the training data and intermediate layers’ outputs. Gradient maskingmitigates attacks by concealing useful gradients. Defensive distillationtrains a smoother model with soft labels. Defense-GANand DiffPureutilize GAN and diffusion models, respectively, to map inputs onto the manifold of clean data, effectively removing adversarial perturbations.
+However, diffusion models introduce a substantial computational load, as they require hundreds of iterations to reconstruct an image. Consequently, defenses based on diffusion models are impractical and have been excluded from our analysis.
+(2) For patch attacks, the Clipped BagNet (CBN)method and the Derandomized Smoothing (DS)method iteratively process segments of the input sample through the classifier and determine the final outcome based on the consensus of the classification results.
+Xiang et al.utilized CNN models with small receptive fields to limit the influence of adversarial patches and designed a robust masking method to eliminate adversarial features.
+
+SECTION: Existing Detection and Defense Methods for ViTs
+Currently, there is a lack of ViT-specific detection methods designed fornorm attacks.
+For patch attacks, Liu et al.observed that adversarial patches typically activate in the middle transformer layers and proposed AbnoRmality-Masking RObust (ARMRO) for detecting suspicious patches with high attention scores in the activate stage, subsequently masking these patches from the input. Although ARMRO was designed to identify adversarial patches rather than adversarial examples, we still use it as a baseline to demonstrate the capability of our detectors against patch attacks, due to the absence of alternative methods.
+
+(1) Fornorm attacks,
+Gu et al.applied a softmax function with a temperature parameter to smooth attention scores in transformer blocks.
+Mo et al.proposed two warm-up strategies: randomly dropping the gradient flow in some attention blocks and masking perturbations in certain input patches.
+Mao et al.created a new ViT model termed Robust Vision Transformer (RVT) by combining robust key components within ViTs.
+Zhou et al.introduced a channel processing module within the transformer block, enhancing ViTs’ robustness by intelligently aggregating embeddings from various tokens.
+(2) For patch attacks,
+Chen et al.and Salman et al.adapted the DS method for ViT models, determining the classification result based on the majority vote. Guo et al.stabilized attentions by training ViT models using images altered with adversarial patches.
+Overall, these methods either involve modifications to the ViT model architecture and attention mechanisms, require model retraining, or impose substantial overhead to enhance input diversity, all of which impede their deployment in practical applications.
+
+SECTION: Threat Model and ViT Robustness
+In this section, we first present the threat model and then experimentally illustrate the vulnerability of ViT models to various types of adversarial attacks.
+
+For a thorough evaluation of robustness, we consider attackers with varying levels of knowledge about target models. (1) White-box: attackers have full access to target models, including the model architecture and weights; (2) Black-box: attackers lack access to target models. While the white-box setting represents attackers with strong capabilities, the black-box assumption reflects a more realistic setting. We assume that white-box attackers’ training process is not influenced by our detection scheme. We also assume that
+attackers only aim to mislead target models during the testing phase but do not disturb the training process. Furthermore, in Section, it is assumed that the attacker has complete prior knowledge of the detection mechanism and adaptively generates adversarial samples.
+
+We use ViT-Base models as the target models, which consist of 12 transformer blocks and 12 attention heads. We utilize the pre-trained ViT models available on Hugging Face, initially trained on ImageNet-21k, and then fine-tune their MLP heads for downstream tasks. To fit the data into the pre-trained model, the images are resized to 224224 and then divided into patches with sizes of 1616 and 3232. The models with patch sizes of 16 and 32 are referred to as ViT-16 and ViT-32, respectively, throughout the rest of the paper.
+During the fine-tuning process, the transformer blocks are frozen, while the MLP head is trained for 50 epochs using a learning rate ofwith the Adam optimizer.
+
+In this paper, we assess the performance of target models under a broad range of attacks.
+For white-box attacks, FGSM, PGD, and APGDare gradient-based methods, while CWleverages an optimization-based methodology. Furthermore, Patch-Fooland Attention-Foolare attention-aware patch attacks explicitly crafted for ViT models. For black-box attacks, we employ three transfer-based attacks: SGM, SE, and TR. SGM generates adversarial examples by applying PGD to a ResNet surrogate model, while SE and TR use a ViT model, DeiT-Tiny-Patch16-224, as the source model. The attack parameters are detailed in Tablewithin Appendix.
+Specifically, using themetric, the FGSM, PGD, APGD, SGM, SE, and TR attacks apply a maximum perturbation of 0.03 for CIFAR-10 and CIFAR-100, and 0.06 for Tiny-ImageNet. The perturbation magnitudes of the CW attack, using themetric, are calculated as 1.37, 2.56, and 2.46 for the ViT-16 model, and 2.11, 2.28, and 2.55 for the ViT-32 model, corresponding to CIFAR-10, CIFAR-100, and Tiny-ImageNet, respectively.
+For patch attacks, namely Patch-Fool and Attention-Fool, only four patches for ViT-16 (196 patches) and one patch for ViT-32 (49 patches) are perturbed, with no constraints on the perturbations within the patches. The adversarial examples generated by these attacks are visualized in Figure(a) within Appendix.
+
+Tablelists the target classifiers’ classification accuracy in both attack and non-attack scenarios with three image datasets, including CIFAR-10, CIFAR-100, and Tiny-ImageNet. We can see that the accuracy of ViT models is significantly affected by adversarial examples. Notably, patch attacks lead to considerable degradation in classification accuracy by perturbing only around 2% of the patches.
+Consequently, it is essential to design a general detection mechanism to safeguard ViT models from adversarial samples.
+
+SECTION: Framework
+The workflow of our detection method is illustrated in Figure. In the testing phase, given an input image, the detection process of our
+detectors is as follows:
+(1) image reconstruction (Section), (2) extraction of attention maps or CLS representations for the original and reconstructed images (Sectionsand), and (3) calculation of the distance between their attention maps or CLS representations (Sectionsand). If the distance exceeds a predefined threshold, the input is identified as adversarial and excluded from the testing phase. In Section, we combine two individual detectors to enhance detection performance.
+
+SECTION: Input Reconstruction
+MAEemploys an asymmetric transformer-based encoder-decoder architecture.
+The workflow of MAE, illustrated in Figure, involves the following steps:
+
+The input image is divided into patches, denoted as, whereis the number of patches. The mask is represented as, where each. The unmasked region, serving as the actual input to the MAE model, is expressed as, whereindicates the operation of applying the mask. The masking ratio can be represented as.
+
+Only the unmasked patches are flattened and fed into the encoder. The encoder design follows the standard ViT encoder, as depicted in Figure. The learnable masked tokens are integrated into the latent representation, alongside the unmasked tokens, and are then fed into the decoder.
+
+Finally, the decoder recovers the masked region and then reconstructs the entire image by substituting the unmasked region with the input patches. The reconstructed image is represented aswhereis the recovered masked region.
+
+: Patches have varying importance in the classification process, due to the self-attention mechanism. In our detection method, we employ a random masking strategy to process the original input. This masking approach enables MAE to capture the information from both the foreground and background, thereby providing a well-reconstructed image. In Section, we selectively mask the foreground or background patches, and demonstrate the superiority of the random masking method. In addition, the MAE model can be employed repeatedly and flexibly to recover different areas of the input.
+This adaptable reconstruction strategy enables ViTGuard to effectively identify adversarial examples from patch attacks, which concentrate perturbations on a minimal number of patches.
+The implementation details of the MAE model are explained in Section.
+
+: Figure(b) in Appendixvisualizes the reconstructed images associated with normal and adversarial inputs. For normal inputs, the reconstructed images introduce imperceptible noise, whereas for adversarial inputs, the reconstructed images exhibit more noticeable noise.
+
+SECTION: Detector I based on Attention (ViTGuard-I)
+While the scaled dot-product attention plays a crucial role in establishing global relationships among different tokens, it has been demonstrated that the raw attention map cannot accurately assess the importance of each token in the classification process. As a solution, we use a more effective method known asto quantify the information flow through the self-attention mechanism. Attention rollout tracks the information flow by considering residual connections in transformer layers. Given the Value in layer, denoted as,
+and the raw attention mapin layer,
+the Value in layeris represented as, whereis an identity matrix. Thus, the normalized attention map, which takes residual connections into account, can be expressed as
+
+Furthermore, by recursively multiplying the attention maps from previous layers, the attention by Attention Rollout in layer, denoted as, is
+
+whereis the attention by Attention Rollout in layer. As only the CLS token is connected to the MLP head and directly used for classification, we extract the attention vector corresponding to the CLS token and use it for our detector design. Given an input, we denote the attention vector from layeras. In the rest of the paper, ‘attention’ refers to the attention vector corresponding to the CLS token calculated by Attention Rollout.
+
+If the input is adversarial, the attention divergence between the original imageand the reconstructed imageis expected to be larger. We use Euclidean distance (norm) to measure the attention divergence:
+
+Ifis larger than a predefined threshold, the input is classified as adversarial. Otherwise, the input is classified as normal.
+
+: The intermediate layers utilized by the detector vary according to different datasets. Traditional detection methods for DNN models typically extract features from deep layers, such as the last layer. However, it has been shown that there is no single best layer for analyzing attention maps and latent representations from ViT models.
+Furthermore, it remains an open problem to interpret the attention patterns learned through supervised training for ViTs. In practice, We select the layer that attains the best AUC score against the FGSM attack based on the validation dataset. This selected layer is subsequently employed to detect against all other adversarial attacks. This selection approach is feasible since FGSM is a well-established adversarial attack algorithm, known for its simplicity and efficiency in generating adversarial examples. Moreover, in Section, we investigate the impact of selecting different transformer layers on the detection of various attacks. We demonstrate that, for optimal detection performance, the selection of the intermediate layer needs to vary depending on the specific datasets and attacks.
+
+SECTION: Detector II based on CLS Representation (ViTGuard-II)
+Besides the attention mechanism, another special feature of ViT is that a classification [CLS] token is added to the input sequence made up of image patches, as illustrated in Figure. At the end of the transformer encoder, only the CLS representation is directed to the MLP head for label prediction, while the representations of other image patches are not utilized.
+It has been demonstrated that, instead of using CLS, the model can achieve a similar classification performance by applying an averaging layer to the image patch representations and then forwarding the averaging layer’s output to the MLP head. However, in this paper, we show the significant ability of the CLS token to enhance ViT’s robustness by designing a detector based on CLS representations.
+
+The process for Detector II is the same as that for Detector I, with the only difference of using a different metric. Given the original image, we first create the reconstructed image. Then, we send bothandto the classifier and compare the difference of their CLS representations. The CLS representations of the original image and the reconstructed image from the-th transformer layer are denoted asand, respectively. The difference between CLS representations is measured using Euclidean distance:
+
+The input is detected as adversarial ifexceeds a predefined threshold. In practice, for Detector II, we utilize the same transformer layer that is chosen for Detector I.
+
+SECTION: Joint Detectors
+To further enhance the detection capability, we can integrate the two detectors.
+Given the original inputand its reconstructed counterpart, if either Detector I or Detector II identifies the input as adversarial, it is classified as adversarial; otherwise, it is classified as normal.
+We observe slight performance variations between the two individual detectors in diverse scenarios involving different attacks and target models.
+Therefore, joint detection is particularly suited for black-box detection scenarios, where the detection system lacks knowledge about the attack types.
+
+SECTION: Evaluation
+In this section, we first explain the experimental setting and then compare our detection methods with existing ones (refer to Sectionsand). Following this, our focus shifts to examining the impact of important elements in ViTGuard and assessing its effectiveness with limited accessible normal images. Finally, we demonstrate ViTGuard’s robustness against possible evasion.
+
+SECTION: Experimental Setup
+We utilize three popular image datasets with varying image dimensions and numbers of classes.comprises ten object classes, with each image having a size of.includes 100 object classes and shares the same image size as CIFAR-10.contains color images labeled across 200 classes, with each image having a size of. More details about the datasets are provided in Appendix.
+
+: We use the ViT-MAE-Base model with a patch size offor input reconstruction. The encoder is composed of 12 transformer blocks and 12 attention heads, while the decoder consists of 8 transformer blocks and 16 attention heads. MAE models are exclusively trained using clean training data samples. The default masking strategy is random masking, with a default masking ratio of 0.5. The impact of different masking strategies and ratios on detection performance will be presented in Sectionsand.
+MAE models are trained from scratch for 250 epochs on CIFAR-10 and CIFAR-100, and for 500 epochs on Tiny-ImageNet, using the Adam optimizer. The learning rate, set at, gradually decreases based on cosine annealing. For patch attacks, we apply the MAE model twice to recover the entire image. This is necessitated by the attack’s perturbation of a minimal number of patches – four and one patches, respectively, for the ViT-16 and ViT-32 target models, considering the total patch number of 196 and 49.
+In preliminary experiments withnorm attacks on CIFAR-100 (refer to Appendix), we observed that full input recovery—applying the MAE model twice—marginally improved AUC scores, ranging from 0.0001 to 0.007, compared to half input recovery. Considering this minimal improvement and the increased computational overhead, we opt to recover only half of the input in evaluations fornorm attacks. Importantly, this approach aims to balance detection effectiveness with efficiency, but it does not imply that our detection method depends on the attack type.: As described in Section, for each dataset, we select the transformer layer with the highest AUC score for ViTGuard-I under FGSM. The chosen layer is then utilized for feature extraction in both ViTGuard-I and ViTGuard-II to detect various adversarial attacks.
+In the evaluation, we use the last transformer layer for CIFAR-10 and CIFAR-100, and the second layer for Tiny-ImageNet. In Section, we will illustrate that no single layer is optimal across all adversarial attacks, especially when our detectors have no prior knowledge of the specific attacks.
+
+The detection mechanism works as a binary classifier, and thus the detection accuracyis evaluated using the following metrics.represents the percentage of the adversarial samples that are correctly detected as adversarial.represents the percentage of the normal samples that are misclassified as adversarial.is used to evaluate the detection capability by plotting TPR against FPR while varying the threshold.measures the area under the ROC Curve and ranges from 0 to 1. A higher AUC score corresponds to a higher TPR at a fixed FPR, indicating better detection performance.
+
+We compare ViTGuard with seven existing detection methods: ARMRO, KD+BU, LID, FS, MSCN, DAE, and GAN. ARMRO, state-of-the-art for defending against patch attacks on ViTs, detects and masks adversarial patches without altering the ViT model. Notably, ARMRO is specifically tailored for patch attacks and is not applicable tonorm attacks. Thus, we compare ARMRO with ViTGuard only for patch attacks, excluding comparisons with other detection methods fornorm attacks.
+Except for ARMRO, the other methods were originally designed fornorm attacks. FS, DAE, and GAN are unsupervised detection methods, while KD+BU, LID, and MSCN are supervised methods. Although KD+BU and LID have been shown to be ineffective against stronger attacksin CNN models, we evaluate their performance in protecting ViTs as they are well-established baselines in adversarial attack detection. DAE and GAN are used as image recovery techniques. An adversarial input is identified if the difference between the original and recovered images exceeds a predefined threshold. For DAE, we use a reconstruction error-based detector, and for GAN, we use a probability divergence-based detector with a softmax temperature of 10. Notably, there is a lack of specifically designed detection mechanisms fornorm attacks in ViT models, so we use detection methods originally designed for CNN models. Please refer to Appendixfor more implementation details.
+
+SECTION: Comparison with ExistingNorm Attack Detection
+In this section, we compare ViTGuard with detection methods that were designed fornorm attacks, and we further test their ability to detect patch attacks.
+Tablesummarizes the detection performance using AUC scores, which reflect their overall detection capability at varying thresholds.
+To visually compare the TPRs, Figuresandin Appendixshow ROC curves with a constrained FPR of 0.2 for various attacks. Moreover, ViTGuard-I and ViTGuard-II exhibit a slight difference in detection performance, as shown in Table, due to their utilization of different features. To further enhance detection capability, we combined both detectors, with the results presented in Appendix.
+
+The AUC scores and ROC curves demonstrate that ViTGuard-I and ViTGuard-II consistently exhibit excellent detection performance, with minor discrepancies between them under different attack scenarios. In contrast, existing detection methods either perform poorly across all attacks against ViT models or excel in specific attacks while underperforming in others. For example, the DAE method has limited image recovery capability, which introduces significant noise in normal inputs within a large feature space, leading to inaccurate detection; hence, it is excluded from further analysis. GAN shows a stronger capability to purify adversarial perturbations but still underperforms on certain attacks, such as black-box attacks.
+Fornorm attacks, ViTGuard improves AUC scores compared to existing methods, with increments of up to 0.0789, 0.1916, and 0.2238 for CIFAR-10, CIFAR-100, and Tiny-ImageNet, respectively.
+Furthermore, it is observed that the CLS-based detector exhibits superior performance on datasets with larger feature spaces (i.e., larger original image sizes before resizing) due to the presence of more complex attention correlations. Conversely, the attention-based detector is more effective in smaller feature spaces, where simpler correlations facilitate more accurate decisions. To reduce computational demands fornorm attacks in practice, the attention-based detector can be prioritized for smaller feature spaces, while the CLS-based detector can be prioritized for larger ones.
+
+Similarly, for Patch-Fool and Attention-Fool attacks, ViTGuard detectors demonstrate superior performance, achieving AUC scores greater than 0.99 in most cases. Specifically, the attention-based detector consistently outperforms the CLS-based detector in the context of patch attacks, as these attacks are inherently designed to manipulate the attention mechanism.
+In contrast, existing detection methods are largely ineffective against patch attacks. Among them, GAN shows relatively fair performance, with AUC scores ranging from 0.9250 to 0.9757.
+
+Although an effective image reconstruction model is critical, detectors also need to consider the unique structural characteristics of the models. ViTGuard detectors utilize intrinsic features of ViT models. In contrast, previous workgenerally relies on loss of reconstruction and probability divergence, neglecting the specific features of the target models. To exclusively demonstrate the superiority of ViTGuard detectors, we use the same MAE model for image reconstruction but employ different metrics-based detectors. In this way, the only distinction lies in the design of their respective detectors. Tablecompares different detectors using the ViT-16 model with Tiny-ImageNet. We observe that ViTGuard detectors outperform other detectors across various attacks, despite utilizing the same MAE model for image reconstruction. ViTGuard detectors show improvements in AUC scores compared to other detectors with the highest performance, with relative increases of 11. 2%, 4. 6%, 20. 0%, 9. 9%, and 7. 3% for PGD, CW, Patch-Fool, SGM, and TR attacks, respectively.
+
+ViTGuard demonstrates robust performance across various attacks, though it exhibits slightly lower performance than other detection methods in some specific cases. Moreover, existing detection methods designed fornorm attacks are ineffective for detecting patch attacks. The effectiveness of ViTGuard’s detection is attributed not only to its powerful and flexible image reconstruction strategy, which effectively mitigates adversarial perturbations, but also to its use of attention-based and CLS-based detectors.
+
+SECTION: Comparison with Existing Patch Attack Detection
+To further evaluate ViTGuard’s efficacy in patch attacks, we compare it with ARMRO, a defense explicitly targeting such attacks against ViT models. ARMRO works by detecting adversarial patches and masking them with the input average. Since ARMRO does not directly detect adversarial examples, we utilize a metric namedto ensure a fair comparison. The fooling rate for ARMRO measures the percentage of adversarial examples correctly classified out of the total, whereas for ViTGuard, it is the percentage of adversarial examples that evade the joint detectors. Figurecompares the fooling rates of ViTGuard and ARMRO under Patch-Fool and Attention-Fool attacks. The threshold for ViTGuard joint detectors is set to limit FPR to 0.01. It is evident that ViTGuard outperforms ARMRO in detecting patch attacks. For instance, for CIFAR-10 and CIFAR-100, the fooling rates of ViTGuard are below 1%, while the fooling rates of ARMRO range from 3.9% to 9.8%.
+
+ViTGuard is effective in detecting patch attacks, with perturbations confined to only 2% of the input patches.
+
+SECTION: Impact of key elements in ViTGuard
+Rather than fixing a default transformer layer, here we explore the impact of intermediate layer selection on the detection capability under various attacks, as illustrated in Figure. We assess AUC scores under four types of adversarial attacks, including FGSM (gradient-based), CW (optimization-based), Patch-Fool (attention-aware), and SGM (transfer-based).
+
+For the FGSM attack, the AUC scores of both detectors, constructed using each layer, are similar. In the case of the CW attack, both detectors generally demonstrate better performance with shallow layers, reaching the highest AUC score with the second layer.
+For the Patch-Fool attack, ViTGuard-I consistently outperforms ViTGuard-II, achieving AUC scores close to 1 for all layers except the first layer.
+ViTGuard-I, relying on attention, proves to be more effective in detecting the Patch-Fool attack, since the Patch-Fool attack is designed to disrupt the attention maps of images.
+For the SGM attack, ViTGuard-I achieves higher performance using features extracted from the second to the tenth layers.
+Overall, no single layer can constantly achieve the best detection performance under different attacks. Therefore, when evaluating our detectors in Section, we do not seek the optimal detection performance, considering that AUC scores are already close to 1 with the default layer selected based on FGSM.
+
+Here we investigate the impact of different masking strategies, including salient (foreground) masking and non-salient (background) masking, on the detection performance. (1): The foreground area, which contains important information about the object, is masked. Only the background patches are forwarded to the MAE model. (2): The background area is masked, and only the foreground patches are sent to the MAE model.
+We use the self-supervised ViT model, DINO (self-stillation withlabels), to create salient and non-salient masks, since it has been demonstrated that DINO can accurately segment objects from the background. Figureshows the masked images with different masking strategies.
+
+Tablelists the AUC scores of the detection methods using different masking strategies undernorm attacks. Fornorm attacks, masking strategies directly affect the image area where adversarial perturbations are purified.
+The random masking strategy always achieves the highest AUC scores, with the non-salient masking strategy following closely as the second highest, and the salient masking strategy yields the lowest AUC scores. These outcomes are reasonable, since random masking retains information from both the object and background. In contrast, other masking strategies restrict input information to either the object or the background, thereby imposing limitations on the effective recovery of masked patches.
+
+The masking ratio determines the proportion of input data for training an MAE model for reconstruction. A lower masking ratio allows the MAE model to recover masked patches more effectively by retaining more information as input. However, it could be difficult to discriminate between adversarial and clean samples, given a small number of recovered patches following the normal distribution.
+On the other hand, a higher masking ratio can mitigate the adversarial effect to a greater extent, but it introduces additional reconstruction loss into the reconstructed image.
+Therefore, we investigate the impact of different masking ratios on the detection performance againstnorm attacks using the ViT-16 model with Tiny-ImageNet.
+
+Tablepresents the AUC scores for masking ratios of 0.25, 0.5, and 0.75. In most cases, the detection method with a masking ratio of 0.5 always achieves the best AUC scores. The masking ratios of 0.25 and 0.75 yield similar but relatively lower AUC scores. These results suggest that masking half of the patches can effectively mitigate the adversarial effect without introducing excessive reconstruction loss. However, the masking ratio determines the amount of input data used to train the MAE model. When prioritizing computational efficiency, a higher masking ratio would be a better choice, given the negligible difference in detection performance in most cases.
+
+SECTION: Generalizability on ViT Variants
+Multiple variantsof the ViT architecture have been developed to increase classification accuracy, improve data efficiency, and enhance model robustness. This study explores the generalizability of ViTGuard across different ViT variants by adapting attention-based and CLS-based detectors to two prominent ViT models: DeiTand CaiT.
+DeiT incorporates a distillation token alongside the CLS token, enabling learning from a teacher model and achieving strong performance with smaller datasets.
+CaiT differentiates between self-attention and class-attention layers by first employing self-attention without a CLS token. The CLS token is then introduced in the later layers to effectively utilize relevant information for classification.
+The details on the implementation of the DeiT and CaiT models, along with their classification accuracies under various attacks, are given in Appendix.
+
+Tablepresents the AUC scores of the two detectors across four representative attacks: PGD (gradient-based), CW (optimization-based), SGM (transfer-based), and Patch-Fool (patch attack). The results indicate that the CLS-based detector (ViTGuard-II) demonstrates superior generalizibility on DeiT and CaiT compared to the attention-based detector (ViTGuard-I).
+This can be attributed to the architectural modifications introduced in the ViT variants, which influence the attention map and potentially reduce the effectiveness of attention-based detectors. Conversely, ViTGuard-II relies on the CLS token, which encapsulates the most critical information related to classification, corresponding to the primary objective of adversarial attacks to induce misclassification. Therefore, the CLS-based detector is better suited to maintain robust performance despite architectural variations in ViT models.
+
+SECTION: Pre-trained Masked Autoencoder
+While existing unsupervised detection methodstypically utilize the entire clean dataset to train their detectors, we explore a scenario in which ViTGuard detectors have access to only a small fraction of the clean data for a specific task. In such cases, we leverage a pre-trained MAE model, fine-tuning it with the available training data.
+We employ the pre-trained MAE model from Tiny-ImageNetand fine-tune it for the CIFAR-10 task with the ViT-16 model. The MAE model is fine-tuned for 250 epochs with a learning rate ofdecreasing based on cosine annealing. Figureshows the TPRs of joint detectors under an FPR of 0.05, considering different percentages of available training data ranging from 10% to 30%.
+In Figure, it is evident that TPRs can approach or reach 1 with only 10% of data used for training the MAE model under FGSM, APGD, and Patch-Fool attacks. For the remaining attacks, TPRs gradually increase with more available training data. Therefore, the pre-trained masked autoencoder serves as a strong foundation for ViTGuard detectors, making them effective even with a limited amount of clean data samples.
+
+SECTION: Robustness against Evasion
+In this section, we assume that attackers have full knowledge of our proposed detection methods, including the architecture and parameters of the MAE model, and the victim classifier, as well as the design principles of ViTGuard-I and ViTGuard-II.
+Inspired by adaptive attacks in, we employ the strongest white-box attack, CW, and design a CW-based adaptive attack to evade ViTGuard detectors.
+In our adaptive attack approach, we design a new adversarial loss function that accounts for the distances in attention and CLS representations from each transformer block between adversarial and reconstructed images. The detailed loss function is presented in Appendix.
+
+To determine the optimal coefficients for the attention term () and the CLS term (), we explore the rangefor both parameters, setting one to 0 while testing the other against its corresponding detector. Figurein Appendixillustrates the fooling rates for the adaptive attack without detection and with ViTGuard-I and ViTGuard-II, respectively. We observe that, for CIFAR-100 and Tiny-Imagenet, settingto,and,, respectively, yields the highest fooling rates. Consequently, these optimal coefficients are set to evaluate the efficacy of our joint detectors against the adaptive attack.
+Without ViTGuard, the adaptive attacks achieve decent fooling rates of 55.8% for CIFAR-100 and 42.4% for Tiny-ImageNet. However, ViTGuard reduces these fooling rates to 24.3% and 11.6% with an FPR of 0.01, and to 6.7% and 5.6% with an FPR of 0.05. Thus, the adaptive attacks fail to compromise ViTGuard. Overall, despite attackers having full knowledge of the detection mechanism, generating successful adversarial samples remains a challenging task. Furthermore, the practical solution to the customized optimization problem of the adaptive attack is hindered by the non-deterministic image reconstruction process associated with the random masking strategy.
+
+SECTION: Discussion and Future Work
+The overhead associated with our approach is largely due to the image reconstruction process, where the MAE model follows the architecture outlined in the original MAE work. In our testing environment, the average computation time for MAE is 2.4 ms, compared to 0.2 ms for ViT-16 during inference. This latency is acceptable given the significant robustness benefits. For datasets with smaller feature spaces, adopting a scaled-down version of MAE could further decrease the computational burden.
+
+The applications of transformers in the CV domain have been rapidly evolving.
+While this paper assesses the generalizability of the proposed detectors on DeiT and CaiT, the emergence of diverse ViT variants necessitates further investigation. Specifically, a thorough examination of their performance under various adversarial attacks and an evaluation of the effectiveness of existing defense methods on these variants are required.
+Furthermore, the CLS token, inherited from transformer designs in NLP, is absent in some ViT variants, such as Swin. Therefore, future research should explore the adaptation of attention-based and CLS-based detectors to these different ViT variants.
+
+To enhance the effectiveness and flexibility of ViTGuard, two advanced strategies can be considered in future research. (1) Ensemble voting: this strategy leverages MAE for image reconstruction and aggregates outputs from multiple detectors, both from our current research and existing studies. (2) Soft decision: this approach provides users with a confidence score, allowing for precise threshold adjustments to balance security and performance on clean samples.
+
+SECTION: Conclusion
+This paper introduces ViTGuard as a novel approach for detecting adversarial examples of ViT classifiers. ViTGuard is designed for robust detection against both commonnorm attacks and more practical patch attacks.
+In contrast, existing detection methods either cannot be adapted for ViT models or fail to achieve accurate detection across various types of attacks. The effectiveness of ViTGuard can be attributed to two key aspects: (1) MAE effectively mitigates the adversarial effect from adversarial images while minimizing reconstruction loss to normal images by randomly masking and recovering a fraction of patches; (2) Attention maps and CLS representations prove to be more effective in detection for ViT models than the model layers’ outputs typically used by existing detection methods. The efficacy of ViTGuard is validated across various adversarial attacks and datasets, and the evaluation results demonstrate its superior detection performance on bothnorm attacks and patch attacks.
+
+SECTION: References
+SECTION: Attack Configurations
+The attack parameters are shown in Table. In FGSM, PGD, APGD attacks,is the maximum perturbation, #steps is the total number of iterations,is the perturbation added in each step, andis a parameter for step-size update. In CW attack, “Confidence” indicates the classification confidence on adversarial samples, andis the learning rate. In Patch-Fool and Attention-Fool, #patches refers to the number of perturbed patches, andis the coefficient for the attention loss. In SGM,is the decay factor to the gradient, and attacks on the surrogate model share the same parameters as PGD attacks. SE and TR employ DeiT-tiny as the source model and utilize the PGD attack.
+
+SECTION: Experimental Setting
+SECTION: Datasets
+consists of 60,000 color images labeled over ten object classes, with 6,000 images per class.
+The size of each image is. The dataset is divided into the training dataset with 50,000 images, the validation dataset with 3,000 images, and the testing dataset with 7,000 images.includes 100 object classes. The image size and dataset size for training, testing, and validation are identical to those of CIFAR-10.consists of 110,000 color images labeled over 200 classes. It is partitioned into three subsets: a training dataset containing 100,000 images, a validation dataset containing 3,000 images, and a testing dataset containing 7,000 images. The size of each image is.
+
+SECTION: Settings of Baseline Detection Methods
+: The Gaussian bandwidth is 0.26, following the configuration in the original paper.: The number of neighbors is set to 10 when calculating the distance distribution.: This method is composed of three image squeezers and adistance based detector. The settings of image squeezers are listed below:
+(1) Decreasing color bit depth: the color depth is decreased to 7 bits.
+(2) Median smoothing: the filter size is.
+(3) Non-local smoothing: the search window size is 13, the patch size is 3, and the filter strength is 4.: Following the methodology outlined in the original paper, we sample the MSCN coefficient histogram from -2 to 2 with a 0.05 interval, generating an 81-dimensional vector for each image.: We adopt the same denoising autoencoder architecture as outlined in the original paper. The autoencoder comprises three convolutional layers with kernels of sizes,, and, respectively, each followed by a sigmoid activation function. The autoencoder is trained using the clean training dataset with unit Gaussian noise at a volume of 0.025.: The GAN network consists of a generator and a discriminator. The generator uses an encoder-decoder architecture to restore the image, with the encoder comprising four convolutional layers, each followed by batch normalization and ReLU activation. The discriminator classifies the generated image, featuring five convolutional layers and ending with a Sigmoid layer. The probability divergence is calculated using the Jensen-Shannon divergence, with the temperature set to 10.: We select five patches with the highest attention scores and mask them using the input average.
+For the supervised methods, the adversarial algorithm used during the detector’s training phase is consistent with the actual attack employed in the testing phase. To tailor KD+BU and LID for ViT models, we substitute the outputs of hidden convolutional layers with the outputs of transformer blocks.
+
+SECTION: Supplemental results
+SECTION: Input Visualization
+Figuredisplays the normal input, adversarial inputs under various attacks, and the corresponding reconstructed images by the MAE model.
+
+SECTION: Comparison between Half and Full Input Recovery
+To design an optimal strategy for deploying the MAE model that balances effectiveness with efficiency, we conducted preliminary experiments using the CIFAR-100 dataset and the ViT-16 model to compare detection performances for half and full-input recoveries. Full input recovery is achieved by applying the MAE model twice, targeting different areas, which can mitigate perturbations across the entire image.
+The performance comparison is shown in Figure.
+Our findings indicate that fully recovering the input consistently leads to improved detection performance, with AUC scores enhancing by a range of 0.0001 to 0.007 for the more effective of the two detectors. However, this improvement is minimal, especially considering that recovering the full input incurs a larger computational overhead. Thus, we decided to apply the MAE model once to recover half of the input in the comprehensive evaluations.
+
+SECTION: ROC Curves for Individual Detectors
+Figuresanddisplay ROC curves for various detection methods applied to ViT-16 models using the CIFAR-10, CIFAR-100, and Tiny-ImageNet datasets.
+
+SECTION: Performance of Joint Detectors
+Tableshows the detection performance of our joint detectors under different FPR limits.
+
+SECTION: Classification Performance of ViT Variants
+The target models utilized in our study are DeiT-Base-Distilled-Patch16-224and CaiT-S24-224. These target models are fine-tuned on the Tiny-ImageNet dataset, freezing the self-attention layers and adjusting only the classification head.
+Due to the different designs of transformer layers in these ViT variants, the attention-based detectors are specifically developed based on the last self-attention layer. In addition, CLS-based detectors are developed using the CLS representation from the classification head.
+Tablepresents the classification accuracy of these models under various adversarial attacks. The attack parameters are provided in Table. The results clearly indicate that the performance of ViT variants is significantly affected by these attacks.
+
+SECTION: Adaptive Attacks
+The revised optimization problem is presented as follows:
+
+whereis the original CW loss,is the total number of transformer blocks,denotes thedistance between attention maps from the-th transformer block of the adversarial image and the reconstructed image, andmeasures the distance between CLS representations.
+
+To determine the coefficients, namelyand, which balance the original CW loss with the attention distance and CLS representation distance, we set one coefficient to zero and vary the other within the range. Subsequently, we analyze the fooling rates both without detection and with the corresponding individual ViTGuard detector.
+We consider three scenarios: (1) no detection, (2) ViTGuard with FPR limited to 0.01, and (3) ViTGuard with FPR limited to 0.05.
+Figuredisplays the fooling rates of adaptive attacks on the CIFAR-100 and Tiny-ImageNet datasets. To develop strong adaptive attacks, we select coefficients that allow the adaptive attack to achieve the highest fooling rate under detection.
+Eventually, for CIFAR-100 and Tiny-ImageNet, the values forare set to,and,respectively.

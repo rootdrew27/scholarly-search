@@ -1,0 +1,251 @@
+SECTION: Composite Quantile Regression With XGBoost Using the Novel Arctan Pinball Loss
+
+This paper explores the use of XGBoost for composite quantile regression. XGBoost is a highly popular model renowned for its flexibility, efficiency, and capability to deal with missing data. The optimization uses a second order approximation of the loss function, complicating the use of loss functions with a zero or vanishing second derivative. Quantile regression – a popular approach to obtain conditional quantiles when point estimates alone are insufficient – unfortunately uses such a loss function, the pinball loss. Existing workarounds are typically inefficient and can result in severe quantile crossings. In this paper, we present a smooth approximation of the pinball loss, the arctan pinball loss, that is tailored to the needs of XGBoost. Specifically, contrary to other smooth approximations, the arctan pinball loss has a relatively large second derivative, which makes it more suitable to use in the second order approximation. Using this loss function enables the simultaneous prediction of multiple quantiles, which is more efficient and results in far fewer quantile crossings.
+
+SECTION: 1Introduction
+
+Extreme Gradient Boosting (XGBoost,Chen and Guestrin, (2016)) is a powerful, open-source software library renowned for its performance in structured or tabular data sets across a wide range of domains, including finance(Gumus and Kiran,,2017; Nobre and Neves,,2019), healthcare(Ogunleye and Wang,,2020; Ramaneswaran et al.,,2021; Li et al.,,2019), and cybersecurity(Dhaliwal et al.,,2018; Jiang et al.,,2020). XGBoost is increasingly being used for safety-critical applications, such as predicting floods(Ma et al.,,2021).
+
+For these safety-critical applications, it is typically insufficient to rely solely on predicting a point estimate. When predicting the water level in a river, understanding the potential extreme values is more important than predicting averages. Quantile regression(Koenker and Bassett Jr,,1978)offers an attractive solution. Instead of merely predicting a point estimate, various quantiles are predicted, for instance including the 0.95-quantile of the water levels.
+
+Quantile regression has been carried out with a large variety of models. While originally mainly linear models were used, modern implementations of quantile regression often leverage complex models such as random forest(Meinshausen,,2006)and neural networks(Hatalis et al.,,2019). These implementations may also predict multiple quantiles with a single model(Xu et al.,,2017), typically referred to as composite quantile regression.
+
+A large advantage of quantile regression is that it makes no distributional assumptions. Many uncertainty estimation methods will typically assume a Gaussian distribution(Lakshminarayanan et al.,,2017; Nix and Weigend,,1994; Gal and Ghahramani,,2016), which could lead to subpar prediction intervals if the data is not normally distributed. Given the large popularity of XGBoost and quantile regression, there is a clear appeal to use XGBoost for this task.
+
+Unfortunately, using XGBoost for quantile regression is nontrivial. At its heart, the model uses a quadratic approximation of the loss function during the optimization. However, as we will discuss in more detail later, the objective that is typically used for quantile regression, the pinball loss, is not differentiable everywhere and has a second derivative of zero, which makes this second-order approximation impossible.
+
+Several solutions have been developed. The current implementation in the XGBoost package uses a different type of trees, additive trees, that do not require the second derivative during the optimization. However, this requires the use of separate models for each quantile. This is undesirable both as this can easily result in a very high number of quantile crossings – for example, the 0.45-quantile being larger than the 0.55-quantile – and because it is inefficient(Zou and Yuan,,2008). Another option is to use the regular XGBoost model but with a smooth approximation of the pinball loss that is differentiable everywhere.
+
+While various of these approximations have been used for neural networks(Hatalis et al.,,2019; Zheng,,2011; Xu et al.,,2017), these approximations typically have a second derivative that is either zero or becomes extremely small. These approximations are unsuitable for XGBoost given its reliance on the second-order approximation of the loss function.
+
+In this paper, we therefore present a novel smooth approximation, named the arctan pinball loss, specifically tailored for XGBoost. Crucially, the loss function is differentiable everywhere and has a much larger second derivative than the existing alternatives, making it more suitable for XGBoost. This allows the use of a single model for multiple quantiles, resulting in far fewer crossings and an increased efficiency.
+
+Our paper is organized as follows. Section2contains all relevant technical details on XGBoost and quantile regression. Additionally, the existing smooth approximations are discussed. The arctan pinball loss is presented in Section3. In Section4, our implementation of quantile regression with XGBoost is compared to the current implementation. Crucially, our approach has significantly fewer crossings while achieving similar or superior coverage. Final concluding remarks can be found in Section5.
+
+SECTION: 2Background and related work
+
+This section consists of three parts. We first provide the details on XGBoost that are necessary for this paper. We then discuss quantile regression and explain why it is non-trivial to use XGBoost for this task. The third subsection provides current solutions for this problem along with the shortcomings of those solutions.
+
+SECTION: 2.1XGBoost
+
+We provide an introduction to XGBoost at the minimal level that is required for this paper. For a more in-depth introduction, we refer toChen and Guestrin, (2016), whose notation we have followed here.
+
+XGBoost is a boosting approach(Schapire,,1990)that iteratively trains weak learners, typically tree models, while employing both the first and second derivative of the loss function, hence the name Extreme Gradient.
+
+The eventual output of the model is the sum of the outputs of thetrees:
+
+whereis the base score,is the learning rate, andis a tree with tree structure, a function that maps the inputs to a leaf index, and weights-vector, a vector containing the weights of each leaf.
+
+XGBoost iteratively trains the trees with the goal to predict the remaining residual. These individual trees are trained by optimizing a regularized objective:
+
+The loss function,, measures the difference between the outputs,, and the observations,. The output could be an estimate ofbut it could also be a conditional quantile. The regularisation termfavors simpler trees with a smaller number of leaves,, and smaller weights.
+
+The model is trained iteratively, one tree at a time. Each tree aims to learn the residual from all the previous trees. Letbe the-th prediction after having trained the firsttrees. During the training of tree, the following objective is optimized:
+
+XGBoost uses a quadratic approximation of Equation (3) during the optimization:
+
+where, and.
+Using this equation, the optimal weight of leafof treecan be calculated:
+
+where, the indices of the data points that end up in leaf.
+
+By using Equation (5), the approximate loss function in Equation (4) can be calculated for a specific tree structure. An efficient split-finding algorithm is used to find the optimal tree structure.
+
+XGBoost further distinguishes itself through several key features that enhance its performance and versatility in machine learning tasks. Firstly, it employs a highly efficient split finding algorithm that optimizes the selection of split points in trees, significantly speeding up the learning process. Secondly, XGBoost has excellent parallelization capabilities, allowing it to utilize multiple cores during the training phase, which greatly reduces the time required to build models. Furthermore, it is adept at handling missing values in the data set. XGBoost automatically learns the best direction to assign missing values during the split, either to the left or right child, depending on which choice leads to the best gain. This ability to deal with incomplete data directly, without needing imputation or dropping rows, makes XGBoost a robust and flexible tool for a wide array of data science and machine learning applications.
+
+SECTION: 2.2Quantile regression
+
+Quantile regression aims to predict a specific quantile of a probability distribution rather than, for instance, predicting the mean. A conditional quantile is defined as:
+
+In other words, it is the smallest value, such that the probability thatis smaller than, given, is at least.Koenker and Bassett Jr, (1978)showed that conditional quantiles can be estimated by minimizing the pinball loss:
+
+whereis the predicted quantile andis the observed value. The pinball loss is visualized in Figure1for two different values of. The intuition behind the loss is that for the 0.9-quantile, estimating a quantile smaller than the observation is penalized more than estimating a quantile that is too large.
+
+Note that the pinball loss only depends on. In the remainder of this paper, we will therefore use the notationand present the loss functions in terms of.
+
+Ideally, we would want to let XGBoost output the quantiles and use the pinball loss function directly. However, this is not possible for two reasons. First of all, the loss function is not differentiable at. Secondly, the second derivative is zero everywhere. This is problematic for XGBoost since it uses a second order approximation of the loss function during the optimization.
+
+SECTION: 2.3Previous solutions
+
+The current solution in the XGBoost package is to use additive trees. These are slightly different trees that do not require the second derivative but rely on an adapted training algorithm that uses line searches. However, using these modified trees requires a separate model for each quantile, which is highly inefficient.
+
+The problem of the differentiability atcan also be overcome by using a smooth approximation of the loss function. Multiple different smooth approximations have been suggested for neural networks.
+
+Hatalis et al., (2019)use the following smooth approximation based on work fromZheng, (2011):
+
+whereis a smoothing parameter that determines the amount of smoothing. A smaller value gives a closer approximation to the true pinball loss.
+
+Cannon, (2011)andXu et al., (2017)use the Huber norm to approximate the pinball loss. The Huber norm is given by:
+
+The resulting approximation of the pinball loss is given by:
+
+This Huber pinball loss has also been applied to XGBoost(Yin et al.,,2023). However, since the second derivative of the Huber pinball loss is still zero for, the algorithm requires a large value ofto properly converge in practice. Being forced to use a largeis undesirable. The second derivative becomes obsolete and the training in practice reduces to gradient descent with a very low learning rate. This can be seen by evaluating Equation (5) for a large value of.
+
+To really benefit from the higher convergence speed achieved by the quadratic approximation used by XGBoost, it is essential to use an approximation of the pinball loss that is not only differentiable at zero but also has a non-zero second derivative everywhere. The exponential approximation,, may therefore seem like a suitable candidate. In fact, the second derivative is strictly positive:
+
+However, when implementing this, we ran into similar problems. Although the second derivative is always positive, it decays exponentially as a function of, resulting in a vanishing second derivative. In summary, we need to find a smooth approximation with a reasonably large second derivative.
+
+SECTION: 3The arctan pinball loss
+
+Our goal is to develop a smooth approximation of the pinball loss function that maintains a large second derivative. To achieve this, we introduce the following approximation, named the arctan pinball loss:
+
+whereis a smoothing parameter that controls the amount of smoothing. A smaller value ofresults in a closer approximation but, as we will soon see, also a smaller second derivative. Theterm ensures that the approximation is unbiased for large values of. For XGBoost, this term is purely aesthetic, as it does not influence the first or second derivative. However, for other applications or optimisation procedures, it could be useful. We provide more details on the construction and the unbiasedness in AppendixA.
+
+The second derivative of the arctan pinball loss is given by:
+
+Crucially, this second derivative is strictly positive and falls off polynomially as opposed to the exponential decay of.
+
+Figure2visualizes this difference in second derivative. Figure2(a) shows that both the exponential pinball loss and the arctan pinball loss approximate the true pinball loss very well when using. However, as can be seen in Figure2(b), the arctan pinball loss has a second derivative that is orders of magnitude larger, making it a much better candidate to use with XGBoost.
+
+By using this loss function, we are able to carry out quantile regression while using the default version of XGBoost. One of the advantages of this is that we can predict multiple quantiles with the same model by using multi-output leaves. From a theoretical point of view, using the same model for multiple quantiles is advantageous. The different quantiles can share information, making it more efficient than estimating all the quantiles with separate models(Zou and Yuan,,2008).
+
+A second advantage of using the same model for different quantiles is that all these quantiles share the same splits. This makes it much less likely that quantiles cross. As we will see in the Section4, using separate models for each quantile results in many more quantiles crossings, which is clearly undesirable.
+
+However, even when using a single model, crossings cannot be entirely prevented. Due to the quadratic approximation, a single update can still result in a crossing. Three scenarios where crossings could occur during an update are visualized in Figure3.
+
+For simplicity, we consider the scenario where there is only a single data point in a leaf. Suppose we predict the 0.95-quantile (red) and the 0.85-quantile (blue). Without any regularization,, the update for both quantiles is proportional to the gradient divided by the second derivative (Equation (5)).
+
+In situation 1, the 0.95-quantile is slightly larger thanand the 0.85-quantile substantially smaller than. The update is proportional to the gradient divided by the second derivative. In the first situation, the gradient for the 0.95-quantile is smaller than for the 0.85-quantile and the second derivative is larger. These resulting updates cause the 0.85-quantile to become substantially bigger and the 0.95-quantile to become slightly smaller. This could result in a crossing.
+
+In situation 2, the 0.85-quantile is smaller thanand the 0.95-quantile is larger thanby a similar amount. In this case, the second derivatives for both are equal. However, the gradient for the 0.85 quantile is roughly 0.85 compared to -0.05 for the 0.95 quantile. This could also result in a crossing during this update.
+
+In the final scenario, both quantiles are larger than. The gradient of the 0.95-quantile isand the gradient for the 0.85-quantile is -0.15. At first glance this should not be able to result in a crossing. However, since the second derivative foris smaller, this is still a possibility.
+
+Note that two of the three crossing scenarios were caused by a difference in second derivative. Since the second derivative of our arctan pinball loss is polynomial instead of exponential, we do not suffer from this effect as much. Additionally, using a largerwould also diminish this effect.
+
+In general, using any approximation of the true loss can result in a slightly biased model. Figure4illustrates the bias that both approximations of the pinball loss,and, have near the origin. The optimum for both losses is slightly belowwhen using alarger than 0.5. This causes the predicted quantiles to be slightly larger. This would result in slightly more conservative prediction intervals, especially when using larger values of. We will observe this behaviour in Section4.
+
+For optimal use of the arctan pinball loss, we recommend the following modeling choices.
+
+Always use standardized targets. This allows us to keep certain hyper-parameters, most notably the smoothing parameter, fixed regardless of the data set. We typically found values between 0.05 and 0.1 to work well. Smaller values result in extremely small second derivatives, and much larger values result in an approximation that is too rough, leading to overly conservative prediction intervals.
+
+Set the min-child-weight parameter to zero. This parameter regularizes the trees by requiring a minimum weight in each leaf in order to allow a split. The weight is defined as the sum of the second derivatives of the points in the resulting leaf. This makes sense when using a loss function with a constant second derivative, such as the mean-squared error. In that case, this parameter enforces a minimum number of data points in each leaf to prevent overfitting. However, since the second derivative of our loss function is far from constant, we advise to not use this parameter and set it to zero.
+
+Use a slightly smaller learning rate of 0.05 (compared to 0.1 in the standard implementation). The weights of the new tree are given by Equation (5). The outputs of the new tree are multiplied by the learning rate to obtain the actual update. Since the second derivative can be substantially smaller than 1, it is still possible to obtain rather large updates. To make this more stable, we advise to use a slightly smaller learning rate.
+
+Set the max-delta parameter to 0.5. This is done for the same reason as the slightly lower learning rate. To prevent overly large updates, this parameter is set to 0.5. During our experiments, we observed no negative effects of using this parameter in terms of coverage or validation loss but it reduced the number of quantile crossings.
+
+SECTION: 4Experimental results
+
+This section consists of three parts. We first go through the various data sets that were used. Subsequently, we explain our experimental design. This includes the choices of hyper-parameters, the optimization procedure, and the metrics that were used. Finally, the results are given and discussed in the third subsection. Our implementation of the arctan pinball loss is publicly available:https://github.com/LaurensSluyterman/XGBoost_quantile_regression.
+
+SECTION: 4.1Data sets
+
+Our first example is a one-dimensional toy example. This experiment demonstrates the qualitative advantages of our approach. Specifically, we illustrate that the splits for the different quantiles are all located at the same positions, significantly reducing the number of quantile crossings.
+
+The training set consists of 1,000 realizations of the random variable pair, whereand.
+
+Secondly, we examine our method on six publicly available UCI regression data sets: Boston housing, energy, concrete, wine quality, yacht, and kin8nm. These data sets range from a few hundred data points, with yacht being the smallest at 308, to several thousands, kin8nm having over 8,000 data points. The data sets feature between 6 and 13 covariates, encompassing both continuous and categorical variables. Given their high dimensionality and the wide range of tasks they represent, these data sets are frequently used as benchmark data sets in machine learning research(Hernández-Lobato and Adams,,2015).
+
+Lastly, we examine the total load on four distinct substations from the Dutch electricity grid. For each substation, three months of data at a temporal resolution of 15 minutes is available. The objective is to predict the load on the substation one day ahead using the 81 available covariates. These covariates comprise a mix of measurements, predictions, and categorical values. Examples include load measurements from the previous day, day-ahead electricity price, predicted amounts of solar radiation and windspeed for the next day, and calendar-derived variables such as whether the day is a weekday or a holiday. These data sets have been provided to us by the distribution system operator Alliander and are publicly available as part of the OpenSTEF package:https://github.com/OpenSTEF/openstef-offline-example/tree/master/examples/data.
+
+SECTION: 4.2Experimental design
+
+For all experiments, we predict 10 different quantiles:
+
+The following hyper-parameters are optimized:
+
+The number of estimators: [100, 200, 400].
+
+Theregularization parameter: [0.01, 0.1, 0.25, 0.5, 1, 2.5, 5, 10].
+
+Theregularization parameter: [0.1, 0.25, 0.5, 1, 2.5, 5, 10].
+
+The maximum depth of the trees: [2, 3, 4].
+
+For the toy example, we applied 3-fold cross-validation to determine the optimal hyper-parameters and evaluated the resulting model on a separate test set.
+
+For the UCI data sets, we used 3-fold cross-validation to obtain predicted quantiles for every data point in the data set. During each cross-validation, another round of 3-fold cross-validation was used to determine the optimal hyper-parameters.
+
+Since the substation data sets are time series, we could not use regular cross-validation. Instead, we used a train/validation/test split where we allocated the first 80of the time series as the training set, the next 10as the validation set, and the final 10as the test set. The optimal hyper-parameters were determined using the validation set, and the actual model was fitted using these parameters on the combined training and validation set. Subsequently, the model was evaluated on the test set. This procedure is visualized in Figure5.
+
+For the toy-example, which is mainly illustrative, we provide visualizations of the various quantiles. For the UCI data set and the electricity-grid substation data sets, we provide the following quantitative metrics:
+
+1. The marginal coverage percentage and average width of the 90PI:
+
+whereis the 90PI that is constructed using the predicted 0.05- and 0.95-quantile. We also report the average width of this interval.
+
+The marginal coverage of an interval, however, does not fully capture the quality of the predicted conditional quantiles. The typical argument is that we want an interval that has the correct marginal coverage while being as narrow, or sharp, as possible(Kuleshov et al.,,2018). A similar argument has been made in terms of calibration and refinement(DeGroot and Fienberg,,1983)for a probabilistic classifier. This argument translates well to quantile regression.
+
+Suppose we are predicting a conditional-quantile, denoted with. The perfect predicted quantile would satisfy:
+
+The predicted quantile is never perfect and we therefore make the following errors:
+
+The error in line (13),, is the calibration error. Crucially, this error can be low by having conditional quantiles that are only correct on average and not for individual values of. This can be seen by noting that:
+
+whereis the density function of the random variable.
+
+The second error term, in line (14), is the refinement error. This term is large if the coverage of the conditional quantile is substantially larger or smaller than the marginal coverage.
+
+As an example, the empirical CDF would be relatively well-calibrated but would not be practical as it entirely ignores the covariates. A similar point is made byKuleshov et al., (2018).
+
+2. The average pinball loss:
+
+Because of the limitation of only reporting the marginal coverage, we also report the average pinball loss:
+
+whereis the pinball loss for quantile,is the number of predicted quantiles,is the number of data points, andis the-th predicted quantile of data point. The pinball loss is a proper scoring rule for conditional quantiles(Gneiting and Raftery,,2007)and therefore measures both the calibration error and the refinement error.
+
+3. The crossing percentage, which is the percentage of adjacent predicted quantiles that cross:
+
+SECTION: 4.3Results and Discussion
+
+Figure6illustrates the difference between our approach and the default implementation of quantile regression in XGBoost. The default implementation uses a separate model for each quantile. This causes the splits to be at different locations, easily resulting in quantile crossings. On the contrary, our approach uses a single model for all ten quantiles and therefore has the splits at the same locations. In this example, our approach had 0 crosses.
+
+The results on the six UCI data sets are given in Table1. We evaluated two values of, our smoothing parameter. A larger value means more smoothing.
+
+We observe far fewer crossings for all six data sets. Additionally, while our intervals are typically smaller, our marginal coverage is overall closer to the desired 90, with the exception of the energy data set. We do not see a clear difference in performance in terms of the pinball loss. This illustrates the previously mentioned fact that the coverage is a marginal coverage. A model can be very well calibrated, but not very informative, or it can be very informative yet poorly calibrated.
+
+The most dramatic example can be found in the wine data set. The 90PI of the original approach only has a 61.2marginal coverage. At first glance, this seems terrible. However, the average pinball loss shows that the actual model is not that much worse than our implementation. When investigating this further, we found that the original-quantiles were slightly, but consistently, too large. This resulted in a very low coverage of thePIs even though the intervals were in fact only slightly too small. The problem is that they were consistently too small for multiple values of, resulting in an extremely low marginal coverage.
+
+Data setAverage Pinball lossPIcoveragePI widthCrossing percentages=0.05s=0.1defaults=0.05s=0.1defaults=0.05s=0.1defaults=0.05s=0.1defaultEnergy0.220.220.1793.997.188.95.45.84.57.10.320.2Concrete1.51.41.581.486.181.315.215.819.85.53.216.1Kin8nm0.0400.0400.04183.184.382.30.440.440.461.10.611.0Boston Housing0.920.910.9580.083.276.18.08.79.92.40.718.5Yacht0.210.260.2190.995.569.22.84.95.50.50.029.8Wine0.170.170.1788.188.761.21.51.71.83.12.25.3
+
+While the marginal coverage is often closer to 90with the arctan loss, we also have a number of data sets where the intervals are too narrow, especially when using a smaller. As mentioned, the original implementation even had a marginal coverage as low as 61.2for one of the data set. This overconfidence is in line with the observation ofGuo et al., (2017)who noted that modern machine learning models are often overconfident. The pinball loss depends on both calibration and refinement and therefore the resulting optimal model according to the pinball loss may not be the best calibrated model.
+
+A general approach to improve the calibration is to add a post-hoc calibration step. The PIs are evaluated on a previously unseen part of the data set and are tuned such that they are better calibrated. We advise to always consider using such a post-hoc calibration step when implementing these models in practice. An example of such a procedure can be found inRomano et al., (2019).
+
+The results for the electricity substations are given in Table2. Our approach yields comparable results while having far fewer crossing and requiring only a single model. For two of the four substations, we have a slightly better pinball loss while for two others, we perform slightly worse. A similar pattern is observed for the coverage.
+
+Data setAverage Pinball lossPIcoveragePI widthCrossing percentagedefaultdefaultdefaultdefaultSubstation 2870.190.1880.676.71.661.560.412.8Substation 3070.750.7788.284.118.247.950.04.2Substation 4350.530.5578.886.14.835.880.02.1Substation 4380.690.6884.686.17.07.30.03.3
+
+We also observed that the models are sometimes biased, rather than overconfident, causing a subpar coverage. We suspect that this is caused by the varying conditions combined with the fact that trees do not extrapolate well.
+
+For the first substation, the training data (including validation) starts halfway through October and ends in early January. The entire test set consists of days in January. During that time, the loads in the substation were typically lower. Multiple factors might cause this, but a likely explanation is reduced sunlight in January.
+
+The reliability diagrams in Figure7visualize this bias for substation 287. Reliability diagrams display the marginal performance of the conditional quantiles(Murphy and Winkler,,1977; Niculescu-Mizil and Caruana,,2005). All the quantiles were too large. For substation 307, visualized in Figure8, we observe that both approaches yielded well-calibrated quantiles.
+
+ThePIs for substations 287 and 307 are visualised for both approaches in Figure9. For substation 287, we observe that the intervals fail to capture the lowest peaks. Additionally, both models exhibit a bias around the 24th of January. The predicted intervals are often above the actual loads in that region.
+
+In this specific application, which involves a time series with only three months of training data, using tree-based models presents clear disadvantages. Inevitably, the model will encounter unseen scenarios, such as the first significantly sunny day or the first frost period in a three-month period. In these instances, the model may fail since the individual trees cannot extrapolate.
+
+This illustrates that XGBoost may not always be the correct model. We stress that we do not claim this to be the optimal way to perform quantile regression. Other models, such as neural networks or even simple linear models, could work just as well, or better, depending on the specific situation. However, there may be situations where XGBoost is preferred due to its efficient training and its capability to handle missing data. In such cases, using the arctan pinball loss allows for the simultaneous estimation of multiple quantiles, resulting in substantially fewer crossings.
+
+SECTION: 5Conclusion
+
+This study introduced a novel smooth approximation of the pinball loss function, termed the arctan pinball loss, which has been specifically designed to meet the needs of the XGBoost framework. The key advantage of this loss function lies in its second derivative, which decreases significantly more slowly than that of the currently available alternatives.
+
+This arctan loss facilitates the use of a single model for multiple quantiles simultaneously. This is both more efficient and greatly reduces the number of quantile crossings. The experimental results demonstrate that this approach is viable for a wide range of data sets and yields competitive results while using only a single model and while having far fewer quantile crossings.
+
+SECTION: References
+
+APPENDIX
+
+SECTION: Appendix AConstructing the arctan pinball loss
+
+Recall that we defined. We will discuss the pinball loss as a function ofand, the desired quantile. The classical pinball loss isforandfor. We can place this pinball loss in a larger set of functions, namely. For the pinball loss,is a stepfunction that goes from 1 to 0 at.
+
+We can also consider other functions forthat go from 1 to 0 to find approximations of the loss function. For a loss function to be suitable for XGBoost we require thatis non-negligible in the relevant domain of. If the targets are standardized, this relevant domain is roughly from -10 to 10 for most data sets.
+
+It is immediately clear that the classical pinball loss is not suitable.
+A simple calculation shows that
+
+Writing it out in terms ofallows us to easily check different functions and see how quickly the second derivative goes to zero.
+
+We propose the following functionas a suitable candidate:
+
+Using thiswould result in the following loss function:
+
+However, this loss function is asymptotically biased, as we demonstrate for the limit. The limittois identical and can be obtained similarly.
+
+To obtain an asymptotically unbiased loss function, we therefore add aterm and end up with our arctan pinball loss:
+
+Crucially, the second derivative of this arctan pinball loss is polynomial:

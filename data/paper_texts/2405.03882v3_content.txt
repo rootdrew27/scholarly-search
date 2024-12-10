@@ -1,0 +1,241 @@
+SECTION: Trio-ViT: Post-Training Quantization and Acceleration for Softmax-Free Efficient Vision Transformer
+Motivated by the huge success of Transformers in the field of natural language processing (NLP), Vision Transformers (ViTs) have been rapidly developed and achieved remarkable performance in various computer vision tasks. However, their huge model sizes and intensive computations hinder ViTs’ deployment on embedded devices, calling for effective model compression methods, such as quantization.
+Unfortunately, due to the existence of hardware-unfriendly and quantization-sensitive non-linear operations, particularly Softmax, it is non-trivial to completely quantize all operations in ViTs, yielding either significant accuracy drops or non-negligible hardware costs.
+In response to challenges associated with, we focus our attention towards the quantization and acceleration for, which not only eliminate the troublesome Softmax but also integrate linear attention with low computational complexity, and proposeTrio-ViTaccordingly.
+Specifically, at the algorithm level, we develop a tailored post-training quantization engine taking the unique activation distributions of Softmax-free efficient ViTs into full consideration, aiming to boost quantization accuracy.
+Furthermore, at the hardware level, we build an accelerator dedicated to the specific Convolution-Transformer hybrid architecture of efficient ViTs, thereby enhancing hardware efficiency.
+Extensive experimental results consistently prove the effectiveness of our Trio-ViT framework. Particularly, we can gain up to,, andFPS under comparable accuracy over state-of-the-art ViT accelerators, as well as,, andDSP efficiency.
+Codes are available at.
+
+SECTION: 
+Thanks to the powerful global information extraction capability of self-attention mechanism, Transformers have achieved great success in various natural language processing (NLP) tasks.
+This success has inspired the rapid development of Vision Transformers (ViTs), which have gained increasing attention in the field of computer vision and shown superior performance compared to their convolution-based counterparts.
+However, their enormous model sizes and intensive computations challenge the deployment of ViTs on embedded/mobile devices, where both memory and computing resources are limited.
+For example, ViT-LargecontainsM parameters and yieldsG FLOPs during inference.
+Thus, effective model compression techniques are highly desired to facilitate ViTs’ real-world applications.
+
+Among them, model quantizationstands out as one of the most effective and widely adopted compression methods. It converts floating-point weights/activations into integers, leading to a reduction in both memory consumption and computational costs during inference.
+Unfortunately, due to the existence of non-linear operations, including LayerNorm (LN), GELU, and especially Softmax, which are not only hardware unfriendly but also quantization-sensitive, ViTs are difficult to be fully quantized, yielding either significant accuracy drops or notable hardware overhead.
+To solve these challenges, several effortshave been devoted.
+For example, FQ-ViTidentifies extreme inter-channel variations in LN’s inputs and excessive non-uniform distributions in attention maps, and proposes Power-of-Two Factor (PTF) and Log-Int-Softmax (LIS) for LN and Softmax quantization, respectively.
+Additionally, I-ViTdevelops innovative lightweight dyadic arithmetic methods to approximate ViTs’ non-linear operations, thus achieving integer-only inference.
+Despite their effectiveness, they are dedicated to the quantization for standard ViTs while overlooking the inherent quantization and acceleration opportunities within efficient ViTs, where the vanilla Softmax-based attention with quadratic computational complexity is typically traded with more efficientSoftmax-free attentionsthat exhibitlinearcomputational complexity.
+To close this gap, we redirect our focus towards the exploration of effective quantization and acceleration for efficient ViTs, aiming to fully unleash their potential algorithmic benefits to win both accuracy and hardware efficiency, i.e.,the Softmax-free property to boost the achievable quantization performance andthe linear complexity characteristic of attentions to enhance inference efficiency.
+
+In addition to the algorithm level, various works have built dedicated accelerators to boost ViTs’ hardware efficiency from the hardware perspective. For instance, Auto-ViT-Accadopts mixed quantization schemes, i.e., fixed-point and power-of-two, to quantize ViTs, and develops a dedicated accelerator to fully leverage the computational resources available on FPGAs.
+Moreover, ViTCoDproposes pruning and polarization techniques to transform ViTs’ attention maps into denser and sparser variants, and then develops a dedicated accelerator incorporating both dense and sparse engines to simultaneously execute the above two workloads.
+Despite the superiority of the above accelerators in enhancing hardware efficiency, they are dedicated to standard ViTs and fall short in fully accelerating efficient ViTs, which are typically characterized by (i) Softmax-free linear attentions and (ii) Convolution-Transformer hybrid architectures.
+Specifically, it has been widely verified that the computational complexity reduction of linear attentions will yield a degradation in their local feature extraction ability, thus necessitating extra compensation components such as convolutions. This results in hybrid architectures for efficient ViTs that comprise both convolutions and Transformer blocks, thus calling for dedicated accelerators to unleash their potential benefits.
+
+To grasp the inherent quantization and acceleration opportunities in efficient ViTs, we make the following contributions:
+
+We propose, a post-training quantization and acceleration framework for efficient Vision Transformers (ViTs) via algorithm and hardware co-design. To the best of our knowledge, this is the first work dedicated to the quantization and acceleration of efficient ViTs.
+
+At the algorithm level, we conduct a comprehensive
+analysis of distinct activations of Softmax-free efficient ViTs and unveil specific quantization challenges. Then, we develop a tailored post-training quantization engine that incorporates several novel strategies, including, and, to address the involved challenges with boosted quantization accuracy.
+
+At the hardware level, we advocate aincorporating multiple computing cores to effectively support various operation types in the Convolution-Transformer hybrid architecture of efficient ViTs.
+Besides, we propose ato facilitate both inter- and intra-layer fusions, thus enhancing hardware utilization and easing the bandwidth requirement.
+
+Extensive experiments and ablation studies consistently validate the effectiveness of our Trio-ViT framework. For example, we can offer up to,, andFPS with comparable accuracy over state-of-the-art (SOTA) ViT acceleration frameworks. Besides, we can achieve up to,, andDSP efficiency. It is expected that our work can open up an exciting perspective for the quantization and acceleration of Softmax-free efficient ViTs.
+
+: we first introduce related works in Sec.and preliminaries in Sec.; Then, we illustrate Trio-ViT’s post-training quantization engine and dedicated accelerator in Sec.and Sec., respectively; Furthermore, extensive experiments and ablation studies consistently demonstrate Trio-ViT’s effectiveness in Sec.;
+Finally, Sec.summarizes this paper.
+
+SECTION: 
+SECTION: 
+Model quantization, which represents floating-point weights and activations with integers without modifying model architectures, is a generic compression solution.
+It can be roughly categorized into two approaches: quantization-aware training (QAT) and post-training quantization (PTQ).
+Specifically, QATinvolves weight fine-tuning to facilitate quantization, yielding higher accuracy or lower quantization bit.
+In contrast, PTQ, which eliminates resource-intensive fine-tuning and streamlines models’ deployment, has recently gained increasing attention.
+For example,incorporates an innovative ranking loss to preserve the functionality of the self-attention mechanism during quantization, successfully quantizing linear operations (matrix multiplications) in ViTs.
+Additionally, FQ-ViTfurther introduces Power-of-Two Factor (PTF) and Log-Int-Softmax (LIS) to quantize thehardware- and quantization-unfriendly non-linearoperations (i.e., LayerNorm and Softmax) in ViTs, achieving full quantization.
+However, these works are developed for standard ViTs and cannot capture quantization opportunities offered by efficient ViTs, which feature Softmax-free attention with linear computational complexity to win both quantization accuracy and hardware efficiency.
+
+SECTION: 
+ViTshave gained growing attention recently and have been developed rapidly in the computer vision field. Among them, ViTfirstly applies a pure Transformer to process sequences of image patches, achieving remarkable performance.
+Furthermore, DeiToffers a better training recipe for ViT, significantly reducing training costs.
+However, standard ViTs still incur intensive computational costs and huge memory footprints during inference to achieve superior performance, calling for efficient ViTs.
+Particularly, EfficientViT, the SOTA one, replaces the vanilla Softmax-based self-attention of quadratic complexity with a novel Softmax-free lightweight multi-scale attention, achieving a global receptive ﬁeld while enhancing hardware efficiency.
+Besides, Flatten Transformeropts for an innovative Softmax-based focused linear attention, preserving expressiveness with low computational complexity.
+Despite the inherent algorithmic benefits of Softmax-free linear attentions in efficient ViTs, includingthe Softmax-free property to facilitate quantization andthe linear complexity to boost hardware efficiency, their dedicated quantization and acceleration methods remain under-explored.
+
+SECTION: 
+Recently, various workshave developed dedicated accelerators to promote Transformers’ real-world deployment. Specifically, Sangerdynamically prunes attention maps during inference and builds a reconfigurable accelerator with a score-stationary dataflow to accelerate such sparse patterns.
+As for ViT accelerators,
+VAQFaccelerates ViTs with binary weights and mixed-precision activations.
+Auto-ViT-Accincorporates heterogeneous computing resources available on FPGAs (i.e., DSPs and LUTs) to separately accelerate the mixed quantization schemes (i.e., fixed-point and power-of-two) for ViTs.
+ViTCoDprunes and polarizes ViTs’ attention maps into denser and sparser ones, and constructs an accelerator to execute them on separate computing engines.
+While these methods can enhance the hardware efficiency for standard ViTs, they are not directly applicable for efficient ViTsdue to their distinct model architectures, such as Softmax-free linear attention and Convolution-Transformer hybrid structures, calling for dedicated accelerators.
+
+SECTION: 
+SECTION: 
+As depicted in Fig., input images are initially partitioned into fixed-size patches and further enhanced with token and positional embedding, serving as input tokens for ViTs’ Transformer blocks. Among them, each Transformer block comprises two key components: a Multi-Head Self-Attention module () and a Multi-Layer Perceptron (), both preceded by LayerNorm (LN) and followed by residual connections.
+Specifically, theis the core element in Transformers for global information capture. It projects input tokensinto queries, keys, and valuesfollowing Eq. (), where,, andare corresponding weights for thehead.
+Subsequently, as formulated in Eq. (),is multiplied by the transposed(i.e.,) and then subjected to Softmax normalization (whererepresents the feature dimension of each head) to generate the attention map. This attention map is further multiplied byto obtain the attention outputfor thehead. Finally, the attention outputs from allheads are concatenated and projected using weightsto produce the final MHSA output, i.e.,in Eq. ().
+As for the, it comprises two linear layers separated by the GELU activation function.
+
+There are two limitations of standard ViTs:the quadratic computational complexity of the self-attention w.r.t. token numbersandthe hardware- and quantization-unfriendly non-linear operations, i.e., LN, GELU, and especially Softmax, which hinder ViTs’ achievable hardware efficiency and quantization accuracy.
+
+SECTION: 
+To tackle the above limitations, efficient ViTshave emerged as a promising solution.
+Here we take EfficientViT, the SOTA efficient ViT, as the example for illustration. As shown in Fig., it not onlyincorporates Softmax-free linear attention but alsoreplaces vanilla LN and GELU with hardware- and quantization-friendly BatchNorm (BN) and Hardswish (Hswish), respectively, significantly facilitating quantization and acceleration.
+
+Specifically, EfficientViTmainly consists of two types of blocks:and.
+Eachcomprises two point-wise convolutions (PWConvs) divided by a depthwise convolution (DWConv). Each layer is followed by a BN and a Hswish (except the last layer). Particularly, BN can be implemented usingconvolutions and seamlessly folded into preceding convolutions, simplifying quantization and acceleration.
+Additionally, eachincludes afor context information extraction and anfor local information extraction.
+In MSA, inputs are projected to generate, which are then processed by lightweight small-kernel convolutions to generate multi-scale tokens. After applying ReLU-based global attention, the results are concatenated and projected to produce final outputs.
+Notably, ReLU-based global attention essentially replaces the similarity functionin vanilla Softmax-based attention with, thus allowing forthe removal of Softmax andthe utilization of the associative property of matrix multiplication to reduce computational complexity from quadratic to linear. This reformulates Eq. () as follows:
+
+SECTION: 
+As illustrated above, due to the inherent benefits of the SOTA efficient ViT, dubbed EffcientViT, i.e., the vanilla Softmax-based self-attention with quadratic complexity, LN, and GELU, are replaced with hardware- and quantization-friendly ReLU-based global attention with linear complexity, BN, and Hardswish, respectively, we thus explore quantization and acceleration on top ofto win both quantization accuracy and hardware efficiency.
+
+We adopt the most widely applied hardware-friendly quantization settingby default, i.e., theandfor activationsand weights, respectively. Formally, as expressed in Eq. (),/are quantized/,/are the corresponding scaling factors,means rounding to the nearest, andis the quantization bit-width.
+
+SECTION: 
+and MBConvs/lightweight MSAs are two primary blocks in EfficientViT, we begin by retaining matrix-multiplications (MatMuls) within MSAs (i.e., the computations in Eq. ()) at full precision to assess quantization impact on MBConvs.
+
+Although it has been widely recognized that activations are more sensitive to quantization than weights, this sensitivity is exacerbated in the context of EfficientViT. As presented in Table, quantizing only weights in EfficientViT-B1to-bit (W8) leads to a comparable accuracy () compared to its full-precision counterpart, while quantizing both weights and activations (except MatMuls in MSAs) to the same bit (W8A8) yields a catastrophic accuracy drop of. This emphasizes the extreme quantization sensitivity of activations in EfficientViT, particularly those in MBConvs, as evident in the accuracy comparison between columnsandin Table.
+As previously introduced in Sec., each MBConv contains two PWConvs separated by a DWConv, we then conduct ablation studies to individually quantize input activations of these three layers in all MBConvs.
+As shown in Table, the input activations of(DW) and the(PW2) are the most quantization sensitive and should be primarily responsible for the accuracy drop.
+To comprehend this issue, we visualize their input activations in Fig.and observe two challenges.
+
+Specifically, as shown in Fig.(c), the input activation of DW exhibits significant inter-channel variations, resulting in the majority of values being represented with few quantization bins (see Fig.(d)). For example, in the input activation of DW within the MBConv from the last stage in EfficientViT-B1, approximatelyvalues occupy a mereof total quantization bins. In contrast, this percentage is considerably higher atfor PW1’s input, which isgreater.
+
+As depicted in Fig.(e), input activation of PW2 features extreme inter-channel asymmetries compared to that of PW1 in Fig.(a), yielding a broader value range and thus a lower quantization resolution. For instance, in PW2’s input within the MBConv from the last stage of EfficientViT-B1, the interval of the first channel is (,), while the interval among all channels is (,), which islarger.
+
+When quantizing MatMuls in Eq. () within lightweight MSAs to 8-bit, we encounter notably worse results, which manifest as a “Not-a-Number” (NaN) issue. We find that this issue primarily arises from the quantization of divisors/denominators in Eq. ().
+As depicted in Figs.(a) and (b), the wide range of values within divisors results in a reduced quantization resolution for smaller values when adopting the uniform quantization. Nevertheless,compared to larger values. For instance, rounding a divisor oftoduring quantization results in an absolute difference of, yet it onlythe final division results. In contrast,
+approximating a divisor oftoyields a negligibleabsolute difference, but it causes the final resultslarger.
+These examples distinctly underscore the inherent incompatibility of uniform quantization for divisors, especially those exhibiting a wide range of values.
+
+SECTION: 
+As introduced inin Sec., there exist extreme inter-channel variations in DW’s inputs, making the vanilla layer-wise quantization unsuitable.
+Fortunately, owing to the distinctive algorithmic characteristic of DW, which processes each input channel independently and thus eliminates the summations along different channels, we can directly employto assign individual scaling factors for each input channel. This approach effectively addresses the above challenge without compromising hardware efficiency.
+Nonetheless, despite its potential advantages in enhancing quantization accuracy, it significantly increases the number of scaling factors for activations, posing another challenge for their optimizations via LSQ, which is widely adopted to optimize activation quantization.
+
+To address this limitation, we propose to adoptfor DW’s inputs.
+Specifically, as shown in Fig., weights in DW feature the same channel number as inputs, and each weight channel functions as an independent filter dedicated to processing its corresponding input channel. This arrangement enables us to assign distinct scaling factors to each weight channel. Thus, as depicted in Fig.(b), filter-wise quantization is essentially the channel-wise quantization for DW’s weights.
+Consequently, inter-channel variations of activationscan be seamlessly transferred to weightsthrough a mathematically equivalent transformation employing channel-wise migration factors:
+
+where,, andare the output, input, weight, and migration factor forchannel, respectively.donate the quantization function,andare the layer-wise and channel-wise scaling factors forand, respectively. This approach greatly facilitates activation quantization without increasing learnable scaling factors of activations and impeding weight quantization. Note that weights can be pre-transformed before deployment to eliminate the on-chip computation. As for activations that depend on the input images during inference and thus cannot be pre-processed, we can fusewithto obtain a fused scaling factorin advance, thus avoiding the on-the-fly transformation:
+
+Furthermore, the computation ofcan be formulated as:
+
+whereis the mean of the maximal values acrosschannels. By comparing Figs.(c)/(d) and Figs.(a)/(b), it is evident that this approach can accomplish two essential objectives., it compresses outliers, effectively reducing the value range of activations., it amplifies smaller values, making them more amenable to quantization.
+
+SECTION: 
+To eliminate the inter-channel asymmetries in PW2’s inputs (introduced inof Sec.), inspired by, we propose filter-wise shifting to pre-process PW2’s inputs before quantization.
+As expressed in Eq. (), we subtract each input channel by its channel-wise mean, thus obtaining the calibrated inputcentered around zero (see Fig.(c)) and significantly reducing value ranges (see the comparison between Figs.(f) and(d)).
+To accommodate the above filter-wise shifting for activations and keep the same functionality as the original PW, the original biasof theoutput channel needs to be updated tofollowing Eq. (), wheredonate the input channel number. This bias update can be pre-computed to eliminate the on-chip processing.
+
+SECTION: 
+As illustrated in Figs.(a) and (b), log2 quantization will allocate more quantization bins to smaller values and vice versa. This inherent characteristic aligns with the algorithmic property of divisors in MSAs, where small values exhibit higher quantization sensitivity as explained in Sec.. Thus, to improve the quantization resolution of small values in divisors of MSAs, we advocate adopting log2 quantization:
+
+whereis log2-qauntized divisors,is the integer divisors generated by integer multiplications betweenandin Eq. (), andandare their scaling factors. Note thatcan be pre-computed, whilecan be effectively implemented in the integer domain following. Specifically, we first adopt the leading one detector (LOD) to find the indexof the first non-zero bit of, then addwith the value of thebit to obtain the result.
+For instance, ifis, then the indexof the first non-zero bit isand the value of thebit is, thus the log2-quantized() is.
+
+By adopting log2 quantization for divisors, we can further replace hardware-unfriendly divisions in Eq. () with hardware-efficient bit-wise shifts, further enhancing hardware efficiency while boosting quantization performance.
+
+SECTION: 
+SECTION: 
+To fully unleash our algorithmic benefits, developing a dedicated accelerator for quantized EfficientViTis highly desired. However, this poses several challenges due tovarious operation types within EfficientViT andthe distinct computational pattern of its lightweight attention compared to the vanilla self-attention in standard ViTs.
+
+As shown in Fig.and introduced in Sec., there are mainly four types of operations in the Convolution-Transformer hybrid backbone of EfficientViT: generic convolutions (where output pixels are produced by the accumulation of partial sums within sliding windows along input channels), PWConvs (which essentially are generic convolutions withkernels), DWConvs (which process each input channel separately, thus only partial sums within the sliding window need to be accumulated), and matrix multiplications (MatMuls).
+For example, they account for,,, andof the total operation numbers in EfficientViT-B1, respectively, when input resolution is.
+
+Considering that PWConvs are the dominant type of operations, one natural thought is to adopt the Multipliers-Adder-Tree () architecture, which is a typical design to efficiently support PWConvs with channel parallelism.
+Specifically, as illustrated in Fig.(a), each processing element (PE) lane in the MAT engine is responsible for the multiplication (via multipliers), summation (via the adder tree), and accumulation (via the accumulator) along the input channel dimension to generate each output pixel (for PWConvs) or partial sum (dubbed psum, for generic convolutions). Thus, the parallelismof the MAT engine is along theto facilitate.
+Besides, inputs are broadcast to different PE lanes and multiplied with different weight filters to produce output/psum pixels from different output channels, thus the parallelismis along theto enhance.
+
+Although the MAT architecture can efficiently process PWConvs as well as easily support generic convolutions and MatMuls (which can be treated as PWConvs with large batch sizes), it has limited flexibility when handling DWConvs., as for DWConvs, only psums generated from the same sliding window can be summed and accumulated, thus the achievable parallelism of each PE lane in MAT is limited by kernel sizes of DWConvs., DWConvs in EfficientViT feature various kernel sizes (and) and strides (and), resulting in different sizes of sliding windows and distinct overlap patterns between adjacent sliding windows when conducting convolutions. This necessitates extra line buffers and substantial memory management overheads to support the multiplication and summation functionality within PE lanes for generating consecutive output pixels., the lack of input reuse opportunities within DWConvs will lead to either a high memory bandwidth requirement or low PE utilization when accommodating the output channel parallelism among PE lanes in the MAT architecture.
+
+To solve the above limitations, the reconfigurable architecture depicted in Fig.(b) can be considered, which incorporates multiple Reconfigurable Multiplier-ACcumulation units ().As depicted in Fig.(c), when executing generic convolutions, PWConvs, and MatMuls, this architecture can be configured to operate in themode to achieve the same functionality as the MAT architecture. This means that each PE lane supports the input channel parallelism to achieve psum reuse, while different PE lanes facilitate output channel parallelism to exploit input reuse.As depicted in Fig.(d), when executing DWConvs, this architecture can be configured to run in themode, thus partial sums within each sliding window can beaccumulated with each R-MAC, making it inherently supports DWConvs with various kernel sizes.
+
+Specifically, as illustrated Fig.(d) right, different R-MACscancompute multiple output pixels from different output channels, thus the parallelism is along thehere.
+Besides, as shown in Fig.(d) top left, weights can be broadcast to all PE lanes and multiplied with input pixels from different sliding windows to generate consecutive output pixels from the same output channel. By doing this, we can reuse overlaps among adjacent sliding windows with only several auxiliary registers and easily support DWConvs with different strides.
+For example, as shown in Fig.(d) bottom left, where we take computations of theDWConv with a stride ofexecuted onR-MACs arranged in the same row fromPE lanes as the example. Initially, a sequence of input pixelsis transmitted to input shift registers, which is then moved forward by cycles. During each cycle, the firstpixels in shift registers are independently multiplied with the broadcast weight, generating thepsums forconsecutive output pixels.
+Aftercycles, the computation moves to the next row of the input feature map and the corresponding filter, continuing in the same computation mode. This process is repeated until allrows are processed, resulting inoutput pixels.
+As for computations of DWConvs with a stride of, overlaps among adjacent sliding windows are spaced instead of successive. Thus, odd-column-indexed input pixels within each row are initially transmitted to shift registers for processing, followed by the even-column-indexed pixels. Weights also need to be broadcast following the same “first odd, then even” rule to accommodate this modified computation scheme.
+Thereby, the parallelismin this architecture is along theto enhance.
+
+Despite its flexibility in supporting all types of operations in EfficientViT, there exist reconfigurable overheads in two aspects., the overheads in computational resources and buffers: each R-MAC needs a high-bit adder and a psum register to support the self-accumulation., the overheads in control logic: extra multiplexers are required to simultaneously support both two accumulation patterns, i.e., self-accumulation and down-forward accumulation.
+
+Considering the fact that:PWConvs are the dominant operations in EfficientViTand the MAT architecture can efficiently support them, as well asEfficientViT incorporates various operation types, especially DWConvs with various kernel sizes and strides, and the R-MAC design can flexibly support all of them, we propose a hybrid architecture for our dedicated accelerator to marry the best of both designs.
+Specifically, it consists of ato efficiently process generic convolutions, PWConvs, and MatMuls, and ato effectively support the above three operation types and DWConvs, thus enhancing flexibility while maintaining hardware efficiency.
+
+Besides the efficiency and flexibility of our proposed hybrid architecture, it offers an opportunity for inter-layer pipeline processing, thus saving data access costs.
+Specifically, DWConvs are exclusively executed on the R-MAC engine in our hybrid accelerator and are sandwiched by two PWConvs in MBConvs of EfficientViT.
+Thus, when the R-MAC engine handles DWConvs, the resulting outputs can be immediately transmitted to the idle MAT engine and serve as inputs to participate in the computation of the subsequent PWConvs.
+This integration enables the computation of DWConvs and their following PWConvs to be fused, leading to enhanced hardware utilization and reduced data access costs from off-chip.
+
+As expressed in Eq. (), after queryand keyundergo ReLU, there areremaining steps for producing the final attention map:MatMuls betweenand value;toke-wise summation of; thenMatMuls ofand outputs from step i;matrix-vector multiplications ofand outputs from step ii; and finallydivisions between outputs from step iii (divisors) and step iv (dividends). Thanks to our log2 quantization for divisors as introduced in Sec., the costly divisions can be substituted by hardware-efficient bit-wise shifts. Thus, it is evident that, besides multiplications, there are also element-wise summations and bit-wise shifts involved in computations of lightweight attention in EfficientViT. These multiplication-free element-wise operations are inherently incompatible with our multiplication-based PE arrays. Besides, they exhibit low computational intensity, yielding increased bandwidth requirements or potential delays.
+
+In addition to the MAT engine and R-MAC engine, which can be leveraged to effectively process MatMuls in the above steps i, iii, and iv, we further integrate several low-cost auxiliary processors into our hybrid architecture to facilitate the multiplication-free computations involved in lightweight attention.
+Particularly, we incorporate anto support the row-wise summation in step ii and ato handle the bit-wise shifts in step v.
+This architectural adjustment offers an opportunity for computation fusion within the attention (i.e., intra-layer pipeline, which will be explained in Sec.), thus enhancing data reuse and easing bandwidth requirements.
+
+Considering the MAT engine, R-MAC engine, and low-cost auxiliary processors in our hybrid design, the above computation steps in the attention that involve various operation types can be simultaneously handled by distinct computing units, thus offering the fusion opportunity.
+For example,whenin step i are executed on the MAT/R-MAT engine,can be broadcast to the auxiliary adder tree for performing the row-wise summation in step ii.
+Besides,when steps iii and iv are processed, their outputs can be immediately sent to the shifter array for element-wise divisions.
+
+SECTION: 
+As shown in Fig., our dedicated accelerator consists ofcomputing cores and several global buffers (buffer B/C and output buffer). Each computing core includes several internal buffers (buffer A and auxiliary/divisor buffers) and multiple computing units (R-MAC engine, MAT engine, auxiliary processors, and re-/log2 quantization modules).
+Specifically, as for computing units in each computing core, thecomprisesPE lanes, each containingR-MACs and can be reconfigured to operate in either self-accumulation or down-forward accumulation modes. This flexibility enables the effective processing of all multiplication-based operations in EfficientViT, including generic convolutions, DWConvs, PWConvs, and MatMuls, as introduced inin Sec..
+Theconsists ofPE lanes, each includingmultipliers, and is developed to efficiently handle multiple multiplication-based operations in EfficientViT, excluding DWConvs, as explained inin Sec..
+Besides, theis developed to quantize divisors in Eq. () following steps outlined at the end of the first paragraph in Sec., thus boosting quantization accuracy as well as enabling the conversion of costly divisions into hardware-efficient bit-wise shifts.
+Our accelerator is also equipped with several low-cost, such as the adder tree and shifter array, to accommodate the computation of multiplication-free operations (e.g., row-wise summation and bit-wise shift) in MSAs, as discussed inin Sec..
+Additionally, ais also incorporated to re-quantize outputs following Eq. (), whereandare quantized output, input, and weight, respectively,andare their corresponding scaling factors, and/are both positive integers. By doing this, the floating-point re-scaling factors are converted into dyadic numbers, allowing the re-quantization process to be implemented using integer-only multiplications and bit-wise shifts, thus facilitating both intra- and inter-layer pipelines on-chip.
+
+As for internal buffers, buffer A broadcasts data to all PE lanes in the R-MAC engine and can also send data to the auxiliary adder tree. The auxiliary buffer cashes outputs from the R-MAC engine and broadcasts data to all PE lanes in the MAT engine, serving as a bridge between the two engines.
+The divisor buffer stores divisors in Eq. () and then transfers them to the log2 quantization module, in preparation for the following bit-wise shifts.
+Regarding global buffers, buffers B/C send data to all computing cores, where data are distributed and transmitted to different PE lanes in R-MAC/MAT engines. The output buffer stores data from all computing cores and directs them to the off-chip DRAM.
+
+SECTION: 
+As introduced above, our dedicated accelerator incorporates both multiplication-based engines (R-MAC and MAT engines, with DWConvs limited to the former) and multiplication-free engines (auxiliary processors that are designed to expedite computations in MSAs). This architecture inherently offers opportunities for pipeline processing, where various operations can be simultaneously executed on distinct computing units, thereby enhancing hardware utilization and throughput.
+As for the, as shown in Figs.(a) and (b), when the R-MAC engine handles DWConv, the resulting outputs are first subtracted by the channel-wise mean obtained on the calibration data to implement the filter-wise shifting introduced in Sec., aiming to facilitate activation quantization. After that, they undergo re-quantization through the re-quantization module before being stored in the auxiliary buffer. Then, they are promptly directed to the idle MAT engine to serve as inputs for subsequent PWConv computations.
+Given that DWConvs entail much fewer computations compared to PWConvs, once the processing of the current DWConv is completed, the R-MAC engine can be reassigned to participate in the concurrent computation of PWConv, alongside the MAT engine.
+
+Regarding the,when the R-MAC engine processesfor thehead,are broadcast to the auxiliary adder tree to generate the vectorvia row-wise summations. This implies that steps i/ii in the Sec.can be executed simultaneously on distinct computing units.
+Concurrently,the MAT engine sequentially preform multiplications betweenand the already obtainedas well asto generate divisors and dividends in Eq. () for thehead, respectively. This means that steps iv/iii in the Sec.are computed consecutively on the MAT engine.
+During this process, the firstly generated divisors are cached in the divisor buffer and then routed to the log2 quantization module for log2 quantization.Once the dividends are obtained, they can be re-quantized via the re-quantization module and then sent to the auxiliary shifter array along with the already log2-quantized divisors to conduct element-wise divisions via bit-wise shifts, thus obtaining the final outputs of MSA.
+Note that once the computation forof all heads is finished, the R-MAC engine can be reused to compute divisors and dividends, together with the MAT engine.
+
+SECTION: 
+SECTION: 
+We validate our Trio-ViT’s post-training quantization algorithm on the. Specifically, we randomly sampleimages from the training set as calibration data and then test on the validation set.
+❶ To verify the effectiveness of our, we consider:
+MinMax, EMA, Percentile, OMSE, Bit-Split, EasyQuant, and the SOTA method FQ-ViT, for standard ViTs/DeiTs, and compare with them in terms of top-1 accuracy.
+❷ To validate our dedicated,
+
+The parallelism of computing engines in our accelerator(as depicted in Fig.) is configured to as. Thus, there are a total ofmultipliers in our accelerator, each can execute an-bit multiplication. To improve DSP utilization, we adopt the SOTA DSP packing strategyto accommodate two-bit multiplications within each DSP, similar to Auto-ViT-Accfor fair comparisons.Furthermore, we followto develop a cycle-accurate simulator for our accelerator to obtain fast and reliable estimations and verify them against the RTL implementation to ensure correctness.
+
+SECTION: 
+From Table, we can drawconclusions.The SOTA post-training quantization (PTQ) method FQ-ViT, which develops dedicated quantization schemes to fully quantize all operations in standard ViTs (including Softmax) to enhance hardware efficiency, suffers fromaccuracy compared to the full-precision models.
+Besides, it also yields an averageaccuracy compared to the base PTQ, where Softmax and other non-linear operations are not quantized and thus incur non-negligible hardware costs.
+This demonstrates that the hardware-unfriendly non-linear operations are sensitive to quantization, hindering both the achievable hardware efficiency and quantization accuracy of standard ViTs.To address this limitation, the SOTA efficient ViT dubbed EfficientViThas been proposed, which features Softmax-free linear attention (LinAttn) and can achieve much higher accuracy with even fewer parameters and computational costs. This underscores EfficientViT’s superiority, highlighting the need for quantization to facilitate its real-world applications.However, due to the distinct distributions of activation in MBConvs and MSAs, as introduced in Sec., the vanilla PTQ method fails to quantize EfficientViT and even yields a Not-a-Number (NaN) issue.To solve this issue, we propose our dedicated PTQ engine, which can effectively quantize EfficientViTs with merely an averageaccuracy when compared with the full precision counterparts, demonstrating our effectiveness.
+
+As shown in Table, we can see that:
+As for the quantization,due to the inter-channel variations in DW’s inputs and inter-channel asymmetries in PW2’s inputs, as introduced in Sec., vanilla uniform quantization fails to quantize MBConvs in EfficientViT.By incorporating our channel-wise migration and filter-wise shifting, which are proposed to solve the above two issues, respectively, we can effectively quantize MBConvs with only an averageaccuracy.
+On top of this, regarding the quantization of,owing to the extreme quantization sensitivity of smaller values in divisors, as illustrated in Sec., the vanilla-bit uniform quantization yields a NaN issue.Thus, we advocate adopting log2 quantization for divisors, which assigns more bins to smaller values and is inherently compatible with the algorithmic property of divisors, thus allowing for quantizing divisors with a mere-bit.
+
+Considering the unique algorithmic property of DWConvs, where each channel of weights serves as an independent filter to process each input channel, channel-wise quantization serves as a straightforward solution to solve the inter-channel variations in DW’s input, as explained in Sec..
+However, it will greatly increase the number of scaling factors, challenging quantization optimization via LSQand limiting achievable accuracy.
+Thus, we advocate adopting channel-wise migration on top of layer-wise quantization.
+As validated in Table, by doing this, we offer an averageaccuracy, demonstrating our superiority in solving the inter-channel variations of DW’s input while maintaining optimization efficiency.
+
+SECTION: 
+We followto scale up the hardware resources of our accelerator to have comparable peak throughput with the general computing platform (i.e., NVIDIA 2080Ti GPU) to enable fair comparisons with GPUs/CPU. As shown in Fig.(where the y-axis is plotted on ascale for better illustration), we can achieve much better hardware efficiency compared to SOTA baselines on GPUs/CPU, validating our effectiveness. Specifically,when compared with the full-precision DeiTson Edge GPU (Tegra X2), we can achieveandthroughput and energy efficiency, respectively.For comparisons with 8-bit DeiTs quantized by FasterTransformer, I-BERTand I-ViT, and executed on the Turning Tensor Core of NVIDIA 2080Ti GPU, we can offerandthroughput and energy efficiency, respectively.
+Furthermore,regarding the comparison with full precision EfficientViTon edge CPU, we can gain up toandthroughput and energy efficiency, respectively.When compared with EfficientViT on edge GPUs (NVIDIA Jetson Nano and Jetson Orin), we can gainandin terms of throughput and energy efficiency.
+
+From Table, we can see that:Due to the superiority of our quantization engine and the promising hardware efficiency of EfficientViT compared to standard ViTs/DeiTs, we gain the lowest latency and highest FPS under comparable accuracy.
+
+SECTION: 
+In this paper, we have proposed, developed, and validated Trio-ViT, the first post-training quantization and acceleration framework dedicated to the state-of-the-art (SOTA) efficient Vision Transformer (ViT), dubbed EfficientViT.
+Specifically, at the algorithm level, we propose a tailored post-training quantization engine that incorporates several innovative quantization schemes to effectively quantize EfficientViT with enhanced quantization accuracy.
+At the hardware level, we develop a dedicated accelerator integrating a hybrid design and a pipeline architecture to boost hardware efficiency.
+Extensive experimental results consistently prove our effectiveness. Particularly, we gain up to,, andFPS with comparable accuracy over SOTA ViT accelerators.
+
+It has been widely demonstrated that model layers exhibit varying degrees of sensitivity to quantization, thus allocating the same bit to all layers is deemed sub-optimal in both accuracy and efficiency. Therefore, our future research will focus on exploring mixed quantization, considering variations in both quantization bits and schemes (such as fix-point and power-of-two).
+
+SECTION: References

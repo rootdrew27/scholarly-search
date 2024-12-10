@@ -1,0 +1,421 @@
+SECTION: DeSparsify: Adversarial Attack AgainstToken Sparsification Mechanisms
+Vision transformers have contributed greatly to advancements in the computer vision domain, demonstrating state-of-the-art performance in diverse tasks (, image classification, object detection).
+However, their high computational requirements grow quadratically with the number of tokens used.Token sparsificationmechanisms have been proposed to address this issue.
+These mechanisms employ an input-dependent strategy, in which uninformative tokens are discarded from the computation pipeline, improving the model’s efficiency.
+However, their dynamism and average-case assumption makes them vulnerable to a new threat vector – carefully crafted adversarial examples capable of fooling the sparsification mechanism, resulting in worst-case performance.
+In this paper, we presentDeSparsify, an attack targeting the availability of vision transformers that use token sparsification mechanisms.
+The attack aims to exhaust the operating system’s resources, while maintaining its stealthiness.
+Our evaluation demonstrates the attack’s effectiveness on three token sparsification mechanisms and examines the attack’s transferability between them and its effect on the GPU resources.
+To mitigate the impact of the attack, we propose various countermeasures.
+The source code is available online.
+
+SECTION: Introduction
+In the last few years, vision transformers have demonstrated state-of-the-art performance in computer vision tasks, outperforming traditional convolutional neural networks (CNNs) in various tasks such as image classification, object detection, and segmentation.
+While vision transformers have excellent representational capabilities, the computational demands of their transformer blocks make them unsuitable for deployment on edge devices.
+These demands mainly arise from the quadratic number of interactions (inter-/intra-calculations) between tokens.
+Therefore, to reduce the computational requirements, various techniques have been proposed to improve their resource
+efficiency.Token sparsification(TS), in which tokens are dynamically sampled based on their significance, is a prominent technique used for this purpose.
+The TS approaches proposed include: ATS, AdaViT, and A-ViT, each of which adaptively allocates resources based on the complexity of the input image (, input-dependent inference) by deactivating uninformative tokens, resulting in improved throughput with a slight drop in accuracy.
+Despite the fact that TS has been proven to be effective in improving the resource efficiency of vision transformers, their test-time dynamism and average-case performance assumption creates a new attack surface for adversaries aiming to compromise model availability.
+Practical implications include various scenarios, such as: attacks on cloud-based IoT applications (, surveillance cameras) and attacks on real-time DNN inference for resource- and time-constrained scenarios (, autonomous vehicles).
+
+Given the potential impact of availability-oriented attacks, the machine learning research (ML) community has increasingly focused its attention on adversarial attacks aimed at compromising model availability.were at the forefront of research in this emerging domain, introducing sponge examples, which leverage data sparsity to escalate GPU operations, resulting in increased inference times and energy consumption.
+
+Exploiting this technique,deliberately poisoned models with sponge examples in the training phase to induce delays during the inference phase.
+The post-processing phase of deep neural networks (DNNs), particularly in the context of object detectionand LiDAR detection, has also been shown to be susceptible to availability-oriented attacks.
+In addition, dynamic neural networks (DyNNs), which adapt their structures or parameters based on input during
+the inference phase, have been found to be vulnerable to adversarial attacks.
+For example, previous studies demonstrated that layer-skipping and early-exit mechanisms are also vulnerable to malicious inputs that aim to induce worst-case performance.
+
+In this paper, we introduce theDeSparsifyattack, a novel adversarial attack that targets TS mechanisms, exploiting their test-time dynamism to compromise model availability.
+To perform our attack, we craft adversarial examples using a custom loss function aimed at thwarting the sparsification mechanism by generating adversarial examples that trigger worst-case performance, as shown in Figure.
+To increase the stealthiness of our adversarial examples in scenarios where anomaly detection mechanisms are employed (, monitoring shifts in the predicted distribution), the attack is designed to preserve the model’s original classification.
+The experiments performed in our comprehensive evaluation examine the attack’s effect for:different sparsification mechanisms (, ATS, AdaViT, and A-ViT);different transformer models (, DeiT, T2T-ViT);compare the performance of different attack variations (, single-image, class-universal, and universal); andinvestigate the adversarial examples’ transferability between different TS mechanisms and the effect of ensembles.
+For example, the results of our attack against ATS show that it can increase the number of floating-point operations by 74%, the memory usage by 37%, and energy consumption by 72%.
+
+Our contributions can be summarized as follows:
+
+To the best of our knowledge, we are the first to both identify TS mechanisms dynamism as a threat vector and propose an adversarial attack that exploits the availability of vision transformers while preserving the model’s original classification.
+
+We conduct a comprehensive evaluation on various configurations, examining different TS mechanisms and transformer models, reusable perturbations, transferability, and the use of ensembles.
+
+We discuss countermeasures that can be employed to mitigate the threat posed by our attack.
+
+SECTION: Background
+Vision transformersconsist of a backbone network, which is usually a transformer encoder comprised ofblocks, each of which consists of a multi-head self-attention layer (MSA) and feedforward network (FFN).
+
+We consider a vision transformerthat receives an input sampleand outputsreal-valued numbers that represent the model’s confidence for each class.
+The input imageis first sliced into a sequence of2D patches, which are then mapped into patch embeddings using a linear projection.
+Next, a learnable class token is appended, resulting in a sequence of size.
+Finally, positional embeddings are added to the patch embeddings to provide positional information.
+A single-head attention is computed as follows:
+
+whererepresent the query, key, and value matrices, respectively.
+These matrices are derived from the output of the previous block of the transformer, denoted as, whereindicates the-th block.
+For the first block,,, the value corresponds to the flattened patches of the input image mentioned above.
+
+SECTION: Related Work
+SECTION: Token sparsification (TS)
+In this section, we provide an overview of the three TS mechanisms we focus on in this paper.
+
+.
+ATS is a differentiable parameter-free module that adaptively downsamples input tokens.
+It automatically selects an optimal number of tokens in each stage (transformer block) based on the image content.
+The input tokens in each block are assigned significance scores by employing the attention weights of the classification token in the self-attention layer.
+A key advantage of ATS is its ability to be seamlessly integrated into pretrained vision transformers without the need for additional parameter tuning.
+
+.
+AdaViT is an end-to-end framework for vision transformers that adaptively determines the use of tokens, self-attention heads, and transformer blocks based on input images.
+A lightweight subnetwork (, a decision network) is inserted into each transformer block of the backbone, which learns to make binary decisions on the use of tokens, self-attention heads, and the block’s components (MSA and FFN).
+The decision networks are jointly optimized with the transformer backbone to reduce the computational cost while preserving classification accuracy.
+
+.
+A-ViT is an input-dependent spatially-adaptive inference mechanism that halts the computation of different tokens at different depths, reserving computation for discriminative tokens in a dynamic manner.
+This halting score-based module is incorporated into an existing vision transformer
+block by allocating a single neuron in the MLP layer to perform this task,, it does not require any additional parameters or computation for the halting mechanism.
+
+SECTION: Availability-oriented attacks
+Confidentiality, integrity, and availability, collectively known as the CIA triad, serve as a foundational model for the design of security systems.
+In the DNN realm, a significant amount of research performed has been devoted to adversarial attacks, particularly those focused on compromising integrityand confidentiality.
+However, adversarial attacks targeting the availability of these models have only recently begun to receive attention by the ML research community.
+
+Pioneers in the field of availability-oriented adversarial attacks,, introduced sponge examples, an attack designed to compromise the efficiency of vision and NLP models.
+The authors presented two attacks exploiting:data sparsity - the assumption of data sparsity, which enables GPU acceleration by employing zero-skipping multiplications, andcomputation dimensions - the internal representation size of inputs and outputs (, in transformers, mapping words to tokens).
+Both attacks aim to maximize GPU operations and memory accesses, resulting in increased inference time and energy consumption.
+Taking advantage of the data sparsity attack vector,proposed sponge poisoning, which aims to compromise a model’s performance by targeting it with a sponge attack during the training phase.introduced a notable extension of the sponge attack (computation dimension vulnerability), presenting an adversarial strategy for NLP models.
+This method employs invisible characters and homoglyphs to significantly manipulate the model’s output, while remaining imperceptible to human detection.
+
+Designed to enhance computational efficiency by adapting to input data during runtime, DyNNshave been shown to be susceptible to adversarial attacks.
+For example,targeted DNNs employing layer-skipping mechanisms, forcing malicious inputs to go through all of the layers.fooled DNNs that employ an early-exit strategy (dynamic depth), causing malicious inputs to consistently bypass early exits, thereby inducing worst-case performance.
+In a unified approach,proposed a method for generating adversarial samples that are capable of attacking both dynamic depth and width networks.
+
+Another line of research focused on the post-processing phase of DNNs.demonstrated that overloading object detection models by massively increasing the total number of candidates input into the non-maximum suppression (NMS) component can result in increased execution times.
+Building on this,extended the approach to LiDAR detection models.
+
+In this paper, we present a novel attack vector that has not been studied before, an adversarial attack that targets the availability of efficient transformer-based models that employ TS mechanisms.
+
+SECTION: Method
+SECTION: Threat model
+We consider an adversary whose primary goal is to generate an adversarial perturbationthat causes TS mechanisms to useavailable tokens,, no tokens are sparsified.
+Furthermore, as a secondary goal, to increase the stealthiness of the attack, the adversary aims to maintain the model’s original classification.
+
+To assess the security vulnerability of TS mechanisms, we consider three scenarios:a white-box scenario in which the attacker has full knowledge about the victim model,a grey-box scenario in which the attacker has partial knowledge about the set of potential models;a black-box scenario in which the attacker crafts a perturbation on a surrogate model and applies it on a different victim model.
+
+Given a datasetthat contains multiple pairs, whereis a sample andis the corresponding label, we consider three attack variants:single-image - a different perturbationis crafted for each,class-universal - a single perturbationis crafted for a target class, anduniversal - a single perturbationis crafted for all.
+
+SECTION: DeSparsify attack
+To achieve the goals presented above, we utilize the PGD attackwith a modified loss function (a commonly used approach).
+The update of the perturbationin iterationis formulated as:
+
+whereis the step size,is the projection operator that enforcesfor some norm, andis the loss function.
+The selection ofdepends on the attack variant:for the single-image variant,;for the class-universal variant with a target class,; andfor the universal variant,.
+
+Next, we describe the proposed custom loss function, which is formulated as follows:
+
+whereis the attacking component,is the classification preservation component, andis a scaling term which is empirically determined using the grid search approach.
+
+Thecomponent, set to achieve the secondary goal, is defined as follows:
+
+wheredenotes the score for classanddenotes the cross-entropy loss.
+
+Thecomponent, set to achieve the main goal, will be described separately for each TS mechanism in the subsections below.
+
+To prune the attention matrix,, remove redundant tokens, ATSuses the weightsas significance scores, whererepresents the attention weights of the classification token, andrepresents the importance of the input tokenfor the output classification token.
+The significance score for a tokenis thus given by:where.
+For multi-head attention, the score is calculated for each head, and those scores are totaled over all the heads.
+Since the scores are normalized, they can be interpreted as probabilities, and the cumulative distribution function (CDF) ofcan be calculated as.
+Given the cumulative distribution function, the token sampling function is obtained by calculating the inverse of the CDF:, whereand(which corresponds to a token’s index).
+To obtainsamples, a fixed sampling scheme is used by choosing:.
+If a token is sampled more than once, only one instance kept.
+Next, given the indices of the sampled tokens, the attention matrix is refined by only selecting the rows that correspond to the sampled tokens.
+For example, in the case in which a tokeninis assigned a high significance score, it will be sampled multiple times, which will result in less unique tokens in the final set.
+
+Since our goal is to prevent the method from sparsifying any tokens, we want the sampling procedure to sample as many unique tokens as possible,,.
+The number of unique sampled tokensdepends on the distribution they are drawn from (the CDF of).
+In an extreme case, when the scores are not balanced (), only the dominant tokenwill be sampled,,.
+In another extreme case, in which the scores are perfectly balanced, each token will only be sampled once, and none of the tokens will be sparsified, resulting in.
+Therefore, we want to push the vectortowards a uniform distribution, which will result in a balanced scores vector.
+
+Formally, letbe a vector representing a uniform distribution.
+The loss component we propose is formulated as:
+
+wheredenotes the Kullback-Leibler (KL) divergence loss anddenotes the scores vector of the-th block.
+The use of KL divergence loss enforces the optimization to consider all the elements in the scores vectoras a distribution, as opposed to a simple distance metric (, MSE loss) that only considers them as independent values.
+
+In AdaViT, a decision network is inserted into each transformer block to predict binary decisions regarding the use of patch embeddings, self-attention heads, and transformer blocks.
+The decision network in theblock consists of three linear layers with parametersto produce computation usage policies for patch selection, attention head selection, and transformer block selection, respectively.
+Formally, given the input to the-th block, the usage policy matrices for the block are computed as, where.
+Since the decisions are binary, the action of keeping/discarding is resolved by applying Gumbel-Softmaxto make the process differentiable, whereandis the Gumble-Softmax function.
+For example, thepatch embedding in theblock is kept whenand dropped when.
+It should also be noted that the activation of the attention heads depends on the activation of the MSA.
+
+The output of the decision network in each blockprovides a binary decision about which parts will be activated.
+Therefore, our goal is to push all the decision values towards the “activate" decision, which will result in no sparsification.
+Practically, we want the Gumbel-Softmax values to be equal to one,,.
+
+Formally, we define the loss component as follows:
+
+wheredenotes the MSE loss,denotes the target value (set at one), anddenotes the decision regarding the activation of the MSA in block.
+We condition the attention heads’ term with, to avoid penalizing the activation of the attention heads when the MSA is deactivated ().
+When, the attention heads in that block are also deactivated.
+
+In A-ViT, a global halting mechanism that monitors all blocks in a joint manner is proposed; the tokens are adaptively deactivated using an input-dependent halting score.
+For a tokenin block, the scoreis computed as follows:
+
+whereis a halting module, andis enforced to be in the range.
+As the inference progresses into deeper blocks, the score is simply accumulated over the previous blocks’ scores.
+A token is deactivated when the cumulative score exceeds:
+
+whereis a small positive constant that allows halting after one block anddenotes the layer index at which the token is discarded.
+Once a token is halted in block, it is also deactivated for all remaining depth.
+The halting moduleis incorporated into a single neuron in the token’s embedding – specifically, the first neuron.
+The neuron is “spared" from the original embedding dimension, and thus no additional parameters are introduced, enabling halting score calculation as:
+
+whereindicates the first dimension of token,denotes the logistic sigmoid function, andandare respectively learnable shifting and scaling parameters that are shared across all tokens.
+
+As noted above, the decision whether to deactivate a tokenin block(and for all the remaining blocks) relies on the cumulative score.
+If the cumulative score exceeds the threshold, then the token is halted.
+Therefore, we want the push the cumulative score forallblocks beneath the threshold, and practically, we want to push it towards zero (the minimum value of the sigmoid function).
+This will result in the use of tokenfor all blocks,,.
+Formally, we define the loss component as:
+
+whereis used to avoid penalizing tokens in deeper blocks that have already been halted.
+
+SECTION: Evaluation
+SECTION: Experimental setup
+We evaluate our attack on the following vision transformer models:; data-efficient image transformer(DeiT)
+small size (DeiT-s) and tiny size (DeiT-t) versions;Tokens-to-Token ViT(T2T-ViT) 19-block version.
+All models are pretrained on ImageNet-1K, at a resolution of 224x224, where the images are presented to the model as a sequence of fixed-size patches (resolution 16x16).
+
+We use the ImageNetand CIFAR-10datasets, and specifically, the images from their validation sets, which were not used to train the models described above.
+For the single-image attack variant, we train and test our attack on 1,000 random images from various class categories.
+For the class-universal variant, we selected 10 random classes, and for each class we train the perturbation on 1,000 images and test them on unseen images from the same class.
+Similarly, for the universal variant, we follow the same training and testing procedure, however from different class categories.
+
+To evaluate the effectiveness of our attack, we examine the following metrics:
+
+: the ratio of active tokens (those included in the computation pipeline during model inference) to the total number of tokens in the vision transformer model.
+
+: the GPU memory usage during model inference.
+
+: the amount of time it takes the model to process an input and produce the output.
+
+: the overall GPU power usage during inference.
+This metric provides insights into the attack’s influence on energy efficiency and environmental considerations.
+
+: the number of floating-point operations executed by the model per second.
+
+: the performance of the model on its original task.
+
+It should be noted that AdaViT and A-ViT only zero out the redundant tokens (, the matrices maintain the same shape), as opposed to ATS which removes them from the computation (, the matrices are reshaped).
+As a result, when evaluating the attack on AdaViT and A-ViT, the values of the hardware metrics (, memory, energy) remain almost identical to those of the clean images.
+The attack’s effectiveness will only be reflected in the GFLOPS and TUR values.
+The GFLOPS are manually computed to simulate the potential benefit (an approach proposed in AdaViT).
+
+We compare the effectiveness of our attack to that of the following baselines:
+
+: a clean image without a perturbation.
+We report the results for a clean image processed by both the sparsified (referred to as) and non-sparsified model (referred to as).
+The results for the sparsified model represent the lower bound of our attack, while the results for the non-sparsified model represent the upper bound,, the best results our attack can obtain.
+
+: a random perturbation sampled from the uniform distribution.
+
+: an attack using the model’s original loss function (proposed in).
+
+: an attack aimed at increasing the model’s activation values.
+
+In our attack, we focus onnorm bounded perturbations, and set, a value commonly used in prior studies.
+For the attack’s step, we utilize a cosine annealing strategythat decreases fromto 0.
+We set the scaling term at(Equation).
+The results are averaged across three seeds.
+In the Appendix, we report results for othervalues and the ablation study we performed on thevalue.
+For the TS mechanisms’ hyperparameter configuration, we use the pretrained models provided by the authors and their settings.
+In addition to the provided pretrained models, we trained the remaining models for AdaViT and A-ViT using the same configurations.
+For ATS, the sparsification module is applied to blocks 4-12, and the number of output tokens of the ATS module is limited by the number of input tokens,,in the case of DeiT-s.
+For AdaViT, the decision networks are attached to each transformer block, starting from the second block.
+For A-ViT, the halting mechanism starts after the first block.
+The experiments are conducted on a RTX 3090 GPU.
+
+SECTION: Results
+Here, we present the results for DeiT-s on the ImageNet images.
+In the Appendix, we report the results for DeiT-t and T2T-ViT; the results on CIFAR-10; the cost of the attacks; and provide some examples for perturbed samples;
+Overall, we observe similar attack performance patterns for the different models and datasets.
+
+Tablepresents the results for the various metrics of the different baselines and attack variants for the DeiT-s model when used in conjunction with each of the TS techniques.
+As can be seen, the baselines are incapable of compromising the sparsification mechanism.
+The random perturbation performs the same as a clean image, while the standard PGD does not affect ATS and only slightly affects AdaViT and A-ViT.
+The sponge examples, on the other hand, generates perturbations that perform even worse than the clean images,, additional tokens are sparsified.
+The single-image attack variant, in which a perturbation is tailored to each image, results in the greatest performance degradation, increasing the GFLOPS values by 74%, 44%, and 100% for the ATS, AdaViT, and A-ViT, respectively.
+Note that the crafted perturbations have just a minor effect on the model’s classification accuracy.
+
+In general, the A-ViT is the most vulnerable of the three modules, and in this case, our attack achieves near-perfect results, increasing the TUR from 72% to 100%,, no tokens are sparsified.
+The attack’s success can be attributed to the fact that A-ViT utilizes a single neuron for the sparsification mechanism, easily bypassed by our attack.
+
+While the attack’s performance against AdaViT is the least dominant among the examined TS mechanisms, further analysis reveals that this stems from the overall behavior of its decision network.
+Figurepresents the distribution of the tokens used in each of the transformer blocks.
+As can be seen, even on clean images, the AdaViT mechanism does not use any tokens in blocks 4, 10, and 12.
+The same behavior is seen in the attention heads in block 4 (Figure) and in the block’s components in block 10 (Figure).
+This phenomena is also evident in the performance of our attack, which is unable to increase the number of tokens used in these blocks.
+In the remaining blocks, our attack maximizes the use of tokens.
+This phenomena could be attributed to the fact that the decision networks in these blocks are overfitted or that these transformer blocks are redundant and do not affect the classification performance even when no sparsification is applied (, a vanilla model).
+
+The distribution of the tokens in the different blocks of ATS is presented in Figure.
+When tested on clean images, the ATS module gradually decreases the number of tokens used as the computation progresses to deeper blocks.
+However, when tested on attacked images, the distribution’s mean shifted towards a higher value compared to the clean case, resulting in a large number of tokens used across all blocks.
+Interestingly, we have seen a special trend in which clean images whose GFLOPS are on the lower end of the spectrum (, “easy" images that require less tokens to be correctly classified) are affected by our attack more easily, while images whose GFLOPS are initially high are more hard to perturb.
+For example, for clean images that have an average of 2.7 GFLOPS, our attack is able to increase the GFLOPS to 4.2.
+On the other hand, clean images that have an average of 3.3 GFLOPS, the GFLOPS of the adversarial counterpart only increase to 3.9.
+This indicates that easily classified images tend to include more “adversarial space," in which an adversary could step in.
+
+We also explore the impact of reusable perturbations – class-universal and universal perturbations (Section).
+In addition to the standard universal perturbation, which only differs from the single-image variant in terms of the dataset used, we explore another universal variant: a universal patch.
+The universal patch is trained on the same dataset used for the universal perturbation, however it differs in terms of its perturbation budget, size, and location.
+We place the patch on the left upper corner of the image and limit its size to, and we do not bound the perturbation budget.
+As seen in Table, the universal variants perform better than the random perturbation baseline against all sparsification modules, confirming their applicability.
+For example, with the class-universal perturbation, a 21%, 30%, and 49% increase in the GFLOPS values compared to the clean image was observed for the ATS, AdaViT, and A-ViT mechanisms, respectively, while maintaining relatively high accuracy.
+The universal patch performs even better in terms of attack performance, however its use causes a substantial degradation in the model’s accuracy, resulting in a less stealthy attack.
+While universal and class-specific perturbations demand more resources than perturbations on single images, they possess a notable advantage.
+A universal perturbation has the ability to influence multiple images or an entire class of images, presenting an efficient means of executing wide-ranging adversarial attacks.
+This would prove to be beneficial in situations where the attacker seeks to undermine the model across numerous samples with minimal computational effort.
+
+In the context of adversarial attacks, transferability refers to the ability of an adversarial example, generated on a surrogate model, to influence other models.
+
+In our experiments, we examine a slightly different aspect in which the effect of perturbations trained on a model with one sparsification mechanism are tested on the same model with a different sparsification mechanism.
+In Figure, we present the transferability results between the TS mechanisms.
+While perturbations that are trained on ATS and A-ViT, and tested on AdaViT work to some extent, other combinations do not fully transfer.
+We hypothesize that this occurs due to the distinct mechanism used by each model.
+Another strategy we evaluate is the ensemble training strategy.
+In this strategy, the adversarial example is trained concurrently on all of the sparsification mechanisms, and in each training iteration a different mechanism is randomly selected.
+The goal is to explore the synergistic advantages of leveraging the strengths of multiple models to generate adversarial perturbations that are more broadly applicable.
+The results of the ensemble training, which are also presented in Figure, show that when a perturbation is trained on all TS mechanisms, it is capable of affecting all of them, achieving nearly the same performance as when the perturbations are trained and tested on the same mechanism.
+In a realistic case in which the adversary has no knowledge or only partial knowledge of the TS mechanism used, the ensemble is an excellent solution.
+
+We also assess the effect of our attack on hardware, based on several GPU metrics.
+As noted in Section, we only report the hardware metric results for the ATS mechanism, as it is the only module that sparsifies the tokens in practice.
+
+As seen in Table, which presents the results for these metrics, we can see that none of the baselines have an effect on the GPU’s performance.
+As opposed to the baselines, the single-image attack variant increases the memory usage by 37%, the energy consumption by 72%, and the throughput by 8% compared to the clean images.
+As noted by the authors, the activation of ATS introduces a small amount of overhead associated with I/O operations performed by the sampling algorithm, which translates to longer execution time compared to the vanilla model.
+
+SECTION: Countermeasures
+In response to the challenges posed by DeSparsify, we discuss potential mitigations that can be used to enhance the security of vision transformers that utilize TS mechanisms.
+In general, based on our evaluation, we can conclude that as the number of parameters involved in the computation of the TS mechanism increases, the model’s robustness to the attack grows (, a decision network in AdaViT compared to a single neuron in A-ViT).
+However, when the TS mechanism is based on parameters that were not optimized for this specific goal (, ATS attention scores), the model is even less vulnerable.
+To actively mitigate the threats, an upper bound can be set to the number of tokens used in each transformer block, which can be determined by computing the average number of active tokens in each block on a holdout set.
+This approach preserves the ability to sparsify tokens while setting an upper bound, balancing the trade-off between performance and security.
+To verify the validity of this approach, we evaluated two different policies for the token removal when the upper bound is surpassed: random and confidence-based policy.
+The results show that the proposed approach substantially decreases the adversarial capabilities compared to a clean model,, adversarial image GFLOPS are almost reduced the level of clean images.
+For example, the GFLOPS reduce from 4.2 to 3.17 when tested on ATS (clean images GFLOPS are 3.09).
+Moreover, we also verified that applying the defense mechanism does not degrade the accuracy on clean images.
+See the Appendix for details.
+
+SECTION: Conclusion
+In this paper, we highlighted the potential risk vision transformers deployed in resource-constrained environments face from adversaries that aim to compromise model availability.
+Specifically, we showed that vision transformers that employ TS mechanisms are susceptible to availability-based attacks, and demonstrated a practical attack that targets them.
+We performed a comprehensive evaluation examining the attack’s impact on three TS mechanisms; various attack variants and the use of ensembles were explored.
+We also investigated how the attack affects the system’s resources.
+Finally, we discussed several approaches for mitigating the threat posed by the attack.
+In future work, we plan to explore the attack’s effect in other domains (, NLP).
+
+.
+A key limitation of our work is the limited transferability of the attack across different TS mechanisms and models, as it only achieves marginal success.
+Although we address this by proposing an ensemble training approach, future research could investigate the development of a unified loss function that effectively targets all TS mechanisms.
+
+SECTION: References
+SECTION: Appendix
+SECTION: Additional results
+SECTION: Results for different models
+In this section, we present the results for the DeiT-t and T2T-ViT models.
+Tablecontains the results for DeiT-t and Tablecontains the results for T2T-ViT.
+In Tablesandwe present the hardware performance for DeiT-t and T2T-ViT, respectively.
+Overall, The results show similar performance to those of the DeiT-s model, demonstrating the generalizability of our method.
+Note that when training DeiT-t with the AdaViT mechanism, the sparsified model is not capable of maintaining a similar level of accuracy as the non-sparsified model, using both the hyperparametes proposed by the authors and other hyperparameters experimented by us.
+
+SECTION: Results for differentvalues
+In this section, we present the results obtained when differentvalues are used.
+Tablesandcontain the performance metric results forand, respectively.
+Tablecontains the hardware metric results for thesevalues.
+Note that we omitted the universal patch results from the tables, as it does not depend on a specific(the perturbation budget is unlimited).
+
+SECTION: Ablation study for scaling hyperparameter
+To find the optimal value for thehyperparameter (Equation 3), we performed an ablation study with variousvalues.
+The goal was to find the optimal point at which the attack’s performance does not substantially degrade, and the model’s classification accuracy is maintained.
+In Figurewe present the results of the ablation study.
+As can be seen, when, the perturbation generated substantially reduces the classification accuracy (20%).
+As thevalue increases, the accuracy improves, with just a minimal affect on the GFLOPS value (a marginal 1% change).
+When, the accuracy is nearly perfectly maintained, and we consider this an optimal value.
+The accuracy preservation will not benefit from the use of a largervalue, and the use of a larger value could negatively affect the attack’s performance.
+
+SECTION: Results for other TS mechanisms
+Beyond ATS, AdaViT, and A-ViT, we further demonstrate that our attack concept generalizes to additional TS mechanisms. Tablepresents the performance of our attack on the AS-ViT mechanism.
+Consistent with the attacks outlined in this paper, we employ a custom loss function to target AS-ViT’s, driving the decision function to keep tokens active throughout all the transformer blocks.
+
+SECTION: Adversarial sample generation cost
+The computational cost for the attack’s generation depends on the attack variant and the token sparsification mechanism.
+In Tablewe compare the cost for generating DeSparsify samples.
+
+It should be emphasized that our objective, simultaneously affecting multiple values in intermediate layers, is far more complex than the standard misclassification task, and thus, more attack iterations are required than the commonly used values. Furthermore, while universal perturbations require more resources than perturbations on single images, they possess a notable advantage: a single perturbation is applicable for all images.
+
+SECTION: Results for CIFAR-10
+In this section, we present the results of our attack when using CIFAR-10 images.
+From Table, we can see that our attack’s performance even improves compared to the ImageNet images.
+This can be attributed to the greater complexity of the image distribution in ImageNet compared to CIFAR-10.
+
+SECTION: Transferability and ensemble training across model backbones
+In addition to the TS techniques transferability experiments presented in the paper, we also conducted experiments on the transferability between different backbones (DeiT-s, DeiT-t, T2T-ViT) and the effect of ensemble strategies (trained on all three backbones).
+Furthermore, to provide a more generalized perspective on the capabilities of the ensemble strategy, we trained perturbations using all three backbones and three TS techniques (for a total of nine models).
+This approach demonstrates the ability of an attacker with partial knowledge of the environment,, knowing only which set of potential models and TS techniques exist (not the exact model or TS technique) to effectively carry out the attack.
+
+Aligning with the TS mechanisms transferability and ensemble results presented in the paper, the backbone transferability and ensemble results show similar performance.
+For example, the average GLOPS increase when a perturbation is trained on one model backbone and tested on another are 14%, 10%, and 9% for DeiT-t, DeiT-s, and T2T-ViT, respectively.
+For perturbations trained with three model backbones that use the same TS mechanism, our attack achieves a 59% increase on DeiT-t, 57% increase on DeiT-s, and a 44% increase on T2T-ViT.
+Finally, for the perturbations trained on all nine models provide an average 38% increase on DeiT-t, 41% increase on DeiT-s, 30% increase on T2T-ViT.
+
+SECTION: Countermeasures
+We implemented the proposed mitigation and found it effective against the attack.
+We set an upper bound to the number of tokens used in each transformer block, determined by computing the average number of active tokens in each block on a holdout set.
+We evaluated two different policies for the token removal when the upper bound is surpassed: random and confidence-based policy.
+In the random policy, tokens are randomly selected to meet the threshold criteria, while in the confidence-based policy, tokens are selected based on their significance.
+
+In Tablewe show the accuracy results for clean images.
+Interestingly, when using the confidence-based policy the accuracy even improves, indicating that the token sparsification mechanisms might not be optimal since they use tokens that can “confuse" them.
+In Table, we show the GFLOPS results for adversarial images (single-image variant).
+Overall, we can see that the defense mechanisms substantially decrease the adversarial capabilities compared to a model that has no defense.
+As opposed to the accuracy results, in which the random policy demonstrated a minor performance degradation, it introduces better defense capabilities than the confidence-based policy.
+We hypothesize that this might occur due to the fact that informative tokens may be removed in earlier blocks (and consequently in all the remaining blocks), as opposed to the confidence-based policy which aims to maintain the highest ranking tokens throughout the entire network.
+
+SECTION: Discussion on Practical Implications
+Following the practical implications discussed in, we consider two different scenarios in which our attack is applicable in:
+
+:
+Typically, cloud-based IoT applications (, virtual home assistants, surveillance cameras) run their DNN inferences in the cloud.
+This exclusive reliance on cloud computing places the entire computational load on cloud servers, leading to heightened communication between these servers and IoT devices.
+Recently, there has been a trend for bringing computationally expensive models in the cloud to edge (, IoT) devices.
+In this setup, the cloud server exclusively handles complex inputs while the edge device handles "easy" inputs.
+This approach leads to a reduction in computational workload in the cloud and a decrease in communication between the cloud and edge.
+Conversely, an adversary can manipulate simple inputs into complex ones by introducing imperceptible perturbations, effectively bypassing the routing mechanism.
+In this scenario, a defender could implement denial-of-service (DoS) defenses like firewalls or rate-limiting measures.
+In such a setup, the attacker might not successfully execute a DoS attack because the defenses regulate the communication between the server and IoT devices within a specified threshold.
+However, despite this, the attacker still manages to escalate the situation by:heightening computational demands at the edge (by processing complex inputs at the edge); andincreasing the workload of cloud servers through processing a greater number of samples.
+
+:
+Token sparsification mechanisms can be harnessed as a viable solution to optimize real-time DNNs inference in scenarios where resources and time are limited.
+For example, in real-time use cases (, autonomous cars) where throughput is a critical factor, an adversary can potentially violate real-time guarantees.
+In another case, when the edge-device is battery-powered an increased energy consumption can lead to faster battery drainage.
+
+We also discuss practical scenarios:
+
+consider a cloud-based IoT platform that uses vision transformers with a TS mechanism to process and analyze images from a network of surveillance cameras that monitor various locations and send data to a centralized cloud server for real-time analysis and anomaly detection.
+
+increasing computational overhead and latency could lead to delays in detecting anomalies, potentially allowing security breaches to go unnoticed for longer periods. In a high-security environment, such a delay could have severe consequences, compromising the safety and security of the monitored locations.
+
+consider autonomous drones that navigate and analyze the environment using models with TS mechanisms. For example, drones that are used for delivery services, agriculture, and surveillance.
+
+An adversarial attack could overload the drone’s computational resources (leading to rapid battery depletion and overheating) that cause navigation errors, reduced flight time, or complete system failure. These can result operational inefficiencies or accidents, especially in complex environments where precise navigation is crucial. In critical applications, such an attack could incapacitate the device, leading to mission (e.g., rescue) failure or safety hazards.
+
+consider wearable health monitors that analyze physiological data, such as heart rate, activity levels, and sleep patterns. These devices provide real-time health insights and alerts to users.
+
+an attack could lead to incorrect health metrics and delayed alerts. This could affect the user’s health management, potentially missing critical health events that require immediate attention.
+
+SECTION: Attack Visualizations
+In Figure, we visualize the adversarial examples from the baselines and the DeSparsify different attack variants.

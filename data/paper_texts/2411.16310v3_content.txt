@@ -1,0 +1,286 @@
+SECTION: Functionality understanding and segmentation in 3D scenes
+
+Understanding functionalities in 3D scenes involves interpreting natural language descriptions to locate functional interactive objects, such as handles and buttons, in a 3D environment.
+Functionality understanding is highly challenging, as it requires both world knowledge to interpret language and spatial perception to identify fine-grained objects.
+For example, given a task like ‘turn on the ceiling light,’ an embodied AI agent must infer that it needs to locate the light switch, even though the switch is not explicitly mentioned in the task description.
+To date, no dedicated methods have been developed for this problem.
+In this paper, we introduce Fun3DU, the first approach designed for functionality understanding in 3D scenes.
+Fun3DU uses a language model to parse the task description through Chain-of-Thought reasoning in order to identify the object of interest.
+The identified object is segmented across multiple views of the captured scene by using a vision and language model.
+The segmentation results from each view are lifted in 3D and aggregated into the point cloud using geometric information.
+Fun3DU is training-free, relying entirely on pre-trained models.
+We evaluate Fun3DU on SceneFun3D, the most recent and only dataset to benchmark this task, which comprises over 3000 task descriptions on 230 scenes.
+Our method significantly outperforms state-of-the-art open-vocabulary 3D segmentation approaches.
+Project page:https://jcorsetti.github.io/fun3du/.
+
+SECTION: 1Introduction
+
+Functionality understanding in 3D scenes requires interpreting natural language descriptions in order to locate functional interactive elements, such as handles, knobs, and buttons, in a 3D environment[9].
+For example, given a task like ‘turn on the ceiling light’, the agent must first understand that the functional goal is to increase the room’s brightness through a light switch, and then locate the switch in 3D by segmentation.
+While functionality understanding has long been a research challenge[34], we argue that this dual requirement, i.e. integrating language comprehension with spatial perception, still poses several unaddressed problems, especially when applied to 3D data.
+A major bottleneck is the limited availability of datasets with fine-grained mask annotations for real-world environments focused on interactive functional objects.
+The recent release of SceneFun3D[9]contributes to address this gap, providing high-resolution point clouds and multi-view images of real-world domestic 3D scenes annotated with functionality masks.
+However, no existing method tackles this unique challenge.
+
+In this paper, we introduce Fun3DU, the first approach designed specifically forfunctionality3Dsceneunderstanding.
+Since 3D data is orders of magnitude smaller than 2D data, it is insufficient for training models capable of understanding real-world nuances, such as those needed for interpreting object functionalities in 3D scenes.
+Therefore, we design Fun3DU as a training-free method that leverages pre-trained vision and language models (VLMs)[8]to comprehend task descriptions and segment functional objects, often not explicitly mentioned in the description.
+Fun3DU is based on four key modules that process multiple views of a given scene and project the results in 3D.
+The first module interprets the task description to explain the functionality and context through Chain-of-Thought reasoning[33].
+The second module locates contextual objects via open-vocabulary segmentation[24]to improve accuracy and efficiency in masking the functional objects within each view.
+Moreover, it employs of a novel visibility-based view selection approach to reduce the number of views from thousands to tens informative ones.
+The third module segments the functional objects on this view subset using a 2D VLM[8].
+The fourth module performs multi-view agreement by lifting and aggregating the 2D masks into the 3D point cloud using point-to-pixel correspondences.
+We validate Fun3DU on SceneFun3D[9], which includes 230 scenes and over 3000 task descriptions.
+SceneFun3D presents challenging real-world scenarios, such as objects with similar appearances (e.g., dresser handles), ambiguous task descriptions that require spatial reasoning (e.g., distinguishing between the top and bottom drawers of a cabinet), and world knowledge (e.g., understanding that switches are typically located near doors).
+
+We adapt open-vocabulary 3D segmentation methods[31,16,19]to this task and use them as comparison baselines.
+Fun3DU outperforms these baselines by a significant margin (+13.2 mIoU on average), highlighting that 3D functionality understanding requires deeper reasoning capabilities than those provided by current open-vocabulary segmentation approaches.
+In summary, our contributions are:
+
+We introduce the first approach specifically designed for functionality understanding in 3D scenes;
+
+We present a noveltraining-freemethod that leverages pre-trained vision and language models to interpret task descriptions and segment functional objects jointly;
+
+We design a novel view-selection algorithm to make masking of functional objects on images effective.
+
+SECTION: 2Related works
+
+Functionality segmentationin 3D scenes has been recently introduced by SceneFun3D[9]as the task of segmenting functional elements that enable interaction within indoor environments, such as handles, buttons, and knobs.
+SceneFun3D provides a dataset containing both 2D images and high-resolution 3D point clouds rich in fine-grained geometric details, which are essential for the precise localization of small functional objects.
+In contrast to related 3D segmentation datasets[10], SceneFun3D features challenging task descriptions that do not explicitly mention the objects to segment and require world knowledge to be correctly addressed.
+Moreover, SceneFun3D focuses on indoor scenes instead of objects as in previous works[10], and thus it is an important benchmark for embodied-AI applications[12].
+In SceneFun3D[9], the authors empirically observe that open-vocabulary 3D segmentation methods, such as OpenMask3D[31]and LERF[19], perform poorly in functionality segmentation when applied without specific modifications or fine-tuning.
+Experiments on OpenMask3D show that fine-tuning the model for this specific task yields slightly better performance, but it remains insufficient for practical use[9].
+This shows that functional segmentation requires ad-hoc architectures to tackle its intrinsic challenges.
+In our paper, we reproduce the results of the baselines introduced in SceneFun3D, and add the state-of-the-art open-vocabulary 3D segmentation method OpenIns3D[16].
+Our results confirm that these methods cannot reliably segment functional objects, but rather segment common household furniture.
+Instead, we introduce the first approach that can segment functional objects from natural language description without relying on task-specific training.
+
+Open-vocabulary 3D segmentation(OV3DS) methods use natural language descriptions to segment objects in 3D scenes.
+These approaches address both semantic segmentation[26,18]and instance segmentation[35,32,31,25].
+Since OV3DS benchmarks provide both RGBD images and 3D point clouds, OV3DS methods are designed to fully exploit both 2D and 3D data.
+They typically rely on a 3D proposal module for predicting 3D masks[31,25]directly from the point cloud, while a 2D module extracts 2D masks[31,25,32]from multi-view RGB images.
+3D proposal modules include ad-hoc trained networks[5,29,17], while 2D modules rely on VLMs[28,21]combined with segmentation or detection components[20,36,22].
+Segmentation is achieved through fusion, either based on 2D-3D mask agreement[31,30,32]or learnable pooling[25,26].
+Several OV3DS methods rely on pre-trained models and do not require task-specific training[31,35,32], while others opt for a distillation strategy[26,18].
+Methods based on Language Radiance Fields[19]can be used for OV3DS[27,13], but they follow the NeRF[23]protocol and require specific training on each scene.
+OV3DS methods[31,32,25]struggle to segment small object parts, as they rely on modules pre-trained on 3D datasets biased toward large objects, tipically common household furniture[1,7].
+Additionally, these methods use concise descriptions that clearly specify object names for easy interpretation.
+Instead, Fun3DU uses Chain-of-Thought reasoning to interpret complex natural language descriptions, and segments the functional elements in 2D to bypass the bias of pre-trained 3D models.
+
+Vision and language models(VLMs) are multimodal models that can process natural language questions about visual data, reason across both modalities, and generate answers in free-form text.
+2D VLMs typically rely on pre-trained unimodal backbones, i.e., a language model and a 2D vision encoder, and differ from each other primarily in how these components are connected.
+For instance, LLaVA[21]introduces an MLP-based adapter to align CLIP[28]visual features with Vicuna[4]textual features.
+Molmo[8]adds the ability to answer questions by pointing to the pixels that support the answer, thanks to specialized training on pixel-grounded data.
+Due to the limited availability of 3D foundation models and large-scale 3D datasets to train them, only few 3D VLMs currently exist[15,14,3].
+However, these methods are trained to ground common objects.
+In this paper, we overcome this limitation by using pre-trained 2D VLMs to process images and then aggregate the results onto the point cloud using geometric information.
+Fun3DU can be adapted to other contexts in a zero-shot manner, eliminating the need for additional data collection or model retraining.
+
+SECTION: 3Our approach
+
+SECTION: 3.1Overview
+
+The input to Fun3DU is a scene point cloud, a set of posed images captured in the same scene, and a task description.
+We first parse the task description with a VLM, in order to extract the names of the objects to segment (Sec.3.3).
+Then, we segment the relevant contextual objects in all the views of the scene and select the best views according to the quality and spatial attributes of the mask.
+The selected views are processed by the VLM to obtain fine-grained masks of the functional object (Sec.3.4), which are then assigned to 3D points via multi-view agreement. (Sec.3.5).
+This results in a heatmap on the point cloud, on which we apply a threshold to obtain the final 3D mask.
+
+SECTION: 3.2Problem formulation
+
+Letdenote the input point cloud of a scene, where eachrepresents a point coordinate, andis the total number of points.
+Letdenote the input views, whereis the total number of RGBD posed images taken from different viewpoints within the scene.andcan vary based on the scene.
+LetDrepresent the task description that can be used to infer the objects to interact with.
+We define two types of objects: thefunctional objectis the ultimate object(s) to segment in 3D, and theparent objectis the object that physically contains the functional object.
+For example, if the task descriptionDstates ‘open the bottom drawer of the cabinet with the TV on top’, the functional object is the ‘knob’ or ‘handle’, and the parent object is the ‘cabinet’.
+LetFdenote the functional object(s), andOdenote the parent object.
+Fun3DU processes,andDand outputs, the 3D mask of the functional object(s) on.
+
+SECTION: 3.3Task description understanding
+
+The task descriptionDmight not explicitly mentionF.
+E.g., in the case of ‘open the bottom drawer of the cabinet with the TV on top’, the agent should only segment the knobs or handles (which are not mentioned inD) of the bottom drawer of the cabinet under the TV.
+
+To extract the information about the object to segment, we use the VLM to decompose the task description into elements that can be identified in images.
+Note thatFcan also be ambiguous, as there can be other objects in the scene similar toF.
+E.g., if the VLM outputs thatFis a ‘knob’, this can be confused with that of a nightstand next to the bed;
+whereas, if the VLM outputs thatFis a ‘handle’, this can be confused with that of the door.
+To address this ambiguity, we query the VLM to provide information about the parent objectO(e.g., the cabinet) in addition toF.
+We found this approach to be effective, but we also experienced two issues.
+Firstly, the model often fails to correctly identifyFdue to a lack of a “stopping criteria" for task understanding and an unclear level of abstraction.
+E.g., when queried with ‘open the door’, it may return ‘door’ asF, stopping at parent-level abstraction.
+At other times, it may output ‘hand’, focusing instead on the finger movements needed to manipulate the handle.
+Secondly, when the model identifiesFcorrectly, the VLM may output a parent object that is typically associated withF, but is unrelated to the specific context ofD. E.g., when queried with ‘open the door’ it correctly returns ‘handle’ asFbut returns ‘cabinet’ as parent object due to hallucination.
+
+We address the first issue by providing the VLM with a stopping criterion by defining a system description that clarifies its role in assisting a robotic manipulator, which can perform limited actions to interact with the scene.
+We address the second issue by adopting a Chain-of-Thought strategy[33], where we query the VLM to first list the actions required to complete the task and then identifyFalong with the hierarchy of objects containing it.
+We select the first item in the hierarchy as the parent objectO.
+Fig.3reports an example of a conversation with the VLM.
+
+SECTION: 3.4Multi-view functionality understanding
+
+The main challenge in understanding functionalities from the views inlies in handling real-world nuances, such as drawers with different numbers of knobs or perspectives where one knob appears lower than the other along the vertical axis of the image (as shown in Fig.4).
+On one hand, multiple functional objects of the same type may be present in a view, but only certain ones should be segmented.
+On the other hand, there are cases where identifying all functional objects in a view is correct; e.g., if the query is ‘open a drawer on a cabinet’, then all knobs on that drawer should be segmented.
+These nuances require an approach to segmentation that accounts for the spatial location of objects in the environment, rather than relying solely on semantic detection or segmentation.
+To achieve this, we leverage VLM’s capability to interpret image semantics in order to accurately locateFwithin the scene[8].
+Moreover,may consists of thousands of views, hence processing them all can be computationally costly.
+Therefore, we determine which views containOto reduce the number of views processed in the subsequent steps.
+We also prioritize views whereOis well visible, thus promoting and fine-grainedFlocalization.
+
+Parent object segmentation.GivenOinferred fromDby the VLM (Sec.3.3), we use open-vocabulary segmentation to locateOin each view.
+In some views, multiple segmentations may appear, as there can be more than one object of the same category asO.
+Formally, for a view, we define the-th segmentation mask as, that is the set of pixel coordinates belonging to the mask.
+For each mask, the segmentation method also outputs a corresponding confidence score that we define as.
+
+Score-based view selection.In order to rank the views, we first assign to each mask a visibility score based on the mask coverage and confidence score.
+We use the highest score between the masks present in the view as the view score.
+We then select a subset of the views that score the highest to use for the functional object segmentation.
+
+Specifically, to compute the visibility score of a mask, we use a polar coordinate representation of pixels, assigning a higher score whenO’s mask is more centered in the image and features a uniform pixel distribution around the center.
+Letanddenote the distance and angle ofrelative to the image center, which are computed as
+
+We analyze the distributions of distance and angle in the mask to assess the visibility ofO.
+Letanddenote the distance and angle distributions, respectively.
+We want to prioritize a uniform distribution for both the distances and the angles, as it implies that the object is close to the image center and uniformly distributed around it.
+Letanddenote the reference uniform distributions for distance and angle, respectively.
+We compute the difference between the measured distributions and the reference one as
+
+whereis the Kullback-Leibler divergence[6].is higher when the distance distribution is uniform between 0 and the maximumin, which implies a mask closer to the image center.is higher when the distribution of angles is closer to a uniform distribution, i.e., when the mask points are uniformly distributed around the image center.
+We combine,, andinto a single score as
+
+where, and,andare hyperparameters.
+We then assign the maximum score to the view as
+
+Fig.4shows two examples withO(i.e., the cabinet).
+In the top row,andare closer to our reference distributionU, thus resulting in higher scoresand.
+Lastly, to process the scene, we create a subset of top-scoring views, defined as, whererepresents the number of views in whichOis both present and well visible.
+In the subsequent step, we localize the functional object within.
+
+Functional object segmentation.Accurately localizing functional objects requires a semantic understanding of objects’ structural composition.
+We can leverage the processing we performed in the previous step as a prior knowledge that a functional object is present and part of the parent object.
+In practice, given the task descriptionDand the functional objectF, we query our VLM as ‘Point to all theFin order toD’.
+
+The VLM will respond with a set of pointson the image plane, which can be empty if the object is not present.
+In our previous example, our query would be ‘Point to all the handles in order to open the bottom drawer of the cabinet with the TV on top’.
+Compared to only providingF, addingDin the query allows the VLM to disambiguate objects that are consistent with the functional object, but not with the task description as a whole (e.g., the handles on the cabinet next to the TV should not be considered).
+To obtain the functional object 2D masks, we fed the resulting points to a promptable segmentor[20].
+
+SECTION: 3.5Point cloud functionality segmentation
+
+Using camera poses for each view, 3D segmentation masks can be obtained by lifting the predicted 2D functional masks onto the 3D point cloud.
+However, this process may introduce false positives if the 2D masks contain inaccuracies.
+To mitigate this, we exploit multi-view agreement: when lifting the 2D masks, we accumulate on each 3D point the count of all the 2D pixels that project onto it, thus producing a heatmap.
+Formally, letrepresent the functional object mask in the-th view, and letbe a 2D pixel within the mask.
+Letbe the 2D-3D mapping from pixels of the-th view to points of the point cloud, so that.
+The scoreof a pointis computed as
+
+i.e., the number of pixels ofthat map to the point, across all themasks.
+Finally, we normalize these counts over the point cloud so that, and defineas the set of points with, whereis a hyperparameter.
+
+SECTION: 4Experiments
+
+SECTION: 4.1Experimental setup
+
+Dataset.SceneFun3D[9]is currently the only dataset providing annotations for functionality segmentation in 3D scenes.
+It includes high-resolution scans of 3D indoor environments divided into two splits: split0 contains 30 scenes, and split1 contains 200 scenes.
+Each scene comprises an average of 1800 high-resolution RGBD images, with corresponding intrinsic and extrinsic camera parameters.
+SceneFun3D provides an average of 15 task descriptions per scene, along with the associated ground-truth masks.
+A task description may correspond to multiple objects within a scene, e.g., if the task is ‘Open the bottom drawer’ and that drawer has two handles, the ground-truth mask includes both handles.
+We report results on both split0 and split1.
+
+Evaluation metrics.Following SceneFun3D[9], we report the Average Precision (AP) at IoU thresholds of 0.25 and 0.5 (denoted as AP25and AP50), as well as the mean AP (mAP), calculated over IoUs from 0.5 to 0.95 in 0.05 increments.
+Additionally, we report the corresponding Average Recall metrics (AR25, AR50and mAR), and the mean IoU (mIoU).
+
+Implementation details.For description understanding, we use LLama3.1-9B[11]with 4-bit quantization.
+For the parent object segmentation, we rely on a pipeline built with OWLv2[24]and RobustSAM[2].
+To segment the functional objects, we first use Molmo[8]to point to the objects, then prompt SAM[20]with these points to generate the final masks.
+We choose Molmo for its point-grounding capability, and because we empirically found that it leads to better results than other VLMs, such as LLaVA[21].
+Although Molmo could also be used for description understanding, its text-only input capabilities have not been released yet.All the above-mentioned models are frozen and used without finetuning.For view selection, we compute the scorewith weightsand, and select the topviews.
+The final 3D maskis obtained by thresholding the heatmap at.
+
+BaselinesWe use open-vocabulary 3D segmentation methods as baselines for comparison[16,25].
+The baselines include OpenMask3D[31]and LERF[19]as in SceneFun3D.
+We reproduce their results on split0 and split1.
+We incorporate the more recent method OpenIns3D[16]as a baseline, modifying its original implementation to better suit the SceneFun3D data.
+In particular, we replace its 2D segmentation module, which operates on rendered views, with the original (real) views provided by SceneFun3D.
+For all baselines, we input the original task descriptionD, as it outperformed other alternative descriptions in our testing.
+More details can be found in the Supp. Mat.
+
+SECTION: 4.2Quantitative results
+
+Tabs.2and2present the results of Fun3DU and the baselines on split0 and split1 of SceneFun3D[9], respectively.
+All baselines score high recall but near-zero precision, indicating a tendency to undersegment functional objects and struggle with capturing fine-grained details.
+In both splits, Fun3DU is the only method to achieve an AP25higher than 0.4, surpassing the nearest competitor, OpenMask3D, by 32.9 and 23.1 points in split0 and split1, respectively.
+While OpenIns3D and LERF achieve relatively high AR25scores (51.5 and 36.0 on split0, 39.9 and 25.1 on split1), their precision remains at zero.
+In fact, Fun3DU is the only method to achieve an mIoU greater than 0.2 in both splits, outperforming the closest competitor by 15 and 11.4 points on split0 and split1, respectively.
+Qualitative results show that all baselines show a strong bias toward parent objects; e.g, when tasked with segmenting a cabinet handle, they often segment the entire cabinet instead.
+This highlights the limitations of such models, which lack the reasoning capabilities needed to accurately interpret the task descriptions of SceneFun3D.
+Moreover, we observe that all methods perform worse on split1 than on split0.
+This is due to the generally higher complexity of the split1 scenes, which exhibit point clouds with up to 13 million points, while split0 is limited to 8 million points.
+This complexity leads to a large drop in performance in OpenMask3D, which mostly relies on the 3D encoder[5], and thus is more affected.
+Instead, LERF, OpenIns3D, and Fun3DU perform masking on the 2D views, which makes them more robust to the higher scene complexity.
+
+SECTION: 4.3Qualitative results
+
+Fig.5provides examples of predictions by Fun3DU and the baselines on split0 of SceneFun3D[9].
+As the high-recall and low-precision behavious suggested in Tab.2, the baselines tends to focus on the parent object rather than the functional object.
+For example, in the second column OpenMask3D and OpenIns3D segment respectively the red lamp and and the nightstand mentioned in the task description, but cannot find the bottom drawer handle.
+Similarly, the other methods can locate the TV stand in the first column, but they miss the button of the music system underneath it.
+In contrast, Fun3DU is able to segment the functional objects with a good degree of accuracy, although some spurious segmentation masks are present, such as on the cabinet in the second column.
+These errors can be caused by the limited precision of the points provided by the VLM when segmenting the functional object.
+When the objects is distant from the camera, the VLM may generate imprecise points that sometimes land on the object beneath (the drawer, in this case), resulting in spurious masks.
+However, the multi-view agreement module filters out most of these errors.
+In the fourth column, we observe that Fun3DU fails to accurately segment the functional object (the radiator dial), and instead segments a portion of the parent object.
+This case is particularly challenging due to the small size of the functional object and its similar texture to the surrounding area.
+Lastly, the fifth column shows a case where visual ambiguity results in an incorrect mask.
+The door mentioned in the task description is positioned near a wardrobe with a very similar door.
+As a result, Fun3DU segments the wardrobe handle instead of the door handle.
+In contrast, both LERF and OpenIns3D correctly identify the bedroom door, although their segmentation masks do not precisely locate the handle.
+See the Supp. Mat. for additional Fun3DU’s qualitative results.
+
+SECTION: 4.4Ablation studies
+
+Unless otherwise specified, all the experiments in this section are conducted on split0 of the SceneFun3D[9]dataset, using Fun3DU with its standard settings.
+
+Architectural design.Tab.4analyzes the impact of each architectural design choice in Fun3DU on the final performance.
+In row 1, we replace the VLM used for functional element segmentation with the open-vocabulary segmentation pipeline employed for localizing parent objects.
+Since OWLv2[24]can only process a limited number of text tokens, it cannot handle the full task description.
+To address this, we create a shorter description by concatenatingOandF(e.g., ‘cabinet handle’).
+This variant achieves significantly lower performance compared to our standard method (row 4), with decreases of 19.4 AP25and 17.3 AR25.
+We attribute this performance drop to the limited reasoning capabilities of the open-vocabulary segmentor compared to the VLM.
+In row 2, we replace the original task descriptionDwith a simplified version, asking the VLM to ‘Point to all theF.’
+This removes the contextual information needed to distinguish the correct functional object from other similar instances in the same environment, causing a drop of 14.4 AP25and 12.3 AR25with respect to our standard method (row 4).
+Lastly, in row 3, we do not use the view selection module, and instead randomly sampleinput images (instead of our default).
+This also removes the influence of the parent object segmentation module, as the random sampling does not consider the presence of the parent object.
+Compared to our standard method (row 4), this results in a drop of 12.8 AP25and 4.9 AR25.
+It is clear that, for accurate segmentation of functional objects, the views quality is far more important than their quantity.
+
+View selection analysis.Tab.4assesses the impact of the hyperparameters in Eq. (3), which influence how input views are ranked by emphasizing different attributes of the parent object masks.
+In row 1, we setand all other weights to 0, relying solely on the detection confidence score to rank the views.
+This results in a drop of 6.3 AP25and 2.4 AR25.
+Ignoring the position of the parent object mask often leads to suboptimal view selection, as it may include distant or occluded parent objects where the functional object is partially visible or absent.
+In rows 2 to 4, we explore the opposite scenario by settingand varyingand.
+Row 2 ranks views based solely on the distance distribution (), row 3 based solely on the angle distribution (), and row 4 considers both distributions equally ().
+All configurations underperform compared to our standard method, with row 4 showing the smallest drop, losing 2.5 AP25and 1.5 AR25.
+Intuitively, the detection confidence score captures the semantic relevance of the predicted mask, while angle and distance scores reflect the quality of the parent object masks.
+By combining these attributes, Fun3DU leverages both strengths for optimal performance.
+
+Hyperparameter sensitivity.Fig.6analyzes the sensitivity of our model to the number of viewsand the final mask threshold.
+It is clear that an higherallows Fun3DU to output more accurate functionality masks, as the consensus from many views raises the score of correct masks and removes spurious predictions.
+Nonetheless, even when provided with 10 or less views, our model does not completely fail: with the standard, using 10 views results in an mIoU above 10 (light green line), while with 4 or less views (cyan and blue lines) the mIoU is still above 7.
+We attribute this result to the view selection procedure, which allows to retain a reasonable performances even with a very sparse, but accurately selected, set of views.
+Increasingover 50 results in a marginally better performance (see the Supp. Mat.), therefore for better trade-off with computational cost we keepin our standard setting.
+
+SECTION: 5Conclusions
+
+We introduced Fun3DU, the first method for functionality segmentation in 3D scenes.
+Fun3DU is training-free as it relies on a vision and language model pre-trained with world knowledge.
+Key components of our approach are the reasoning module for processing task descriptions and the view selection module for pruning low-quality views.
+Fun3DU is capable of accurate functionality segmentation, but errors can occur when the location of the parent object alone is insufficient to identify the functional object.
+In future work, we will extend Fun3DU to incorporate additional objects mentioned in the task description beyond the parent object as contextual priors.
+This will help resolve ambiguous cases where segmentation currently fails and prove valuable in complex environments, such as those with multiple rooms.
+
+SECTION: References

@@ -1,0 +1,519 @@
+SECTION: Causal K-Means Clustering††thanks:We thank Larry Wasserman for helpful discussions and comments. A part of this work was done while Kwangho Kim was a PhD student at Carnegie Mellon University.
+
+Causal effects are often characterized with population summaries. These might provide an incomplete picture when there are heterogeneous treatment effects across subgroups. Since the subgroup structure is typically unknown, it is more challenging to identify and evaluate subgroup effects than population effects. We propose a new solution to this problem:Causal k-Means Clustering, which harnesses the widely-used k-means clustering algorithm to uncover the unknown subgroup structure. Our problem differs significantly from the conventional clustering setup since the variables to be clustered are unknown counterfactual functions. We present a plug-in estimator which is simple and readily implementable using off-the-shelf algorithms, and study its rate of convergence. We also develop a new bias-corrected estimator based on nonparametric efficiency theory and double machine learning, and show that this estimator achieves fast root-n rates and asymptotic normality in large nonparametric models. Our proposed methods are especially useful for modern outcome-wide studies with multiple treatment levels. Further, our framework is extensible to clustering with generic pseudo-outcomes, such as partially observed outcomes or otherwise unknown functions. Finally, we explore finite sample properties via simulation, and illustrate the proposed methods in a study of treatment programs for adolescent substance abuse.
+
+Keywords:Causal inference; Heterogeneous treatment effect; Personalization; Subgroup analysis; Observational studies
+
+SECTION: 1Introduction
+
+SECTION: 1.1Heterogeneity in Treatment Effects
+
+Statistical causal inference is all about estimating what would happen to some response when a “cause” of interest is changed or intervened upon. In causal inference, the average treatment effect (ATE) has regularly emerged as one of the most sought-after effects to measure. For a binary treatment, the ATE is defined by
+
+whereis the potential outcome that would have been observed under treatment(Rubin1974). There has been lots of work concerning efficient and flexible estimation of the ATE and its analogs(Van der Laan et al.2003; Chernozhukov et al.2016; Kennedy2022).
+
+However, the effect of treatment often varies across subgroups, both in terms of magnitude and direction. Certain subgroups may experience larger effects than others. A treatment could even benefit certain subgroups while harming others. A potential shortcoming of the ATE is that it can mask this effect heterogeneity. Identifying treatment effect heterogeneity and corresponding subgroups plays an essential role in a variety of fields, including policy evaluation, drug development, and health care, and has sparked growing interest. For example, patients with different subtypes of cancer often react differently to the same treatment; however, our understanding of cancer subtypes at the molecular level is limited, and there is little consensus about which treatments are most effective for which patients(Kravitz et al.2004; Hayden2009). Typically, a functional form of the relationship between treatment effects and unit attributes is unknown a priori, therefore such effect heterogeneity has to be explored using data-driven methods. Despite a lot of recent work in this area, there are still many unsolved problems, and it has not been studied as extensively as other branches of causal inference(Kennedy2023).
+
+To better understand treatment effect heterogeneity, investigators often target to estimate the conditional average treatment effect (CATE):
+
+whereis a vector of observed covariates. The CATE offers the potential to personalize causal effects by making them specific to each individual’s characteristics. Many methods have been proposed for CATE estimation, with a focus in recent years on leveraging the benefits of machine learning.
+For example,van der Laan & Luedtke (2015)developed a framework for loss-based super learning.Athey & Imbens (2016); Zhang et al. (2017)proposed a recursive partitioning approach.Foster et al. (2011); Wager & Athey (2018)andImai et al. (2013)adopted random forests and support vector machine classifiers, respectively.Grimmer et al. (2017)proposed a weighted ensemble approach.Shalit et al. (2017)developed a neural network architecture based on integral probability metrics.Künzel et al. (2017)presented a meta-algorithm with a particular focus on unbalanced designs.Nie & Wager (2021)gave a novel adaptation of RKHS regression methods and studied conditions for oracle efficiency.Kennedy (2023)provided generic model-free error bounds and presented an algorithm achieving the fastest possible convergence rates under smoothness assumptions.
+
+SECTION: 1.2Understanding Heterogeneity via Cluster Analysis
+
+In contrast to earlier work, which has focused on supervised learning methodologies, we consider analyzing treatment effect heterogeneity from an unsupervised learning perspective. We developCausal Clustering, a new technique for exploring heterogeneous treatment effects leveraging tools from cluster analysis. We aim to understand the structure of effect heterogeneity by identifying underlying subgroups as clusters. Our work is therefore more descriptive and discovery-based, and fills an important gap in the literature.
+
+We illustrate the idea of causal clustering through the case of binary treatments in FigureLABEL:fig:causal-cluster-illustration. We generate a sample where a projectionof each observation is drawn from a mixture of six Gaussian distributions with different means and covariance functions, with the overall ATE set to zero. By construction, there are six clusters, with units within each cluster being more homogeneous in terms of the CATE. When it comes to analyzing the heterogeneity of treatment effects, people often rely on the histogram of the CATE as in FigureLABEL:fig:causal-cluster-illustration-(c). However, in this case, the histogram fails to reveal the details about the true subgroup structure. By adapting the idea of cluster analysis, we aim to uncover clusters with markedly different responses to a given treatment than the rest, while maintaining a high degree of homogeneity within each cluster, as shown in FigureLABEL:fig:causal-cluster-illustration-(b). This allows for an interesting new study of subgroup structure; as far as we know, clustering methods have yet to be employed in causal inference or heterogeneous effects problems.
+
+Our problem differs significantly from the conventional clustering setup since the variable to be clustered consists of unknown functions (i.e., potential outcome regression functions) that must be estimated. Clustering with these unknown “pseudo-outcomes” has not received as much attention as clustering on standard fully observed data, despite its importance. Some previous work considered cluster analysis using partially observed outcomes, yet still in a vector form with fixed dimensions. For example,Serafini et al. (2020)explored missing data problems in clustering, andHaviland et al. (2011)studied group-based trajectory modeling with non-random dropouts.Su et al. (2018)considered clustering with measurement errors.
+In a similar context,Kumar & Patel (2007)considered clustering on unknown model parameters, though without theoretical analysis. To the best of our knowledge, none of the existing methods in clustering literature have considered nonparametric approaches to clustering with unknown functions. In our analysis, we show that if the nuisance estimation error with respect to those unknown functionals is sufficiently small, then the excess clustering risk is near zero. In this sense, our work is in a similar spirit to the classification versus regression distinction in statistical learning(Devroye et al.2013, Theorem 2.2).
+
+In addition to the existing supervised-learning based approaches,
+our framework offers a complementary tool for identifying subgroups that substantially differ from each other. Our proposed methods are particularly useful in outcome-wide studies with multiple treatment levels(VanderWeele2017; VanderWeele et al.2016); instead of probing a high-dimensional CATE surface to assess the subgroup structure, one may attempt to uncover lower-dimensional clusters with similar responses to a given treatment set.
+
+The remainder of the paper is structured as follows. In Section 2, we formalize the idea of causal clustering based on the k-means algorithm. In Section 3, we present a plug-in estimator, which is simple and readily implementable yet will in general not be-consistent. In Section 4, we develop an efficient bias-corrected estimator for k-means causal clustering under a margin condition, which attains fastrates and asymptotic normality under weak nonparametric conditions. In section 5, we illustrate our approach using simulations and real data on effects of treatment programs for substance abuse. Section 6 concludes with a discussion.
+
+SECTION: 2Setup and estimands
+
+Consider a random sampleoftuples, whererepresents the outcome,denotes an intervention, andcomprises observed covariates. For simplicity, we focus on univariate outcomes, although our methodology can be easily extended to multivariate outcomes.
+Throughout, we rely on the following widely-used identification assumptions(e.g., Imbens & Rubin2015, Chapter 12):
+
+if.
+
+.
+
+is bounded away from 0 a.s..
+
+For, let the outcome regression function be denoted by
+
+For, one may define the pairwise CATE by
+
+Then, we define theconditional counterfactual mean vectoras
+
+If all coordinates of a pointwere the same, there would be no treatment effect on the conditional mean scale. Also, adjacent units in the conditional counterfactual mean vector space would have similar responses to a given set of treatments, since for two units,
+
+This provides vital motivation for uncovering subgroup structure via cluster analysis on projections of a sample onto the conditional counterfactual mean vector space. Crucially, standard clustering theory is limited here since the variable to be clustered is, a collection of the unknown regression functions, which themselves have to be estimated.
+
+In this work, we propose a novel k-means causal clustering. k-means (also known as vector quantization) is one of the oldest and most popular clustering algorithms, having originated in signal processing. It works by findingrepresentative points (or cluster centers) which defines a Voronoi tessellation. There has been a substantial amount of research on-means clustering. (See, for review,Jain (2010)or the monograph ofGraf & Luschgy (2007)). It is one of the few clustering methods whose theoretical properties are rather well-understood, as the analysis is relatable to principal components analysis(Ding & He2004).
+
+We call a set ofrepresentative points acodebookwhere each. Letbe the projection ofonto:
+
+Then we define thepopulation clustering riskwith respect toby
+
+and the corresponding optimal codebookby
+
+wheredenotes all codebooks of lengthin the image ofdefined in (4). Whenis fixed, the population clustering risk (5) can be viewed as a real-valued functional on a nonparametric model. Importantly,is a non-smooth functional of the observed data distribution, so the standard semiparametric efficiency theory does not immediately apply. In Section4, we shall propose an efficient estimator forunder a margin condition.
+
+The conditional counterfactual mean vector in (4) can be easily tailored for a specific use through reparametrization without compromising our subsequent results. With, for instance, one may considerwithuntreated andas a baseline risk instead of. This may be more useful for exploring the relationship between the baseline risk and the treatment effect as illustrated in FigureLABEL:fig:alternative-parametrization. As has been shown in the literature of heterogeneous treatment effects, the difference in regression functions may be more structured and simple than the individual components(e.g., Chernozhukov et al.2018; Kennedy2023). Some parametrizations might help harness this nontrivial structure (e.g., smoothness or sparsity) of each CATE function. For example, clustering oncould be easier than clustering on, when we are less concerned with the baseline risk. If we are interested in how a treatment shifts the quantiles(e.g. Chernozhukov & Hansen2005; Zhang et al.2012), we can redefine our conditional counterfactual mean vector byfor some prespecified(for median,), whereis the quantile function of our potential outcome, i.e.,for.
+
+In the sequel, we use the shorthandand. We letdenotenorm for any fixed vector. For a given function, we use the notationas the-norm of. Also, we letdenote the conditional expectation given the sample operator, as in. Notice thatis random only ifdepends on samples, in which case. Otherwiseandcan be used exchangeably. For example, ifis constructed on a separate (training) sample, thenfor a new observation. We letdenote the empirical measure as in. Lastly, we use the shorthandto denotefor some universal constant.
+
+SECTION: 3Plug-in Estimator
+
+Suppose theare all known. In this case, the optimal codebookcan be estimated by computing a minimizer of the empirical clustering risk, just as in the standard k-means clustering:
+
+The common method used to findis known as Lloyd’s algorithm(Lloyd1982; Kanungo et al.2002), yet there are other recent developments as well(Leskovec et al.2020). A solution of such algorithms normally depends on the starting values. Some popular methods for choosing good starting values are discussed in, for example,Tseng & Wong (2005); Arthur & Vassilvitskii (2007).
+
+The problem of evaluating how goodis, compared to the true, has been extensively studied.Pollard (1981)proved strong consistency of k-means clustering in the sense thatas well as. Borrowing techniques from statistical learning theory,Linder et al. (1994)andBiau et al. (2008)showed that when an input vector is almost surely bounded, the expected excess risk may decay atandrates, respectively. More recently, it has been shown that fasterorrates can be attained under a margin condition on the source distribution(Levrard2015,2018); we shall go over this margin condition in detail shortly.
+
+However, in our setting we cannot estimateusingas in (7) since we do not know each. Instead, we propose the following plug-in estimator
+
+whereis some initial estimator of the outcome regression functions. We will use sample splitting to avoid imposing empirical process conditions on the function class of(Kennedy2016,2022). For now, we suppose thatare constructed on a separate, independent sample; this will be discussed in more detail in the following section.
+
+Due to the non-smoothness of the projection function, in general we would not expect the proposed plug-in estimator (8) to inherit the rate of convergence of. To resolve this, we shall assume that the source distributionis concentrated aroundin a similar spirit toLevrard (2015,2018).
+
+In the sequel, the set of minimizers of the clustering risk will be denoted by, i.e.,. For, we define theVoronoi cellassociated with a clusteras the closed set by
+
+and its boundary by
+
+And we write the entire boundaries induced fromas
+
+Next, for anyand some, we define a setby
+
+can be viewed as a neighborhood ofin which the distance from a pointto two nearest cluster centers differs by as much as. For example, in 2-dimensional Euclidean space (i.e., when),forms a region surrounded by hyperbolas that are symmetric around each segment in, as shown in Figure3. Now we introduce the followingmargin condition.
+
+A distributionsatisfies a margin condition with radiusand rateif and only if for all,
+
+The above margin condition requires a local control of the probability aroundfor, hence implies that every optimal codebook forms a "natural classification". A largerindicates thatis "more structured", facilitating the formation of such a natural classifier, whereas a smallersuggests that a natural classifier is less likely to exist; when, the density is unbounded near.Levrard (2015,2018)used the same condition withto achieve fastrates of convergence for the excess risk, and provided some instances of the corresponding natural classifiers. This type of margin condition, where the weight of the neighborhood of the critical region is controlled, has been often adopted for a wide range of problems in causal inference involving estimation of non-smooth target parameters(e.g., van der Laan & Luedtke2015; Luedtke & Van Der Laan2016; Kennedy et al.2018; Levis et al.2023; Kim & Zubizarreta2023). We introduce the following mild boundedness and consistency assumptions as well.
+
+a.s.
+
+.
+
+In the next theorem, we give upper bounds of the excess risk, showing that the proposed plug-in estimator (8) is risk consistent.
+
+Supposesatisfies the margin condition with some,, and let
+
+Then under AssumptionsA1,A2, we have
+
+wheneveris constructed from a separate independent sample.
+
+A proof of the above theorem and all subsequent proofs can be found in Web AppendixB. The termincommonly appears in the literature involving efficient estimation of non-smooth functionals based on the margin condition, including those listed above. The termis due to the fact that the margin condition in Definition3.1only requires a local control in the neighborhood; if, this term vanishes. Theorem3.1essentially states that the extra price we pay for excess risk is the estimation error of the outcome regression functions.
+
+The fact thatis risk consistent does not imply thatis actually close to the true codebook. To assure consistency of, an additional condition is required as follows.
+
+is unique up to relabeling of its coordinates: i.e.,is a singleton.
+
+The uniqueness specified in AssumptionA3is also used in earlier work byPollard (1981,1982). The next theorem states that the proposed plug-in estimator is consistent.
+
+Under AssumptionsA1-A3,computed by the plug-in estimator (8) converges in probability to.
+
+The mapfromintois differentiable if(Pollard1982). Based on Theorems3.1and3.2, one may thus characterize the rate of convergence ofas stated in the next corollary.
+
+Suppose thatsatisfies the margin condition with some,, and that AssumptionsA1-A3hold. Also assume thatis constructed from a separate independent sample. Then
+
+The plug-in estimator is simple and intuitive. When an initial estimator is available oris fitted in a separate independent sample, (8) is readily implementable using the standard, off-the-shelf algorithms including Lloyd’s algorithm. Otherwise, we can estimate the risk via cross-fitting, where we swap the samples, repeat the procedure, and average the results to regain full sample size efficiency. Then we compute the optimal codebook that minimizes the estimated risk. We shall address this in further detail shortly.
+
+Note that the convergence rate in Theorem3.1essentially inherits from. Hence, for either the risk or the codebook, rates of convergence would be expected to be slower thanwith non-normal limiting distributions not centered at the true parameter, unless careful undersmoothing of particular estimators (e.g., splines) is used. Consequently, valid confidence intervals (even via bootstrap) may not be constructed. In the following section, we will develop an estimator that can beconsistent and asymptotically normal even if the nuisance functions are estimated flexibly at slower thanrates, in a wide variety of settings.
+
+SECTION: 4Semiparametric Estimator
+
+In this section, we describe estimators that can achieve faster rates than the plug-in estimator from Section3based upon semiparametric efficiency theory.
+
+SECTION: 4.1Proposed estimator
+
+For convenience, we introduce the following additional notations
+
+wheredenotes a set of relevant nuisance functions.is a conditional probability of receiving the treatment; when,denotes the propensity score. Notice thatandare the uncentered efficient influence function for the parametersand, respectively. The efficient influence function is important to construct optimal estimators since its variance equals the efficiency bound (in asymptotic minimax sense). Shortly, we shall see that exploiting the efficient influence function endows our estimators with desirable properties such as double robustness or general second-order bias, allowing us to relax nonparametric conditions on nuisance function estimation. We refer the interested reader to, for example,van der Vaart (2002); Tsiatis (2007); Kennedy (2016,2022)for more details about influence functions and semiparametric efficiency theory.
+
+Next, for any fixed, we define
+
+where we letdenote a set of all nuisance functions collectively, andbe the-th element of the projection.is the uncentered efficient influence function forwheneversatisfies the margin condition, as formally stated below.
+
+Suppose that AssumptionsA1,A2hold, and thatsatisfies the margin condition with someand. If, for every optimal codebook, we let, thenis the efficient influence function for.
+
+We now describe how to construct the proposed estimator for.
+Following(Robins et al.2008; Zheng & Van Der Laan2010; Chernozhukov et al.2017; Newey & Robins2018; Kennedy2023)and many others, we use sample splitting (or cross-fitting) to allow for arbitrarily complex nuisance estimators. Specifically with fixed, we split the data intodisjoint groups, each with sizeapproximately, by drawing variablesindependent of the data;indicates that subjectwas split into group. This could be done, for example, by drawing eachuniformly from. We propose our estimator foras
+
+where we letdenote empirical averages only over the set of unitsin groupand letdenote the nuisance estimator constructed only using those units. In the following section, we will show that the above estimatoris asymptotically efficient under weak conditions for any.
+
+Then we propose estimating the optimal cluster codebookas a minimizer of:
+
+After finding the function,can be computed on a full sample. Note that the cross-fitting procedure described above is equally applicable to the plug-in estimator (8). (12) can be computed using first-order (e.g., gradient descent) or second-order (e.g., Newton-Raphson) methods based on the derivative formulas (13) and (14) specified in the following section.
+
+SECTION: 4.2Asymptotic Properties
+
+In this subsection, we analyze asymptotic properties of the proposed estimator. For notational simplicity, we define the remainder term that appears in our results as follows:
+
+Note that terms inare all second-order, as opposed to, the analogous bias term for the plug-in estimator in the previous section.
+We introduce the following additional assumptions pertaining to our nuisance estimation.
+
+for some.
+
+.
+
+.
+
+AssumptionA5is a mild consistency assumption, with no requirement on rates of convergence. AssumptionA6may hold, for example, under standard-type rate conditions onwhich can be attained under smoothness, sparsity, or other structural constraints(e.g., Kennedy2016).
+
+Lemma4.1allows us to specify conditions under whichis an asymptotically normal and efficient estimator for, for anysatisfying the margin condition, as stated in the following lemma.
+
+Suppose that the margin condition in Definition3.1is satisfied with some,, and that AssumptionsA1,A4,A5, andA6hold. Then for every optimal codebook,
+
+whereis specified in (10).
+
+Under the similar conditions as Theorem3.2, we can show the proposed codebook estimator (12) is consistent, as stated in the following corollary.
+
+If AssumptionsA1,A3,A4, andA5hold, thencomputed by the semiparametric estimator (12) converges in probability to.
+
+We now focus on the asymptotic properties of, particularly on identifying conditions that assureconsistency and asymptotic normality in large nonparametric models. In the next theorem, our first main result of this section, we compute an asymptotic bound for the excess risk, as well as the rate of convergence for.
+
+Suppose thatsatisfies the margin condition with some,, and that AssumptionsA1,A3,A4, andA5hold. Also, assume that,. Then, if, we have
+
+Note that the conditionis equivalent to, i.e., there are no vacant Voronoi cells, and guarantees that the derivative matrixis nonsingular.
+Theorem4.4shows that the proposed codebook estimatorand the associated excess risk may attain substantially faster rates than its nuisance estimators. Specifically if(weaker assumption thanA6), we can attainrates forand faster-than-rates for excess risk by virtue of the fact thatinvolves products of nuisance estimation errors.
+
+Asymptotic normality of estimated codebooks in the standard k-means clustering was first studied byPollard (1982). However, extending the classic result ofPollard (1982)to causal clustering poses some difficulties due to the complexity of our new risk functionwhich relies on multiple nuisance components in an infinite-dimensional function space. To achieve asymptotic normality for our estimated codebook, we shall adopt the logic employed inKennedy et al. (2023).
+
+Letwhere eachis defined in (9). With a slight abuse of notation, as was done inBottou & Bengio (1994)we compute the derivative ofat anyfor some fixedby
+
+where we let, i.e., the subscript for the nearest center to a given. Similarly, one may compute the derivative matrix ofat:
+
+whereandis a-dimensional vector of all ones.
+
+Notice that the solutions of the minimization problem (12) can be equivalently expressed by solutions to the following empirical moment condition (up toerror):
+
+In the next theorem, we give the second main result of this section, which presents conditions allowing forconsistency and asymptotic normality of.
+
+Suppose thatsatisfies the margin condition with someand, and that AssumptionsA1,A3,A4, andA5hold. Also, assume that,. Then, if,
+
+Theorem4.5requires a stronger version of the margin condition whereis completely empty. Note that we still do not restrict the radius. Importantly, Theorem4.5implies thatcan be not onlyconsistent but also asymptotically normal under the rate condition in AssumptionA6, which may hold even when the nuisance estimators are generic and flexibly fit. In this case, asymptotically valid confidence intervals can be readily constructed via bootstrap methods.
+
+SECTION: 5Illustration
+
+SECTION: 5.1Simulation Study
+
+In order to assess the performance of the proposed estimators, we conduct a small simulation study. We consider a simplified scenario where a generated codebook forms a natural classifier satisfying the margin condition. As briefly shown in FigureLABEL:fig:experiments-(a), we demonstrate that, as anticipated by our theoretical results, the proposed semiparametric estimator from Section4generally has smaller error than the plug-in estimator from Section3, and achieves parametricrates even withrates on nuisance estimation. Details and full results are included in Web AppendixA.
+
+SECTION: 5.2Case Study
+
+Here we apply our method to the real-world dataset that was collected to study the relative effects of three treatment programs for adolescent substance abuse, i.e., community (), MET&CBT-5 (), SCY ()(McCaffrey et al.2013; Burgette et al.2017). For illustration purpose, we use a subset of publicly available data via thetwangR package. The dataset consists ofsamples,youths for each treatment, andcovariates including age, ethnicity, and criminal history. Our outcome is the program effectiveness score, where higher scores indicate reduced frequency of substance use.
+
+We use the proposed semiparametric estimator withsplits, using the gradient descent algorithm for optimization. For nonparametric estimation we used the cross-validation-based Super Learner ensemble(Van der Laan et al.2007)to combine regression splines, support vector machine regression, and random forests. The Elbow method indicates thatcan be a reasonable choice. FigureLABEL:fig:experiments-(b) displays the four clusters in the counterfactual mean vector space, revealing a substantial degree of heterogeneity. In FigureLABEL:fig:experiments-(c), we also present the density plots for the pairwise CATE estimatesand, across different clusters. This helps to understand how units in each cluster respond differently to a specific treatment. For instance, for Cluster 2, the traditional community program is more effective than the MET&CBT-5, while there is no significant difference between the community and SCY programs. On the other hand, for units in Cluster 4, the MET&CBT-5 is moderately more successful than the community program, whereas the SCY is significantly less effective.
+
+SECTION: 6Discussion
+
+In this paper, we propose a new framework for analyzing treatment effect heterogeneity by leveraging tools in cluster analysis. We provide flexible nonparametric estimators for a wide class of models. The proposed methods allow for the discovery of subgroup structure in studies with multiple treatments or outcomes. Our framework is extensible to clustering with generic pseudo-outcomes, such as partially observed outcomes or unknown functionals.
+
+Our findings open up a plethora of intriguing opportunities for future work. In an upcoming companion paper, we consider kernel-based undersmoothing approaches for causal k-means clustering, which do not require the margin condition. Much more work is required to expand causal clustering to other widely-used clustering algorithms, such as density-based clustering and hierarchical clustering. Different algorithms rely on different assumptions about the data, necessitating distinct analysis. Connecting to prescriptive methods, such as optimal treatment regimes, and other settings involving, for example, time-varying treatments, instrumental variables, or mediation would be also promising directions for future research.
+
+SECTION: References
+
+SECTION: Web Appendix
+
+SECTION: Appendix ASimulation Study Details
+
+We consider a simple data generating process as follows. First, we fix, each of which is randomly drawn from a set. Then we randomly pickpoints in a bounded hypercubeunder a constraint that every pairwise mutual Euclidean distance between two cluster centers is always greater than. A set of thesepoints is considered as our true codebook; consequentlydefines the associated Voronoi cells. To assign roughly equal numbers of units to each, for each unit, we draw a labelfrom a multinomial distribution:with. Given this label information, we setwherefollows a truncated normal distribution ofwith the threshold of. This guarantees that the nearest center for units with labelin the counterfactual mean vector space is always, and that the margin condition holds. Next, we model our observed data generating process byand, whereand. Finally, we letand, whereand, respectively, which ensures thatand.
+
+We randomly pickdifferent pairs ofand vary the sample sizefromtofor each. For eachtuple, we generate data according to the above specified process, and then computeand the corresponding risk using the plug-in estimator from Section3, as well as the semiparametric estimator from Section4. We usesplits and the gradient descent algorithm for optimization. We run the simulationtimes for eachat two different nuisance rates of. Results are presented in FigureLABEL:fig:app-sim.
+
+For both fast () and slow () rates at which the nuisance functions are estimated, the performance of the proposed semiparametric estimator is improved asgrows, nearly atrates. On the other hand, the plug-in estimator shows far worse performance at the slow nuisance estimation rates, as it is no longer expected to converge atrates. Hence, the simulation results validate our theoretical findings in Sections3and4, and support our recommendation to use the proposed semiparametric estimator described in Section4in practice.
+
+SECTION: Appendix BProofs
+
+Notation Guide.Hereafter, we letdenote the-norm in order to simplify notation and avoid any confusion with the Euclidean norm, as the-norm is used most frequently in the proofs. For simplicity, we drop the dependence onif the context is clear. Also, for any fixed, we letforso that, and let
+
+Further, we letso thatunder the margin condition for any,. With a slight abuse of notation, we write.
+
+SECTION: B.1Proof of Theorem3.1
+
+Before proving Theorem3.1, we present the three following lemmas.
+
+Suppose that AssumptionA1holds, andsatisfies the margin condition with some,. Then we have
+
+wheredenotes the-th coordinate of.
+
+Recall that.
+Lettingand, we have
+
+On the one hand, by the iterated expectation we have that
+
+where the last inequality follows by the margin condition. Similarly,
+
+where the first and second inequalities follow by Hölder’s and Markov’s inequalities, respectively, and the fact that eachis Lipschitz at.
+
+Putting the two pieces together, we finally obtain that
+
+∎
+
+The next lemma shows that one may achieve faster rates for the bias of.
+
+Suppose that AssumptionA1holds andsatisfies the margin condition with some,. Then we have
+
+The proof follows the same logic that we develop in greater detail in the subsequent proof of LemmaB.6(see RemarkB.2).
+∎
+
+The following lemma computes the bias of our plug-in risk estimator.
+
+Supposesatisfies the margin condition for some,. Then under AssumptionsA1,A2, we have
+
+wheneveris constructed from a separate independent sample.
+
+It is immediate to see that
+
+where,.
+The central limit theorem implies. Also, it follows by LemmaB.2that
+
+Further, under AssumptionA1, it follows that
+
+which, by the triangle inequality, leads to
+
+For the second term in the last display, note that
+
+where the last inequality follows by LemmaB.1. Hence, by the given consistency condition in AssumptionA2, we get,,, and thereby conclude that. Hence,, and by the sample splitting lemma(Kennedy et al.2018, Lemma 2), we obtain.
+
+Putting the three pieces back together into (A.1), we obtain the desired bias bound as
+
+∎
+
+Theorem3.1immediately follows by LemmaB.3.
+
+Notice that
+
+Sincea.s.,Linder et al. (1994, Theorem 1)implies the following bound for the first term in (B.1):
+
+For the second term, we have
+
+due to LemmaB.3.
+
+Hence we obtain that
+
+The same argument as in the preceding proof can be used to compute the rate of convergence in expectation as well. Specifically, whena.s.,Biau et al. (2008, Theorem 2.1)implies that
+
+Also, by virtue of LemmaB.2one may deduce that
+
+Using the above inequalities instead of (A.5) and (B.1), we obtain that
+
+∎
+
+SECTION: B.2Proof of Theorem3.2
+
+For any, under AssumptionA1, we have
+
+We defer the proof until LemmaB.7(see RemarkB.3).
+∎
+
+First, we aim to show
+
+To this end, consider the following decomposition for any:
+
+We will analyze the terms in the following order: (iii)(ii)(i).
+
+(iii)Consider setsof the subgraph. The shattering number ofis, which follows by the fact that eachis represented as a union of the complements ofspheres. Hence the function classis a VC-class. For any fixedand, by the stability property(e.g., Van Der Vaart & Wellner1996, Lemma 2.6.17)the function classis also a VC-class. Takingas the envelope function, we haveunder the given boundedness condition. Thus,is-Glivenko-Cantelli, yielding.
+
+(ii)Under AssumptionA1, by LemmaB.4we have
+
+which isunder the consistency condition in AssumptionsA2.
+
+(i)Letfor the function classfrom before. Then,
+
+One may view the nuisance functionsas fixed given the training data. Sinceis a VC-subgraph for any fixed, so isgiven. Let the VC index ofbe. Then we have
+
+for some universal constants. Hence applyingGiné & Nickl (2021, Theorem 3.5.4), we obtain that
+
+Taking the envelopewhich is bounded, it is immediate to show thatas the integral in the last display is finite. Consequently we get.
+
+Now that we have shownthe desired consistencyfollows byVan der Vaart (2000, Theorem 5.7), noting thatis a continuous, bounded function whose domainis compact, and thatis unique.
+
+SECTION: B.3Proof of Lemma4.1
+
+Before proving the main result, we introduce the following lemma.
+
+Under AssumptionsA1andA4, we have that for any,
+
+Since, it follows
+
+∎
+
+(Kennedy (2022, Example 2))
+For, it is well known that
+
+Suppose that AssumptionsA1,A4hold andsatisfies the margin condition with some,. Then we have
+
+Letting
+
+and
+
+one may write
+
+Now note that
+
+where the last equality follows by the fact that. For the first term in the last display,
+it is immediate to see by LemmaB.5and RemarkB.1that
+
+Next, let us rewrite the second term in (A.7) by
+
+By mimicking the proof of Theorem 2 ofLevis et al. (2023), we have that
+
+where the first inequality follows by the fact thatand, the third by the margin condition, and the last by local Lipschitz continuity of eachatunder AssumptionA1.
+
+Similarly as above, we also note that
+
+which the first inequality follow by Hölder’s inequality, the second by Markov’s inequality. Putting these together, we finally obtain that
+
+∎
+
+The proof of LemmaB.2parallels the proof of LemmaB.6provided above. Indeed, since we have the counterpart of (A.7) as
+
+the only difference is to replace (A.8) with
+
+which gives the result.
+
+Using the same logic as in the proof of LemmaB.6, we may obtain the following uniform bound.
+
+For any, under AssumptionsA1,A4, we have
+
+Notice that (A.7) and (A.8) hold for any, i.e.,
+
+where
+
+Further, proceeding similarly to (B.3), we may get
+
+which follows by Hölder’s inequality and local Lipchitz continuity ofat.
+Hence, we conclude that for any,
+
+The result arises from the fact that the RHS is independent of.
+∎
+
+The proof of LemmaB.4parallels that of LemmaB.7given above. Indeed, for, both
+
+are.
+
+Recall thatand. For two distributions, the second-order remainder term in the von Mises expansion is given by
+
+By LemmaB.6,
+the last term in (A.11) is further bounded as
+
+Hence for a submodel, we have
+
+by virtue of the fact that the remainderessentially consists of only second-order products of errors between. Since there is at most one efficient influence function in nonparametric models, now we can apply Lemma 2 ofKennedy et al. (2023)and conclude thatis the efficient influence function.
+∎
+
+SECTION: B.4Proof of Lemma4.2
+
+For any, one may write
+
+where we drop the dependence oninfor simplicity. Then consider the following decomposition:
+
+It suffices to show that the termsandare negligible, as the last term converges toby the central limit theorem.
+
+(i)Notingwith fixed, we have
+
+By adding and subtracting terms, it is straightforward to show
+
+Similarly, one may get
+
+Further, we showed in (B.1) thatif.
+
+Putting the three pieces together, we conclude thatunder the consistency condition in AssumptionA5.
+Hence, we conclude
+
+which follows by the sample splitting lemma(Kennedy et al.2018, Lemma 2).
+
+(ii)Noting that
+
+by LemmaB.6we get
+
+which isby the given nonparametric condition.
+
+Finally, the desired result follows by Slutsky’s theorem.
+∎
+
+SECTION: B.5Proof of Corollary4.3
+
+The proof follows the exact same logic as that of Theorem3.2. It boils down to show. This follows under the consistency condition in AssumptionA5since
+
+due to LemmaB.7.
+∎
+
+SECTION: B.6Proof of Theorem4.4
+
+The first order condition for a solution to the minimization problem (12) is given by, whereis defined in (13). Also note that (12) is equivalent to minimizingwith
+
+We will proceed with (A.12) in the proof.
+
+We use the logic that parallels the proof of Theorem 3 ofKennedy et al. (2023).
+By abuse of notation, we rewrite the empirical moment condition as
+
+where can be obtained by simply adding and subtracting terms. Note that the above represents a system ofequations. Here we omit the termfor simplicity. The terms in (A.13), (A.14), and (A.15) will be addressed sequentially.
+
+The first term in (A.13) will be asymptotically multivariate Gaussian by the central limit theorem, and hence. Also, under AssumptionA1and the boundedness condition, it is immediate to see
+
+is bounded for each. In the proof of Theorem4.5, we shall show that the term (A.16) is indeed. Thus, byKennedy et al. (2018, Lemma 2), for the second term in (A.13), we get
+
+Under the consistency condition in AssumptionA5, the term in (A.14) isbyKennedy et al. (2018, Lemma 2).
+
+Next, we shall analyze the second term in (A.15). It suffices to analyze the-th block of the derivative vector (13). By adding and subtracting terms, it is immediate to see that
+
+The first term in the above display is bounded as
+
+(See RemarkB.1). For the second term, first we notice that
+
+Next, lettingand,
+we have
+
+where. Hence, using the same logic that we used to obtain (B.3) and (B.3) in the proof of LemmaB.6, one may get
+
+Therefore the second term in (A.15) is bounded as
+
+Finally, we tackle the first term in (A.15). Recall that the ‘Hessian’ matrix ofis computed by
+
+where. By the given condition that each, the matrixis nonsingular. Also we haveby Corollary4.3. Hence by Taylor’s theorem, we get the linear approximation
+
+where the last equality follows by virtue of the fact thatunder the consistency condition in AssumptionA5. Putting this back into the original empirical moment condition, together with the other results, we have
+
+or equivalently,
+
+by the nonsingularity of. This implies
+
+so that
+
+Next, byPollard (1982, Lemma A), under AssumptionA1, the mapis differentiable with derivative, which leads to the following first-order approximation:
+
+The linear term must vanish as settingminimizes. Consequently, we have
+
+∎
+
+SECTION: B.7Proof of Theorem4.5
+
+First, we argue that the function classis Donsker for any fixed, if. This follows by noticing thatconsists of sums of locally Lipschitz functions with non-overlapping, compact supports, each region defined with the indicator,, and so has a finite bracketing integral.
+
+Next, recall the empirical moment condition in the proof of Theorem4.4. For the second term in (A.13), note that one may rewrite (A.16) as
+
+Noting the following notational equivalence
+
+and lettingand, similarly as in the proof of LemmaB.6, one may show that for any, under the margin condition with any,,
+
+where the last inequality follows by the fact that the functionis locally Lipschitz at. Hence, by Corollary4.3as well as the boundedness condition, from (A.19) it follows that
+
+Also, it is immediate to see thatby Corollary4.3. Hence, by the triangle inequality, the term (A.18) is.
+
+Now, consider the following identity
+
+Under the strong margin condition with someand, by Lemma 19.24 ofVan der Vaart (2000), we conclude that the term in (A.20) is. The term in (A.21) isas well, since when, (A.17) and Corollary4.3imply
+
+Applying this to the original moment condition, together with the other results in SectionB.6, we obtain
+
+Substituting the result of Theorem4.4into (A.22) finally yields
+
+∎

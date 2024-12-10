@@ -1,0 +1,489 @@
+SECTION: MRGen: Diffusion-based Controllable Data Engine for MRI Segmentation towards Unannotated Modalities
+
+Medical image segmentation has recently demonstrated impressive progress with deep neural networks, yet the heterogeneous modalities and scarcity of mask annotations limit the development of segmentation models on unannotated modalities.
+This paper investigates a new paradigm for leveraging generative models in medical applications: controllably synthesizing data forunannotated modalities,without requiring registered data pairs.
+Specifically, we make the following contributions in this paper:
+(i) we collect and curate a large-scale radiology image-text dataset,MedGen-1M, comprising modality labels, attributes, region, and organ information, along with a subset of organ mask annotations, to support research in controllable medical image generation;
+(ii) we propose a diffusion-based data engine, termedMRGen, which enables generation conditioned on text prompts and masks, synthesizing MR images for diverse modalities lacking mask annotations, to train segmentation models on unannotated modalities;
+(iii) we conduct extensive experiments across various modalities, illustrating that our data engine can effectively synthesize training samples and extend MRI segmentation towards unannotated modalities.
+The code, model, and data will be publicly available athttps://haoningwu3639.github.io/MRGen/.
+
+SECTION: 1Introduction
+
+Medical image segmentation[43,21,33,55]has achieved remarkable success, becoming a cornerstone of intelligent healthcare.
+However, challenges such as data privacy, modality complexity, and the high cost of segmentation annotations significantly restrict its development towards unannotated modalities.
+As depicted in Figure1(left), these limitations are especially acute in MRI, which exhibits significant discrepancies across modalities.
+
+Magnetic Resonance Imaging (MRI) is a non-invasive imaging technique widely recognized for its high-quality and radiation-free characteristics.
+However, MRI scans are often expensive, time-consuming, and sensitive to motion.
+Additionally, there is significant variability across different MRI modalities, and even within the same modality, differences in machines and scanning parameters can lead to substantial discrepancies in images.
+The complexity and variability of MRI, coupled with high annotation costs, lead to a scarcity of registered data pairs and segmentation annotations, posing significant challenges to the development of robust segmentation models.
+In this paper, we aim to leverage the progress in generative models, specifically, diffusion models[18], to facilitate the training of segmentation models onunannotated MRI modalities.
+
+Generally speaking, there are three challenges when applying the generative models to MRI data synthesis:
+(i) paradigm: as presented in Figure1(right), previous models[13,3]primarily focus on generating data for modalities with annotations.
+This approach limits their scalability to under-annotated or unannotated MRI modalities;
+(ii) data: the scarcity of MR images and fine-grained annotations makes it challenging to develop general and controllable generative models;
+(iii) controllability: to better benefit downstream tasks with synthetic data, generative models must enable controllable generation, guided by conditions such as text prompts or segmentation masks, to produce training samples for downstream tasks.
+
+To tackle the above challenges, we collect and curate a large-scale radiology image-text dataset,MedGen-1M, featuring CT and MRI of various modalities sourced from the Internet and open-source data.
+Our dataset comprises 1.2 million 2D slices with modality labels, attributes, region, and organ information, with a subset also containing organ mask annotations. The extensive image-text pairs across diverse modalities provide a foundation for training a general MRI generation model, and the available mask annotations further enable more controllable generation.
+
+Building on this foundation, this paper introducesMRGen, a diffusion-based data engine for controllable MRI synthesis, particularly, for modalities withnosegmentation masks ever available.
+At training time, we employ a two-stage strategy:
+(i)text-guided pretrainingon diverse, large-scale radiology image-text pair data, enabling the model to generate images across various modalities based on text descriptions;
+and
+(ii)mask-conditioned finetuningon data with mask annotations, facilitating controllable generation based on organ masks.
+Consequently, such a strategy even allows MRGen to extend its controllable generation abilities towards modalities that donothave segmentation annotations available.
+During inference, MRGen takes text prompts and organ masks as inputs,
+producing MR images aligned with the given modality, region, and organs.
+With such synthetic samples, we can thus facilitate MRI segmentation tools towards modalities without manual annotations.
+
+Our contributions in this paper can be summarized as follows:
+(i) we establish a new paradigm for generative model applications in medical analysis,i.e., synthesizing data of unannotated modalities to serve as training samples for downstream segmentation models;
+(ii) we curate a large-scale radiology image-text dataset,MedGen-1M, which features detailed modality labels, attributes, regions, organ information, and a subset with organ mask annotations, providing a foundation for building general and controllable image generation models in the radiology domain;
+(iii) we developMRGen, a diffusion-based data engine capable of generation conditioned on text prompts and masks, synthesizing MR images of various annotation-scarce modalities;
+(iv) we conduct extensive experiments across diverse modalities, demonstrating that MRGen can controllably synthesize high-quality MR images, boosting segmentation performance on unannotated modalities.
+
+SECTION: 2Related works
+
+Generative modelshave been a research focus in computer vision for years,
+with GANs[12]and diffusion models[18,45]leading the advancements.
+These models have found extensive applications across various tasks, including text-to-image generation[42,24,38,48], image-to-image translation[4,22,58], artistic creation[30,51,44], and even challenging video generation[10,19].
+Notably, CycleGAN[58]employs cycle-consistency loss to facilitate image translation with unpaired data, while the Stable Diffusion series[42,39,11]efficiently produces high-resolution images in latent space, earning broad recognition.
+
+Medical image synthesisaims to leverage generative models to improve medical image analysis models or tackle challenges such as data scarcity and privacy concerns[28].
+Prior works train generative models on X-ray[3], CT[13], and brain MRI[8,36], while methods like DiffTumor[5]and FreeTumor[49]focus specifically on generating tumor images to improve tumor segmentation.
+
+Existing works[3,13]primarily focus on in-domain augmentation within mask-annotated training modalities, and often struggle to generalize to unseen and unannotated modalities.
+To this end, this paper explores a novel paradigm for medical image generation, producing samples for modalities lacking mask annotations, to train MRI segmentation models towards these challenging scenarios.
+
+Medical image segmentationhas been a long-standing research topic, with various architectures being proposed[43,21,15,56,34].
+Recently, inspired by SAM[27,41], large-scale interactive segmentation models[33,55,9]have been developed for medical image analysis.
+However, the heterogeneity of MRI challenges the generalization of current segmentation models, which struggle with varying intensity distributions among diverse modalities.
+Existing methods generally address this problem by learning domain-invariant content, which either requires mixing training data from multiple domains, or relies on deliberately designed data augmentations strategies[57,20,46,37,50,6].
+Despite recent efforts in annotating segmentation masks for extensive MRI data[7,14], building datasets with wide-ranging modalities, scanners and protocols is time-consuming and labor-intensive.
+In this paper, we explore controllable generative models to synthesize mask-conditioned MR images for any segmentation model, without tedious hyperparameter selection in data augmentation.
+
+SECTION: 3Data Curation
+
+To train our proposed data engine,
+we first collect and curate a large-scale radiology dataset,
+termedMedGen-1M, containing CT and MR images with rich modality information, clinical attributes, and mask annotations.
+In the following, we elaborate on our data processing pipeline and present the statistics of the curated dataset.
+
+Data collection.We first collect a large amount of abdominal CT and MR images from the Radiopaedia111radiopaeida.orgwebsite, licensed under CC BY-NC-SA 3.0222To obtain the data, readers must first get permission from Radiopaedia, then we will share the download link..
+This portion of data comprises a wide variety of modalities, serving as the large-scale image-text pairs (), with each sample containing an image and its modality label.
+As listed in Table1, we also integrate CT and MR data with modality labels and abdominal organ mask annotations from several open-source datasets, to construct data triplets (), which will be further explained in Section4.
+
+Automatic annotations.Given the wide variability in abdominal imaging, such as differences between theupper abdominal regionand thepelvic region, relying solely on modality labels may not sufficiently distinguish these images.
+Thus, we divide the abdomen into six regions, including:Upper Thoracic Region,Middle Thoracic Region,Lower Thoracic Region,Upper Abdominal Region,Lower Abdominal Region, andPelvic Region.
+We then use off-the-shelf BiomedCLIP[52]to categorize all 2D slices into these six categories to serve as region information.
+
+Moreover, considering that even medical-specific text encoders may not clearly distinguish fine-grained correlations and differences between modalities likeT1andT2[47,53],
+we employ GPT-4[1]to map all modality labels to free-text modality attributes that describe signal intensities offat,muscle, andwater.
+For example,T1modality can be represented asfat high signal, muscle intermediate signal, water low signal.
+This aims to help the model understand the imaging characteristics among distinct modalities.
+
+Discussion.After the data processing mentioned above,
+we assemble ourMedGen-1Mdataset.
+As shown in Table1, the dataset consists of approximately 16K 3D volumes, covering CT and over a hundred MR modalities, totaling nearly 1.2M 2D slices.
+Each sample is paired with its corresponding modality labels, modality attributes, region, and organ information, with 190K samples featuring paired mask annotations.
+Compared to the existing datasets, the scale, modality diversity, and fine-grained annotations of MedGen-1M provide more information for training generative models tailored for medical imaging.
+More statistics will be detailed in SectionB.2of theAppendix.
+
+SECTION: 4Method
+
+We first formulate the problem in Section4.1,
+followed by a detailed description of the proposedMRGenarchitecture in Section4.2;
+then we elaborate on the training details of our model in Section4.3;
+lastly, we present the procedure of synthesizing and filtering samples with our data engine for downstream segmentation tasks in Section4.4.
+
+SECTION: 4.1Problem Formulation
+
+In this paper, we focus on developing a diffusion-based controllable data engine for medical imaging, particularly for synthesizing data across various modalities withnomask annotations available.
+Specifically, our proposedMRGen() generates the radiology image (), conditioned on a text prompt () and the organs mask (),i.e.,, whereandrefer to the trainable parameters of the foundation generative model and the mask condition controller, respectively.
+
+As described in Section3, our large-scale dataset,i.e.,, encompasses three types of data, supporting the development of the proposed data engine.
+Concretely, the training process is carried out in two phases:
+(i) we pretrain a text-guided generative model on the image-text data (), covering diverse modalities;
+and
+(ii) we then train a condition controller jointly on image-text pairs with mask annotations from source-domain dataset (), and image-text pairs from the target-domain dataset ().
+The ultimate goal is to generate target-domain images (), conditioned on text prompts () and masks (), to serve as training samples for segmentation models.
+
+Relations to existing tasks.This paper makes two key advancements over existing methods:
+(i) conventional generative augmentation methods are confined to generating samples within mask-annotated training modalities[13,3,8].
+Conversely, our model can synthesize data for modalities lacking mask annotations, conditioned on text prompts and masks, improving segmentation models on these challenging scenarios;
+(ii) unlike image translation works[58,22,36]that typically require registered data pairs for training or are limited to specific conversions, our model provides flexible and controllable generation with no need for registered data or mask-annotated data of the target modality.
+
+SECTION: 4.2Architecture
+
+For our generation paradigm, we expect the model to leverage the large number of image-text data pairs, and the limited data with segmentation masks,
+to achieve controllable generation for segmentation-scarce modalities.
+Our proposed model (MRGen) consists of three components:
+(i) latent encoding; (ii) text-guided generation;
+and (iii) mask-conditioned generation, as detailed below.
+
+Latent encoding.Given the high resolution of medical images, we adopt the idea of latent diffusion[42], for efficient generation within a compressed, low-dimensional latent space.
+As shown in Figure2(a), we utilize an autoencoder architecture, where a 2D MRI slice () is encoded into a latent code () for diffusion training.
+The decoder then reconstructs the image () from the latent code, as expressed by the following:
+
+Text-guided generation.This part follows the diffusion model paradigm, consisting of a forward diffusion process and a denoising process.
+Concretely, the forward process progressively adds noise to the latent features () oversteps towards white Gaussian noise.
+At any intermediate timestep, the noisy features () can be expressed as:,
+whereandrepresent predefined hyperparameters, which will be detailed in SectionAof theAppendix.
+
+As depicted in Figure2(b),
+the learnable denoising process typically reconstructs images from noise by estimating the noise term.
+To model this process in the compressed latent space, we adopt a UNet[43].
+Specifically, to generate images guided by text prompts, we design templated text prompt (), that consists of diverse modality labels, modality attributes, regions, and organs,
+for example:{mdframed}[backgroundcolor=gray!10, linewidth=0pt]“T1 MRI; fat high signal, muscle intermediate signal, water low signal, fat bright, water dark; upper abdomen; liver, spleen, and kidney”.We employ an off-the-shelf text encoder () to encode the text prompt into embeddings, expressed as=.
+These text embeddings are then fed into our model via cross-attention, serving as the key and value, with visual latent codes as the query.
+
+Mask-conditioned generation.Next, we incorporate mask conditions to enable more controllable generation.
+As shown in Figure2(c),
+we adopt the idea similar to ControlNet[51],i.e., initializing the mask encoder () with the weights of the diffusion UNet encoder, coupled with a learnable downsampling module () to align the dimensions of the mask with the latent code.
+In the input mask (),
+we use distinct intensity values to indicate the different organs,
+and encode it as a residual into the corresponding layers of the UNet decoder, guiding the generation process.
+In addition, zero convolution initialization is employed to stabilize the training process, as observed in[51].
+For each layerof the diffusion UNet decoder, the outputcan now be formulated as follows:
+
+SECTION: 4.3Model Training
+
+Here, we present the training procedure for our generative model, including (i) autoencoder reconstruction, (ii) text-guided pretraining, and (iii) mask-conditioned finetuning.
+
+Autoencoder reconstruction.The autoencoder for compression is trained solely on raw images from, using a combination of MSE loss and KL divergence loss as follows:, whereimposes a KL-penalty towards a standard normal on the learned latent, similar to a VAE[26]andrepresents a predefined weight.
+
+Text-guided pretraining.The diffusion-based generative model, parameterized by,
+is trained on a large number of image-text pairs in, covering diverse modalities.
+The objective function can be formulated as the MSE loss between the added Gaussian noise () and the prediction ():
+
+This pretraining phase enables MRGen to generate radiology images across diverse modalities based on text prompts.
+
+Mask-conditioned finetuning.The mask condition controller, consisting of the mask encoder () and the learnable downsampling module (), can be trained jointly on the source-domain triplet dataset,,
+and target-domain dataset comprising only image-text pairs,, with all other parameters frozen. The training objectivecan be expressed as:
+
+Here, incorporating target-domain data without mask annotations prevents overfitting to the source domain.
+
+Discussion.(i) The large-scale image-text dataset () comprises a wide range of modalities, covering those of source-domain dataset () and target-domain dataset ();
+(ii) Mask-conditioned finetuning on mask-annotated data allows MRGen to learn correlations between images and organ masks;
+(iii) Such a two-stage training strategy then enables MRGen to extend its controllable generation ability towards target domains lacking mask annotations.
+
+SECTION: 4.4Synthetic Data for Segmentation Training
+
+With our data engine, we aim to generate target-domain data conditioned on the segmentation masks, to facilitate training segmentation models towards unannotated modalities.
+
+Data synethesis.At inference time, we feed the text prompt () and organ mask () as conditions into our MRGen model () to generate the corresponding target-domain image ().
+For simplicity, when constructing the input conditions, we directly utilize region, organ information, and mask annotations from source-domain data.
+
+Data autofilter.To ensure the fidelity of generated images to the mask conditions, we design an automatic filtering pipeline using the off-the-shelf SAM2[41]model, as depicted in Figure3.
+Specifically, we feed the mask () and the generated image () into SAM2 to predict a segmentation confidence score (), and a pseudo mask annotation used to calculate the IoU score () with.
+A sample is considered high-quality and aligned with the mask condition if both its IoU score and confidence score exceed the predefined thresholds; otherwise, it is discarded.
+
+SECTION: 5Experiments
+
+Here, we start by describing the experimental settings in Section5.1; then, in Section5.2and5.3, we present a comprehensive evaluation of our method from both quantitative and qualitative perspectives; lastly, we provide results for ablation experiments in Section5.4to prove the effectiveness of our proposed methods.
+
+SECTION: 5.1Experimental Settings
+
+We aim to evaluate our proposed data engine from two aspects:
+(i) image generation, and (ii) segmentation. Concretely, to simulate MRI segmentation towards unannotated modalities, we construct 8 cross-modal dataset pairs within our MedGen-1M. Each pair comprises a mask-annotated source-domain dataset and an unannotated target-domain dataset.
+The generative model is trained on each dataset pair to synthesize target-domain samples, which are then used to train segmentation models. We assess the quality of generated images, and the performance of the segmentation models on the target-domain test set.
+
+Baselines.Forimage generation,
+we compare mask-conditioned generated images from MRGen against two other approaches:
+CycleGAN[58]for translating source-domain images to the target domain;
+and DualNorm[57]for aggressive augmentation of source-domain images.
+Forsegmentation, we evaluate models trained on five data sources:
+(i) source-domain data, as a baseline;
+(ii) DualNorm augmented data;
+(iii) CycleGAN translated data;
+(iv) MRGen generated data;
+and
+(v) manually annotated target-domain data, serving as a strong oracle baseline.
+We adopt nnUNet[21]and UMamba[34]as segmentation frameworks for all settings, except for DualNorm, which uses a customized UNet.
+Moreover, we include SAM2[41]as a reference for interactive semi-automatic segmentation, using randomly perturbed oracle boxes as prompts.
+
+Evaluation metrics.We employ different metrics for assessment:
+For image generation, we adopt the commonly used Fréchet Inception Distance score (FID)[16]to assess the diversity and quality of the generated images.
+For the downstream segmentation models, we employ the widely used Dice Similarity Coefficient (DSC)[35]to compare the predicted segmentation mask and ground truth.
+Considering segmentation consistency, we stack slices back into 3D volumes for DSC calculation.
+
+Implementation details.All the images are resized to resolution 512512 pixels.
+For training, we start by training the VAE with a learning rate ofand a batch size offor 50K iterations.
+Next, the text-guided generative model and mask condition controller are trained with a learning rate of, using batch sizes of 256 and 128 for 200K and 40K iterations, respectively.
+Moreover, we randomly drop text prompts with a 10% probability to enable classifier-free guidance for better performance.
+All training is conducted onNvidia A100 GPUs using the AdamW[32]optimizer.
+The downsampling factor, latent feature dimension, KL divergence loss weight, and diffusion timestepsare set to,,, and, respectively.
+During inference, we perform 50-step sampling using DDIM[45], with the classifier-free guidance[17]weight set to.
+We adopt the pretrained text encoder in BiomedCLIP[52]to encode text prompts, and SAM2[41]for automatic filtering.
+For each conditional mask, we generate 20 candidates and select the best two that satisfy the predefined thresholds, which are set to 0.80 and 0.90 for IoU and confidence scores, respectively.
+
+SECTION: 5.2Quantitative Results
+
+Image generation.As shown in Table2, images from the source domain exhibit high FID values with the target domain,
+indicating substantial discrepancies between distinct radiology modalities.
+Similarly, images augmented by DualNorm and translated by CycleGAN also exhibit high FID values, confirming their limited ability to emulate target-domain images. Conversely, our MRGen presents a significantly lower FID,
+demonstrating its capability to accurately generate images in target modalities, thus providing a foundation for training segmentation models with synthetic data.
+
+Segmentation.As presented in Table3, we have the following four key observations:
+(i) The significant discrepancies among different modalities hinder the ability of nnUNet and UMamba trained exclusively on source-domain data to generalize to the target domain, resulting in the lowest average DSC scores.
+(ii) The conventional image translation approach, CycleGAN, and the augmentation-based method, DualNorm, achieve moderate improvements in average DSC scores.
+However, these methods still struggle in the target domain and occasionally underperform in specific scenarios.
+(iii) In contrast, our proposed MRGen generates high-quality images for target domains, achieving the highest DSC score in 11 out of 13 experiments and significantly outperforming CycleGAN.
+Notably, MRGen consistently improves performance across all settings compared to source-only training, demonstrating the adaptability and effectiveness of its synthetic data across various segmentation architectures.
+(iv) The interactive SAM2 model, trained on substantially larger datasets, exhibits robust zero-shot segmentation capabilities with perturbed oracle box prompts.
+However, as a semi-automatic method, its reliance on spatial prompts and manual intervention limits its scalability and practical applicability.
+
+SECTION: 5.3Qualitative Results
+
+Generation.As depicted in Figure4,
+the images of distinct modalities exhibit substantial visual discrepancies, making it challenging for DualNorm to simulate via augmentation.
+Additionally, CycleGAN is prone to instability during training, frequently leading to model collapse when learning such complex translations.
+Conversely, our proposed MRGen effectively generates images that closely resemble the target domain and align with conditioned organ masks.
+This capability provides a solid foundation for the controlled generation of training data to extend segmentation models towards unannotated modalities.
+
+Segmentation.As shown in Figure5, despite significant variability between the source and target domains, MRGen substantially improves segmentation accuracy across all organs with high-quality synthetic data. However, the data derived from DualNorm and CycleGAN lead to unsatisfactory segmentation results, due to notable discrepancies from the target domain or low quality.
+
+SECTION: 5.4Ablation Studies
+
+To validate the effectiveness of our modules and strategies, we conduct ablation studies on the downstream segmentation task.
+Specifically, we train nnUNet using data synthesized under different training and inference settings.
+As presented in Table4, we have the following observations:
+(i) even without integrating unannotated target-domain data during training, MRGen still improves segmentation performance on the target modality.
+This indicates that the two-stage training strategy effectively enables MRGen to extend controllable generation to modalities without mask annotations;
+(ii) the autofilter pipeline based on SAM2 further improves performance by selecting data pairs that align better with the mask conditions.
+More ablation studies on image generation will be provided in SectionD.2of theAppendix.
+
+SECTION: 6Conclusion
+
+This paper explores a novel paradigm of applying generative models in medical imaging: controllably synthesizing data for modalities lacking mask annotations, to train MRI segmentation models towards these challenging scenarios.
+To support this, we curate a large-scale radiology image-text dataset,MedGen-1M, featuring detailed modality labels, attributes, regions, and organ information, along with a subset of organ mask annotations.
+Built upon the dataset, our diffusion-based controllable data engine,MRGen, generates MR images conditioned on text prompts and masks, enabling data synthesis across unannotated modalities for training segmentation models. Comprehensive quantitative and qualitative evaluations across diverse modalities demonstrate that MRGen can effectively synthesize data, advancing MRI segmentation for unannotated modalities.
+
+SECTION: References
+
+MRGen: Diffusion-based Controllable Data Engine for MRI Segmentation towards Unannotated ModalitiesAppendix
+
+SECTION: Appendix APreliminaries on Diffusion Models
+
+Diffusion Models[18]are a class of deep generative models that convert Gaussian noise into structured data samples through an iterative denoising process.
+These models typically comprise a forward diffusion process and a reverse denoising process.
+
+Specifically, the forward diffusion process progressively introduces Gaussian noise into an image () via a Markov process oversteps.
+Letrepresent the noisy image at step.
+The transition fromtocan be formulated as:
+
+Here,represents pre-determined hyperparameters that control the variance at each step.
+By definingand, the properties of Gaussian distributions and the reparameterization trick allow for a refined expression:
+
+This insight provides a concise expression for the forward process with Gaussian noiseas:.
+
+Diffusion models also encompass a reverse denoising process that reconstructs images from noise.
+A UNet-based model[43]is typically utilized to learn the reverse diffusion process, represented as:
+
+Here,represents the predicted mean of Gaussian distribution, derived from the estimated noiseas:
+
+Building on this foundation,Latent Diffusion Models[42]adopt a Variational Autoencoder (VAE[26]) to project images into a learned, compressed, low-dimensional latent space.
+The forward diffusion and reverse denoising processes are then performed on the latent codes () within this latent space, significantly reducing computational cost and improving efficiency.
+
+SECTION: Appendix BDetails of MedGen-1M
+
+In this section, we provide additional details about our collected and curatedMedGen-1Mdataset.
+In SectionB.1, we elaborate on the implementation details of the automatic annotation pipeline;
+and in SectionB.2, we present more comprehensive statistics about the dataset.
+
+SECTION: B.1Automatic Annotations
+
+We employ an automated annotation pipeline to annotate the data in our MedGen-1M, ensuring that the samples contain comprehensive clinically relevant annotation information.
+This process primarily includes two components: human body region classification and modality explanation, which will be detailed as follows.
+
+Region classification.Considering the wide range and variability of abdominal imaging, we adopt the off-the-shelf BiomedCLIP[52]image encoder to encode all 2D slices and the BiomedCLIP text encoder to encode predefined text descriptions of six abdominal regions.
+Based on the cosine similarity between the image and text embeddings, the 2D slices are classified into these six categories, includingUpper Thoracic Region,Middle Thoracic Region,Lower Thoracic Region,Upper Abdominal Region,Lower Abdominal Region, andPelvic Region.
+For text encoding, we use a templated text prompt as input:
+
+[backgroundcolor=gray!10, linewidth=0pt]This is a radiology image that shows $region$ of a human body, and probably contains $organ$.
+
+Here, $region$ and $organ$ represent the items in the following list:
+
+[backgroundcolor=gray!10, linewidth=0pt](region, organ) = [
+(‘Upper Thoracic Region’, ‘lung, ribs and clavicles’),
+(‘Middle Thoracic Region’, ‘lung, ribs and heart’),
+(‘Lower Thoracic Region’, ‘lung, ribs and liver’),
+(‘Upper Abdominal Region’, ‘liver, spleen, pancreas, kidney and stomach’),
+(‘Lower Abdominal Region’, ‘kidney, small intestine, colon, cecum and appendix’),
+(‘Pelvic Region’, ‘rectum, bladder, prostate/uterus and pelvic bones’)
+]
+
+Modality explanation.To capture the correlations and distinctions among various modality labels, we leverage GPT-4[1]to generate free-text descriptions detailing the signal intensities offat,muscle, andwaterfor each modality label.
+This helps the model better understand the imaging characteristics of distinct modalities.
+The prompt we use is as follows:
+
+[backgroundcolor=gray!10, linewidth=0pt]As a senior doctor and medical imaging researcher, please help me map radiological imaging modalities to the signal intensities of fat, muscle, and water, as well as their corresponding brightness levels. Please provide the answer in the following format:
+fat{}signal, muscle{}signal, water{}signal, fat{}, muscle{}, water{}.
+Now, tell me the attributes of $modality$.
+
+SECTION: B.2Dataset Statistics
+
+In this section, we present more detailed statistics about our curated MedGen-1M dataset, including the unannotated image-text pairs fromRadiopaedia333radiopaeida.org, as well as the mask-annotated data sourced from various open-source datasets.
+
+Data without mask annotations.For the image-text pairs fromRadiopaedia-CTandRadiopaedia-MRI, which are used for training the autoencoder and text-guided generation, we allocate 1% of the data as a test set to evaluate reconstruction and generation performance, maximizing the amount of data available for pretraining.
+As a result, 1,007,616 samples are used for training, comprising 804,628 fromRadiopaedia-CTand 202,988 fromRadiopaedia-MRI.
+The test set consists of 10,179 samples, with 8,128 fromRadiopaedia-CTand 2,051 fromRadiopaedia-MRI.
+
+We conduct a statistical analysis of the distribution of modalities inRadiopaedia-MRI, as presented in Figure6(a).
+The free-text modality labels cover approximately 300 categories, providing a diverse set of MRI modalities that form a crucial foundation for MRGen to learn text-guided generation and expand its mask-conditioned generation capabilities towards modalities originally lacking mask annotations.
+Furthermore, the distribution of images across different regions inRadiopaedia-CTandRadiopaedia-MRIis presented in Figure6(b).
+
+Data with mask annotations.Following the SAT[55], we split the data with mask annotations into training and test sets, as detailed in Table5.
+For dataset pairs comprising different datasets, we use their shared organs as the segmentation targets.
+
+SECTION: Appendix CImplementation Details
+
+In this section, we will provide a comprehensive explanation of the implementation details discussed in the paper.
+Specifically,
+SectionC.1describes the preprocessing and augmentation strategies applied to the training data.
+SectionC.2elaborates on the details of the autofilter pipeline.
+Finally, SectionC.3outlines the implementation details of the baselines.
+
+SECTION: C.1Preprocessing & Augmentation
+
+Data preprocessing.To ensure consistency across data from various sources and modalities, we apply tailored preprocessing strategies as follows:
+(i) For data fromRadiopaedia, the images are directly rescaled to the range [0, 1];
+(ii) For CT images with mask annotations, intensities are clipped to [-300, 200] and then rescaled to [0, 1];
+(iii) For MR images with mask annotations, intensities are clipped to the 0.5 and 99.5 percentiles and rescaled to [0, 1].
+After normalization, all data are subsequently rescaled to [-1, 1] for training various components of MRGen, including the autoencoder, diffusion UNet, and mask condition controller.
+For training downstream segmentation models, images are rescaled to [0, 255] and saved in ‘.png’ format, followed by the preprocessing configurations of nnUNet[21]and UMamba[34].
+
+Data augmentation.During autoencoder training, we apply random data augmentations to the images with a 20% probability.
+These augmentations included horizontal flipping, vertical flipping, and rotations of 90∘, 180∘, 270∘.
+In contrast, no data augmentations are applied during the training of the diffusion UNet and mask condition controller.
+For downstream segmentation models, we adhere to the default data augmentation strategies provided by nnUNet[21]and UMamba[34].
+
+SECTION: C.2Autofilter Pipeline
+
+When deploying our proposed data engine, MRGen, to synthesize data for segmentation model training, we adopt the off-the-shelf SAM2[41]model to perform automatic interactive segmentation on generated images, with the mask conditions as prompt.
+This pipeline automatically selects samples that are fidelity to the condition masks, thus ensuring the quality of synthetic image-mask pairs.
+In this section, we elaborate on more implementation details of this automatic filtering pipeline, particularly focusing on the generation of MR images that encompass multiple organs.
+
+Specifically, we begin by defining the following thresholds: confidence threshold (), IoU score threshold (), average confidence threshold (), and average IoU threshold ().
+Both the mask () and the generated image () are fed into SAM2.
+For each organ maskin,
+SAM2 will output a confidence score () and a pseudo mask annotation, which is then used to calculate the IoU score () with.
+For each generated sample (),
+it is regarded as a high-quality sample if the following conditions are satisfied:,
+and,.
+Otherwise, the sample will be discarded.
+
+In all experiments, the predefined thresholds are set as follows:,,, and.
+
+SECTION: C.3Baselines
+
+CycleGAN.We follow the official implementation and training strategies across all experimental settings.
+Subsequently, source-domain images are translated into the target domain and paired with the source-domain masks to create paired samples for training downstream segmentation models.
+
+SAM2.We use SAM2-Large in all the experiments.
+Segmentation results are derived in a slice-by-slice and organ-by-organ manner: For each slice with mask annotations, we simulate box prompts for each annotated organ individually.
+To take into account the error introduced by manual intervention, the oracle boxes are randomly shifted at each corner, by up to 8% of the image resolution, following the protocol in MedSAM[33].
+
+DualNorm.Following the official implementation, we apply random non-linear augmentation on each image in the source domain, to generate a source-dissimilar training sample, and train the dual-normalization model.
+All preprocessing steps, network architectures, and training strategies follow the official recommendations, with the exception that images are rescaled to 512512, consistent with other approaches.
+Note that we evaluate DualNorm on all the slices in the test set, offering a more rigorous evaluation compared to the official implementation, which only considers slices with segmentation annotation.
+
+SECTION: Appendix DMore Experiments
+
+In this section, we present additional experimental results to demonstrate the superiority of our proposed data engine.
+In SectionD.1, we showcase both quantitative and qualitative results of in-domain generation.
+In SectionD.2, we conduct extensive ablation studies to illustrate the improvements introduced by our design in radiology image generation.
+Finally, in SectionD.3, we provide additional qualitative results to validate the accuracy and flexibility of the generated outputs.
+
+SECTION: D.1In-domain Generation
+
+Our proposed data engine not only synthesizes images for target modalities lacking mask annotations but also maintains controllable generation capabilities within the source domain.
+Moreover, as presented in Table6, downstream segmentation models trained exclusively on synthetic source-domain data can achieve performance comparable to those trained on real manually-annotated source-domain data.
+This offers a feasible solution to address concerns about medical data privacy.
+
+Moreover, we provide visualizations of in-domain generation in Figure7, qualitatively demonstrating that our MRGen can reliably perform controllable generation of a large number of samples within the training domain with mask annotations.
+
+SECTION: D.2Ablation Studies
+
+In this section, we provide more ablation study results on image generation, to demonstrate the necessity of model and data design within our proposed data engine, focusing on autoencoder reconstruction and text-guided generation.
+
+Autoencoder reconstruction.We evaluate the reconstruction performance of various VAEs on the test set derived from our curated MedGen-1M dataset, comprisingRadiopaedia-CTandRadiopaedia-MRI.
+The evaluated models include:
+(i) the VAE of pretrained Stable Diffusion (VAE-SDM),
+(ii) the VAE of Stable Diffusion finetuned on our dataset (Finetuned-VAE-SDM),
+(iii) our model trained solely onRadiopaedia-MRIdata (VAE-MRGen (MRI-only)),
+and
+(iv) our VAE-MRGen trained on the complete dataset (VAE-MRGen (Ours)).
+
+The reconstruction quality is assessed using standard metrics, including Peak Signal-to-Noise Ratio (PSNR), Structural Similarity Index (SSIM), L1 Error, and Mean Squared Error (MSE) between the reconstructed and original images.
+
+As illustrated in Table8, we draw the following three key observations:
+(i)Finetuning on radiology data:
+VAEs finetuned on radiology data significantly improve the reconstruction quality compared to pretrained Stable Diffusion models, revealing the limited generalizability of natural image VAEs to radiology images.
+(ii)Latent code dimension:
+our autoencoders with a larger latent code feature dimension achieve further improvements in reconstruction quality, suggesting that increasing the increased capacity of latent code enables better representations.
+(iii)Extra data:
+incorporating CT data into training further improves reconstruction quality, approaching the performance of lossless compression.
+To this end, unlike RoentGen[3]that relies on pretrained VAEs, we employ high-capacity autoencoders trained specifically on radiology data, to ensure that the generative models built upon this foundation can produce better image details.
+
+Text-guided generation.We evaluate the text-guided image generation performance of various models on the test set derived from our MedGen-1M dataset, encompassingRadiopaedia-CTandRadiopaedia-MRI.
+The evaluated models include:
+(i) the pretrained Stable Diffusion (SDM),
+(ii) the Stable Diffusion finetuned on our MedGen-1M (Finetuned-SDM),
+(iii) our model using only free-text modality labels as text conditions (MRGen (Modality-only)),
+and
+(iv) our MRGen, which utilizes templated text prompts incorporating modality labels, attributes, regions, and organs information (MRGen (Ours)).
+
+We employ commonly used evaluation metrics for image generation, including the Fréchet Inception Distance (FID[16]) to assess the quality and diversity of generated images.
+Additionally, we utilize BiomedCLIP[52]to calculate two similarity metrics: image-to-image similarity (CLIP-I) between the generated images and ground truth, and image-to-text similarity (CLIP-T) between the generated images and the free-text modality descriptions.
+
+As presented in Table8, we draw the following three observations:
+(i)Finetuning on radiology data:
+pretrained Stable Diffusion tends to generate natural images rather than ideal radiology images, resulting in suboptimal performance across all evaluation metrics.
+However, finetuning on our dataset significantly enhances its generative performance.
+(ii)Text encoder:
+using BiomedCLIP[52]as the text encoder, trained on biomedical data, instead of CLIP[40]in Stable Diffusion, improves MRGen’s ability to capture similarities and differences among radiology modalities.
+Additionally, our high-capacity VAE, provides further potential improvements to generation quality.
+(iii)Templated text prompt:
+incorporating templated text prompts with detailed information (including modality, attributes, regions, and organs) outperforms using modality labels alone.
+This enables MRGen to better grasp the relationships among distinct modalities, thereby further improving generation quality, particularly in terms of image-to-image similarity with the ground truth.
+
+SECTION: D.3More Qualitative Results
+
+In this section, we provide qualitative visualizations of more datasets, covering both image generation and segmentation.
+
+Image generation.As depicted in Figure9and10, we present additional visualizations of controllable generation on target modalities lacking mask annotations.
+These results demonstrate that the proposed data engine can effectively generate high-quality samples based on masks across various datasets and modalities, facilitating the training of downstream segmentation models towards these challenging scenarios.
+
+Image segmentation.As presented in Figure11and12, we provide more visualizations of segmentation models trained using synthetic data on modalities that originally lack mask annotations.
+This validates that the samples generated by MRGen can effectively assist in training segmentation models, achieving impressive performance in previously unannotated scenarios.
+
+SECTION: Appendix ELimitations & Future Works
+
+SECTION: E.1Limitations
+
+Our proposed data engine, MRGen, is not without its limitations.
+Specifically, MRGen encounters difficulties when generating conditioned on extremely small organ masks and occasionally produces false-negative samples.
+
+Extremely small organ masks.The morphology of the same organ, such as theliverorspleen, can vary significantly across different slices of a 3D volume, resulting in significant variability in their corresponding masks.
+Furthermore, the distribution of these masks is often imbalanced, with extremely small masks being relatively rare.
+When generating in the latent space, these masks are further downsampled, leading to unstable generation quality, as depicted in Figure8(a).
+A feasible solution to mitigate this issue is to increase the amount of data with mask annotations, thereby improving the model’s robustness.
+
+False-negative samples.Another challenge arises from the varying number of organs to be segmented on each slice.
+For instance, one slice may contain theliver,kidneys, andspleen, while another may include only theliverandspleen.
+This variability causes MRGen to occasionally generate additional segmentation targets not specified in the mask condition.
+For example, as illustrated in Figure8(b),kidneysare unexpectedly synthesized by MRGen, despite not being included in the mask conditions, leading to false negatives during the training of downstream segmentation networks.
+A feasible solution is to design a more comprehensive and robust data filtering pipeline to filter these false-negative samples.
+Alternatively, simple manual selection can serve as a quick and effective method to remove samples that do not meet the requirements.
+
+SECTION: E.2Future Works
+
+To address the aforementioned limitations of MRGen, we propose several directions for future improvement:
+(i) Constructing more comprehensive and richly annotated datasets, such as incorporating more annotated CT data or collecting more MRI data, to enhance the model’s ability to effectively utilize mask conditions;
+(ii) Designing finer-grained, accurate, and efficient generative model architectures to improve generation efficiency and accuracy, particularly for small-volume organs;
+and
+(iii) Developing a more robust and comprehensive data filtering pipeline to reliably select high-quality samples that meet the requirements of downstream tasks.

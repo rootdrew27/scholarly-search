@@ -14,11 +14,10 @@ PATH_TO_PAPERS_TXT = Path(r'/data/classes/2024/fall/cs426/group_5/SchSearch/scho
 PATH_TO_LOG = Path(r'/data/classes/2024/fall/cs426/group_5/SchSearch/scholarly-search/log')
 PATH_TO_LOG.mkdir(parents=True, exist_ok=True)
 
-PATH_TO_SEMSIM_WEIGHTS = r'/data/classes/2024/fall/cs426/group_5/SchSearch/scholarly-search/weights/semsim'
+PATH_TO_SEMSIM_WEIGHTS = r'/data/classes/2024/fall/cs426/group_5/SchSearch/scholarly-search/weights/semsim4'
 
 end_of_paper_words = [
     'references',
-    'acknowledgements', 
     'acknowledgement',
     'author information',
     'acknowledgment',
@@ -28,9 +27,8 @@ end_of_paper_words = [
     'conflict of interest',
     'copyright',
     'data availability',
-    'acknowledgments',
-    'ethical approval',
-    
+    'acknowledgment',
+    'ethical approval', 
 ]
 
 papers_to_skip = [
@@ -41,9 +39,9 @@ papers_to_skip = [
 ]
 # Intialize models
 LLM_Tokenizer = PreTrainedTokenizerFast.from_pretrained("weights/hugging_pt/tokenizer")
-LLM = AutoModelForCausalLM.from_pretrained("weights/hugging_pt/model").to('cuda')
+LLM = AutoModelForCausalLM.from_pretrained("weights/hugging_pt/model").to('cpu')
 
-SemSim = SentenceTransformer(PATH_TO_SEMSIM_WEIGHTS, device='cpu')
+SemSim = SentenceTransformer(PATH_TO_SEMSIM_WEIGHTS, device='cuda')
 
 # Init Embedding Library 
 embLib = EmbeddingLibrary(
@@ -57,7 +55,10 @@ embLib = EmbeddingLibrary(
     name="Prototype"
 )   
 
+embLib.update_paper_list()
 embLib.set_paper_embs()
+SemSim.to('cpu')
+LLM.to('cuda')
 
 def paperLink(paper_id):
     arxiv_link = f"https://arxiv.org/abs/{paper_id}"
@@ -75,7 +76,7 @@ def llmPrompt(prompt):
             inputs.input_ids,
             attention_mask=inputs['attention_mask'],
             pad_token_id=LLM_Tokenizer.eos_token_id,
-            max_length=4000,
+            max_length=3500,
             temperature=0.01
     )
 
@@ -84,8 +85,7 @@ def llmPrompt(prompt):
         skip_special_tokens=True,
         clean_up_tokenization_spaces=False
     )
-    
-    
+     
     return output[0]
 
 if __name__ == '__main__':
@@ -93,11 +93,9 @@ if __name__ == '__main__':
     
     with open(f"./Questions/{filepath}", "r") as file:
         prompts = file.readlines()
-    responses = []
-    
-    
-    for prompt in prompts:
-        
+
+    responses = []        
+    for prompt in prompts: 
         responses.append(llmPrompt(prompt))
 
     print('Switching LLM to RAM and SemSim model to VRAM\n')
@@ -106,9 +104,8 @@ if __name__ == '__main__':
    
     N_RESULTS = 5 
     for i, response in enumerate(responses, start=0):
-        print("question" + prompts[i])
-        print(response)
-        prompts[i] = f"Give a scholarly response to the question \"{prompts[i]}\". Make the response an IEEE paper. Make it so each section starts with \"SECTION: \" on each part of the paper. Do not include references. Only use academic papers. Inculde nothing additional.\n"
+        print("Input: " + prompts[i])
+        prompts[i] = f"Give a scholarly response to the question, \"{prompts[i]}\". Make the response an IEEE paper. Each Section starts with \"SECTION: \". Do not include references. Only use academic papers. Include nothing additional.\n"
         top_paper_ids = embLib.search_papers(prompts[i], response, n_results=N_RESULTS)
 
         if len(top_paper_ids) == 0:

@@ -1,0 +1,995 @@
+SECTION: GD-VAEs: Geometric Dynamic Variational Autoencoders for Learning Nonlinear Dynamics
+and Dimension Reductions
+We develop data-driven methods incorporating geometric and topological
+information to learn parsimonious representations of nonlinear dynamics from
+observations. The approaches learn nonlinear state-space models of the
+dynamics for general manifold latent spaces using training strategies related
+to Variational Autoencoders (VAEs). Our methods are referred to as Geometric
+Dynamic (GD) Variational Autoencoders (GD-VAEs). We learn encoders and
+decoders for the system states and evolution based on deep neural network
+architectures that include general Multilayer Perceptrons (MLPs), Convolutional
+Neural Networks (CNNs), and other architectures. Motivated by problems
+arising in parameterized PDEs and physics, we investigate the performance of
+our methods on tasks for learning reduced dimensional representations of the
+nonlinear Burgers Equations, Constrained Mechanical Systems, and spatial fields
+of Reaction-Diffusion Systems. GD-VAEs provide methods that can be used
+to obtain representations in manifold latent spaces
+for diverse learning tasks involving dynamics.
+
+SECTION: Introduction
+We develop data-driven approaches for learning predictive
+models and representations from observations of dynamical processes. We introduce learning
+methods that incorporate inductive biases leveraging known prior topological
+and geometric information. This allows for using insights from techniques in
+the qualitative analysis of dynamical systems and other domain
+knowledge. In practice, the observation data can include experimental
+measurements, large-scale computational simulations, or solutions
+of complex dynamical systems for which we seek reduced descriptions. Learning
+representations with prescribed target properties can be used to help enhance
+the robustness of predictions, yield more interpretable results, or
+provide further insights into the underlying mechanisms generating observed
+behaviors.
+
+A central challenge in the dynamical setting is to learn informative
+representations facilitating stable predictions for multiple future states of
+the system.
+For this purpose, we develop probabilistic autoencoders that
+incorporate noise-based regularizations and geometric priors to learn smooth
+reduced dimensional representations for the observations. We train our probabilistic autoencoders
+building on the framework of Variational Autoencoders
+(VAEs). To incorporate known topological and
+geometric information, we develop learning methods allowing for general
+manifold latent spaces. This presents challenges to obtain neural networks to
+represent mappings to the manifold geometry and for gradient-based training. We address
+these issues by developing mappings based on extrinsic geometric descriptions
+and by developing custom back-propagation methods for passage of gradient
+information through our manifold latent spaces. We demonstrate these
+methods for learning representations and performing prediction
+for constrained mechanical systems, parameterized non-linear PDES,
+Burger’s equation, and Reaction-Diffusion systems.
+
+The general problem of learning dynamical models from a time series of
+observations has a long history spanning many fields. This includes the fields of dynamical systems,
+control,
+statistics,
+and machine learning. Many of the most successful and widely-used
+approaches rely on assumptions on the model structure, most commonly, that a
+time-invariant linear dynamical systems (LDS) provides a good local approximation or that the
+noise is Gaussian.
+These include the Kalman Filter and extensions,
+Proper Orthogonal Decomposition
+(POD), and more recently Dynamic
+Mode Decomposition (DMD)and Koopman Operator approaches.
+Methods for
+learning nonlinear dynamics include the NARX and NOE approaches with function
+approximators based on neural networks and other models classes,
+sparse symbolic dictionary methods
+that are linear-in-parameters using LASSOsuch as SINDy,
+and dynamic Bayesian networks (DBNs), such as Hidden Markov Chains (HMMs) and
+Hidden-Physics Models.
+
+Many variants of autoencoders have been developed for making predictions of
+sequential data. This includes those based on Recurrent Neural Networks (RNNs) with
+LSTMs and GRUs.
+Approaches for incorporating topological information into latent
+variable representations include the early works by Kohonen on Self-Organizing
+Maps (SOMs)and Bishop
+on Generative Topographical Maps (GTMs) based on density networks providing a
+generative approach.
+While general RNNs provide a rich approximation
+class for sequential data, they pose for dynamical systems challenges for
+interpretability and for training to obtain predictions stable over many steps.
+Autoencoders have also
+been combined with symbolic dictionary learning for latent dynamics inproviding some advantages for
+interpretability and robustness. Dictionary methods however require specification
+in advance of sufficiently expressive libraries of functions.
+Neural networks incorporating physical information have also been developed,
+where some of the methods use regularizations introduced during training to
+enhance stability. The work ofconsiders methods for processing of speech
+and handwriting by investigating RNNs combined with VAEs to obtain
+more robust sequential models.
+
+In our work, we learn dynamical models building on the VAE framework to train
+probabilistic encoders and decoders between general manifold
+latent spaces. This provides additional regularizations and constraints
+to help promote parsimoniousness, disentanglement of features, robustness,
+and interpretability. Prior VAE methods used for dynamical systems include. These works use primarily Euclidean
+latent spaces and consider applications such as human motion capture and ODE
+systems. More recently, VAE methods using non-Euclidean latent spaces include.
+These incorporate the role of geometry by augmenting the prior
+distribution
+on a Euclidean latent space to bias encodings toward a manifold.
+In the recent works, explicit projection
+procedures are introduced to map analytically or to sample through random walks
+an embedded manifold. These works primarily consider geometries based
+on, spheres, tori, and cylinders. We develop in our work
+more explicit procedures that can be used with back-propagation
+for more general geometries, including
+non-orientable manifolds. We also discuss related methods in our proceedings
+paper.
+
+We introduce here further methods for more general latent space
+representations, including non-orientable manifolds, and applications to
+parameterized PDEs, constrained mechanical systems, and reaction-diffusion
+systems. We introduce general methods for non-Euclidean latent spaces in
+terms of point-cloud representations of the manifold along with local gradient
+information that can be utilized within general back-propagation frameworks.
+This allows for manifolds that have complex shapes
+or arise from other unsupervised learning approaches.
+
+The paper is organized as follows.
+In Section, we formulate the probabilistic encoder-decoder
+models and use the Evidence Lower Bound (ELBO) to derive and motivate the loss
+functions and regularizations used for training. In
+Section, we discuss the challenges in learning
+with manifold latent spaces. We also develop methods for mapping to general
+manifolds and for performing back-propagation for gradient-based training. In
+Section, we present results demonstrating the methods for
+learning representations for constrained mechanical systems, parameterized
+non-linear PDEs, Burgers equation, and Reaction-Diffusion systems. To
+investigate the role of the non-linear mappings and noise regularizations in our
+approaches, we also make comparisons of our methods with analytic techniques
+and some other widely-used data-driven methods. We also present additional derivations in
+Appendixand. We present an
+additional result on how learned covariances can be used to help identify geometric
+structures in Appendix. The introduced GD-VAE
+methods provide ways to incorporate topological and geometric information
+when learning representations for dynamical tasks.
+
+SECTION: Learning Nonlinear Dynamics with Variational Autoencoders (VAEs)
+A central challenge in the non-linear setting is to learn
+from observations informative parsimonious representations of the
+dynamics. In practice,
+observation data can include experimental measurements, large-scale
+computational simulations, or solutions to more
+complicated dynamical systems for which we seek reduced descriptions.
+Such representations can then be used to make predictions,
+to perform simulations, or as part of optimization for designing
+controllers.
+
+We develop data-driven approaches building on the Variational Autoencoder (VAE)
+framework. In contrast to standard
+autoencoders, which can result in scattered disconnected
+encodings, VAEs train probabilistic encoders
+and decoders where noise provides additional regularizations. In VAEs
+this promotes smoother dependence on inputs,
+more connectedness between the encodings, and disentanglement
+of encoded components.
+
+We learn VAE predictors using a Maximum Likelihood Estimation (MLE)
+approach. For dynamic predictions,
+we use a Log Likelihood (LL) which can be expressed as
+
+Thegives the Log-Conditional (LC) Likelihood andgives the marginal Log Likelihood of. For
+predicting the dynamics of, we discretize in time. We sample
+trajectories as, whereandis the sampling time-scale.
+We learn representations for the discretized dynamicsby lettingand. We baseon the autoencoder
+framework in Figureand.
+More specifically, we use variational inference to approximate the LL by
+the Evidence Lower Bound
+(ELBO). In particular, we use
+the concavity ofand Jensen’s Inequality for. This yields the
+lower-bound
+
+To simplify the notation for the expressions above, we have suppressed
+dependence on the parameters. We assume here the considered
+probability distributions factor to have an autoencoding-like property so that.
+This ensures the encodingcaptures all the relevant information to
+generate, so that. Thegives the distribution for a probabilistic encoder map fromto. Thegives a probabilistic decoder map
+that
+reconstructsfrom.
+
+The encoding and decoding distributions in the variational approximations
+will often be taken to be learnable Gaussians of the formand. Thedenotes the probability density of the multi-variate Gaussian
+with meanand covariance.
+In the case of no noise, thewould serve as a deterministic encoding map
+ofto obtain. When there is noise,becomes the center location of the Gaussian in latent space
+and is the most probable encoding ofto obtain, see
+Figure. This holds similarly for the probabilistic
+decoder map given byand. For the decoder,
+the log probability gives a weighted-norm
+penalizing errors in reconstructing, since for a Gaussian. Here, theis
+a constant independent ofand
+
+This holds similarly forin reconstructingfrom.
+
+It is convenient to reformulate the maximization of the terms of the
+lower-bound in equationto a minimization problem with
+loss function. The optimization then
+can be interpreted as minimizing the reconstruction losses
+
+subject to further regularization based on reducing the Kullback-Lieber
+(KL)-Divergence betweenand,
+
+We also split the latent codes asand
+introduce the additional distributionwhich
+models steps of the latent space dynamicswhereand. We restrict
+the decoder distributions to have dependenceand. In the
+case of deterministic dynamics, we alternatively can express this by
+introducing the latent-space mappingparameterized by. We also augment theterm to
+serve as an adjustable regularization weighted by the parameterand
+also allow for adjusting the relative strength of the reconstructions forandusing the parameter. Our models have the learnable
+parameterswithfor the
+encoder,for the decoder, andfor the dynamics.
+
+In summary, we train our models based on minimizing the loss functionwith
+
+Thedenotes the distribution for the
+probabilistic encoding map,denotes the distribution
+of the probabilistic decoding map, andthe
+prior distribution used for regularizing the organization of the latent-space
+representation. This is trained using batches ofobservation samples. For a dynamical
+system with a collection of sampled trajectories,
+we have thatsamples the
+initial stateandsamples the future state, wheregives the trajectory index andthe sampled initial time.
+
+The loss function in equationprovides a regularized form of
+MLE. The three
+terms comprisingcan be interpreted as follows
+(i)for the log likelihood of
+reconstructing samples, (ii)is the log likelihood of
+correctly predicting samples after a single time step, and (iii)is a regularization term based on the Kullback-Liebler (KL)
+Divergence between the encoding distribution and latent space prior
+distribution.
+
+For the trainable encoder and decoder probability distributions,
+we use parameterizations for the Gaussians of the form
+
+Thedenotes the density of the multivariate Gaussian with meanand covariance. We also can express this more
+directly in terms of the probabilistic maps and resulting random variables as
+
+Thedenote noise regularizations provided
+by Gaussian random variables with mean zero and covariance.
+
+The terms that can be learned in this dynamic VAE framework are,
+which are parameterized by.
+Thedenote learnable functions encoding
+or decoding the inputs. These can be represented using deep neural networks or
+other model classes, see Figure.
+The noise serves as an additional source of regularization to help promote
+smoothness and connectedness of the encodings,
+see Figure.
+In practice, while the
+variances are learnable, for many problems it can be useful to treat theas hyper-parameters. We discuss some ways to use
+learnable covariancesto extract from the data useful geometric
+structures in Appendix.
+
+We learn predictors for the dynamics by training over samples of evolution pairs, wheredenotes the sample index andwithfor a time-scale. To make
+predictions, the learned models use the following stages: (i) extract fromthe features, (ii) evolve, (iii)
+predict usingthe, see
+Figuresand.
+By function composition, the learned model also can
+make multi-step predictions for the dynamics.
+
+SECTION: Learning with Manifold Latent Spaces having General Geometries and
+Topologies
+For many systems, parsimonious representations can be obtained by working with
+non-Euclidean manifold latent spaces. This includes tori for doubly periodic
+systems or even non-orientable manifolds, such as a klein bottle as arises in
+imaging and perception studies. For this purpose, we
+learn encodersover a family of mappings to a prescribed manifoldof the form
+
+Thedenotes a candidate encoder to the manifold when the
+parameters are. This can be used as part of the encoder map with, see equationand Figure.
+
+To generate a family of maps over which we can learn in practice, we use that a
+smooth closed manifoldof dimensioncan be embedded within, as supported by the Whitney Embedding Theorem. We obtain a family of maps to the manifold by constructing
+maps in two steps using equation.
+In the first step, we use an unconstrained encoderfromto a pointin the embedding space.
+In the second step, we use a mapthat projects a pointto a pointwithin the embedded manifold. In this way,can be any learnable mapping fromtofor which there are many model classes including
+neural networks. To obtain a particular manifold map, theonly needs to learn an equivalent mapping fromto, whereis in the appropriate equivalence classof a target pointon the manifold,.
+Here, we accomplish this in practice two ways: (i) we provide an
+analytic mappingto, (ii) we provide a high resolution
+point-cloud representation of the target manifold along with local gradients
+and use fora quantized or interpolated mapping to the nearest point on. We provide more details of our methods below and in Appendix A.
+
+In practice, we can view the projection mapto the manifold
+as the solution of the optimization problem
+
+We can always express patches of a smooth manifold using local coordinate
+chartsfor. For example, we could use in practice a local Monge-Gauge
+quadratic fit to a point cloud representation of the manifold, as
+in. We can expressfor some chartfor solution of
+equation. In terms of the collection of coordinate chartsand local parameterizations, we
+can express this as
+
+Theis the input andis the solution of
+equation. This gives the coordinate-based representation.
+For smooth parameterizations, the optimal solutionssatisfies the following implicit equation arising from the optimization problem,
+
+During learning with back-propagation, we need to be able to compute the
+contributions to the loss function of the gradient
+
+where. If we approach training models
+using directly the expressions of equation, we would need ways
+to compute both the gradientsand. While the gradientscan be obtained readily for many model classes, such
+as neural networks when using back-propagation, the gradientspose additional challenges. Ifcan be expressed
+analytically, then back-propagation techniques can be employed
+directly. However, in practice,will often result from a numerical
+solution of the optimization problem in equationwhich uses
+equation. We show how in this setting alternative approaches
+can be used to obtain the contributions to the loss function of the
+gradient.
+
+To account for the contributions of such terms to the loss, we instead derive
+expressions for the variations ofandusing that they are
+related by. If we parameterizeby some scalar parameter, then we havefor each. For example, this is motivated by takingandfor some pathin the input and
+parameter space. We can
+obtain the needed gradients by determining the variations ofby using equation.
+This follows sinceand. Theoften can be readily obtained analytically or
+numerically from back-propagation. The more challenging term to compute
+is. This can be obtained fromby considering a sufficiently rich variety of
+paths in parameter spacethat probe each direction.
+From equation,
+this allows us to express
+the gradients using the Implicit Function Theorem as
+
+The term typically posing the most significant computational challenge
+issinceis
+obtained numerically from the optimization problem in
+equation. We solve for it using the expression in
+equationto obtain
+
+This only requires that we can evaluate for a giventhe local
+gradients,,, and thatis invertible. Computationally, this only requires us to
+find numerically the solutionand evaluate numerically the expression
+in equationfor a given. This allows
+us to avoid needing to compute directly. Now sinceand since we can computeusing equation,
+we can numerically evaluate.
+This provides the needed gradients for training our models with
+manifold latent spaces.
+
+For learning via back-propagation, we use these results to assemble the needed
+gradients. For our manifold encoder maps, we use the following approach.
+Using,
+we first find numerically the closest point in the manifoldand represent it asfor
+some chart. Next, using this chart we compute the gradients using that
+
+We take in equationa column vector convention with.
+We next compute
+
+and
+
+From equationsand,
+the gradients,,
+and using equation, we compute.
+This allows us to learn VAEs with latent spaces forwith general
+specified topologies and controllable geometric structures.
+We provide additional details in Appendix A.
+We refer to this learning framework for data-driven modeling of
+dynamics on latent spaces having general geometries as
+Geometric Dynamic Variational Autoencoders (GD-VAEs).
+
+We remark that the geometry of manifolds can be represented in many different
+ways using either extrinsic or intrinsic descriptions. The algorithms
+leverage extrinsic descriptions which allows for avoiding the need for
+local coordinate charts and instead uses a global parameterization
+(over-parameterization) of the manifold. While many of the numerical
+calculations are performed in, we should emphasize that
+the learning methods still gain the benefits of the lower dimensionality
+of the manifold and still gain the benefits of the constraints arising from
+the latent-spaces geometric and topological structure. For instance,
+the decoder only needs to learn correct mappings from the subset of points
+that lie within the manifold. The manifold latent-space results in
+learning methods gaining statistical power from the training samples
+since their mappings to and from the manifold results overall in
+needing to learn responses over a smaller set of inputs.
+
+The manifold latent spaces provided by GD-VAEs also
+can be combined with the use of tailored prior distributionsfor the manifold setting.
+For simplicity, we primarily use here generic Gaussian priors similar to those
+used on the ambient space. When restricted to the geometric structure this gives
+a conditional probability distribution over the manifold. Our aim here is
+to use the priors to help with identifiability by setting the length-scale of
+the embedding maps and to help with learning by driving training steps
+toward a common target encoding. The GD-VAE methods
+are flexible and any prior for which the KL-Divergence regularization can be
+computed can be used in practice. Priors can be developed for
+specific manifold latent-spaces leveraging further knowledge
+and information relevant to a target machine learning task.
+
+GD-VAEs provide ways to leverage topological and geometric
+information to help unburden the encoder and decoder from having to learn
+these embedding structures as part of training. As we shall discuss
+below in the context of specific examples, the manifold latent space
+structures also can help with reduced sensitivity to noise and obtaining more robust and
+parsimonious representations. This increased level of organizational structure
+also can be used to help with identifiability and with interpretability of the
+learned representations.
+
+SECTION: Results
+We report on the performance of the methods.
+We consider examples that
+include learning the dynamics of the non-linear Burger’s PDEs
+and reaction-diffusion PDEs. We also investigate
+learning representations
+for constrained mechanical systems.
+We consider the roles of manifold latent spaces having
+different dimensions, topology, and geometry.
+
+SECTION: Burgers’ Equation of Fluid Mechanics: Learning Nonlinear PDE
+Dynamics
+We consider the nonlinear viscous Burgers’ equation
+
+whereis the viscosity. We consider
+periodic boundary conditions on. Burgers equation is
+motivated as a mechanistic model for the fluid mechanics of advective transport
+and shocks, and serves as a widely used benchmark for analysis and
+computational methods.
+
+The nonlinear Cole-Hopf Transformcan be used to relate Burgers
+equation to the linear Diffusion equation. This provides a representation of the solution
+
+This can be represented by the Fourier expansion
+
+Theandwiththe Fourier transform. This provides an analytic representation
+of the solution of the viscous Burgers equationwhere. In general, for nonlinear PDEs with
+initial conditions within a class of functions, we aim to learn
+models that provide predictionsapproximating the evolution operatorover time-scale.
+For the Burgers equation, theprovides in principle
+an analytic way to obtain a reduced order model by truncating the
+Fourier expansion to.
+This provides for the Burgers equation a benchmark model against which to
+compare our learned models. For general PDEs comparable analytic
+representations are not usually available. In addition, for many problems
+arising in practice, we are interested primarily in how the system
+behaves for a limited class of initial conditions and parameters.
+The aim then becomes to find a reduced model that predicts well
+the outcomes for these circumstances. We show how data-driven
+approaches can be developed for this purpose.
+
+We develop VAE methods for learning reduced order models for the responses of
+nonlinear Burgers Equation when the initial conditions are from a collection of
+functions. We consider in particular. We remark that while the initial
+conditions are a linear combination of two functions, this relation does
+not hold for the solutions given the non-linear dynamics of the Burgers’
+PDE. We learn VAE models that extract fromlatent
+variablesto predict. Given the non-uniqueness of
+representations and to promote interpretability of the model, we introduce the
+inductive bias that the evolution dynamics in latent space foris linear of
+the form, giving exponential decay rate.
+For discrete times, we take, where. We treatedas a hyperparameter in our studies with, but this
+could also be learned if additional criteria is introduced for the latent-space
+representations. The exponential decay is used to influence how the dynamical
+information is represented in latent space and also helps ensure dynamical
+stability for predictions. For the encoders and decoders, we consider general
+nonlinear mappings which are represented by deep neural networks.
+
+We train the model on the pairsby drawingsamples ofwhich generates the
+evolved state under Burgers equationover time-scale. We perform studies with parameters,with our Deep Neural Networks (DNNs) with layer sizes
+(in)-400-400-(out), ReLU activations, and,. The
+covariancesandused are diagonal with
+initial standard deviationsso thatand. We show results of our model predictions in
+Figureand
+Table.
+
+We investigate the importance of the non-linear approximation properties of our
+methods in capturing system behaviors. We do this by making comparisons with linear
+methods that include Dynamic Mode
+Decomposition (DMD),
+Proper Orthogonal Decomposition (POD), and
+a linear variant of our GD-VAE approach. Recent CNN-AEs have also studied related
+advantages of non-linear
+approximations. Some
+distinctions in our work is the use of VAEs to further regularize the autoencoders and
+using topological latent spaces to facilitate further capturing inherent structures. The
+DMD and POD are widely used and successful approaches that aim to find an
+optimal linear space on which to project the dynamics and learn a linear
+evolution law for system behaviors. DMD and POD have been successful in
+obtaining models for many applications, including steady-state fluid mechanics
+and transport problems.
+However, given their inherent linear approximations they can encounter
+well-known challenges related to translational and rotational invariances, as
+arise in advective phenomena and other
+settings. Our comparison studies can
+be found in Table.
+
+We also considered how our VAE methods performed when adjusting the parameterfor the strength of the
+reconstruction regularization. The reconstruction regularization has a
+significant influence on how the VAE organizes representations in latent space
+and the accuracy of predictions of the dynamics, especially over multiple
+steps, see Figureand
+Table. The regularization serves to
+align representations consistently in latent space facilitating multi-step
+compositions. We also found our VAE learned representations capable of some
+level of extrapolation beyond the training data, see
+Table. While extrapolation was not our
+main aim, it is interesting that the learned neural network representations
+appear to be based on features that retain enough information to be able to predict
+system responses reasonably even outside the training domain.
+
+SECTION: Burgers’ Equation: Topological Structure of Parameterized PDEs
+For parameterized PDEs and other systems, there is often significant prior
+geometric and topological information available concerning the space
+of responses of the system. For example, the parameters may vary periodically
+or have other imposed constraints limiting possible responses. We show
+how our methods can be utilized to make use of this structure to
+learn latent space representations having specified topological
+or geometric structures.
+
+SECTION: Periodic and Doubly-Periodic Systems: Cylinder and Torus Latent Spaces
+We start by considering Burgers’ equations with initial conditions
+parameterized periodically as
+
+We consider solutions with. Since the boundary conditions
+are periodic, the initial conditions parameterized byeffectively shift relative to one another and we have the topology of a circle.
+We also consider initial conditions parameterized doubly-periodic as
+
+This corresponds to the topology of a torus. We can project our solutions onto
+the Clifford Torus given by the product space, whereis the circle space.
+For example representations of latent spaces, see
+Figure. In each case, we seek
+representations that disentangle state information of
+the collection of solutionsor.
+
+In principle, for the periodic case, one analytic way the family of solutionscould be encoded continuously is to use
+thelatent space with mapping
+
+This is similar to projecting a cone-shaped manifold in three dimensions to the
+two dimensional-plane. However, in practice, this is hard to learn from
+the training data given how this representation entangles the time
+and configuration state information,
+see Appendix.
+Also, while such encodings may be useful for some problems, using
+models that disentangle time and the configuration state information
+into separate dimensions in the latent space is expected to result in
+simpler manifold structures and more interpretable results.
+We impose this structure by seeking representations of the form
+
+The mappingdoes not depend on time and captures the current state information.
+As a consequence of the potentially non-trivial topology of thelatent
+variable, Euclidean latent spaces with a continuous encoder
+that disentangles time must also map to a sufficiently larger number
+of dimensions to embed the manifold to preserve the topology.
+In the periodic case, this would be to at least three
+dimensions. An example of such an analytic mapping tois
+
+This mapping corresponds in a latent space having a cylinder topology.
+Similarly, for the doubly-periodic familythe state
+information can be mapped in principle to a torus by.
+This would yield the disentangled embeddingwith. The torus can be represented in principle
+inor as a product spacewhereis the circle space. This latter representation
+is referred to as the Clifford Torus. This
+gives the latent space with the cylinder topology,
+whereis the base-space. For periodic case theis
+a circle and for the doubly-periodic case theis a torus.
+
+We demonstrate how our methods can be used in practice to learn representations
+for the dynamics of the Burgers’ Equation solutions for latent spaces having
+specified topologies. We use a few approaches to leverage the prior geometric
+information about the system and to regulate how the model organizes the latent
+representations. This includes (i) specifying an explicit time-evolution map
+to disentangle time by requiring, whereis the discrete time step andis the-standard basis vector. We also use (ii)
+projection of the representation to a manifold structure, here we project the
+firstdimensions to impose the topology as discussed in
+Section.
+In this way, we can introduce inductive biases for general initial conditions
+leveraging topologic and geometric knowledge to regulate the latent
+representations toward having desirable properties.
+
+For our example of the Burger’s Equationswith the
+periodic initial conditions in equation, we train usingsolutions sampled uniformly overand time. The samples are
+corrupted with a Gaussian noise having standard deviation. We
+train GD-VAEs using our framework discussed in
+Section. The neural networks have the architecture with
+number of layers for encoders (in)---(latent-space)
+and decoders (latent-space)---(out). The layers
+have a bias except for the last layer and ReLU activation
+functions. The numerical solutions of the
+Burgers equationare sampled aswithatpoints giving (in)=(out)==. We also perform
+trainings representing the encoder variance with a
+trainable deep neural network, and set decoder variance such that log
+likelihood can be viewed as a Mean Square Error (MSE) loss with weight.
+
+We predict the future evolution of the solutions of
+the Burger’s Equation over multiple steps using equation.
+We investigate the-accuracy of the learned GD-VAE predictions relative
+to the numerical solutions. We compare the GD-VAE with more conventional VAE
+methods that do not utilize topological information. We also make
+comparisons with standard Autoencoders (AEs) with
+and without utilizing topological information and our projection approaches
+in Section. We refer in the notation
+to our geometric projection as.
+We show our results in Table.
+
+We find our GD-VAE methods are able to learn parsimoneous disentangled
+representations that achieve a comparable reconstruction accuracy to standard
+VAE and AE provided these latter methods use enough dimensions. Reconstruction
+accuracy alone is only one way to measure the quality of the latent-space
+representations. Topological considerations play a significant role. When
+using too few dimensions, we see the standard AE and VAE methods can struggle
+to learn a suitable representation, see Figure.
+As we discuss in more detail in Appendix, this arises
+since the autoencoders involve continuous maps that are unable to accomodate
+the topology injectively. For periodic systems this can result in rapid
+looping back behaviors approximating a discontinuity which results in
+scattered latent space points, see Figure.
+For additional discussions of the role of latent topology and
+training behaviors see Appendix.
+
+For longer-time multi-step predictions, we find our geometric projections can
+help with stability of the predictions arising from composition of the learned
+maps. We find both GD-VAEs and AEs withhave enhanced
+stability when compared to standard AEs for multi-step predictions. We find at
+time, the AE+still is able to make accurate
+predictions, while the standard AE incurs significant errors, see
+Table. This arises from the geometric
+constraints reducing the number of dimensions and the ”volume” of
+the subset of points in the latent space overwhich the encoder and decoders must
+learn correct mappings for responses. The geometric projection
+also serves to enhance the
+statistical power of the training data given more opportunities for common
+overlap of cases. In contrast, for multi-step predictions by general autoencoder maps
+new latent-space codes can arise during compositions
+that are far from those encountered in the training set
+resulting in unknown behaviors for the dynamic predictions.
+While in some cases there is comparable-reconstruction
+errors to AEs with, the VAEs give
+better overall representations and more reliable training
+since the noise regularizations
+result in smoother organization of the latent codes with less
+local sensitivity in the encoder-decoder maps relative to
+the AEs. The geometric projections developed for GD-VAEs provide further
+benefits for stability by constraining the latent-space dynamics to be
+confined within a closed manifold which further
+enhances the multi-step predictions, see results forin
+Table.
+
+SECTION: Constrained Mechanical Systems: Learning with General Manifold Latent Spaces
+We consider physical systems with constrained mechanics, such as the
+arm mechanism for reaching for objects in Figure.
+The observations are taken to be the two
+locationsgiving. When the segments are
+constrained, these configurations lie on a manifold embedded
+in. The aim of these studies is to show
+how GD-VAEs with manifold latent spaces can be used to
+learn representations for constrained systems. We do not
+currently consider dynamical predictions in these studies.
+This corresponds to GD-VAEs with latent space dynamicsgiven by the
+identity map.
+We focus instead on the types of representations learned
+for the constrained latent geometries. When
+the two segments are constrained to be rigid,
+this results in the collection of configurations having the
+topology of a torus. We can also allow
+the segments to extend and consider more exotic constraints. For example, we could
+require the two pointsalways be within a constraint set
+that is a klein bottle surface within.
+Related situations arise in other areas of imaging and mechanics, such as in
+pose estimation and in studies of visual perception.
+
+For the arm mechanics, we can use
+this prior knowledge to construct a latent space having the topology of a torus
+represented by the product space of two
+circles. To obtain a learnable class of
+manifold encoders, we use the family of maps. We taketo map intoand, whereand. This provides an analytic formulation we can use
+to perform gradient-based learning in combination with our back-propagation training
+methods in
+Section. For the case of klein bottle constraints,
+we use a numerical approach based on a point-cloud representation of the
+non-orientable manifold with parameterized embedding ingiven by
+
+We take. Theis taken to be the map to
+the nearest point of the manifold, which we use to compute
+numerically the surface information. This allows for gradient-based learning when
+combined with our back-propagation training methods discussed in
+Section.
+
+We train our GD-VAE methods with encoder and decoder DNNs having layers of
+sizes (in)-100-500-100-(out) with Leaky-ReLU activations withwith results reported in Figure. The results
+demonstrate how we can learn smooth representations for constrained mechanical
+systems for both orientable and non-orientable manifold latent spaces. For
+both the torus and klein bottle latent spaces, we see smooth representations
+are learned for generating the configurations. For the latent torus manifold,
+the representation is comparable to the two angular degrees of freedom. This
+shows our GD-VAE approaches can be used as unsupervised learning methods for
+contrained mechanical systems to learn representations in manifold latent
+spaces with general topology and orientability.
+
+SECTION: Reaction-Diffusion PDEs in 2D: Learning Representations
+for Spatially Distributed Dynamics
+We show how our GD-VAEs can be used to learn features for representing
+the states and dynamic evolution of spatially extended reaction-diffusion systems,
+see Figure.
+Consider the system
+
+Theandgive the spatially distributed concentration of
+each chemical species at timewith. We consider the
+case with periodic boundary conditions with. We
+develop learning methods for investigating the Brusselator system, which is known
+to have regimes exhibiting limit
+cycles. This
+indicates after an initial transient, the orbit of the dynamics
+will localize and approach a subset of states topologically
+similar to a circle. We show how GD-VAE can utilize this
+topological information to construct latent spaces for encoding states of the
+system. The Brusselatorhas reactions withand. We take
+throughout the diffusivityand reaction rates.
+
+We consider initial conditions for the concentration fieldsandparameterized bygiven by
+
+We remark that while the initial conditions are given by a linear combination
+of functions the resulting solutions do not satisfy this relation given the
+non-linear dynamics of the reaction-diffusion system. The chemical fields
+evolve under periodic boundary conditions within a box length.
+We use second order Central-Differences to estimate the spatial derivatives and
+Backward-Euler method for the temporal evolution(py-pde python packageis used for numerical
+calculations). For the discretization, we space the grid points withand use a time-step of.
+
+We show how our GD-VAE methods can be used for solutions to learn a parsimonious
+disentangled representations in a manifold latent space. The dynamics consists
+of a brief transient followed by close approach to a limit cycle. For the
+dynamics after the transient, we encode the temporal and state information
+using a cylindrical topology. While a preliminary application of Principle
+Component Analysis (PCA) in a sufficiently large number of dimensions
+can be used to identify the transient and the period of the limit cycle,
+it does not provide a well-organized or parsimonious representation of the
+dynamics. Using from PCA the top three singular vectors, we show the
+entangled embedding in Figure.
+
+We use GD-VAE methods to learn a more organized encoding for representing the
+states and system dynamics. For this purpose, we develop encoders based on
+Convolutional Neural Networks (CNNs) and Multilayer Perceptrons (MLPs) to map
+from spatial concentration fieldsto latent codes. The encoder
+serves to map the spatial fieldsto codesin a manifold latent
+space having prescribed topology using our methods discussed in
+Section. We develop decoders based on using
+MLPs that control Transpose Convolutional Neural Networks (T-CNNs) to map from
+latent codesto construct spatial concentration fields, see
+Figure.
+
+We specify a manifold latent space having the geometry of a cylinderwithand axis
+in the-direction. We prescribe on this latent space the dynamics having
+the rotational evolution
+
+This is expressed in terms of an embedding in. Thegives the angular velocity. This serves to regularize how the encoding of the
+reaction-diffusion system is organized in latent space.
+
+The GD-VAE then is tasked with learning the encoding and decoding mappings for
+the reaction-diffusion concentration fieldsto representations that are
+well-organized for capturing and predicting the reaction-diffusion system
+states and dynamics. This organization allows for making multi-step
+predictions from the latent space. Throughout our empirical studies, we use
+the angular velocitydetermined from the preliminary PCA
+analysis. In principle, such parameters also can be learned as part of the
+training of the GD-VAE.
+
+For training, we use an architecture with CNNs having four layers
+each of which has (in-channels, out-channels, kernel-size, stride, padding)
+with parameters as follows respectively (2,10,3,3,1),(10,20,3,3,1),(20,40,2,2,1),(40,100,5,1,0). Each layer was followed by aactivation, except for the last layer which is fed into the MLPs. The
+MLPs have an architecture with layer sizes 100-(latent-space-embed) where
+latent-space-embed=3. Theis then applied to the output
+of the MLPs to map to the manifold latent spaceusing our methods
+discussed in Section. For the decoder, we use
+MLPs with layer sizes (latent-space-embed)-100. We use T-CNNs having four
+layers each of which has (in-channels, out-channels, kernel-size, stride,
+padding) with parameters (100, 40, 5, 1, 0), (40, 20, 2, 2, 1), (20, 10, 3, 3,
+1), (10, 2, 3, 3, 1). All layers have a bias andactivations except for
+the last layer.
+
+We use our GD-VAE methods for learning representations and for predicting the
+evolution dynamics of the reaction-diffusion system. We
+show a few predictions of the concentration fields by the GD-VAEs in
+comparison to the numerical solutions of the PDE in
+Figure. We characterize the accuracy of the
+predictions and reconstructions using-relative errors. We report results
+of our methods for multi-step predictions in
+Table.
+
+We find that GD-VAEs are able to learn representations in the manifold latent
+spaces capable of making good predictions of the dynamics. The manifold latent
+space is particularly advantageous for multi-step predictions by helping to
+constrain the encodings promoting more robust learning over a lower dimensional
+space and smaller subset of points. In this geometric setting, learning only
+needs to be performed over the subset of points on the manifold. This enhances
+the statistical power of the training data. This also simplifies the type of
+encoder and decoder response functions that need to be learned relative to
+the higher dimensional setting of. In addition, during
+multi-step predictions we see the geometric constraints also enhance stability.
+This arises from the latent space dynamics always being confined within the
+manifold. As a result, it is less likely for the one-step updates to map to a
+codein unfamiliar parts of the latent space away from those locations
+characterized during training.
+The lower dimension of the geometric
+latent space also provides similar benefits with encoding. This arises from
+points being more concentrated and providing more statistical power
+in learning a model for the local
+responses of the underlying reaction-diffusion system. The more organized
+representations are also more amenable to interpretation.
+
+These results indicate some of the ways our GD-VAE approaches can be used to leverage
+qualitative information about the dynamics both to enhance learning and to gain
+insights into system dynamics. The methods provide practical ways to learn
+parsimonious representations capable of providing quantitatively accurate
+predictions for high dimensional dynamical systems having latent
+geometric structures. The GD-VAEs can be used to obtain representations for
+diverse learning tasks for many types of dynamical systems.
+
+SECTION: Software Package
+We have developed software packages for the introduced GD-VAE methods. This
+includes python implementations of our geometric projections (g-projection),
+manifold latent space representations, custom back-propagation approaches for
+modular training, and examples. The python package can be installed
+usingpip install gd-vae-pytorchor
+downloaded from our website. For more
+information, see.
+
+SECTION: Conclusions
+We introduced GD-VAEs for learning representations of nonlinear
+dynamics on manifold latent spaces having general topologies
+and geometries. The methods allow for
+learning representations with prescribed geometric properties
+which can be used to help enhance
+the robustness of dynamical predictions, yield more interpretable results, or
+provide further insights into the underlying mechanisms generating observed
+behaviors. The methods also allow for leveraging qualitative information
+and analysis of dynamical systems for use in data-driven learning.
+We performed several benchmark studies to validate and characterize
+the methods. This included making comparisons of GD-VAEs with POD,
+DMD, and more conventional AEs. Our results indicate how the
+non-linear approximation properties of neural networks combined
+with geometric inductive biases can be used to help
+improve the reductions of representations and the accuracy of
+predictions and reconstructions. We also presented
+results for constrained mechanical systems, and
+the non-linear dynamics of parameterized PDEs,
+Burgers’ equations, and reaction-diffusion systems.
+The results indicate some of the ways
+geometric and topological information
+present opportunities to simplify model representations,
+aid in interpretability, and enhance
+robustness of predictions. The GD-VAEs can be
+used to obtain representations for diverse types
+of learning tasks involving dynamics.
+
+SECTION: Acknowledgements
+Authors research supported by grants DOE Grant ASCR PHILMS DE-SC0019246 and NSF
+Grant DMS-1616353. Also to R.N.L. support by a donor to UCSB CCS SURF program.
+Authors also acknowledge UCSB Center for Scientific Computing NSF MRSEC
+(DMR1121053) and UCSB MRL NSF CNS-1725797. P.J.A. would also like to
+acknowledge a hardware grant from Nvidia.
+
+SECTION: Appendix
+SECTION: Backpropagation of Encoders for Non-Euclidean Latent Spaces given by
+General Manifolds
+We develop methods for using back-propagation to learn encoder maps fromto general manifolds. We perform learning using
+the family of manifold encoder maps of the form. This allows for use of latent spaces
+having general topologies and geometries. We represent the manifold as an
+embeddingand computationally use
+point-cloud representations along with local gradient information, see
+Figureand.
+To allow forto be
+learnable, we develop approaches for incorporating our maps into general
+back-propagation frameworks.
+
+For a manifoldof dimension, we can represent it by an
+embedding within, as supported by the Whitney Embedding
+Theorem. We letbe a mappingto points on the manifold. This allows for learning within the family of manifold encodersany function fromto. This facilitates use of deep neural networks and other
+function classes. In practice, we shall taketo map
+to the nearest location on the manifold. We can express this as the
+optimization problem
+
+We can always express a smooth manifold using local coordinate
+charts, for example, by using a local Monge-Gauge quadratic fit
+to the point cloud. We can expressfor some chart. In terms of the coordinate chartsand local parameterizationswe can
+express this as
+
+where. Theis the input andis the solution sought.
+For smooth parameterizations, the optimal solution satisfies
+
+During learning we need gradientswhenis varied characterizing variations of points
+on the manifold. We derive these expressions by considering
+variationsfor a scalar parameter. We can obtain the
+needed gradients by determining the variations of. We can
+express these gradients using the Implicit Function Theorem as
+
+This implies
+
+As long as we can evaluate atthese local gradients,,, we only need to determine computationally the solution.
+For the back-propagation framework, we use these to assemble the needed
+gradients for our manifold encoder mapsas follows.
+
+We first find numerically the closest point in the manifoldand represent it asfor
+some chart. In this chart, the gradients can be expressed as
+
+We take here a column vector convention with. We next compute
+
+and
+
+For implementation it is useful to express this in more detail component-wise as
+
+with
+
+The final gradient is given by
+
+In summary, once we determine the pointwe need only
+evaluate the above expressions to obtain the needed gradient for learning via
+back-propagation
+
+Theis determined byusing. In practice, theis
+represented by a deep neural network fromto.
+In this way, we can learn general encoder mappingsfromto general manifolds.
+
+SECTION: Role of Latent Space Geometry in Training
+In practice, the encodings that organize the data in a manner convenient for
+representing the dynamic evolution can be challenging to learn in data-driven
+methods. In cases where the embedding space is too low dimensional or
+incompatible with the intrinsic topology this is further compounded. To
+illustrate some of the issues that arise, we consider a dynamical system with a
+periodic parameterization using as our example the Burgers’ equation in
+equationdiscussed in Section. For
+this data set, it is natural to consider representing the system state and the
+dynamics using the geometry of a cylinder. In principle, it is possible
+to obtain a representation of the dynamics if restricted over a finite
+duration of time using only a two dimensional Euclidean spaceas in equation. This is similar to a projection
+of a cone-shaped manifold in three dimensions projected to the
+two dimensional plane.
+
+However, in practice this can be difficult to
+work with since there is an inherent tension during training between the
+periodicity and the natural ways the typical encoders will operate.
+This arises from the continuity of the encoder model class used in training
+that maps from the dynamical system solutions to thelatent
+space. We find that training proceeds initially by mapping a collection
+of states to a smooth patch of codes in the latent space. As a
+consequence of continuity, the encoder for the states associated with
+system responses forandneed to map to similar codes. This results in an encoder that exhibits for a subset of
+states an extreme sensitivity to inputs that results in rapidly varying
+the code to loop back to accommodate the periodicity, seeandin Figure.
+Again, the issue arises since the states must map continuously to the latent space for
+all encoders encountered during training. Unless the map happens already to form a
+circle or other periodic structure inthere will be a subset of
+points that arise with rapid variation. This results in a subset
+of points having a poor encoding with states mapped to codes scattered in the
+latent space. This provides a poor basis for representing and predicting the
+system dynamics. When encoding over time we see disorganized fragments,
+connected again by transitions having rapid variations.
+We show this typical behavior observed during such training in
+Figure. This indicates the importance
+of choosing a latent space with either a sufficiently large
+number of dimensions or which has a topology that is compatible with
+the data set. Our GD-VAE approach allows for keeping the
+latent space dimensionality small by allowing for accommodating general
+topologies in the latent space using our methods in
+Section.
+
+SECTION: Identifying Latent Geometric Structures using VAE Covariance
+The VAE training can be performed with a learnable covariance structurewith entries, see equation. In VAE the-divergence regularization term is typically used to drive the encoding
+points to match a standard Gaussian distribution or other prior. The
+coding-point distribution arises from a combination of the scattering of the
+coding of points from the encoded training data points and from the Gaussian
+noise controlled by the variance, see equation.
+Consider covariance, where. If components ofare held
+fixed to be a small value then the coding-point distribution can only arise
+from scattering of the encoding points. However, ifis
+learnable, then the encoder can map to a narrow distribution in some of the
+coding points with the Gaussian noise with variancecompensating to satisfy the-regularization term.
+
+We have found in practice in some cases this can be used to identify geometric
+structure within the data. We perform the embedding into a higher dimensional
+space than is needed, we find smaller values ofcorrelate with
+encoding to a lower dimensional manifold structure, similar to. We show how this can be used in practice to find
+reduced embeddings. By looking at mini-batches of data withsamples, we
+can compute two statistics (i) the mean of the variance (mov)
+
+and (ii) the
+variance of the mean (vom)
+
+where.
+
+When allowing the variance to be trainable, we can computeandto help identify important feature directions in latent space. We
+show results for training the Burgers’ Equation embedding the cylinder topology
+case of Sectionin Figure.
+We see important feature components of the encoded data have the characteristic
+signature of having a largeand a small. If we reduce
+the encoding to just these components, we can obtain a lower dimensional
+embedding for the data. We find this embedding have a cylindrical geometric
+structure providing a good latent space representation of the system state
+information. In contrast, if we were to choose any two arbitrary latent code
+dimensions, such aswe obtain a poor entangled representation, see
+Figure. This allows for using information from
+theandto further extract geometric structure from
+data. This can be used to formulate latent manifold spaces for use with our
+GD-VAE approaches.
+
+SECTION: References

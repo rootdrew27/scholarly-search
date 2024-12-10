@@ -1,0 +1,599 @@
+SECTION: MLP, XGBoost, KAN, TDNN, and LSTM-GRU Hybrid RNN with Attention for SPX and NDX European Call Option Pricing
+
+We explore the performance of various artificial neural network architectures, including a multilayer perceptron (MLP), Kolmogorov-Arnold network (KAN), LSTM-GRU hybrid recursive neural network (RNN) models, and a time-delay neural network (TDNN) for pricing European call options. In this study, we attempt to leverage the ability of supervised learning methods, such as ANNs, KANs, and gradient-boosted decision trees, to approximate complex multivariate functions in order to calibrate option prices based on past market data. The motivation for using ANNs and KANs is the Universal Approximation Theorem and Kolmogorov-Arnold Representation Theorem, respectively. Specifically, we use S&P 500 (SPX) and NASDAQ 100 (NDX) index options traded during 2015-2023 with times to maturity ranging from 15 days to over 4 years (OptionMetrics IvyDB US dataset). Black & Scholes’s (BS) PDE[1]model’s performance in pricing the same options compared to real data is used as a benchmark. This model relies on strong assumptions, and it has been observed and discussed in the literature that real data does not match its predictions. Supervised learning methods are widely used as an alternative for calibrating option prices due to some of the limitations of this model. In our experiments, the BS model underperforms compared to all of the others. Also, the best MLP model outperforms the best TDNN model on all error metrics. We implement a simple self-attention mechanism to enhance the RNN models, significantly improving their performance. The best-performing model overall is the LSTM-GRU hybrid RNN model with attention. Also, the KAN model outperforms the TDNN and MLP models. We analyze the performance of all models by ticker, moneyness category, and over/under/correctly-priced percentage. Due to some of the errors being complimentary in the sense of having opposite percent over-priced and under-priced for some moneyness categories, it may be beneficial to investigate the ensembling of the best models.
+
+Key Words:European Call Option; Moneyness; Long-Short-Term-Memory (LSTM); Gated-Recurrent-Unit (GRU); Recurrent Neural Network (RNN); Time-Delay Neural Network (TDNN); Multilayer Perceptron (MLP); Self-Attention; Adaptive Moment Estimation (Adam); Kolmogorov-Arnold Representation Theorem (KART); Kolmogorov-Arnold Network (KAN)
+
+Table of Contents
+
+1. Problem description & state of the art2. Derivation of BS Option Pricing PDE3. Motivation for Deep Learning & ANNs4. Method, Data Setup, & Expected Results5. Data Summary Statistics and Exploratory Plots6. Black-Scholes Model7. MLP Model8. XGBoost Model9. TDNN Model & Potential Improvements10. RNN Models & Attention Mechanism11. Kolmogorov-Arnold Representation Theorem & KAN Model12. Evaluation & Results13. Future WorkAppendix: Best KAN Model Parameter Count & EquationsFiguresReferences
+
+SECTION: 1Problem Description & State Of The Art
+
+Financial derivatives are contractual agreements between multiple parties, the value of which is contingent upon the performance or characteristics of a specified underlying asset (or a collection of such assets), such as stocks, market indices, interest rates, commodity prices, exchange rates, or other benchmarks[2]. An option contract can be defined as a financial derivative that gives the holder the right but not the obligation to buy (call) or sell (put) an underlying asset at a specified price (strike = K) on the expiration date (European style) or before it (American style). Options are traded both in the over-the-counter market and through exchanges[3]. Purchasing a European call option allows one to bet on the price of the underlying asset rising since the predetermined strike price is subtracted from the terminal price of the underlying in the payoff. Hence, in the context of a European call option, the holder will rationally choose to exercise the option at the maturity timeif the underlying asset’s price exceeds the strike price, i.e., when. Under such circumstances, the option holder can acquire the asset by paying the strike priceto the option writer, thereby securing an asset valued at. The resultant profit for the holder is, as the asset can be immediately sold in the financial market at its current value. Conversely, if the asset’s price at maturityis less than the strike price, the option holder will opt not to exercise the option, rendering it worthless[2]. In this scenario, the holder can purchase the asset directly in the market for a price lower than, making it irrational to utilize the contractual right provided by the option[2]. Notably, the holder of a European call option is not obligated to exercise the option if the underlying asset underperforms. This flexibility allows the holder to avoid unfavorable trades. However, the option seller, or writer, is contractually bound to fulfill the terms of the option should the holder choose to exercise it[2].
+
+A crucial aspect of what makes simple options attractive is their versatility in constructing robust trading strategies and hedging positions. By combining a collection of simple options contracts in creative ways, traders can devise sophisticated strategies that optimize returns or mitigate risks. Among the most popular strategies are the straddle, condor, butterfly, and covered call. The straddle strategy involves purchasing both a call option and a put option on the same underlying asset with the same strike price and expiration date. This strategy benefits from significant price movements in either direction, as profits from one option can offset the losses from the other, making it an effective choice in highly volatile markets[4]. The condor strategy, specifically the iron condor, is a more advanced approach that involves selling an out-of-the-money put and an out-of-the-money call while simultaneously buying a further out-of-the-money put and call. This results in a strategy that profits when the underlying asset remains within a specific price range, thus limiting potential losses but also capping the maximum profit[3]. The butterfly spread is another neutral options strategy that combines both calls and puts to benefit from low volatility. It involves purchasing a call (or put) at a lower strike, selling two calls (or puts) at a middle strike, and purchasing another call (or put) at a higher strike price. The butterfly spread is designed to generate a profit when the underlying asset’s price remains near the middle strike price[5]. Lastly, the covered call strategy involves holding a long position in an underlying asset while simultaneously selling a call option on the same asset. This strategy generates additional income from the premium received for selling the call, and it is particularly attractive in markets where the underlying asset is expected to experience minimal price fluctuations[6].
+
+These strategies demonstrate the potential to creatively use simple options contracts to achieve diverse investment objectives, whether to speculate on price movements or to hedge position risk effectively. Since 1973, standardized options have been actively traded on regulated exchanges, while other options are privately negotiated and sold by financial institutions to their clients. A category of options known as exotic options exists, characterized by complex payoff structures, which may involve multiple underlying assets or FX rates. Aside from these complications, an exotic option may contain path dependency, where the payoff is influenced not solely by the asset price(s) at maturityor at a specific timebut also by the asset’s price at multiple points in time. Unlike standard options, exotic options are typically not listed on regulated exchanges but are transacted over the counter (OTC)[2]. This means they are customized and directly sold by banks and other financial institutions to their counterparties[2].
+
+In 1973, Fischer Black and Myron Scholes co-authored a paper on arguably the most important option pricing model, which is now referred to as the BS model in short. Based on several strong assumptions, they constructed a closed-form solution to a PDE describing the evolution of European style puts and calls. The PDE used by Black & Scholes is:
+
+Here,is a function of the underlying asset’s price, risk-free rate, volatility of the underlying asset, and time. The BS formula for the price of a vanilla European call option is:
+
+and
+
+Here,, is the expiration time,is time-to-maturity,is the current price of the underlying,is the strike price, andare as above. Also,is a cumulative distribution function of a zero-mean and standard deviation 1 normal variable, meaningis the probability such that this variable is less than or equal to. The assumptions for the B-S model (as described by J.C. Hull[3]) are:
+
+No transaction costs or taxes
+
+No riskless arbitrage can exist
+
+No dividends or other cash flows are paid during the lifetime of the security
+
+Trading and hedging of security is continuous, with the asset’s liquidity being guaranteed
+
+Risk-free rate is constant for all maturities
+
+Short selling is allowed without penalty or short rebate
+
+Stock price follows Geometric Brownian motion with volatility of the underlying asset being constant over the lifetime of the option. As outlined in[2], a GBM process is described by the following Stochastic Differential Equation (SDE):
+
+whereis a standard Brownian motion,denotes the drift parameter (a constant and deterministic growth rate of the asset), andis the constant volatility parameter. Equivalently, this can be expressed in its integral form as:
+
+This model for asset price dynamics is sometimes referred to as the Samuelsen model[2].
+
+Although the BS model is one of the most significant pieces of mathematical finance, earning its authors the 1997 Nobel Prize in Economics, it has been widely criticized for not matching real market data. One of the earliest works that undermined the model was published by Jackwerth & Rubinstein in 1996[7], showing that market data demonstrates skewed stock price distributions that are rarely log-normal. This goes against the BS model since it represents underlying asset prices with a log-normal distribution. A consequence of the BS model’s assumption that stock price is log-normally distributed is that log returns are expected to be normally distributed. However, multiple studies have demonstrated that log return distributions are rarely normal, as real market data displays heavy-tailed distributions[8]. The assumptions of constant volatility and interest rate have also been criticized as being unrealistic[9]. Since its inception, the BS model has seen many enhancements, but despite these continued improvements, one of the BS model’s persistent downfalls is its inability to capture the volatility smile. The volatility smile is a pattern where the implied volatility, inferred from market prices of options, varies with the strike price and maturity, deviating from the constant volatility assumption of the BS model[13,14]. Specifically, as discussed above, the BS model assumes that the volatility of the underlying asset remains constant over time, leading to a single implied volatility for all options on the same underlying asset. However, empirical evidence shows that implied volatilities tend to increase as options move away from the at-the-money (ATM) strike price, forming a "smile" shape when plotted against strike prices[2].
+
+Implied volatility, denoted as, is the volatility value that, when inserted as a parameter into the Black-Scholes option pricing formula, reproduces the market-observed option pricefor a given strike priceand maturity. Mathematically, it is defined[2]as:
+
+where. Here,represents the theoretical option price calculated using the Black-Scholes model with the implied volatility, which equates to the market priceobserved at time. Thus, implied volatility is extracted by using a quoted option value to recover a value for, which is possible since the B-S option price can be written as 1-to-1 function of volatility. Specifically, since volatility is valid in the range [ 0 , infinity), the function is restricted to this range. In fact, this function is continuous and strictly increasing in this range and has a unique solution via reasoning that relies on the absence of the arbitrage principle. Hence, by analyzing the range where this function is convex (until a point of inflection occurs), algorithms such as the Newton-Raphson method can be used to estimate values offrom the parameters, and observed option price[2]. The need for such iterative methods to solve for implied volatility further underscores the limitations of the BS model.
+
+The presence of a volatility smile indicates that market participants anticipate different levels of volatility depending on the moneyness of the option. This phenomenon can be attributed to several factors, including market expectations of future volatility, supply and demand imbalances, and the heavy-tailed nature of asset return distributions, which the BS model fails to account for[15]. In practice, the volatility smile is a significant departure from the theoretical underpinnings of the BS model and the concept of implied volatility itself, as discussed in works such as[2], highlights the discrepancy between the theoretical model and market reality. The volatility smile also reflects the market’s perception of risk. For instance, higher implied volatilities for out-of-the-money (OTM) options suggest that traders expect significant price movements, which are not captured by the BS model’s simplistic assumptions. These expectations might be driven by anticipated events, market sentiment, or historical data showing fat tails in the distribution of returns. Overall, the existence of the volatility smile is a key indicator of the BS model’s limitations and has prompted the development of more sophisticated models that better capture the complexities of real market behavior, such as stochastic volatility models[11,12], local volatility models[19,21,22], and jump-diffusion models[23,24,25]. Additionally, Lévy models, both finite and infinite activity[26,27,28,29,30], have been explored for their ability to better model the heavy tails and skewness observed in asset return distributions, as highlighted in[2].
+
+Local volatility models, as introduced by Dupire[19]and further developed by Derman and Kani[21], have gained prominence as they allow for precise calibration to market-observed implied volatilities. Unlike other models that require extensive calibration of open parameters, the local volatility framework directly uses implied volatility data to match market prices of European vanilla options, thereby effectively reproducing volatility skews and smiles. This exact calibration is achieved without the need to optimize model parameters, making local volatility models particularly attractive for pricing and risk management of derivative products[2]. Stochastic volatility models, such as the Heston model[11], and jump-diffusion models, like those proposed by Merton[23]and Kou[24], also provide more robust mechanisms for capturing market behaviors that the Black-Scholes model fails to account for, including jumps in asset prices and heavy tails in return distributions. While these models are more flexible and can be fitted to option market data, they often require intricate calibration processes to align model outputs with market prices. Moreover, the original Black-Scholes model has been further extended with enhancements such as the inclusion of dividends[10]and more intricate modeling of interest rate dynamics. Notable examples include the Hull-White model, which integrates stochastic interest rates into the Black-Scholes framework to enable the pricing of interest rate-sensitive derivatives[20], and the Black-Derman-Toy model, which incorporates interest rate modeling to account for their effects on bond option pricing[31]. Additionally, the Heath-Jarrow-Morton (HJM) framework provides a comprehensive approach for modeling the evolution of interest rates, significantly broadening the applicability of the original Black-Scholes model in financial markets[32].
+
+SECTION: 2Derivation of Black-Scholes PDE
+
+The following derivation is based on the detailed discussion and proof by Oosterlee & Grzelak in their widely recommended textbookMathematical Modeling and Computation in Finance[2]. An outline of the proof of the solution via the Feynman-Kac theorem is also provided in their work, but the proof is omitted in this paper. Other alternative solution methods include MC simulation, Fourier transform or characteristic function methods, discretization of the PDE via finite differences, and pricing via the martingale approach, which is also discussed by Oosterlee & Grzelak.
+
+SECTION: 2.1 Itô’s Lemma and Itô Process
+
+Itô’s lemma, named after the Japanese mathematician Kiyoshi Itô, is a cornerstone in the study of stochastic processes and stochastic calculus. It provides the necessary framework for working with increments of Brownian motionas, functioning analogously to a Taylor expansion when handling deterministic variables and functions. One can derive solutions to SDEs and formulate pricing stochastic partial differential equations (SPDEs) for various financial derivative products through Ito’s lemma. Also, it acts as a theoretical underpinning for many results in stochastic optimal control and reinforcement learning.
+
+First, we need to consider the following Stochastic Differential Equation (SDE) as described by Oosterlee and Grzelak[2], which corresponds to the Itô process:
+
+whereandrepresent the drift and volatility functions, respectively. These functions are required to satisfy the following Lipschitz continuity conditions, which ensure that the drift and volatility functions do not exhibit rapid growth:
+
+for some constantsand anyandin. When these conditions are met, it follows with probability one that a continuous and adapted solution to this SDE exists, satisfying[2]. Now, consider the case where a processfollows the Itô dynamics outlined above, where the driftand diffusionsatisfy the previously mentioned Lipschitz conditions. If we define a functionof the stochastic processand time, and assume thathas continuous partial derivatives, namely,, and, then a new stochastic variablecan be shown to also follow an Itô process[2]. This process is governed by the same Brownian motion. The result of the lemma, which makes it extremely useful for computation, is that the SPDE foris then given by:
+
+Equivalently, Itô’s lemma can also be expressed in its integral form as follows:
+
+This integral formulation can be particularly useful for deriving solutions to various SPDEs and evaluating complex integrals. As seen above, Itô’s lemma is analogous to the Taylor expansion in standard calculus but includes an additional Itô correction term to account for the stochastic nature of the process. Specifically, the Itô correction term is thecomponent in the drift term, which arises due to the quadratic variation of the Brownian motion. Typically, any higher-order terms are neglected under the convention that their contribution is insignificant in the limit as[2].
+
+SECTION: 2.2 Black-Scholes PDE & Solution
+
+Building on the assumption outlined in section 1 of this paper, Black and Scholes derived their seminal partial differential equation (PDE) for the valuation of European options[1]. Namely, for this derivation, we assume a constant interest rateand volatility. The market is considered liquid, meaning assets can be traded continuously and in arbitrary quantities. Additionally, short-selling is permitted without penalty, transaction costs and dividend payments are neglected, and we assume the absence of any bid-ask spread in stock/index and option prices. A fundamental task in quantitative finance is determining the fair value of a financial derivative at the time of sale, denoted as. More generally, we seek to determine the valuefor any timeand to manage the associated risk incurred when an option writer must trade the assetat maturity, given a fixed strike price. This derivation of the BS PDE is centered around the concept of a replicating portfolio, which is designed to mirror the cash flows of the financial derivative. This portfolio can be static or dynamic, with the latter requiring periodic rebalancing based on new market information. We will follow the approach in[2], where a dynamic delta hedging strategy is employed, and the portfolio is continuously adjusted rather than at discrete rebalancing times. To begin, note that the underlying asset’s stochastic process is assumed to be a GBM with constant volatility, which has the following aforementioned SDE under the real-world measure:
+
+Given that the option priceis a function of both timeand the stochastic process, we start by applying Itô’s lemma to derive its dynamics:
+
+Then, we substitute the SDE forinto the Itô expansion above, starting with the first-order terms:
+
+Expanding further:
+
+Next, we compute the second-order term, but first, we outline some conventions.
+
+SECTION: 2.2.1 Box Calculus Conventions for Itô Calculus
+
+In Itô calculus, the algebra used to handle the stochastic terms includes special rules for the manipulation of the differentialsandand terms involving their products. In essence, we can neglect higher-order terms likeand, since they become insignificant as. The key rules are:
+
+For instance, when expanding the product of two differentials, sayand, the following computation applies given these rules:
+
+Which gives the useful rule:
+
+These conventions are crucial for the correct manipulation and simplification of stochastic differential equations in the context of Itô calculus and will be useful in simplifying the second-order term. Specifically, we get the following after expanding:
+
+Then, the only term that remains after applying these Box calculus rules is
+
+which is simply an example of the aforementioned rule for multiplying two differentials with.
+Now, substituting this back into our equation for, we get:
+
+Finally, combining all terms with, we arrive at the following expression:
+
+Next, we construct a replicating portfolio, consisting of a long (i.e., buy) position in one example of the option (with value) and a short (i.e., sell) position of sizein the stock/index:
+
+This portfolio must hedge the risk, meaning the stochastic component governed byshould be eliminated. To this end, we calculate the change in the portfolio value using our existing expressions forand:
+
+To ensure the portfolio’s value is risk-free/deterministic, we choosesuch that the-terms cancel out:
+
+Substituting this into the previous equation results in:
+
+Importantly, the portfolio dynamics are now independent of the drift term, relying solely on the volatility, which is responsible for encapsulating the uncertainty in the future behavior of stock prices[2]. The portfolio value,, should grow at the risk-free rate, comparable to an investment in a risk-free money savings account. This growth ensures that the return on the portfolio matches that of a risk-free investment. We can represent a bank account, where the amount of money grows at the rate, as follows:
+
+whereis the initial amount in the bank account at time. The differential form of the bank account growth is then given by:
+
+For a portfolio amount, the change in the value of the portfolio, assuming it grows at the same rate, can then be expressed as:
+
+Here,represents the constant interest rate corresponding to a risk-free savings account, and the equation above highlights that the portfolio’s value increases at the risk-free rate, consistent with a no-arbitrage condition.
+
+Combining equations 18, 20, and 22, we get:
+
+Finally, equating equations 21 and 23, and simplifying, we arrive at the Black-Scholes PDE (equation 1) for the option value:
+
+This is a parabolic PDE, with the "+"-sign in front of the diffusion term, indicating the problem is well-posed when accompanied by a final condition. As explained in[2], the final condition is usually provided by the payoff function, wheresince the discount factor reduces to 1 at time t = T. For a European vanilla call option, the payoff has the following form:
+
+and the value of the option is the continuously discounted expectation of the payoff under the risk-neutral measure. This is outlined concisely in the statement of the Feynman-Kac theorem tailored to this problem presented by Oosterlee & Grzelak[2]:
+
+SECTION: 2.2.2 Feynman-Kac Theorem for BS PDE
+
+Given the money-savings account, modeled by, with constant interest rate, letbe a sufficiently differentiable function of timeand stock price. Suppose thatsatisfies the following partial differential equation, with general drift term,, and volatility term,:
+
+with a final condition given by. The solutionat any timeis then given by:
+
+where the expectation is taken under the measure.
+
+According to the Feynman-Kac theorem, the task of solving the Black-Scholes partial differential equation (PDE), which emerges by selecting the drift termand the diffusion term, can be reformulated as the computation of the expected value of a discounted payoff function under the-measure, as explained in[2].
+
+SECTION: 2.2.3 Derivation of BS Formula
+
+Hence, this final condition is necessary to solve the PDE, and the closed-form solution in equations 2-4 of this paper can be recovered as follows:
+
+This can be decomposed into two parts using indicator functions:
+
+Before proceeding, we review some valuable properties of Lognormal random variables as discussed in[33].
+
+SECTION: The Lognormal PDF and CDF
+
+Firstly, we use the fact that if a random variablefollows the normal distribution with meanand variance, thenfollows the lognormal distribution with mean
+
+and variance
+
+The pdf foris
+
+and the cdf is
+
+whereis the standard normal cdf.
+
+SECTION: The Lognormal Conditional Expected Value
+
+As in[33], we let the expected value ofconditional onbe. For the lognormal distribution, using Equation 29, this becomes:
+
+Then, with the change of variable, we get,, and the Jacobian is. Hence we have
+
+Combining terms and completing the square, the exponent is
+
+Equation 32 becomes
+
+Consider the random variablewith pdfand cdf, and the scale-location transformation. It is easy to show that the Jacobian is, that the pdf forisand that the cdf is. Hence, the integral in Equation 33 involves the scale-location transformation of the standard normal cdf. Using the fact thatthis implies that
+
+Now, we return to equation 28 and compute the two terms of conditional expectations to recover equations 2-4. We use the same approach as in[33].
+
+with
+
+To evaluate the two integrals, we make use of the result derived above that underand at timethe terminal stock pricefollows the lognormal distribution with meanand variance, whereis the time to maturity.
+
+The first integral uses the conditional expectation of|
+
+This conditional expectation is, from Equation 34
+
+which simplifies to
+
+so the first integral is
+
+Using Equation 30, the second integral in Equation 35 can be written
+
+Thus, combining the two terms, the equation simplifies to:
+
+whereandare defined as:
+
+Therefore, we recover equations 2-4. These steps outline the derivation of the Black-Scholes formula, where the terms correspond to the expected payoff of the option under the risk-neutral measure, discounted to the present time.
+
+SECTION: 3Motivation for Deep Learning & ANNs
+
+The application of artificial neural networks (ANNs) to option pricing gained traction in the 1990s. One of the pioneering studies, conducted by Malliaris and Salchenberger[38], employed a multilayer perceptron (MLP) network to estimate the prices of S&P 100 call options. Their findings demonstrated that the neural network frequently outperformed the BS model in terms of prediction accuracy, as measured by mean squared error (MSE). Since then, a diverse array of ANN architectures and deep learning methodologies have been explored for option pricing, facilitated by the availability of vast amounts of market data for model training. The Universal Approximation Theorem[34,35,36]asserts that feed-forward neural networks possess the capacity to approximate a vast class of functions through the learning of suitable weights. This foundational principle underpins the motivation behind this study and similar efforts aimed at deriving the functional form of option pricing via neural network training. A particularly influential contribution in this domain was made by Hutchinson et al.[39], whose 1994 paper presented a nonparametric approach to pricing and hedging derivative securities using learning networks. Their study focused on S&P 500 futures options and similarly reported superior performance compared to the BS model. An extensive review of such applications of neural networks to option pricing and hedging is provided by Ruf and Wang[40], offering a comprehensive overview of developments up to 2020. More recently, Ferraz[41]employed the XGBoost algorithm, incorporating the parameters of the BS model as inputs, to predict option prices. Furthermore, with advancements in the field, even Physics-Informed Neural Networks (PINNs), originally devised to solve partial differential equations (PDEs) in physics, have been adapted for derivative pricing under the right conditions[43].
+
+Moreover, research has also demonstrated the ability of neural networks to capture the volatility smile. For instance, studies by Dugas et al.[44]and Liu et al.[45]have employed deep learning architectures that effectively model the volatility smile by capturing the complex non-linear relationships between option prices and their determinants. Dugas et al. showed that neural networks could better replicate market prices than the BS model, particularly in scenarios where the implied volatility surface exhibits strong curvature. Similarly, Liu et al. demonstrated that their model, incorporating volatility surface features, outperformed traditional models by capturing the nuanced effects of asymmetry and tail risk in return distributions. The inputs for the ANN or deep learning model can vary but tend to be[37]some subset of the following: past underlying prices, strike price, time-to-maturity, risk-free rate r, and volatility estimates. Inputs such as volume, skewness, kurtosis, and others have also been used before. There are multiple alternatives for producing the volatility estimates, with some noteworthy ones being GARCH (generalized autoregressive conditional heteroskedasticity) model volatility forecasts as done in[37]and historical realized volatilities for different time scales. Hull describes the calculation of realized volatility[3]from historic returns over a time periodas:
+
+Here,is the number of observations,is the stock price at the end ofinterval, andis the length of the time interval in days. For example, for 1 year, the standard assumption is 252 trading days, meaning. As explained by T. Pohjonen: ’According to Merton (1973), the return of the underlying asset is independent of the level of the price of the underlying assetsuch that it is also independent of the pricing functionof an option price. Therefore, ANNs are trained to estimate the pricedivided by the strike. This leads us to the functional form:
+
+where some number of volatility estimates can be chosen[37]. Other alternative approaches that are widely used in the literature include applying some form of smoothing (e.g., exponential) to the historic volatility estimates, interpolating interest rate estimates from yield curves, and using implied volatility estimates or modeling volatility as stochastic.
+
+SECTION: 4Method, Data Setup, & Expected Results
+
+In this study, the aforementioned functional form is used with six volatility estimates of, and 90 days all annualized assuming 252 trading days in a year. Only historic volatility estimates are used without implied or GARCH-fitted volatility. The focus is restricted to cash-settled European-style call options for non-dividend paying indices of S&P 500 (SPX), Dow-Jones Index (DJX), and NASDAQ 100 (NDX). This choice of options should ensure adherence to BS’s intended use case of European exercise style and no dividends. A majority of studies tackling the problem of option pricing using ANNs and other deep learning methods focus on S&P 500 options. Hence, this selection allows for a good comparison to previous work as well as expanding the range of indices addressed through the inclusion of NDX and DJX. As described in[37], options with time-to-maturitydays,or, andare excluded from consideration. Such options are low-priced, deep-in- or deep-out-of-money, or not consistent with the no-arbitrage assumption (respectively), meaning they could lead to large deviations between theoretical and observed prices, or they have little informational content as they are rarely traded. Options are called at-the-money (ATM) when the strike price is approximately equal to the price of the underlying (the ratiois close to 1 ) and in-the/out-of-the-money whenandrespectively. Themodel is used as a benchmark with MAE (mean absolute error), MSE (mean squared error), and RMSE (root mean squared error) metrics calculated to check its performance on real market data. Then, different multilayer perceptron architectures are tested with automatic hyperparameter tuning by trying different architectures and combinations of parameters. After the MLP NNs, XGBoost is tested with automatic parameter tuning. Finally, after good versions of the MLP and XGBoost models are found, we move on to the KAN, TDNN and RNN models.
+
+SECTION: 4.1 Data Setup
+
+The data for this study comes from the Wharton Research Data Services as a subset of the (optionm_all) IvyDB US by OptionMetrics data set. The subset collected is called df for simplicity. Specifically, it includes only European calls for the three indices selected for the date range: 2015/05/13. The data includes columns for date and exdate, which can be used to calculate the time-to-expiration. The C column is calculated as the average of the best bid and best offer prices for the call option as done in[41]. The documentation of the data indicates that the ’strike price’ column is actually, so the K column can be created by dividing this ’strike price’ by 1000. The ’target_C/K’ column is then found by dividing the calculated C by the calculated K. Data for the underlying indices’ closing prices (daily) is collected from Yahoo Finance for the same date range. The column ’’ is created by filling in the rows of df with the appropriate closing price for the underlying security based on the date and ticker columns. After this, the ’ S ’ column is adjusted to be ’’ by dividing the old values by K. The columns ’sigma_w’ forare added by the aforementioned method to include rolling window historic volatility estimates. The 13-week US Treasury Bill rates (collected from Yahoo Finance) are used for r without smoothing. Before filtering, this data set includes 23,187,972 rows/observations. After filtering (df_filtered) and removing rows that caused missing values after volatility estimate calculations,rows remain with only two of the indices (SPX and NPX). The remaining data consists ofandobservations of SPX and NDX, respectively. This includes all dates available and all calls meeting the filtering criteria. Our filtered data contains 148, 897 different options contracts (unique option_id). The data set is split with the firstsamples being training and the remainingbeing split evenly into validation and test sets. Moreover, the ranges, andare used for ATM, OTM, and ITM moneyness ratio classification respectively. Also, predictions within amargin around the actualratio are classified as being correctly priced, with predictions below and above this range being labeled as under and overpriced, respectively. These ranges for ATMs and correctly priced can potentially be narrowed to improve evaluation.
+
+SECTION: 4.2 Expected Results
+
+We anticipate slight differences in performance across the two remaining tickers, with the best results expected for SPX, as it accounts for the largest proportion of the training data after filtering. Additionally, we expect the models to perform better on SPX than on NDX, given SPX’s more even distribution of proportions by moneyness level, as well as its lower range and standard deviation of call prices. Moreover, based on the literature, we expect superior performance on in-the-money and out-of-the-money calls, as these options are traded more frequently in practice compared to at-the-money options.
+
+SECTION: 5Data Summary Statistics & Exploratory Plots
+
+As seen in Figure 1, the data does not reflect the BS model’s assumption that the risk-free rate is constant throughout the lifetime of an option. The dashed red vertical lines (30 days apart) on this plot (showing interest rate over time) clearly indicate that, even within 1-month periods, interest rate fluctuates significantly. Moreover, as shown in Figure 2, for both tickers, historical volatility estimates fluctuate a lot, with these changes being less erratic for longer window sizes. Hence, the BS model’s assumption that volatility is constant throughout the lifetime of an option is also not met. These two observations are why methods such as smoothing are used in the literature. As shown in Figure 3, log returns distributions for prices of both indices are not exactly normal. Specifically, for both tickers, heavier tails and a sharper peak can be seen, which resembles Laplace distributions. Hence, the data does not demonstrate all three of these assumptions of the BS model. As shown in Figure 4, the data has a larger proportion of OTM than ITM calls for both tickers and significantly fewer ATM tickers for NDX than SPX. Indeed, as mentioned before, options for the NDX ticker have a much more uneven distribution of moneyness proportions. Out of the two tickers, SPX has the largest proportion of ATM calls, and NDX has the largest proportion of OTM calls. In addition, Figure 4 also shows that NDX calls are more expensive than SPX ones across all moneyness levels, and NDX has a wider range and larger standard deviation of call prices. Aside from the proportions of the data made up by each ticker, these observations about moneyness also support the expectation that all models should do better on the SPX ticker. The shortest time to expiration in the data is 15 days, with the longest being approximately 1800 days. However, as shown in Figure 5, most of the calls in the data havetime to expiration (days). For both tickers, ITM calls have a larger price on average, with the second largest being ATM calls and OTM calls being the cheapest. Also, Figure 5 shows that for calls with a longer time to expiration, the average price for each moneyness category is higher. As shown in the last figure, the range of K is approximately 3.5 times larger for NDX than SPX call options (top subplot). This happens since the NDX index price range for 2015-2023 is approximately 4 times wider than the SPX index price range (as shown in the bottom subplot) and K is subtracted from the underlying asset’s price in a call option payoff. Furthermore, our dataset has contracts on both indices with an expiry (T) of up to 4 years but only for the SPX index with expiry of 4.5 - 7+ years. As seen in the plot there are gaps for this section of SPX call option contracts with T > 4.5 years, which reflects that such contracts are traded less regularly.
+
+SECTION: 6Black-Scholes Model
+
+The results of fitting the BS model are good - as expected. Still, it is noteworthy that many studies in the literature achieved better results with this model by putting more work into the quality of its inputs. In this study, relatively simple estimates are used for volatility and risk-free rate. The BS model is restricted to predicting the test set for fair comparison with the other models. Also, since the output of the B-S model is call option price but the output of the other models is the ratio of this price over strike price, the BS model’s predictions were divided by K for comparison. As shown in Figure 6, for the volatility estimates, wider window sizes yield more accurate pricing with the BS model. Across all error metrics, the best-performing version of the BS model is the one with 90-day historical volatility. This raises the question of whether testing even wider window sizes would improve the BS model’s predictions. The best version of the BS model does significantly better on the SPX ticker than on NDX, as expected. Figure 7 shows a plot of the 90-day window size volatility BS model’s predictions vs actual values of theratio. Overall, this model yields predictions that areoverpriced,under-priced, andcorrectly priced (withinmargin of actual C/K value), meaning that its main weakness is overpricing calls. Although, as mentioned in section 3, it may be beneficial to test narrower ranges for the ’correctly priced’ margin.
+
+SECTION: 7MLP Model
+
+For the MLP models, as well as the XGBoost, TDNN, and RNN models, the same set of features is used as inputs. Namely, past underlying prices divided by strike price, strike price, time-to-maturity, risk-free rate r, and all six historic volatility estimates. The target for all of these models is the ratio of call option price over strike price. All the MLP architectures tested have 10 neurons in the input layer (to match the number of features) and a single neuron in the output layer to produce the predictions. The Adam optimizer with MSE loss function is used for training. The MSE loss function has the following form:
+
+whereandare thepredicted and actualvalues respectively. Additionally, an early stopping criterion based on validation loss not decreasing for 10 epochs (restoring best weights from before stopping) is used to prevent overfitting. All variants of the model were trained for 100 epochs, and all combinations of the following architectures and parameters (respectively) were tested:neurons, layers, {activations[’relu’, ’tanh’, ’sigmoid’], learning rates.
+
+The best-performing MLP model has 3 layers (excluding input and output layers) of 64 neurons, each with tanh activations throughout and a learning rate of 0.00008. It is trained for 100 epochs with the same early stopping criterion as mentioned before, after which it is fit on the test set to yield predictions. Figure 9 shows the best MLP model’s training and validation loss over epochs. As evident in the plot, the validation loss fluctuates a lot towards the end of training, so it may be beneficial to train for longer with a larger patience for early stopping. Despite this, as seen in Figure 10, the best MLP model’s predictions forfit the actual values much more tightly, and it does not have such a weakness with overpricing as the B-S model, with much more even proportions of prediction below and above the actual values. But, for some reason, it seems to struggle with calls that have larger values of this ratio. Specifically, it tends to under-price these calls more than ones with a lower value of this ratio. In fact, the best MLP model yieldsoverpriced,under-priced, andcorrectly priced calls. As expected, the MLP model also does better on the SPX ticker than on NDX. As shown in Figure 12, which shows the predictions and actual values across time, the B-S model struggles more toward the end of the test set. As shown in Figure 13, the best MLP model also has slightly worse performance towards the end of the test set, but this difference is much less noticeable than for the B-S model. In fact, as shown in Figure 14, the best MLP model did better than the best B-S model across all error metrics.
+
+The simplest potential improvement to the MLP model is adding dropout (or Gaussian dropout) or 11/12 regularization, which has not been implemented yet. Batch/layer normalization or various weight initializations, such as Xavier or He initialization, could also improve the training. The swish, GELU (both shown in figure 15), SwiGLU activations, or some adaptive activation functions could be tested as well. Also, it could be beneficial to test MLP architectures with different activations in different layers, as the same activation was used in all layers when testing different activations for this project. However, the potential improvement that could yield the biggest difference in performance would be to add GRU (gated recurrent unit) or LSTM layers to handle the temporal dependence in the data, which is discussed in section 10. Finally, as done in[37], the final output layer could have an exponential function to ensure the predicted values are positive sincevalues cannot be below 0.
+
+SECTION: 8XGBoost Model
+
+XGBoost stands for extreme gradient boosting, and it combines lots of weaker learners (decision trees) into a strong learner. When used for prediction/regression, decision trees work by systematically breaking down the dataset into smaller and more specific subsets, which starts at the root of the tree. The root node encompasses the entire dataset, representing the initial, undivided data. The algorithm then engages in feature selection for splitting, where it identifies a particular feature and a specific point on that feature to bifurcate the data into two segments, as shown in Figure 16. This decision is guided by the goal of minimizing mean squared error in the case of a continuous target variable. Following this, branches are created. The dataset is divided into two groups, each determined by the selected feature and split point, leading to the formation of two new nodes. This step marks the initial separation of the data based on distinct feature values and the determined cut-off value. The process of recursive splitting then continues, and this methodology of splitting is applied repeatedly to each resulting branch. The algorithm selects the features and split points that contribute to the largest reduction in the variance of the target variable within these newly formed subsets. An important aspect of this process is the stopping criteria. The division of data continues until the maximum tree depth is reached, but other alternatives for the stopping criteria exist. Prediction within a decision tree is executed at the leaf nodes. Each leaf node is responsible for making a prediction, typically calculated as the mean of the feature values of the observations grouped under that node. When a new data point is introduced for prediction, it ’moves’ down the tree, following the paths determined by its feature values, until it reaches a leaf node. The mean target value of this final node is then used as the predicted value.
+
+As mentioned, XGBoost grows each tree up to the specified maximum depth, and then the trees are pruned back to their optimal size. XGBoost uses bagging (bootstrap aggregating) and boosting to reduce errors caused by variance and bias, respectively. Bagging is training each tree on different random subsets of the data and then using a weighted sum of the individual tree predictions for the overall prediction, as shown in Figure 17. Boosting is adding each tree sequentially to correct errors made by previously added trees. Gradient boosting minimizes the loss function by adding the trees using a gradient-descent-like procedure. The XGBoost implementation used has many parameters that were not tested, such as subsample and colsample_by_tree, both of which are built in ways of reducing overfitting. As described in the documentation, subsample specifies the fraction of the training data to be randomly sampled for each tree, and colsample_bytree controls the fraction of features to be randomly sampled for each tree. Subsampling occurs once in each boosting iteration for subsample and once for every tree constructed for colsample_bytree. Both of these parameters have default values of 1, which are used in this project. This means that each tree is trained on all of the data and all of the features. Different values of the max_depth, n_estimators, alpha, learning rate, and lambda are tested. The documentation explains the max_depth parameter as the stopping criterion for the maximum depth of each tree that can be reached, n_estimators as the number of trees used, and alpha/lambda as the coefficients forregularization on the weights. It is important to note that the same random_state is used in the sampling for all XGBoost models tested to ensure fair comparison, which would be especially crucial if the subsample parameter value were varied from 1. All combinations of the following architectures and parameters (respectively) were tested:max_depth, 75], n_estimatorsalpha, lambda, learning rates. The learning rates range was tweaked with preliminary training stages before testing all combinations of the aforementioned options.
+
+The best-performing XGBoost model has 50 trees and a max_depth value of 35 withand 0.00001 for the learning rate, alpha, and lambda values, respectively. This model was trained with early stopping based on the validation set error with a patience of 10 boosting rounds. Figure 18 shows the training and validation errors over boosting rounds for this model. As seen, the training and validation error curves are nearly identical and decrease sharply at the beginning, then flatten out as the number of boosting rounds increases. This indicates that we avoid overfitting as, typically, overfitting would show a divergence between the two curves, where the training error continues to decrease while the validation error starts increasing or being unstable after a certain number of rounds. Indeed, as shown in Figure 19, the best XGBoost model did surprisingly well with its predictions for, fitting the actual values much more tightly than the best BS, MLP, and TDNN models. Overall, the best XGBoost model yieldedoverpriced,under-priced, andcorrectly priced calls. Indeed, as shown in Figure 21, this model also handled the later points of the test set better than the previous models. Figure 22 is a table of the error metrics by model for XGBoost, MLP, and B-S. Also, Figure 27 shows the error metrics by model for all of the models. It is evident that XGBoost outperforms the best MLP, TDNN, KAN, and B-S models across all metrics.
+
+SECTION: 9TDNN Model & Potential Improvements
+
+TDNN stands for Time-Delay Neural Network, and this model is especially well suited to handle temporal dependence in the data due to its architecture and handling of the features. The architecture of TDNN is characterized by its hierarchical structure, which employs varying temporal convolutions. This structure allows each layer in the network to establish connections that span across outputs from the preceding layer, which improves the network’s ability to capture temporal dynamics. As the network processes data deeper into its layers, each unit within the network effectively broadens its ’view’ or ’scope’ of the input sequences. This expanding receptive field allows the network to incorporate a wider context at each subsequent layer, gaining an enhanced understanding of temporal patterns within the data. Specifically, in the TDNN, different layers handle different time steps, such as,. This approach is tailored to address varying temporal dependencies, allowing the network to focus on different segments of the time series data in a more targeted manner. Another critical feature of TDNN is the inclusion of statistical pooling (based on mean and standard deviation) across segments of the input sequence. This pooling mechanism serves to summarize the extracted features. By doing so, it ensures that the relevant characteristics of the sequences are efficiently captured and distributed throughout the network. The overall architecture of the TDNN can be summarized as having three main sections: (1) the frame-level layers, which consist of temporal convolutions; (2) the statistical pooling layer, which condenses the outputs from the frame-level layers; and (3) the segment level layers, which further refine these features and include an embedding layer followed by the prediction layer.
+
+The actual TDNN model is complex and takes excessive tuning. Due to the time constraints of this project, a simpler TDNN-inspired neural network model is used, with the main differences being the absence of statistical pooling and a vastly simplified hierarchal structure of temporal convolutions. The current model structure is a series of sequential 1D convolution layers (Conv1D from Keras) with the same context window and kernel sizes throughout. All of these Conv1D layers also have padding = ’same’ to ensure the inputs to layers following the first one are of the appropriate dimension. Also, all of these layers have the same activations throughout, and each of them is followed by a dropout regularization layer with the same proportion throughout (of the preceding layer’s outputs, which are randomly set to 0 ). After the temporal convolution and dropout layers, the output is flattened and fed into a dense layer with a single neuron for prediction. Also, the same reshaping is applied to all the feature sequences. This reshaping must be applied to the data before it can be fed into the TDNN-like model. Specifically, the following function was used to perform this data manipulation:
+
+This function is designed to transform a two-dimensional array X, representing feature time sequences, into a three-dimensional array, with each element representing a time-windowed sequence, which can then be fed into the TDNN-like model. The parameter time_steps is an integer that determines the length of each temporal slice in the reshaped data. The function works by iterating through the array X and, for each iteration indexed by, it extracts a slice of the data starting from the current index i and extending time_steps rows ’forward’. This slice includes the current time step as well as the past #(time_steps - 1) time steps. As a result, each slice forms a sequence that captures a specific window of time in the data. As mentioned, the output of this function is a three-dimensional array. This array is essentially a compilation of the extracted slices, where each slice represents a sequence of data corresponding to a particular feature over the specified time window.
+
+As with the MLP model, the Adam optimizer and MSE loss functions were used for training. All combinations of the following architectures and parameter values were tested:time_steps, num_layersConv1D, kernel_sizes, filters, activations = [’swish’, ’gelu’, ’relu’, ’tanh’, ’sigmoid’learning rates,, dropout rates. During the model selection, all models are trained for 75 epochs with early stopping with a patience of 10. The best TDNN model from our experiments uses time_stepsfor the data reshaping and has 3 Conv1D layers with tanh activations, filters, learning rate, dropout rate, and kernel_size. It was trained for 200 epochs with a patience of 30 for the early stopping criterion, which was triggered after 175 epochs. As shown in Figure 23, this model’s validation error fluctuates significantly throughout the training process, while its training error steadily decreases with minimal fluctuation. This divergence between the training and validation errors clearly indicates overfitting, where the model has learned to fit the noise in the training data rather than generalizing to unseen data. The large spikes in the validation error suggest that the model is not consistently performing well on the validation set, further emphasizing the lack of generalization. Specifically, overfitting is evident from several key signs in the plot: (1) the validation loss shows considerable variance with sharp increases at various points, indicating the model’s sensitivity to the validation data; (2) the training loss decreases monotonically, suggesting that the model is continuing to learn patterns in the training data even as it becomes increasingly specific to that dataset, and (3) there is a clear divergence between the smooth, downward trend of the training loss and the erratic behavior of the validation loss, which reflects the model’s inability to generalize effectively beyond the training set. These observations highlight the importance of adding regularization techniques such as l1/l2 penalty on the loss or larger dropout rate to prevent the model from fitting the training data too closely and to improve its performance on unseen data. As shown in Figure 24, the predicted C/K values for the TDNN model fit the actual values well, but the overpricing issue is apparent. Overall, as shown in Figure 28, it overprices, under-prices, and correctly pricesof calls. As shown in Figure 26, similar to the BS, MLP, and XGBoost models, the TDNN model does worse towards the end of the test set, but this is less noticeable. Also, similarly to the other models, the TDNN does slightly better on SPX than on NDX calls. As shown in Figure 27, this TDNN model does better than the BS models on all error metrics but slightly worse than MLP.
+
+SECTION: 10RNN Model & Self-attention Mechanism
+
+In time series regression tasks such as ours, where the objective is to model and predict temporal dependencies, Recurrent Neural Networks (RNNs) emerge as a natural choice due to their inherent ability to process sequences of data. Unlike traditional feedforward networks such as Multilayer Perceptrons (MLPs) or tree-based methods like XGBoost, which handle inputs in a static manner, RNNs are specifically designed to maintain and utilize information from previous time steps, thus capturing temporal patterns effectively. The core advantage of RNNs lies in their use of hidden states that are passed across time steps, enabling them to model sequential dependencies and handle variable-length input sequences, which MLPs and XGBoost cannot inherently manage without modification or preprocessing. However, despite their strengths, RNNs are not without drawbacks. One of the most critical challenges associated with training RNNs is the vanishing and exploding gradients problems, where gradients during backpropagation either diminish to near zero or escalate uncontrollably. This issue, as extensively discussed in Bengio et al. (1994)[49], severely limits the network’s ability to learn long-term dependencies, often leading to suboptimal performance and difficulties during training.
+
+SECTION: 10.2 LSTM - 1997
+
+To mitigate these issues, advanced RNN variants such as Long Short-Term Memory (LSTM) networks and Gated Recurrent Units (GRUs) have been developed. LSTM networks, introduced by Hochreiter and Schmidhuber (1997)[50], incorporate a gating mechanism that controls the flow of information, allowing the network to retain important information over extended periods and effectively combat the vanishing gradient problem. The key innovation in LSTMs is the memory cell state, which is modulated by input, forget, and output gates, ensuring that the network learns when to forget or retain information. The following pseudocode outlines a single pass through the LSTM algorithm:
+
+SECTION: Single Pass Through LSTM Algorithm
+
+Initializethe hidden stateand cell statefor the current time step.
+
+Compute the Forget Gate:
+
+Concatenate the previous hidden stateand current input.
+
+Multiply the result by the weight matrixand add the bias.
+
+Apply the sigmoid activation function to produce the forget gate output.
+
+Compute the Input Gate:
+
+Concatenate the previous hidden stateand current input.
+
+Multiply the result by the weight matrixand add the bias.
+
+Apply the sigmoid activation function to produce the input gate output.
+
+Update the Cell State:
+
+Generate the candidate cell stateusing the previous hidden stateand current input.
+
+Multiply the result by the weight matrixand add the bias.
+
+Apply the tanh activation function to obtain the candidate cell state.
+
+Update the cell stateby combining the forget gate output, the previous cell state, and the input gate outputwith the candidate cell state.
+
+Compute the Output Gate:
+
+Concatenate the previous hidden stateand current input.
+
+Multiply the result by the weight matrixand add the bias.
+
+Apply the sigmoid activation function to produce the output gate output.
+
+Compute the Hidden State:
+
+Apply the tanh activation function to the updated cell state.
+
+Multiply the result by the output gate outputto obtain the current hidden state.
+
+Returnthe hidden stateand the updated cell stateas the output for time step.
+
+The LSTM’s gating mechanism can be mathematically stated as follows:
+
+SECTION: 10.2 GRU - 2014
+
+Gated Recurrent Units (GRUs), proposed by Cho et al. (2014)[51][52], offer a simpler alternative to LSTMs by streamlining the gating mechanism. Instead of having separate forget and input gates, GRUs combine these into a single update gate and introduce a reset gate to control the inclusion of past information. This architecture simplifies the model, making it more computationally efficient while retaining the ability to capture long-term dependencies. The following pseudocode outlines the steps involved in a single pass through the GRU:
+
+SECTION: Single Pass Through GRU Algorithm
+
+Initializethe hidden statefor the current time step.
+
+Compute the Reset Gate:
+
+Concatenate the previous hidden stateand current input.
+
+Multiply the result by the weight matrixand add the bias.
+
+Apply the sigmoid activation function to produce the reset gate output.
+
+Compute the Update Gate:
+
+Concatenate the previous hidden stateand current input.
+
+Multiply the result by the weight matrixand add the bias.
+
+Apply the sigmoid activation function to produce the update gate output.
+
+Compute the Candidate Hidden State:
+
+Apply the reset gateto the previous hidden state(element-wise multiplication).
+
+Concatenate the result with the current input.
+
+Multiply the result by the weight matrixand add the bias.
+
+Apply the tanh activation function to obtain the candidate hidden state.
+
+Compute the Final Hidden State:
+
+Combine the update gate outputwith the previous hidden stateand the candidate hidden stateusing an element-wise multiplication and addition to obtain the final hidden state.
+
+Returnthe final hidden stateas the output for time step.
+
+The GRU’s gating mechanism can be mathematically described as follows:
+
+In this formulation:
+
+-is the reset gate, which determines how much of the past hidden stateshould be forgotten.
+-is the update gate, which controls how much of the previous hidden stateshould be retained versus how much of the new candidate hidden stateshould be added.
+-is the candidate hidden state, which is computed using the reset gate-modulated hidden stateand the current input.
+-is the final hidden state at time step, which combines the old hidden stateand the new candidate hidden statebased on the values of the update gate. These equations and the corresponding pseudocode outline the full operation of a GRU cell, which effectively manages information flow and retains long-term dependencies in the sequence data.
+
+SECTION: 10.3 Model Selection
+
+Given the advantages of both LSTM and GRU architectures, we were motivated to test various combinations of these layers to determine the most effective architecture for our time series regression task. To prepare the data for RNN training, it was necessary to reshape the input data into sequences, ensuring that no future data was introduced into the past. This was accomplished using the following code:
+
+We systematically tested all combinations of the following hyperparameters:timesteps_list = [3, 7, 12, 17, 25],activations = [’tanh’, ’relu’, ’sigmoid’],neurons = [16, 32, 64, 128], andlearning_rates = [0.000025, 0.00019, 0.00045, 0.0013, 0.0045, 0.021]. Each model was trained over 100 epochs with early stopping and a patience of 20, using the Adam optimizer with a Mean Squared Error (MSE) loss function. After preliminary testing, we selected a dropout rate of 0.023, which showed consistent performance within a tested range of 1-35%. The following architectures were evaluated:
+
+The best-performing architecture from our experiments is a hybrid recurrent neural network (RNN) combining both Long Short-Term Memory (LSTM) and Gated Recurrent Unit (GRU) layers, specifically configured in the sequence(’LSTM’, ’GRU’, ’LSTM’, ’GRU’, ’LSTM’). This architecture is selected by testing all combinations of the parameters and architectures as described above. The specific hyperparameter values used are:timestep = 12,activation = tanh,neurons = 32,learning_rate = 0.000097, anddropout_rate = 0.023. The activation function across all layers wastanh, which is known for its smooth gradient properties, thus helping to mitigate vanishing gradient issues that can occur during backpropagation through time. Each recurrent layer was composed of 32 neurons, striking a balance between model complexity and computational efficiency. Following the model selection stage, we trained the best model for 250 epochs with early stopping and a patience of 30 epochs. This approach allowed the network to reach its optimal performance without overfitting, as the early stopping mechanism halted training once the validation loss ceased to improve significantly. The combination of LSTM and GRU layers in this architecture seems to provide the model with an enhanced capacity to learn and retain both short-term and long-term dependencies. This model does better than the BS, MLP, and TDNN on all error metrics. Despite the already impressive results of this model, we discuss adding a simple self-attention mechanism in the following section before comparing it fully to all models.
+
+SECTION: 10.4 Attention Mechanism & Results
+
+We incorporate attention within the best-performing LSTM/GRU RNN architecture to enhance the model’s ability to capture temporal dependencies and important patterns in the data. Our attention mechanism is inspired by the scaled dot-product attention used in transformers, tailored to suit RNNs[46]. In this implementation,represents the attention dimensionality, which is the number of features used in the attention mechanism equivalent to the ’neurons’ parameter in our code. Given an input sequence represented by the hidden states, whereis the sequence length andis the dimensionality of the hidden states, the attention mechanism first computes query, key, and valuematrices as linear transformations of:
+
+whereare learnable weight matrices, withto match the number of neurons per layer in our best RNN configuration. The attention scores are computed using the scaled dot-product, followed by the application of the softmax activation function to ensure the scores are normalized:
+
+The softmax function is defined as:
+
+This step ensures that the attention scores sum to one, allowing them to effectively weigh the contributions of different input positions. The resulting attention matrixis applied to the value matrix to produce the attention output:
+
+In our implementation, the attention mechanism is integrated into each RNN layer, allowing it to dynamically focus on salient features across different time steps. After obtaining the attention output, we concatenate it with the original RNN output, resulting in a more informative feature representation:
+
+To further enhance the model’s performance, we apply the ‘tanh‘ activation function after each RNN layer:
+
+This activation function helps stabilize the learning process by maintaining gradients within a manageable range. Additionally, a dropout layer is applied after each RNN and attention mechanism to prevent overfitting and improve generalization. By dynamically weighting these features, the attention mechanism helps the model to capture nuanced market dynamics and improve generalization to unseen data[47,48]. In our experiments, the aforementioned best model enhanced with this simple self-attention mechanism performed very well and did better than all other models on all error metrics. This model was trained for 100 epochs with early stopping and patience of 30. As shown in Figure 33, this model’s validation error fluctuates a lot at the start and throughout the 80 epochs before early stopping is triggered. Its training error almost does not fluctuate at all and just decreases quickly. As shown in Figure 31, the predicted C/K values for this model fit the actual values very well overall, and they provide the tightest fit around the true values of all models. Overall, it overprices 17.94%, under-prices 34.01%, and correctly prices 48.05% of calls. As shown in Figure 32, similar to the other models, the best RNN does worse towards the end of the test set, but this is not as noticeable as for the other models. Also, similarly to the other models, it does slightly better on SPX than on NDX calls.
+
+SECTION: 11KAN Model & Kolmogorov-Arnold Representation Theorem
+
+Kolmogorov-Arnold Networks (KANs) represent an innovative neural network architecture that leverages the Kolmogorov-Arnold Representation Theorem to approximate multivariate functions through a systematic composition of univariate functions. This approach, as outlined in a recent study by Liu et al.[53], marks a significant departure from traditional feedforward neural networks and aims to leverage the strengths of MLPs while alleviating some of their weaknesses. Specifically, Kolmogorov-Arnold Networks represent an integration of splines and multilayer perceptrons, utilizing the strengths of both while mitigating their respective limitations[53]. Splines are highly effective for approximating low-dimensional functions, allowing for precise local adjustments and the flexibility to adapt across different resolutions[53]. However, they face significant challenges with the curse of dimensionality (COD), as they struggle to leverage compositional structures effectively[53]. In contrast, MLPs are better equipped to handle the COD due to their inherent feature-learning capabilities[53]. Nevertheless, MLPs lack the precision of splines in low-dimensional scenarios because of their inefficiency in optimizing univariate functions[53]. As explained by Liu et al. in their study, for a model to accurately learn a function, it must be capable of ’both capturing the compositional structure (external degrees of freedom) and accurately approximating univariate functions (internal degrees of freedom)’. KANs achieve this by combining the advantages of both MLPs and splines—leveraging MLPs externally for feature learning and utilizing splines internally for optimal univariate function representation. This unique structure enables KANs to efficiently learn complex features, akin to MLPs, while simultaneously optimizing these features with the accuracy typical of spline-based methods[53].
+
+Instead of relying on fixed activation functions, KANs employ layers based on splines. In traditional feedforward neural networks, nonlinearities are typically introduced through activation functions like ReLU or sigmoid, applied element-wise to the outputs of linear transformations with learned weights and biases. In contrast, KANs capture these nonlinearities by constructing layers that apply splines with learnable coefficients to the inputs. Training KANs involves optimizing the constants in the splines and KAN layers are integrated into the network architecture in a manner similar to standard dense layers. In our implementation of KANs, we use orthogonal polynomials to construct these splines, which differs from the original approach that uses B-splines[53]. Additionally, we employ dropout regularization to mitigate overfitting. In contrast, Liu et al. developed additional loss terms based on the l1 penalty on the splines’ coefficients, an entropy regularization term, and performed targeted pruning of nodes to achieve sparsification. We anticipate that adding this targeted pruning mechanism instead of our dropout regularization would significantly improve our KANs. This is left for future work along with testing other modifications. Since all of the transformations are differentiable, KANs can be trained in the same way as MLPs via backpropagation using stochastic gradient descent or its variants, such as the Adam optimizer, which is used in this paper with the MSE loss function.
+
+SECTION: 11.1 Kolmogorov-Arnold Representation Theorem
+
+The Kolmogorov-Arnold Representation Theorem (KART) provides the theoretical foundation for KANs. It states that any continuous multivariate functioncan be represented as a finite composition of continuous univariate functions and addition. Formally, for any continuous function, there exist continuous functionsandsuch that:
+
+This theorem underscores the ability of KANs to approximate any continuous multivariate function by systematically constructing the network’s architecture using the specified univariate transformations. Additionally, one of the key advantages of KANs lies in their inherent interpretability, which is particularly valuable in the domain of scientific machine learning, as highlighted by Liu et al. in their paper. Unlike traditional neural networks that often operate as "black boxes," KANs maintain a clear mathematical structure that aligns closely with the functional forms encountered in various scientific disciplines[53]. This transparency allows researchers to better understand and trust the model’s predictions, as each layer and transformation within a KAN has a clear and interpretable role. This makes KANs an attractive choice for applications where understanding the underlying relationships in the data is as important as the predictive performance itself[53]. However, this aspect of KAN is not explored in our study and is left for future work. We refer the reader to the original paper[53]for more information about the interpretability of KANs. Moreover, in their paper, Liu et al. demonstrate that the statement of the KART presented above corresponds to a composition of 2 KAN layers[53], which helps with understanding how more of these layers can be stacked to create deeper KANs.
+
+SECTION: 11.2 KAN as a Feedforward Neural Network
+
+Unlike the original Kolmogorov-Arnold Networks (KANs) as presented in[53], which utilize B-splines with an adaptive grid, our implementation uses simpler splines constructed from orthogonal polynomial bases without adaptive grid adjustment. Additionally, we do not employ residual activation functions at all and we use tanh to normalize the input before each layer’s polynomial transformation which are two more differences from the original. Our KAN implementation also includes dropout for regularization (instead of the l1 norm and entropy-based loss on the spline coefficients as done in[53]). We test four different types of orthogonal polynomials as alternatives for constructing splines: Legendre, Chebyshev of the 2nd kind, Laguerre, and Bessel. This decision was motivated by the powerful approximation properties of these polynomials but there are many other alternatives for the spline construction in KAN layers such as using wavelets[61]or Fourier coefficients[62][63]. This description follows the detailed derivation provided in the original work[53], adapted to account for the inclusion of thenormalization, orthogonal polynomial splines, and dropout layers in our modified KAN model. To get a sense of the network architecture as a whole, we start with an array specifying the number of nodes in the layers of the computational graph of the KAN (as done in[53]). The computational graph has L+1 layers as the input is counted separately.
+
+Here,is the number of nodes in the-th layer of the computational graph, withbeing the (zeroth) input layer. Next, we specify the input and output dimensions of each layer of the KAN and choose the polynomials to apply at each layer with the degree to go up to in the spline:
+
+Hence, the input and output dimensions of the-th KAN layer areandrespectively andranges from 1 to. However, we index the KAN layers such thatis the-th KAN layer withranging from 1 to. In this study, we restrict our experiments to KAN architectures with the same choice of orthogonal polynomials used for the splines in each KAN layer. We implore the reader to note that we refer to both a ’layer’ of the computational graph and KAN ’layers’ but these are different. Namely, the-th KAN layer goes between the-th and-th layers of the computational graph. There areactivation functions between layersandof the computational graph[53], which corresponds to the-th KAN layer. Specifically, the activation function connecting neuronin layerto neuronin layer(of the computational graph) is denoted by:
+
+The pre-activation value at neuronin layer(of the computational graph) is, while the post-activation value is:
+
+which represents the output of the activation function applied to the pre-activated value. For the-th neuron in layerof the computational graph, the overall activation value is then the sum of all incoming post-activations:
+
+For-dimensional inputs and-dimensional outputs, the-th KAN layer in our implementation can be defined as applying the following transformation to the data:
+
+where eachis a composition ofand the spline of orthogonal polynomials as outlined below:
+
+where:
+
+is the pre-activation value of the-th neuron in layerof the computational graph.
+
+is the orthogonal polynomial chosen for layer (of the KAN)of degreeapplied to the-th component of the-normalized input.
+
+is the largest degree of the polynomials used in layer.
+
+andare the learnable weights.
+
+Hence, for the-th neuron in layer, the overall activation value can then be written as:
+
+For an-layer KAN, the total number of weights can be computed as follows:
+
+Thefunction ensures that the input remains within the stable range, which is critical for maintaining the stability and accuracy of polynomial computations, especially when higher-degree polynomials are used. We also add dropout after each KAN layer (excluding the first and last KAN layers). The dropout function is applied (after the KAN layer transformation) at the 2, …, (L - 1) layers’ outputs, randomly zeroing a fraction of the outputs during training. Here we denotepercent dropout as. We use the standard implementation of inverted dropout in PyTorch. The dropout operationcan be represented as:
+
+whereis the input vector to the dropout layer,is a mask vector of the same dimension as, with each elementindependently sampled from a Bernoulli distribution:
+
+anddenotes element-wise multiplication. During training,is the dropout rate (e.g.,for 30% dropout) and during testing, dropout is disabled. The final output of our KANs, representing the prediction, can be written as:
+
+whereis the total number of KAN layers in the network, andis the KAN transformation applied by the-th layer. Here,is the input withcomponents andis the output withcomponents.
+
+Our experiments for the KAN models are carried out using PyTorch, where we implement custom KAN layers to compute the output based on the recurrence relations of the chosen orthogonal polynomials. The coefficientsfor each layer are initialized using a normal distribution with a mean of 0 and a standard deviation that is inversely proportional to the sum of the input and output dimensions of that layer. Specifically, the weightsare sampled as follows:
+
+Additionally, we initialize the spline coefficients sampled from a normal distribution centered around 0.1 with a standard deviation inversely proportional to the degree:
+
+SECTION: 11.4 Recursive Definitions of Orthogonal Polynomials
+
+Figure 39 shows plots of the first seven polynomials for the various families of orthogonal polynomials in our study. In our implementation, we employed the following recursive definitions:
+
+Chebyshev Polynomials of the Second Kind
+
+Legendre Polynomials
+
+Bessel Polynomials
+
+Laguerre Polynomials
+
+These recursive formulations were the simplest to implement the KAN layers. However, using these recursive definitions is not the most computationally efficient method, as using some of the series or closed-form expressions for the polynomials could be quicker. Moreover, it would be prudent to test the alternative of using min-max normalization instead of tanh to keep the inputs in the [-1, 1] range. Below is an example of how a Legendre KAN layer is implemented in our framework:
+
+This custom layer generates the KAN transformation for each layer based on the Legendre polynomials, while similar classes handle the other orthogonal polynomials. In[53], the network uses B-splines for the activation functions with additional grid extension mechanisms to adjust the grid dynamically during training. However, in our implementation, we rely purely on the intrinsic properties of the orthogonal polynomials, which provide stability and efficiency without the need for grid adjustments. In future work, it would be prudent to test whether combining layers of different polynomials increases performance. Also, from our experiments, it is clear that our KANs would benefit significantly from more regularization since dropout alone is not enough. We anticipate that the targeted pruning of nodes mechanism used in the original paper should work very well.
+
+SECTION: 11.3 KAN Best Model Selection and Testing
+
+In our study, an extensive model selection process was conducted to identify the best KAN architecture for our task. We systematically varied several hyperparameters, including the type of orthogonal polynomial used in the KAN layers, the number of neurons per layer (8, 16, 32, 64), the number of KAN layers (2 to 4), the learning rates (0.000055 to 0.02), and the degrees of the polynomials (1 to 7). The KANs were trained using the Adam optimizer with a Mean Squared Error (MSE) loss function, as with the other models. In the best model selection, each model was trained for 75 epochs, with early stopping implemented (patience of 25 epochs) to prevent overfitting. We used four types of KAN layers (Legendre, Chebyshev of the Second Kind, Bessel, and Laguerre), systematically testing all combinations of polynomial degrees and layers. The best model was identified based on the validation error. Our systematic exploration of these combinations allows us to evaluate the effectiveness of different configurations to identify the optimal model architecture. In our experiments, the best KAN model had the following configuration: [’kan_layer’: Cheby2KANLayer, ’neurons’: 16, ’layers’: 3, ’learning_rate’: 0.0059, ’degree_combination’: [2, 5, 4] ] and performed very well. In fact, it does better than the BS, MLP, and TDNN on all error metrics, as shown in Figure 27. This model was trained for 100 epochs with early stopping and patience of 30 and a dropout of 5%. As shown in Figure 37, this model’s validation error fluctuates a lot but steadily decreases over time, and its training error is much more stable and also goes down steadily over epochs. As shown in Figure 35, the predicted C/K values for this model fit the actual values very well. Overall, it overprices 21.42%, under-prices 44.06%, and correctly prices 34.52% of calls. As shown in Figure 36, similarly to the MLP, TDNN, XGBoost, and RNN models, this model does worse towards the end of the test set.
+
+SECTION: 12Evaluation & Results
+
+As can be seen in Figure 27, which is a table of error metrics by model, the best-performing model across all error metrics was the LSM-GRU hybrid RNN model with attention. However, all the other models also did significantly better than the B-S model. Although TDNN did significantly better than BS, it was the second worst model, and even our simple MLP did slightly better on all error metrics. This is likely because we did not implement a full hierarchy of varying temporal convolutions as intended in the original TDNN architecture. As can be seen in Figure 28, which is a table of over/under/correctly priced proportions, the RNN and the TDNN models have the lowest and largest proportions of overpriced calls, respectively. Moreover, the RNN and the B-S models have the largest and lowest proportions of correctly priced calls, respectively. Finally, the TDNN and MLP models have the lowest and largest proportions of under-priced calls, respectively. Interestingly, although the RNN model is the best, it has more of an issue with underpricing than the TDNN and BS models. As shown in Figure 29, all models perform better on SPX than NDX calls in terms of correctly priced. The difference in performance for the two tickers is smallest for the KAN model. The RNN, XGBoost, TDNN, and MLP models all overprice more on NDX than on SPX calls, but the opposite is true for the BS and KAN models. The RNN, TDNN, and XGBoost models all underprice more on SPX than on NDX calls, but the opposite is true for the BS, MLP, and KAN models.
+
+As expected, Figure 30 shows that all models do better on ITM than on ATM calls (in terms ofcorrectly priced). But, unexpectedly, all models do better on ATM than on OTM calls, which may be because the range around the value of 1 for the ATM category is too wide. Also, all models have larger % overpriced than under-priced for the ATM moneyness category. The MLP and B-S models display a higher percentage of overpriced than underpriced options for the ITM category, whereas the other models exhibit the opposite trend, with a greater percentage of underpriced than overpriced options for ITM calls. Furthermore, all models aside from the MLP have a higher percentage of overpriced than underpriced options for OTM calls. Given that some of the errors between the models are complementary, exhibiting opposite percentages of overpriced and underpriced options across certain moneyness categories, it may be beneficial to explore ensembling approaches to leverage these complementary strengths.
+
+SECTION: 13Future Work
+
+To advance this research, we plan to finalize the implementation of the Time-Delay Neural Network (TDNN) by incorporating a carefully designed hierarchy of temporal convolutions. Following this, we will integrate several enhancements into the MLP, KAN, and RNN models, including the application of alternative regularization techniques, the implementation of batch and layer normalization, and the evaluation of alternative activation functions such as Swish and GELU. To further improve the KAN and MLP models, we will explore the impact of integrating LSTM or Gated Recurrent Unit (GRU) layers and attention mechanisms. Additionally, we will implement the explicit formula definitions for orthogonal polynomials, which should enhance the computational efficiency of the KANs. We also plan to experiment with multi-head attention as an alternative to the current self-attention mechanism employed in our models. Another aspect of this study we will tweak further is the margin for correctly priced options and the ATM range. We want to test whether narrowing both may yield a better comparison across models. After these adjustments, we intend to expand the feature set by incorporating volume, skewness, and kurtosis and adapt all models to account for put options in addition to call options by leveraging put-call parity. Moreover, we hope to extend the analysis to include other financial indices and investigate the potential benefits of applying smoothing techniques to the historical volatility and interest rate estimates. We also plan to compare our models to Heston stochastic volatility and other extensions of the BS model by discretizing the SDEs and pricing our call options via Monte Carlo simulation, which facilitates the comparison of our existing models to an alternative pricing method that is widely used in the industry and academia. Another direction we want to explore is to check which models capture the volatility smile best and compare this to the BS model’s inability to capture it. Moreover, we want to investigate the specific polynomials and coefficients used in the KAN model for the final predictions, leveraging the interpretability of KANs.
+
+In addition to the improvements discussed, we plan to explore alternative supervised learning model architectures for this task. One promising direction involves the use of selective state space models (SSMs), particularly Mamba[54], and its variants—Mamba-2[55], DyGMamba[56], and Mamba-2-Hybrid[57], which have been shown to perform well in time series forecasting tasks. Mamba is a novel architecture designed to capture temporal dependencies in data. It integrates selective state space models into its framework, allowing the model to dynamically propagate or forget information based on the sequence length dimension and input content, leading to significant improvements in efficiency and performance, especially on long sequences[54]. Building on Mamba, Mamba-2 introduces a structured state space model (SSM) that unifies the theoretical connections between SSMs and variants of attention mechanisms. This refinement allows Mamba-2 to generalize well across multiple tasks while achieving linear scaling in sequence length. Furthermore, Mamba-2’s core architecture has been shown to outperform Transformers of equivalent size and complexity, with significant efficiency gains[55]. DyGMamba extends this by incorporating dynamic temporal graphs into the SSM framework. This allows for efficient modeling of long-term temporal dependencies on continuous-time dynamic graphs, effectively capturing intricate temporal patterns that emerge over extended periods. DyGMamba achieves state-of-the-art performance on temporal graph learning tasks, combining computational efficiency with powerful temporal representation learning[56].
+
+These models have demonstrated a 5x increase in throughput over Transformers while maintaining state-of-the-art performance across various modalities, including language, audio, and genomics[54]. However, to the best of our knowledge, they have not been explored for financial time series in the context of option pricing, although other state space models like Hidden-Markov models (HMMs) have been. Mamba and its variants offer promising avenues for future research, and we plan to rigorously evaluate their performance on our task, comparing them with the existing models to determine their effectiveness in capturing complex financial time-series patterns. Furthermore, we will explore Physics-Informed Neural Networks (PINNs), given that the option pricing problem can be framed as learning the solution to a partial differential equation (PDE) from noisy data. This approach could provide additional insights and improved accuracy in modeling financial derivatives. Also, we plan to test CatBoost as an alternative gradient-boosting decision tree model since it has been shown to outperform XGBoost on time series forecasting and tasks with tabular data[58]. Finally, we plan to test the performance of a KAN-Capsule-Net as a novel architecture for this task. This is an architecture inspired by Hinton’s CapsNet but with KAN layers with orthogonal polynomials instead of MLP blocks. Capsule Networks (CapsNets) is a type of neural network architecture aiming to better capture spatial/temporal hierarchies and relationships between features using "capsules" composed of small groups of neurons. Hinton et al. proposed that the key advantage of CapsNets is their ability to dynamically route information between capsules, allowing the network to model part-whole relationships more effectively than traditional ANNs or convolutional neural networks (CNNs)[59].
+
+SECTION: Appendix: Best KAN Model Parameter Count & Equations
+
+In our experiments, the best KAN has the following configuration from the code:[’kan_layer’: Cheby2KANLayer, ’neurons’: 16, ’layers’: 3,’learning_rate’: 0.0059, ’degree_combination’: [2, 5, 4]].
+
+This can also be specified as follows:
+
+Parameter Count:
+
+For each KAN layer:
+
+Polynomial Spline Weights:
+
+Outer Sum Weights:
+
+-Layer 1 (10 Input Neurons to 16 Output Neurons) with:
+
+Spline Weights:parameters.
+
+Outer Sum Weights:parameters.
+
+-Layer 2 (16 Neurons to 16 Output Neurons) with:
+
+Spline Weights:parameters.
+
+Outer Sum Weights:parameters.
+
+-Layer 3 (16 Neurons to 1 Output Neuron) with:
+
+Spline Weights:parameters.
+
+Outer Sum Weights:parameters.
+
+Total Parameter Count for the KAN Model:parameters.
+
+Comparison to a standard 3 hidden layer MLP with 16 Neurons per Layer:
+
+Layer 1 (Input to First Hidden Layer):parameters.
+
+Layer 2 (First to Second Hidden Layer):parameters.
+
+Layer 3 (Second to Third Hidden Layer):parameters.
+
+Layer 4 (Third Hidden Layer to Output):parameters.
+
+Total for the MLP:parameters.
+
+Therefore, our three-layer KAN model with Chebyshev polynomials hasmore parameters compared to a standard three hidden layer MLP with the same number of neurons in each layer and the same input and output dimensions. For an-layer KAN, the total number of parameters can be computed as follows:
+
+The final output of our best KAN variant, representing the prediction, can be written as:
+
+Here,is the input withcomponents andwhich is a scalar since. In the fllowing equations,has 16 components,andhave 16 components, andis a scalar. We representafter dropout asandis a mask vector with 16 components to be applied via element-wise multiplication with. In our best KAN configuration, we use a dropout of 5% meaning= 0.05 in the equations below.
+
+SECTION: Figures
+
+Figure 1: Risk-Free Rate vs Time
+
+Figure 2: Historic Volatilities by Ticker for Different Window Size
+
+Figure 3: Log Price Returns Distribution
+
+Figure 4: Average Price and Proportion for Moneyness Category by Ticker
+
+Figure 5: Average Price and Proportion for Moneyness Category by Time to Expiration
+
+Figure 6: Error Metrics for B-S Model with Different Volatility Estimates
+
+Figure 7: Predicted vs Actual C/K for Best B-S Model
+
+Figure 8: Error Distribution for Best B-S Model
+
+Figure 9: Training & Validation Loss Over Epochs for Best MLP Model
+
+Figure 10: Predicted vs Actual C/K for Best MLP Model
+
+Figure 11: Error Distribution for Best MLP Model
+
+Figure 12: Actual & Best B-S Model C/K Predictions vs Time
+
+Figure 13: Actual & Best MLP Model C/K Predictions vs Time
+
+Figure 14: Error Metrics for Best MLP & B-S Models
+
+Figure 15: Activation Functions (ReLU, Swish, Tanh, GELU)
+
+Figure 16: Decision Tree for Prediction ([60])
+
+Figure 17: XGBoost Prediction ([42])
+
+Figure 18: Training & Validation Loss Over Epochs for Best XGBoost Model
+
+Figure 19: Predicted vs Actualfor Best XGBoost Model
+
+Figure 20: Error Distribution for Best XGBoost Model
+
+Figure 21: Actual & Best XGBoost Model C/K Predictions vs Time
+
+Figure 22: Error Metrics for Best MLP, XGBoost, & B-S Models
+
+Figure 23: Training & Validation Loss Over Epochs for Best TDNN Model
+
+Figure 24: Predicted vs Actual C/K for Best TDNN Model
+
+Figure 25: Error Distribution for Best TDNN Model
+
+Figure 26: Actual & Best TDNN Model C/K Predictions vs Time
+
+Figure 27: Error Metrics by Model
+
+Figure 28: Total Percentages of Underpriced and Overpriced Options by Model
+
+Figure 29: Overpriced & Underpriced Percentages by Ticker for Each Model
+
+Figure 30: Percentages of Overpriced & Underpriced by Moneyness Category for Each Model
+
+Figure 31: Actual & Best RNN Model C/K Predictions
+
+Figure 32: Actual & Best RNN Model C/K Predictions vs Time
+
+Figure 33: Training & Validation Loss Over Epochs for Best RNN Model
+
+Figure 34: Error Distribution for Best RNN Model
+
+Figure 35: Actual & Best KAN Model C/K Predictions
+
+Figure 36: Actual & Best KAN Model C/K Predictions vs Time
+
+Figure 37: Training & Validation Loss Over Epochs for Best KAN Model
+
+Figure 38: Error Distribution for Best KAN Model
+
+Figure 39: First 7 Orthogonal Polynomials for Besel, Laguerre, Legendre, and Chebyshev of 2nd Kind
+
+Figure 40: (Top) All Options contracts by K vs T ; (Bottom) SPX and NDX price over the same period.
+
+SECTION: References

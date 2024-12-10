@@ -1,0 +1,271 @@
+SECTION: RETR: Multi-View Radar Detection Transformerfor Indoor Perception
+Indoor radar perception has seen rising interest due to affordable costs driven by emerging automotive imaging radar developments and the benefits of reduced privacy concerns and reliability under hazardous conditions (e.g., fire and smoke). However, existing radar perception pipelines fail to account for distinctive characteristics of the multi-view radar setting. In this paper, we propose Radar dEtection TRansformer (), an extension of the popular DETR architecture, tailored for multi-view radar perception. RETR inherits the advantages of DETR, eliminating the need for hand-crafted components for object detection and segmentation in the image plane. More importantly, RETR incorporates carefully designed modifications such as 1) depth-prioritized feature similarity via a tunable positional encoding (TPE); 2) a tri-plane loss from both radar and camera coordinates; and 3) a learnable radar-to-camera transformation via reparameterization, to account for the unique multi-view radar setting. Evaluated on two indoor radar perception datasets, our approach outperforms existing state-of-the-art methods by a margin ofAP for object detection andIoU for instance segmentation, respectively.
+Our implementation is available at.
+
+SECTION: Introduction
+Perception information encompasses the processes and technologies to detect, interpret, and understand their surroundings. Complementary to the mainstream camera and LiDAR sensors, radar can enhance the safety and resilience of perception under low light, adversarial weather (e.g., rain, snow, dust), and hazardous conditions (e.g., smoke, fire) at affordable device and maintenance cost.
+An emerging application of radar perception is indoor sensing and monitoring for elderly care, building energy management, and indoor navigation. A notable limitation of indoor radar perception is the low semantic features from radar signals.
+
+Earlier efforts use radar detection pointsto support simple classification tasks such as fall detection and activity recognition over a limited number of patterns. To support challenging perception tasks such as object detection, pose estimation, and segmentation, lower-level radar signal representation such as radar heatmaps is more preferred. Along this line, the earliest work is RF-Poseusing a convolution-based autoencoder network to fuse features from the two radar views and regress keypoints for 2D image-plane pose estimation. It is later extended to 3D human pose estimation. It is noted that RF-Pose is not publicly accessible. More recently, RFMaskborrows the Faster R-CNN frameworkby proposing candidate regions only in the horizontal radar heatmap via a region proposal network (RPN). A corresponding proposal in the vertical radar heatmap is automatically determined using afixed-heightcandidate region at the same depth as the horizontal proposal. The combined horizontal and vertical proposals are then projected into the image plane for bounding box (BBox) estimation. In addition, RFMask calculates the BBox loss only over the 2D horizontal radar view and disregards features from the vertical radar heatmap for BBox estimation.
+
+In this paper, we exploit features from both horizontal and vertical radar views for object estimation and segmentation and introduce(Fig.). RETR extends the popular Detection Transformer (DETR), which effectively eliminates the need for hand-crafted components such as non-maximum suppression and proposal/anchor generation, to the multi-view radar perception. More importantly, RETR incorporates carefully designed modifications to exploit the unique multi-view radar setting such as shared depth dimension and the transformation between the radar and camera coordinate systems. Our contributions are summarized below:
+
+1) Encoder: we associate features from both radar views by applying self-attention over the pooled multi-view radar tokens, eliminating the need for a cumbersome association scheme. We introduce a top-feature selection to allow onlyfeatures from each view to keep the complexity low. 2) Decoder: the DETR decoder provides a natural way to associate the same object query to corresponding features from the two radar views via cross-attention. As such, the object query is able to learn 3D spatial embedding of objects in the radar coordinate (see Fig.).
+
+: To enhance feature association across the two radar views, we further exploit the fact that the two radar views share the depth dimension and introduce a tunable positional encoding (TPE) as an inductive bias. TPE imposes constraints in the attention map to prioritize the relative importance of depth dimension and avoid exhaustive correlations between radar views.
+
+: we enforce the output queries of the DETR decoder to directly predict 3D BBoxes in the radar coordinate system and convert them into the 2D image plane. We introduce a tri-plane loss that combines the BBox loss in the 3D radar plane and that in the 2D image plane, to calculate the global set-prediction loss.
+
+: We employ a calibrated radar-to-camera coordinate transformation via a calibration process and a learnable coordinate transformation via reparameterization by preserving the orthonormal (i.e., 3D special orthogonal group) structure of the rotation matrix.
+
+We demonstrate the effectiveness of our contributions through evaluations on two open datasets: the HIBER datasetand the MMVR dataset.
+
+SECTION: Related Work
+Indoor radar perception tasks include object detection (BBoxes), pose estimation (keypoints), and instance segmentation (human masks), and radar datasets in different data formats were reported in. Particularly, radar heatmap-based approaches have gained attention not only in indoor perceptionbut also for automotive radar perception, due to richer semantic features compared to those extracted from sparse radar point clouds.
+RF-Posepredicts human poses on the image plane using a convolution autoencoder-based architecture.
+With the HIBER dataset, RFMask considers proposal-based object detection and instance segmentation.
+More recently, MMVRhas been openly released to accelerate advancements in indoor radar perception.
+
+Since the introduction of DETR for 2D image-plane object detection, subsequent studies have been developed based on its framework, largely due to DETR’s ability to eliminate the need for hand-designed components such as non-maximum suppression (NMS).
+In, Conditional DETR decomposes the roles of content and positional embeddings in the transformer decoder, improving not only prediction accuracy but also training convergence speed. More recently,has proposed Rank-DETR as a rank-oriented architectural design, guaranteeing lower false positives and false negatives in prediction.
+
+SECTION: Preliminary
+Conceptually, let us consider a pair of (virtual) horizontal and vertical antenna arrays withelements for each array, sending a set of frequency modulated continuous waveform (FMCW) pulses for object detection.
+The two 1D arrays generate one horizontal radar view in the azimuth-depthdomain and one vertical radar view in the elevation-depthdomain,
+
+wheredenotes the-th sample of FMCW sweep on the-th antenna at time,is the wavelength of the-th sample,denotes the round-trip distance from the-th array element to a position, andanddenote the number of samples and the number of array antennas, respectively. Usually, the azimuthis in an interval ofand the elevationand the depthare similarly defined. At a particular time, we have the horizontal radar heatmapand the vertical radar heatmapwith a shared depth axis. The multi-view radar testbeds in HIBERand MMVRutilize advanced MIMO-FMCW radar systems. We defer the MIMO-FMCW radar heatmap generation to Appendix.
+
+By takingconsecutive multi-view radar heatmaps (and) as the input, we are interested in detecting objects on the image plane:
+
+wheredenotes predicted BBoxes for object detection and pixel-level masks for instance segmentation. Using the BBox as an example in Fig., our pipeline includes the following steps: 1) Fig.(a): By taking the two radar views overconsecutive framesas input, the end-to-end object detection moduleoutputs a set of parameters describing 3D BBoxes in the radar coordinate system; 2) Fig.(b): The radar-to-camera 3D coordinate transformationconverts the predicted 3D BBoxes at the output ofto corresponding 3D BBoxes in the 3D camera coordinate system; 3) Fig.(c): The 3D-to-2D projectionprojects the 3D BBox in the camera coordinate system into corresponding 2D image plane normally with a known pinhole camera model.
+
+SECTION: RETR: Radar Detection Transformer
+We first present the RETR architecture and then highlight radar-oriented modifications. We defer the discussion on Segmentation to Appendix.
+
+SECTION: RETR Architecture
+We present the RETR architecture in Fig., introducing its major modules in a left-to-right order. Refer to Appendixfor the detailed architecture.
+
+Givenand, a shared backbone network (e.g., ResNet) generates separate horizontal-view and vertical-view radar feature maps:and, whereandrepresent the number of channels and downsampling ratio over the spatial dimension, respectively.
+
+A transformer-based encoder expects a sequence of tokens as input. This is done by mapping the feature maps into a sequence ofmulti-view radar tokens:and, where. We defer the tokenization discussion to Section.
+
+The transformer encoder provides a simple yet effective method for associating radar features from both horizontal and vertical views by applying self-attention over the pool ofmulti-view radar tokens, eliminating the need for cumbersome association schemes. Specifically, the-th () encoder layer updates the multi-view radar tokens through multi-head self-attention:
+
+wheredenotes feed-forward networks,is the number of encoder layers, and,andare projections to derive the multi-head query, key and value embedding from, respectively. For the first (-th) layer, we have. Note that we omit the description of “Layer norm” and “multi-head index” in Eq.for clarity.
+
+Additionally, since the multi-view radar tokens lack positional information and the self-attention is permutation-invariant, we supplementwith positional embedding added (or attached) to the input of each encoder layer. Refer to Sectionfor a tunable positional encoding.
+
+The decoder provides a natural way to associate the same object query with features from the two radar views via cross-attention. For each decoder layer, it takesobject queriesas its input, and consists of a self-attention layer, a cross-attention layer and a FFN. Specifically for the-th () decoder layer, it first updates all queries through multi-head self-attention:
+
+where,andare the projections with different parameterization from those in the self-attention layer (Eq.).
+Then, the decoder layer further updates the object queriesof Eq.via multi-head cross-attention with the multi-view radar tokensfrom the encoder output:
+
+where bothandare supplemented with positional embedding.
+Finally, the decoder outputsenhanced object queriesfor downstream tasks.
+
+Given theenhanced object queries, RETR directly estimates 3D BBoxes in the radar coordinate:
+
+wheredescribes the 3D BBox center and respective widths along the 3D axes, andnormalizes the 3D BBox prediction to.
+Then, as shown in Fig.(b), we apply a radar-to-camera transformationto convert the predicted 3D BBoxes to ones in the 3D camera coordinate as
+
+whereis a 3D rotation matrix,is the 3D translation vector, andis-th corner of the 3D BBox corresponding to. Subsequently in Fig.(c), we project the 3D BBoxesonto the 2D image plane via a 3D-to-2D projection.
+From the projected 2D corners, one can calculate the 2D BBox center and width and height in the image plane as
+
+The final BBox estimationin the image plane is obtained by adding an offset headto compensate for the spatial downsampling and normalizing it to the interval:
+
+SECTION: Top-Feature Selection as Tokenization
+In DETR, the tokenization simply collapses the spatial dimensions of the feature map into a single dimension, resulting inandtokens for the horizontal and vertical radar feature maps, respectively. As a result, we havemulti-view radar tokens. It is known that the complexity of transformers grows quadratically with respect to the token length.
+Here, we introduce a customized Top-feature selection as tokenization, maintaining a low complexity for the RETR encoder and decoder:and, where. In this case, we shrink the multi-view radar tokens fromto.
+For each radar frame, we consistently select the Top-strongest features, which may originate from varying spatial locations depending on the specific radar frame. Consequently, the gradient propagates back through the selectedfeatures to the backbone weights, irrelevant to their spatial locations.
+
+SECTION: TPE: Tunable Positional Encoding
+The TPE is built on the top of the concatenation operation between the content embedding(either feature embeddingat the encoder or
+decoder embeddingat the decoder) and positional embeddingin the conditional DETR(see Fig.(b)):
+
+wheredenotes concatenation, rather than the sum in DETR(see Fig.(a)):
+
+It is seen that Eq.eliminates the cross terms between the content and positional embeddings in Eq.and, allowing content/positional embeddings focus on their respective attention weights, contributes to faster training convergence.
+
+In our case, the positional embedding is composed of a depth () axis and an angular (either azimuthor elevation) axis. As such,withrepresenting the depth positional embedding andthe angular positional embedding. Then expanding Eq.withleads to
+
+In Eq., we have the following observations:
+
+reflects how similar the features in the key and query may appear;
+
+Depth similarityremains consistent regardless of whether the key and query originate from the same radar view or different radar views;
+
+Angular similaritycan be a self-angular similarity (azimuth-to-azimuth or elevation-to-elevation) when the key and query are from the same radar view, or a cross-angular similarity (azimuth-to-elevation or elevation-to-azimuth) for different radar views.
+
+Motivated by the above observations, we can promote higher similarity scores for keys and queries with similar depth embeddings than those far apart in depth, especially for the ones from different views, by allowing for adjustable dimensions between depth and angular embeddings:
+
+where the tunable dimension ratiois in the interval. As illustrated in Fig.(c), when, the positional embedding is equivalent to that used in conditional DETR. Whenapproaches, the depth positional embedding is minimized, making the depth similaritynegligible in Eq.. Conversely, asapproaches, the depth positional embedding dimension increases, and so does the importance of the depth similarity in Eq..
+
+We implement our TPE with a fixed sine/cosine positional encoding along the depth and angular (azimuth or elevation) dimension. For an even depth/angular positional dimension, we have
+
+whereandare the position index and dimension for the depth and angular axes, respectively,is the (even/odd) element index, and= 10000 is a temperature. By adjusting the ratioin Eq., we change the dimensions of the depthin Eq.and the angularin Eq., while keeping the total positional dimension ofconstant. We show the visualization of TPE in Appendix.
+
+SECTION: Tri-Plane Set-Prediction Loss
+DETR calculates a matching cost matrix with each element constructed from 1) a classification costand 2) a BBox loss between one ofpredictionsand one of ground truth BBoxes(including the “no object” class). The BBox loss is a weighted combination of the generalized intersection over union (GIoU) lossand theloss:
+
+wheredenotes the weight. Over the permutation setbetweenpredictions and ground truth objects, the Hungarian algorithmis applied with the matching cost matrix to find the optimal assignmentof predictions to ground truth.
+Given, the loss is computed only for the matched pairs and is referred to as the set-prediction loss.
+
+Since RETR predicts 3D BBoxesin the 3D radar coordinate and maps them into the 2D image plane, we propose to enhance the above Hungarian match cost matrix using aTri-Plane BBox Lossfrom both the radar coordinate and image plane.
+This is illustrated in Fig., where a 3D BBoxin the radar coordinate is projected onto 1) the 2D horizontal radar plane as(the top branch); 2) the 2D vertical radar plane as(the middle branch); and 3) the 2D image plane asof Eq.(the bottom branch). The tri-plane BBox losssums up 2D BBox losses over all three planes using Eq.:
+
+RETR finds the optimal assignmentusing the matching cost with 1) the original classification costand 2) the tri-plane BBox loss. The resulting set-prediction loss usingis referred to as the tri-plane set-prediction loss.
+
+SECTION: Learnable Radar-to-Camera Coordinate Transformation
+The rotation matrixand translation vectorin the radar-to-camera transformation of Eq.can be calibrated in advance.
+However, this calibration process may be accurate only for a limited interval of depth and angles. Instead of relying on the calibrated transformation, we introduce a learnable transformation via a reparameterization onwhile keeping it orthonormal.
+To this end, we need to ensure that the learnableresides in the 3D special orthogonal group.
+Considering thatis a special case of a Lie group, one of the differentiable manifolds, we can firstly map a 3D vectorto Lie algebrausing the projection. And then we apply the exponential mapthat mapsinto the nearest point insuch that the resultingresides onand satisfies the orthonormal structure. This leads to the following reparameterization ofin terms of:
+
+whereis thenorm, With the above reparameterization, the learnable radar-to-camera coordinate transformation in Eq.reduces to learn the vectorand the translation vector.
+
+SECTION: Experiments
+SECTION: Setup
+We evaluate performance over two open indoor radar perception datasets: MMVRand HIBER. MMVR includes multi-view radar heatmaps collected from overhuman subjects acrossrooms over a span ofdays. In our implementation, we utilize data from(P2) which includesK data frames capturing both single and multiple human subjects in diverse activities such as walking, sitting, stretching, and writing on the board. For the training-validation-test split, we follow the data splitas defined in MMVR.
+
+HIBER, partially released, includes multi-view radar heatmaps fromhuman subjects in a single room but from different angles with two data splits: 1) “WALK”, consisting ofdata frames with one subject (Section); and 2) “MULTI”, consisting ofradar frames with multiple () human subjects walking in the room (Appendix).
+More dataset details can be found in Appendix.
+
+We consider RFMaskand DETRas baseline methods. Since RFMask and DETR originally compute the BBox loss only in the 2D horizontal () radar plane and the 2D image () plane, respectively, we enhance both methods with a unified bi-plane BBox loss (). We also introduce a DETR variant with top-feature selection, allowing it to take features from both horizontal () and vertical () heatmaps as input. For RETR, we setfor the top-selection, the positional embedding dimension to, and a tunable dimension ratio at. We include one variant that only employs the TPE at the decoder (TPE@Dec.). More hyper-parameter settings can be found in Appendix.
+
+For object detection, we adopt average precision (AP) at two IoU thresholds of() and() and its mean () over thresholds. We also consider average recall (AR) when it is restricted to making only one detection () or up todetections () per image. For segmentation, we report the averagevalue between the predictive and ground truth masks. Detailed metric definitions can be found in Appendix.
+
+SECTION: Main Results
+Tableshows the main results on the MMVR dataset under “P2S1”.
+Compared with RFMask, DETR with a single horizontal radar view does not show performance improvement. By just adding the vertical radar view at the input, DETR with top-selection exhibits a noticeable performance improvement over RFMask. Built upon DETR (Top-K), RETR (TPE@Dec.) implements two enhancements: 1) TPE at the decoder and 2) tri-plane BBox loss, resulting in further improvements with a gain ofin,in, andin, highlighting the importance of TPE and supervision at the vertical radar view. By further incorporating TPE at the encoder, the full version of RETR achieves an impressive performance improvement over RFMask, demonstrating increases ofin,in, andin, respectively.
+The results under “P2S2” on MMVR can be seen in Appendix.
+
+Tablepresents the main results on the HIBER dataset under “WALK”. Similar to Table, we observe a similar trend of performance improvement from DETR to RETR variants. Numerically, we see increases ofin,in, andin, when directly comparing RETR to RFMask. These performance improvements are smaller compared with those in Table. This is potentially because the HIBER data under “WALK” predominantly involves walking, where RFMask’s fixed-height vertical proposals may work fine. In contrast, MMVR under “P2” includes more diverse activities such as sitting, leading to likely overestimated vertical proposals for RFMask and thus greater improvements in MMVR than HIBER.
+The results under “MULTI” on HIBER can be seen in Appendix.
+
+Fig.presents the cross-attention map at the last decoder layer between predicted BBoxes (via object queries) and multi-view radar features.
+RETR accurately predicts the subject in the background of the image plane (middle panel) with a forward-bending posture (Query 1).
+The cross-attention maps of Query 1, with respect to horizontal (left) and vertical (right) radar features, highlight areas with features contributing the most to Query 1. These contributing areas in the vertical plane are more stretched along the depth axis compared with those in the horizontal plane. Notably, the contributing areas from the two views share similar depth intervals.
+For Query 2 which identifies the subject in the foreground, the cross-attention maps shift its focus to contributing areas at closer depth compared with those for Query 1, indicating an effective 3D spatial embedding of object queries at the RETR output. We provide more visualizations in Appendix.
+
+We present failure cases in Fig.of Appendix. Predicting arm positions remains challenging, suggesting that RETR may not focus its attention on regions with weak radar reflections.
+Moreover, multi-path reflections from the ground, ceiling, and other strong scatterers (e.g., metal) can cause (first-order or second-order) ghost targets and elevate the noise floor. Traditional signal processing techniques can mitigate these effects but require access to raw radar data. Alternatively, ghost targets can be labeled in the multi-view radar heatmaps, though this can be time-consuming and costly. One can then extend RETR to classify output queries to one of, alongside regressing queries to the BBox parameters.
+
+SECTION: Ablation Studies
+We report ablation studies with RETR under “P2S1” on MMVR.
+Further results of ablation studies can be seen in Appendix.
+
+Tablepresents the ablation study of the tunable dimension ratioand its impact on the object detection performance in terms of( primary vertical axis) andand(secondary vertical axis). The results indicate thatyields the best performance. The detection performance gradually decreases asapproaches toand.
+
+To evaluate the effectiveness of the Learnable Transformation in Section, we compareandmetrics of RETRs with and without. The results in Tableindicate that it is possible to incorporate the radar-to-camera geometry into the end-to-end radar perception pipeline without the need for a cumbersome calibration step, while still achieving comparable perception performance.
+
+Tablecompares RETR with a bi-plane BBox loss (horizontal radar plane and image plane) to that with the tri-plane loss (including the vertical radar plane). The results highlight the necessity of accounting for the vertical BBox loss and the importance of leveraging features from the vertical radar heatmap, leading to a performance improvement ofin.
+
+SECTION: Conclusion
+In this paper, we introduced RETR, extending DETR to the multi-view radar perception with carefully designed modifications such as depth-prioritized feature similarity via TPE, a tri-plane loss from radar and camera coordinates, and a learnable radar-to-camera transformation. Experimental results over two radar datasets and comprehensive ablation studies demonstrate that RETR significantly outperforms both RFMask and DETR baseline methods.
+
+Indoor radar perception technologies, including RETR, offer a wide range of social applications in navigating and monitoring subjects such as the elderly, infants, robots, and humanoids, enhancing safety and energy efficiency while preserving privacy. However, it is crucial that perception results remain secure and private to prevent misuse in inferring subject attributes such as gender, size, and height. These technologies could potentially be used to advance indoor surveillance without individuals’ acknowledgment or consent.
+
+SECTION: References
+SECTION: Details of RETR Architecture
+Fig.illustrates the transformer encoder and decoder used in RETR.
+In the original DETR implementation, the image features from the CNN backbone are given in input to the transformer encoder, with spatial positional embeddings added to the queries and keys at each multi-head self-attention layer of the encoder.
+On the other hand, RETR extracts features from a shared-weight backbone for both horizontal and vertical views and obtains them as. At this time, the positional encoding (TPE) is concatenated with the features (content). Subsequently, Top-selection is applied to extract the most relevant features and reduce time and space complexity (i.e.,andin the left figure). These Top-features from the horizontal and vertical views are concatenated to compose a single sequence of tokens, which are then fed to the transformer encoder. The encoder consists of a stack of multi-head self-attention layers, that allow for the consideration of correlations between the two views.
+The multi-head attention is simply the concatenation ofsingle attention heads followed by a projection layerto regain the initial dimensionality. The common practiceis to use residual connections,, and layer normalization:
+
+whereis concatenation along the channel axis, anddenotes the weight tensor of attention.
+
+The decoder receives the decoder embeddings, which we initially set to zero and concatenated with the object queries, and encoder memory (i.e. the output sequence of the encoder transformer), generating refined embeddings through multiple multi-head self-attention and cross-attention layers.
+In particular, the cross-attention layer utilizes the encoder memory to produce Keys and Values, which correlate with the Queries to produce the Refined Queries. In right figure of Fig., the decoder embeddings which concatenated with the object queries are first input into the self-attention, and the output is then passed through a normalization layer. At this point, the values are added using a residual structure. Next, cross-attention between the encoder memory, used as the key, and the decoder embeddings is calculated. Similarly, a residual structure is employed as in the self-attention. This entire sequence is repeatedtimes to obtain the final decoder embeddings.
+
+Following the computational complexity notation used in the DETR paper, every self-attention mechanism in the encoder has a complexity ofwhereis the embedding dimension andis the number of selected features from the Top-selection. The cost of computing a single query/key/value embedding is(withwheredenotes the number of attention heads andthe dimension in each head), while the cost of computing the attention weights for one head is. Other computations may be negligible. In the decoder, each self-attention mechanism has a complexity ofwhereis the number of queries, and the cross-attention between query and multi-view radar features has a complexity of.
+In conclusion, the overall complexity of our RETR model is
+
+SECTION: Segmentation
+The original DETR is naturally extended by adding a segmentation head on top of the decoder outputs. Following this extension, our RETR enables segmentation by adding an architecture with a similar structure. Fig.illustrates the segmentation architecture we implemented, consisting of a cross-attention layer, a feature pyramid network (FPN)-style CNN, and final light U-Net. Given a single refined query, we use a cross-attention layer to generate attention heatmaps for each object at a low resolution.
+For the backbone output used in cross-attention, we utilized features extracted from the vertical heatmap, enhancing robustness to the height of the human. To increase the resolution of the mask, an FPN-style architecture is employed which also exploits the low-level backbone features at different layers (from 5 to 2) to generate some coarse segmentation masks. Since the FPN module is also responsible for lifting features from the radar view to the image plane, it does not have enough capacity to generate fine-grained segmentation masks. Thereby, we also add a very light U-Net to further refine the previously generated masks.
+It is important to note that our model, differently from the original DETR implementation, predicts a single binary mask for each query.
+Indeed, we exploit for each query the corresponding bounding box prediction in the radar plane, apply the Radar-to-Camera transformation and the 3D-to-2D image projection, to obtain the bounding box in the image plane.
+This bounding box is finally used to extract the corresponding portion from the ground truth segmentation mask, which is employed to supervise the segmentation prediction for the same query.
+As a loss function, we adopt the DICE/F-1 lossand focal loss.
+
+We note that the segmentation head can be trained at the same time as the BBox head in an end-to-end manner, or we can first train the detection head and then freeze all weights and train only the segmentation head in a two-step process. We followed the original DETR and employed the latter strategy.
+During prediction, we filter out the detection with a confidence below 50%, then compute the per-pixel argmax to produce the final binary segmentation mask.
+
+We report quantitative results the segmentation tasks in Table.
+From this table, RETR (which combines all our contributions) achieves 77.07@, which is a significant performance improvement over the conventional RFmask with a gap of 11.77@.
+In addition, we point out how the DETR (Top-) version (row 3) alone is able to increase the performance by almost 5%.
+We visualize the segmentation results in Fig..
+Each row represents the data segment number in MMVR. It can be observed that RETR captures the shape of people with high fidelity.
+Notably, the results for d6s3 and d8s6 demonstrate that we are able to segment even complex postures, including sitting positions. Additionally, as shown in d7s5, RETR accurately estimates positions even when subjects are sitting far from the radar, such as at the back of the room. These results indicate that RETR can be easily extended from a detector to a segmentation model by adding a segmentation head, and it can accurately estimate masks.
+For more visualizations, including comparison with RFMask and failure cases, see Appdendix.
+
+SECTION: Visualization of TPE
+We visualize the positional embedding of each axis to observe the TPE. We calculated the positional embedding according to Eq.and Eq., and visualized each axis as a separate figure with several value of(). Fig.shows the results. The top row is positional embeddings for each axis; depth and angle, and the bottom row is similarity through positions with dot product of positional embeddings. Each column denotes the(). The blue color represents the large value, and red color represents the low value.
+The top row show that the characteristic elements are concentrated in the first some dimensions from top row. In addition,andare expected to contain more depth features since the spread of depth features is larger thanor lower.
+Furthermore, when we look at the similarity matrix (bottom row), the deeper blue color is concentrated in the center of the matrix atand. This indicates that the depths are more closely matched to each other, and that the degree of similarity can be changed by changing the.
+
+SECTION: Multi-View MIMO-FMCW Radar Heatmap Generation
+Fig.illustrates the preprocessing flow of the multi-view radar heatmap using data from two MIMO-FMCW radars, which create two orthogonal virtual arrays composed ofelements spaced at half-wavelength intervals while transmitting multiple pulses. By sampling the pulses reflected back, a 3D data cube can be formed, which is structured along the horizontal/vertical arrays, ADC samples (intra-pulse or fast-time), and pulse samples (inter-pulse or slow-time).
+Performing a 3D fast Fourier transform (FFT) on this data cube yields radar spectra across the angle (azimuth for horizontal radar and elevation for vertical radar), range, and Doppler velocity domains. The SNR is further improved by integrating the 3D radar spectra along the Doppler domain, resulting in two radar heatmaps (range-azimuth and range-elevation) in polar radar coordinates. These heatmaps are then projected into the radar Cartesian coordinate system.
+
+SECTION: Details of Experimental Settings
+MMVRhas 345K data frames collected fromhuman subjects overdifferent rooms (e.g, open/cluttered offices and meeting rooms) spanning overseparate days. MMVR consists of 2 parts: 1) 107.9K data frames of protocol 1 (P1): Open Foreground in a single open-foreground space with a single subject; and 2) 237.9K data frames of protocol 2 (P2): Cluttered space in 5 cluttered rooms with multiple subjects and multiple actions, including sitting postures. Data splits are set as same as S1 in MMVR. “P1” is used to establish the best possible radar perception benchmarks, while “P2” is designed for more challenging scenarios and for cross-environment and cross-subject generalization. The “P2” includes data such as sitting postures; therefore, we select this as the main dataset that we use in our experiments.
+
+HIBERis an open-source multi-view radar dataset including horizontal and vertical radar heatmaps and annotations such as 2D and 3D poses, BBoxes, and segmentation masks.
+Among its data splits, “WALK” and “MULTI” are currently accessible. The “WALK” split includes 73.5K data frames, each featuring a single person per frame, while “MULTI” consistently includes two individuals per frame.
+We refined the original BBox labels in the HIBER dataset, addressing their initial overestimation by creating tighter BBoxes; see Fig.for an illustration.
+
+The hyper-parameters used in our experiments of Sectionare shown in Table. The table is divided into three parts, Data, Model, and Training, each with parameter names, notations, and values for each dataset.
+
+We use RFMaskas conventional method for BBox and segmentation tasks.
+However, RFMask can only predict relaxed BBoxes in the image plane due to its loss calculation being limited to the horizontal plane. Therefore, to train and predict using HIBER dataset (and also MMVR dataset), which consists of refined BBoxes as explained above, an additional module is required to convert the relaxed BBoxes predicted in the image plane into refined BBoxes.
+As a result, we modify RFMask in a way that the BBox loss is calculated on the image plane and backpropagates to learnable parameters in an end-to-end fashion.
+Specifically, we add an image BBox regression module alongside a horizontal BBox Regression module, enabling the conversion of BBox offsets to the image plane. By computing loss with respect to these offsets, we can learn refined BBoxes on the image plane. Additionally, the region proposals estimated by the region proposal network (RPN) are transformed into 3D BBoxes based on the fixed-height size, the same as the original RFMask. These BBoxes are then projected onto the image plane and a 3D-to-2D projection.
+
+SECTION: Definition of Metrics
+We adopt average precision on intersection over union (IoU)as an evaluation metric.
+IoU is the ratio of the overlap to the union of a predicted BBoxand annotated BBoxas:
+
+Average Precision (AP) can then be defined as the area under the interpolated precision-recall curve, which can be calculated using the following formula:
+
+where The interpolated precisionat a certain recall levelis defined as the highest precision found for any recall level.
+We present three variants of average precision:,, and, where the former two represent the loose and strict constraints of IoU, whileis the averaged score overdifferent IoU thresholds inwith a stepsize of.
+
+Average recall (AR)between 0.5 and 1 ofcan be computed by averaging over the overlaps of each annotationwith the closest matched proposal, that is integrating over theaxis of the plot instead of theaxis. Letbe theoverlap andthe function. Letdenote thebetween the annotationand the closest detection proposal:
+
+The followings are some variations of:
+
+:given 1 detection per data.
+
+:given 10 detection per data.
+
+:given 100 detection per data.
+
+SECTION: Additional Ablation Study
+To validate the effectiveness of our RETR, we conducted additional ablation studies. Unless otherwise specified, the hyperparameters follow those listed in the Table.
+
+Tableshows the evaluation results on the HIBER dataset. From this table, it can be seen that using RETR improves performance across all metrics. Similar to the MMVR results, RETR with tri-plane loss shows enhanced performance. Additionally, the use of RETR with TPE in both the encoder and decoder also contributes to performance improvements. However, compared to the “P2S1” of MMVR, the performance improvement is smaller (the improvement is 15.28from DETR to RETR). This is likely because, unlike “P2S1”, HIBER under “WALK” only involves walking actions, which benefit less from the use of 3D information.
+
+“P2S2” (Cross-Session and Unseen Split) on the MMVR dataset first splits all data segments in d5, d6, d7, and d9 into train, validation, and test sets. Then, it is included all data in d8 in the test set such that one can assess the generalization performance of trained model for an unseen environment (d8). Therefore, “P2S2” is the most challenging scenario in the MMVR.
+Tableshows the evaluation results under “P2S2”.
+From the results in the table, we confirmed that the prediction performance was improved by using RETR. In particular, RETR outperforms RFMask by a margin of.
+However, compared to the results of P2S1, there is a significant decrease in performance, and this is due to the unseen environment.
+
+To investigate the impact of tuning in TPE, we observed the performance differences when varying the ratio of depth and angle dimensions (since the total dimension is, e.g., a ratiomeans depth is rounded todimensions and angle todimensions). In Section, we showed detection results in Tablewith selected someand metrics. Here, we show the results with more variants ofand metrics.
+Fig.shows the result. The horizontal axis denotes the proportion of depth dimensions, and the vertical axis denotes the performance of various metrics. Note thatrefers to the primary axis, whileandrefer to the secondary axis. The figure shows that the highest performance is achieved when the depth proportion is. The performance exhibits a peak at this point, indicating that prioritizing depth improves performance.
+
+We expand Tableby including additional precision and recall metrics, providing a more comprehensive evaluation of the Learnable Transformation. The complete results are presented in Table.
+
+In Section, Tablecompared RETR with a bi-plane BBox loss (horizontal radar plane and image plane) to that with the tri-plane loss (including the vertical radar plane).
+We show the more results with complete metrics. The results in Tablehighlight the necessity of accounting for the vertical BBox loss and the importance of leveraging features from the vertical radar heatmap.
+
+Tableshows that, as the value ofincreases (e.g.,and), object detection performance improves across both precision and recall metrics.
+
+Tablereports the effect of training data size on detection performance using the MMVR dataset. We compare the original data size () withradar frames against reduced data sizes of half () and one-tenth (). The results demonstrate a gradual improvement in detection performance as the data size increases.
+
+Tablereports the average inference time in milliseconds, evaluated over all frames in the test data using an NVIDIA A40 GPU. RETR achieves an average inference time ofms, which is comparable to that of RFMask atms.
+
+SECTION: Visualization Result
+To compare the conventional RFMask with our RETR, we visualized the prediction results of each. Fig.shows these results. Each row indicates the segment name used from the “P2S1” test dataset. In detection, RFMask has some miss-detections, whereas RETR accurately predicts even when there are multiple subjects. For instance, RFMask tends to fail in detecting people close to the camera, as seen in d8s6/002, but this is improved with RETR. In segmentation, RETR captures human shapes more accurately than RFMask. However, RETR can also fail in mask estimation, as seen in the example of d9s6.
+
+We provide failure cases in Fig.. As shown in images such as d5s3/002 and d6s4/009, RETR occasionally mispredicts a bending-over person as standing. Additionally, as shown in d5s4/007, it is often challenging to predict the detailed position of the arms, leading to failures in both detection and segmentation. In some cases, such as d5s6/006 and d8s6/002, the segmentation mask region was excessively large or too narrow. Moreover, in instances such as d9s6/004, while the BBox prediction was successful, the segmentation failed. There was also a case, such as d9s4/005, where the inaccuracy in the BBox prediction led to an incorrect mask position.

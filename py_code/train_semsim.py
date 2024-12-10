@@ -64,6 +64,8 @@ model_name = 'all-distilroberta-v1'
 
 device = 'cuda'
 
+#path_to_old_weights = r'/data/users/roota5351/my_cs426/group_5/SchSearch/scholarly-search/weights/semsim3'
+
 model = SentenceTransformer(model_name, device=device)
 
 emb_lib = EmbeddingLibrary(
@@ -143,7 +145,6 @@ from torch.nn.modules.dropout import Dropout
 def set_dropout(model, p):
 
 
-
     def set_d(module):
 
         for c in module.children():
@@ -170,15 +171,17 @@ train_loss = MultipleNegativesRankingLoss(model, kl_factor=0.5)
 
 args = SentenceTransformerTrainingArguments(
 
-    output_dir=f"training/{model_name}",
+    output_dir=f"training/{model_name}_1",
 
-    num_train_epochs=10,
+    num_train_epochs=50,
 
     per_device_train_batch_size=64,
 
     #per_device_eval_batch_size=16,
 
     warmup_ratio=0.1,
+
+    weight_decay=0.01,
 
     fp16=True,  # Set to False if your GPU can't handle FP16
 
@@ -220,6 +223,6 @@ trainer = SentenceTransformerTrainer(
 
 trainer.train()
 
-path_to_weights = r'/data/users/roota5351/my_cs426/group_5/SchSearch/scholarly-search/weights/semsim3'
+path_to_new_weights = r'/data/users/roota5351/my_cs426/group_5/SchSearch/scholarly-search/weights/semsim4'
 
-model.save(path_to_weights)
+model.save(path_to_new_weights)

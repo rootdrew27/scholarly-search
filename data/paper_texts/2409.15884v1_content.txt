@@ -1,0 +1,108 @@
+SECTION: Interpolation filter design for sample rate independent audio effect RNNs
+
+Recurrent neural networks (RNNs) are effective at emulating the non-linear, stateful behavior of analog guitar amplifiers and distortion effects. Unlike the case of direct circuit simulation, RNNs have a fixed sample rate encoded in their model weights, making the sample rate non-adjustable during inference. Recent work has proposed increasing the sample rate of RNNs at inference (oversampling) by increasing the feedback delay length in samples, using a fractional delay filter for non-integer conversions. Here, we investigate the task of lowering the sample rate at inference (undersampling), and propose using an extrapolation filter to approximate the required fractional signal advance. We consider two filter design methods and analyze the impact of filter order on audio quality. Our results show that the correct choice of filter can give high quality results for both oversampling and undersampling; however, in some cases the sample rate adjustment leads to unwanted artefacts in the output signal. We analyse these failure cases through linearised stability analysis, showing that they result from instability around a fixed point. This approach enables an informed prediction of suitable interpolation filters for a given RNN model before runtime.
+
+SECTION: IIntroduction
+
+Virtual analog (VA) modeling refers to the digital emulation of analog audio effects and guitar amplifiers[1]. The aim is to replace bulky, costly hardware with software—usually implemented as a plug-in for a digital audio workstation. Three main paradigms exist:white-boxapproaches using circuit simulation methods[2,3,4];black-box, data-driven approaches[5,6,7]; and hybridgrey-boxapproaches such as differentiable DSP[8,9,10,11]. For guitar amplifier and distortion emulation, a perceptually convincing black-box approach uses recurrent neural networks (RNNs) trained on paired input-output recordings of the specific device[7], sometimes conditioned on user-controls[12]. One limitation of RNNs compared to a white or grey box method is that the sample rate of the training data is implicitly encoded into the model weights and therefore not easily adjustable at inference.
+
+Ideally, any audio processing software should be able to operate at at arbitrary sample rates—or at least the industry standard rates of,and multiples thereof. One possibility is to resample the input signal to the desired rate, and then back to its original rate after processing. For real-time applications, however, this may add excessive CPU expense and/or latency. The performance will depend greatly on the choice of resampling filter, and therefore a detailed comparison of the proposed methods in this work versus resampling is left to future work.
+
+Here, we build on previous work[13,14]investigating modifications to the architecture of RNNs with the aim of a sample rate independent system. Our contributions are:
+
+to expand the non-integer oversampling experiments of[14]with a larger set of candidate filters and larger database of pre-trained LSTM models;
+
+to explore the task of “undersampling” by a non-integer, proposing a means of achieving this by implementing a fractional signal advance in the state feedback loop;
+
+to show that in many cases, the proposed interpolation filters can yield high quality results, but that in a few cases they severely degrade model output quality;
+
+to show that the cases where the interpolation/extrapolation filters fail can be analysed through a linearisation of the modified RNN around a fixed point.
+
+This paper is structured as follows: Sec.IIintroduces the problem; Sec.IIIoutlines sample rate independent RNNs and the proposed filter designs; Sec.IVcontains the experimental details; Sec.Vshows the results and Sec.VIinvestigates the results further through linear analysis. Sec.VIIprovides concluding remarks. Audio examples are available.111https://a-carson.github.io/icassp25_srirnns/
+
+SECTION: IIProblem Statement
+
+Consider a continuous-time input audio signalthat has been sampled at a rate ofto givewhereis an integer sample index. In this work we consider recurrent neural networks (RNNs) of the form:
+
+whereis the hidden state of lengthandis the output signal. This class of model has been extensively used in recent years for modelling guitar amplifiers and effects pedals[7]. In this work we considerto be a LSTM cell, andan affine transformation (which is by definition sample rate independent).
+
+Here we consider the model (1) as pre-trained on audio with sample ratebut at inference we wish to stream audio sampled at a different rate, such that the model takes the input signaland produces the output signal. For an objective measure of quality we generate a target signalwhich isresampled fromtousing a DFT-based sample rate conversion[15], and measure the signal-to-noise ratio as:
+
+whereis the duration of the input signal in samples. The objective here is to design a sample rate independent RNN which results in a maximum SNR.
+
+SECTION: IIISample rate independent RNNs
+
+Adjusting the inference sample rate of an RNN can be achieved by maintaining the same delay duration (in seconds) seen by the RNN during training[13,14]. The modified RNN operating atcan be defined as:
+
+whereis the delay-line length adjustment in samples[13,14]. For non-integer conversion ratios, the state at non-integer time stepcan be approximated with a fractional delay FIR filter:
+
+whereis the filter order andare the filter coefficients.
+
+SECTION: III-ALagrange interpolation
+
+Lagrange interpolation is well known to be suitable for approximating a fractional delay[16,17,18,19], with the coefficients derived analytically[20]:
+
+This design has the benefit of giving the exact phase response and unity gain at DC, i.e.. If the desired delay is within a one-sample range and centered around, the filter is maximally flat[16]. In this problem, however, we are restricted by the causality of (3a) so we also consider non-centered designs. Forthis filter was used for the task of oversampling (in[14], with(non-centered) giving the best results across all the filters studied. Here we propose using a Lagrange extrapolation for approximation of a signal advance when.
+
+SECTION: III-BMinimax design
+
+Additionally we consider aminimaxdesign which minimises the L-infinity norm of the error magnitude over a desired bandwidth[16,21]. Previous work applied this to a fractional delay problem[21]and showed the filter coefficients can be obtained via solution of a second order cone optimization[22]. Here, we set the bandwidth of optimization from zero to 0.25to cover the typical frequency range of guitar and bass effects. An additional constraint was imposed to find solutions whereto ensure unity gain at DC. The coefficients were obtained using MATLAB’ssecondorderconefunction.
+
+(a) Oversampling:
+
+(b) Undersampling:
+
+SECTION: IVExperiment details
+
+Models:all experiments were carried out on a set of 160 pre-trained LSTM models from the GuitarML Tonelibrary222https://guitarml.com/tonelibrary/tonelib-pro.html. These models are user-created “captures” of various guitar amplifiers and effects pedals including distortion, overdrive and compressors. The models have the
+same structure as Eq. (1) withbeing an LSTM cell with hidden size 40 givingstates including the cell states. The users are instructed to record their training data at, so we assume the models have been trained correctly at this rate. Note that we have no information on model quality with respect to the original target analog system.
+
+Sample rate conversion ratios:we consider two common non-integer oversampling and undersampling ratios:, giving operating sample rates offor
+
+Candidate filters:the candidate filters were designed using the Lagrange and Minimax methods for ordersand fractional delays of. The magnitude response and phase delay error of the filters can be seen in Fig.1. Henceforth, the Kthorder filter designs will be referred to as Lagrange-K or Minimax-K.
+
+Baselines:we compare the results against two baselines: the “naive” method of no interpolation or extrapolation; and the state-trajectory network method (STN)[23,14].
+
+Test signal:the input test signalwas sixty seconds of guitar and bass direct-input recordings. Before measuring the SNR the first 44100 samples were truncated to remove transients.
+
+SECTION: VResults
+
+(a) Oversampling:to
+
+(b) Undersampling:to
+
+The results of the oversampling experiment are shown in Fig.2a). For Lagrange interpolation, the mean SNR increases with interpolation order, but so does the spread of the distribution of SNR results. Lagrange-5 performed best in 58.1% cases (with a SNR of up to) however in 8.1% of cases it performed worse than the naive method with a SNR as low as. We will refer to these cases as failures, to be further examined in Sec.VI. The SNR distributions for the minimax filters are generally more consistent. For example, the mean SNR for Minimax-5 is less than for its Lagrange counterpart, but the worst case scenario is better. For a single “best” filter choice across all models, Lagrange-3 appears to be a good compromise with a SNR ranging fromto.
+
+Fig.2b) shows the results for undersampling. In general the mean, minimum and maximum SNR for all filters is lower than in the oversampling case. In some cases the higher order Lagrange filters provided a good result of SNR, but the minimum SNR for all methods is less than, indicating an extremely noisy output signal in these cases. In 3.1% of cases the naive method of no interpolation gave the best SNR and therefore none of the proposed methods are suitable for undersampling those models. We can conclude that there is no single filter for undersampling that will give reasonable results across all models. In the following section, we show that linearised analysis of the target system can help identify which filters are likely to fail, allowing the user to rule these out before experimenting at run-time.
+
+SECTION: VILinearised analysis
+
+The results in Sec.Vshow that the best choice of interpolation filter has a strong dependence on the target system, and a poor choice can severely degrade output quality. Here we show that linearised analysis of the RNN[24]can help identify which filters are likely to cause a failure.
+
+Consider the modified RNN with delay-line interpolation (3a) under zero input conditions. We can linearise around some fixed pointthrough a Taylor expansion:
+
+whereis the Jacobian matrix. This can then be rewritten as a one-step state space system:
+
+where. Defining vector, we have:
+
+whereis the Kronecker product. Note that for(no interpolation),. System (7) can then be analysed by examining the pole locations, given by:
+
+In general we will have(non-unique) eigenvalues, and thus the order of interpolation increases the number of poles in the system. For stability around this fixed point we require.
+
+SECTION: VI-AExperiment
+
+We approximated a fixed point for a given model by initialising the unmodified system with zero state and zero input, running for 10k samples and takingas the time-averaged states over the last 1k samples. We then computedfor all model and filter combinations and predicted if each case would be either stable or unstable, depending on the pole locations. For each case the corresponding empirical result in Sec.Vwas labelled as either successful if the proposed methods gave a positive increase in SNR (relative to no interpolation) or a failure otherwise. This was repeated for both oversampling and undersampling to give 3200 experiments in total. The results can be seen in TableI. The results show a high correlation between the stability prediction and the empirical results: in 97.8% of cases () the linear analysis correctly predicts the binary empirical result.
+
+SECTION: VI-BCase study
+
+Fig.3shows an example of a model that fails when linear extrapolation (Lagrange-1) is used to undersample the LSTM. The spectrogram shows high energy ringing at a frequency of. Fig.4shows the linearised analysis for the same system. The extrapolation has caused one conjugate pair of poles to leave the unit circle, and the pole-angle corresponds to the most prominent peak in the output spectrum. Referring back to Fig.1(b) (top-left), this can be attributed to the high-shelf behaviour of linear extrapolation.
+
+(a)
+
+(b)
+
+SECTION: VIIConclusions and further work
+
+This paper explored interpolation-based methods for adjusting the sample rate of RNNs to allow audio processing at an inference sample rate that differs from training. This builds on prior work that proposed implementing a fractional delay filter in the state feedback loop for the task of non-integer oversampling. Here we extended this method to the inverse task of undersampling, and proposed achieving this by approximating a fractional signal advance in the feedback loop. We considered Lagrange and minimax FIR filter designs, and evaluated the performance of the filters on 160 pre-trained LSTM models of various guitar amplifiers and distortion effects. The results showed that the best choice of filter was highly dependent on the effect-specific weights of the LSTM model. A good choice of filter may give up toSNR when oversampling or up towhen undersampling. However, for certain models a poor choice of filter can result in poorer quality than if no interpolation was used. We showed that these failure cases can be predicted using linearised analysis of the original RNN around a fixed point. In future we will investigate model-specific optimal filter design, using the linearised analysis used to enforce stability as a design constraint. Alternatively, this analysis may enable sample rate conversion by adjusting the weights of the network, thus avoiding the need for interpolation or extrapolation entirely.
+
+SECTION: References

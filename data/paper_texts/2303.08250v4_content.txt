@@ -1,0 +1,273 @@
+SECTION: Continual Learning via Learning a Continual Memory in Vision Transformer
+This paper studies task-incremental continual learning (TCL) using Vision Transformers (ViTs). Our goal is to improve the overall streaming-task performance without catastrophic forgetting by learning task synergies (e.g., a new task learns to automatically reuse/adapt modules from previous similar tasks, or to introduce new modules when needed, or to skip some modules when it appears to be an easier task).
+One grand challenge is how to tame ViTs at streaming diverse tasks in terms of balancing their plasticity and stability in a task-aware way while overcoming the catastrophic forgetting.
+To address the challenge, we propose a simple yet effective approach that identifies a lightweight yet expressive “sweet spot” in the ViT block as the task-synergy memory in TCL.
+We present a Hierarchical task-synergy Exploration-Exploitation (HEE) sampling based neural architecture search (NAS) method for effectively learning task synergies by structurally updating the identified memory component with respect to four basic operations () at streaming tasks.
+The proposed method is thus dubbed as CHEEM (Continual Hierarchical-Exploration-Exploitation Memory).
+In experiments, we test the proposed CHEEM on the challenging Visual Domain Decathlon (VDD) benchmark and the 5-Dataset benchmark. It obtains consistently better performance than the prior art with sensible CHEEM learned continually.
+
+SECTION: Introduction
+Developing continual learning machines is one of the hallmarks of Artificial Intelligence (AI), to mimic human intelligence in terms of learning-to-learn to be adaptive and skilled at streaming tasks. However, state-of-the-art Deep Neural Networks (DNNs) are not yet intelligent in the biological sense from the perspective of continual learning, especially plagued with the critical issue known asat streaming tasks in a dynamic environment.
+To address catastrophic forgetting, there are two main categories of continual learning methods: exemplar-based methodsand exemplar-free methods. Both have witnessed promising progress, while the latter is more challenging and has attracted more attention recently.
+
+In this paper, we focus the exemplar-free setting. Since no data of previous tasks in any forms will be available, the challenge is typically on how to retain the model parameters trained for previous tasks in updating the model for a new task, i.e. balancing the plasticity and the stability.
+There have a vast literature of exemplar-free continual learning using Convolutional Neural Networks.
+One pioneering approach is to regularize the change in model parameters such as the popular Elastic Weight Consolidation (EWC) method. To be more flexible in handling complexities at streaming tasks, a popular paradigm is to dynamically select and/or expand the model such as the learn-to-grow method, Supermask in Superposition (SupSup), Lightweight Learner, the calibration method, the efficient feature transformation methodand the Channel-wise Lightweight Reprogramming (CLR) method.
+
+More recently, with the availability of powerful pretrained Transformer models,
+for continual learning, as illustrated in Fig., two main approaches are the prompt-based design, and the parameter-tuning based design, both of which do not dynamically and structurally update the model architectures.The intuition underlying the need of doing such updates in continual learning is to flexibly handle the varying complexities of streaming tasks in the wild.
+
+We aim to address the above challenge in this paper. To that end, we study task-incremental continual learning (TCL), in which tasks often have significantly different label spaces and task IDs of data are available in both training and testing. For example, we consider the challenging VDD benchmark, as illustrated in Fig.. We are aware that class-incremental continual learning (CCL) has gained much more attention recently, which does not assume the availability of task IDs of testing data. However, we note that most of existing CCL methods using Transformers often assume a common classification space (e.g., all the stream tasks have the same number of classes such as L2P, CODAPrompt, and DER), or the total number of classes throughout continual learning is assumed to be known), or assume the streaming (domain-incremental) tasks are mostly separable via-NN in the prompt space such as S-Prompts, which are not applicable in the VDD benchmarkof interest in this paper.
+
+.
+We aim to improve the overall streaming-task performance without catastrophic forgetting (i.e., resiliency) by learning task synergies (e.g., a new task learns to automatically reuse/adapt modules from previous similar tasks, or to introduce new modules when needed, or to skip some modules when it appears to be an easier task).
+It is not feasible to devote all components of a Transformer model to be dynamic
+
+in continual learning due to considerations in two-fold: the computational cost to compensate the quadratic complexity of multi-head self-attention (MHSA) in Transformer models, and the trade-off between the plasticity and the stability.
+As illustrated in Fig., we identify the output projection layer after MHSA as the task-synergy memory that will be structurally and dynamically updated in continual learning.
+We present an effective hierarchical task-synergy exploration-exploitation (HEE) sampling based NAS method to learn to select the four operations in Fig.(c). The proposed method is thus dubbed as().
+With our proposed CHEEM, we observe sensible structures learned to update as illustrated in Fig.. For example, Tsk2_C100 is very similar to Task1_ImNet, thusmost of the blocks from Tsk1_ImNet, but‘IN_B4’ (low-to-middle level features) and introduces aB12 block (the high-level features). Tsk3_SVHN is very different from both Tsk1_ImNet and Tsk2_C100 and a relatively easier task, which learns tomany of the blocks from Tsk1_ImNet with two (B10 and B11) blocks. We note that the learned task synergies make a lot intuitive sense considering the nature of different tasks, which shows the effectiveness of our proposed CHEEM.
+
+.
+This paper makes three main contributions to the field of task-incremental continual learning with ViTs. (i) It presents a hierarchical task-synergy exploration-exploitation sampling based NAS method for learning task-aware dynamic models continually with respect to four operations:,,, andto overcome catastrophic forgetting. (ii) It identifies a “sweet spot” in ViTs as the task-synergy memory, i.e., the output projection layers after MHSA in ViTs. It also presents a new usage for the class-tokenin ViTs as the task-synergy memory updating guidance. (iii) It is the first work, to the best of our knowledge, to evaluate continual learning with ViTs on the large-scale, diverse and imbalanced VDD benchmark, with better performance than the prior art.
+
+SECTION: Our Proposed CHEEM
+In this section, we present details of our proposed CHEEM.
+
+SECTION: Identifying a Task-Synergy Memory in ViT
+We start with a vanilla-layer ViT model (e.g., the 12-layer ViT-Base).
+The left of Fig.shows a ViT block. Denote byan input sequence consisting oftokens encoded in a-dimensional space. In ViTs, the first token is the so-called class-token,. The remainingtokens are formed by patchifying an input image and then embedding patches, together with additive positional encoding. A ViT block is defined by,
+
+whererepresents the layer normalization, andis a linear transformation fusing the multi-head outputs from MHSA module.
+The MHSA realizes the dot-product self-attention between Query and Key, followed by aggregating with Value, where Query/Key/Value are linear transformatons of the input token sequence. The FFN is often implemented by a multi-layer perceptron (MLP) with a feature expansion layerand a feature reduction layerwith a nonlinear activation function (such as the GELU) in the between.
+
+The proposed identification process is straightforward. Without introducing any modules handling forgetting, we compare both the task-to-task forward transferrability and the sequential forgetting of different components in a ViT block.
+
+To that end, we use the 10 tasks in the VDD benchmark(see Fig.). We first compare the transferrability of the ViT trained with the first task (ImageNet) to the remaining 9 tasks in a pairwise task-to-task manner and compute the average Top-1 accuracy on the 9 tasks (see Eqn.). Then, we start with the ImageNet-trained ViT, and train it on the remaining 9 tasks continually and sequentially in a predefined order (i.e., sequentially fine-tuning the ImageNet-trained ViT backbone in a plain way). We compute the average forgetting on the first 9 tasks (including ImageNet) (see Eqn.).
+As shown in Table, we compare 11 components or composite components across all blocks in the ImageNet-pretrained ViT.
+Consider the strong forward transfer ability, manageable forgetting, maintaining simplicity and for less invasive implementation in practice,
+
+SECTION: Learning CHEEM
+, similar in spirit to. After the first task, the CHEEM at the-th layer in the ViT model consists of a single expert defined by a tuple,
+
+where the subscript presents the layer index and the list-based superscript shows which task(s) use this expert.are the parameters of the projection layer andis the associated mean class-token,pooled from the training dataset after the model is trained, which is task specific (as indicated by the superscript). For example, if an expert is reused by another task (say, 3) in continual learning, we will have.
+
+As shown in Fig., for a new task, learning to update CHEEM consists of three components: i) the Supernet construction (the parameter space of updating CHEEM), ii) the Supernet training (the parameter estimation of updating CHEEM), and iii) the target network selection and finetuning (the consolidation of the CHEEM for the task).
+
+For clarity, we consider how the space of CHEEM is constructed at a single layerfor a new task, assuming the current CHEEM consists of two experts,(Fig., left). We utilize four operations in the Supernet construction:
+
+: Skips the entire MHSA block, which encourages the adaptivity accounting for the diverse nature of tasks.
+
+: Uses the projection layer from an old task for the new task unchanged, which will help task synergies in learning.
+
+: Introduces a new lightweight layer on top of the projection layer of an old task, implemented by a MLP with one squeezing hidden layer.
+
+: Adds a new projection layer, which enables the model to handle corner cases and novel situations.
+
+The bottom of Fig.shows the search space. The Supernet is constructed byandeach existing expert at layer, and adding aand aexpert. The newly addedMLPs and projection layers will be trained from scratch using the data of a new task only. The right-top of Fig.shows theoperation on top ofis learned and added,whererepresents parameters of theMLPs learned for the task 3, andis the meantoken pooled for the task 3. The expertis updated toindicating its weights will be shared with task 3.
+
+The proposedoperation will effectively increase the depth of the network in a plain way. In the worst case, if too many tasks useon top of each other, we will end up stacking too many MLP layers together. This may lead to unstable training due to gradient vanishing. Shortcut connectionshave been shown to alleviate the gradient vanishing problems. We introduce the shortcut connection in adding a MLPoperation. We test two different implementations: with shortchut in all the three components (supernet training, target network selection and target network finetuing) versus with shortcut only in target network finetuning. The latter is preferred as analyzed in Appendix.
+
+To train the Supernet constructed for a new task, we build on the SPOS methoddue to its efficiency. The basic idea of SPOS is to train a single-path sub-network from the Supernet by sampling an expert at every layer in each mini-batch of training. One key aspect is the sampling strategy. The vanilla SPOS method uses uniform sampling (i.e., the(PE) strategy, Fig.left).
+We propose an exploitation strategy (Fig.right), which utilizes a hierarchical sampling method that forms the categorical distribution over the operations in the search space.
+
+Consider a new taskwith the training dataset, with the current supernet consisting oftask-specific target networks, we first run inference of thetarget networks onto pool initialtokens for each expert, e.g.,andin the bottom of Fig..
+Consider one expertat the-th layer which is shared by two previous tasksandwith their meantokensandrespectively, we have the pooledtokens for the current task,and, computed accordingly. The task similarity is computed by,
+
+whereis the Normalized Cosine Similarity, which is calculated by scaling the Cosine Similarity score betweenandusing the minimum and the maximum Cosine Similarity scores from all the experts in all the MHSA blocks of the ViT. This normalization is necessary to increase the difference in magnitudes of the similarities between tasks, which results in better Expert sampling distributions during the sampling process in our experiments. The task similarity score will be used in sampling theandoperations.
+
+For the new task, we also have theexpert and theexpert at each layer, for which we do not have similarity scores. Instead, we introduce an auxiliary expert,(see the right of Fig.) which gives equally-likely chance to select theexpert or theexpert once sampled in NAS. For theexpert itself, the similarity score between it and the new taskis specified by,
+
+which intuitively means we probabilistically resort to theoperation or theoperation when other experts turn out not “helpful” for the task.
+
+At each layerin the ViT, for a new task, the task-similarity oriented operation sampling is realized by a 2-level hierarchical sampling, as illustrated in the right of Fig.:
+
+The first level uses a categorical distribution with the maximum number of entries beingconsisting of at most the previoustasks (some of which may useand thus will be ignored) and theexpert. The categorical distributionis computed by the Softmax function over the similarity scores defined above, where.
+
+With a previous tasksampled with the probability, at the second level of sampling, we sample theoperation for the associated expert using a Bernoulli distribution with the succcess rate computed by the Sigmoid function of the task similarity score defined by, and theoperation with probability.
+
+After the Supernet is trained, we adopt the same evolutionary search used in the SPOS methodbased on the proposed hierarchical sampling strategy. The evolutionary search is performed on the validation set to select the path which gives the best validation accuracy. After the target network for a new task is selected, we retrain the newly added layers by theandoperations from scratch (random initialization), rather than keeping or warming-up from the weights from the Supernet training. This is based on the observations in network pruning that it is the neural architecture topology that matters and that the warm-up weights may not need to be preserved to ensure good performance on the target dataset.
+
+As illustrated in Fig., to harness the best of the pure exploration strategy and the proposed exploitation strategy, we apply epoch-wise exploration and exploitation sampling for simplicity. For the pure exploration, we directly uniformly sample the experts at a layer, consisting of theexperts from the previoustasks, and theandoperations, where.
+At the beginning of an epoch in the Supernet training, we choose the pure exploration strategy with a probability of(e.g., 0.3), and the hierarchical sampling strategy with a probability of. Similarly, when generating the initial population during the evolutionary search, we draw a candidate target network from a uniform distribution over the operations with a probability of, and from the hierarchical sampling process with a probability of, respectively.
+In practice, we set(e.g.,) to encourage more exploration during the evolutionary search, while encouraging more exploitation for faster learning in the Supernet training.
+
+SECTION: Experiments
+We test our CHEEM on two benchmarks and compare with the prior art.
+It obtains better performance than the prior art in comparisons.We use 1 Nvidia A100 GPU in all experiments.
+
+:
+We evaluate our approach on the VDD benchmarkand the 5-Datasets benchmark introduced in.
+The VDD benchmark is challenging because of the large variations in tasks as well as small number of samples in many tasks, which makes it a favorable for evaluating continual learning algorithms. More details are in Appendix.
+
+: We consider two task-incremental settings and compare with the corresponding prior art.It always starts from the model trained for the first task with the feature backbone and head classifierfor any subsequent tasks. Letbe the backbone trained for the task() with weights initialized from the model of task, andthe head classifier trained from scratch. The average accuracy is defined as:
+
+whereuses the Top-1 accuracy, and. Under this paradigm, there is no catastrophic forgetting. Depending on howis trained, it may require to keepseparate model checkpoints.Letbe the backbone trained sequentially and continually after taskandis its head classifier.
+The average accuracy is,
+
+The average forgettingon the firsttasks is,
+
+where.
+Depending whetheris task-aware or not, the average forgetting could be either zero or not. This continual learning paradigm (rather than task-to-task paradigm) is more interesting in the literature, and also our focus in this paper.
+
+SECTION: Results on the VDD Benchmark
+We report results using the two settings stated above as follows.
+
+We compare with three state-of-the-art methods: the Learning-to-Grow (L2G) method, the Learning-to-Prompt (L2P) methodand the S-Prompts method. We modify L2G to work with ViTs using two NAS algorithm, the DARTSused by the vanilla L2G and a recently improved-DARTS. We also apply L2G only to the final projection layer in the MHSA. We modify both L2P and S-Prompts for VDD under the task-incremental setting (Appendix).
+
+As shown in Table,We observe:
+
+Both L2P and S-Prompts use the frozen backbone from the first ImNet task, while L2G and our CHEEM learn to grow the backbone. Compared to L2P and S-Prompts, although L2G is worse in terms of overall performance, it works much better for tasks that are different from the ImNet such as the three, SVHN, UCF and OGlt, where L2G can outperform L2P by more than,andrespectively. Overall, we observe that learning task-aware dynamic backbone is beneficial in continual learning with sensible architectures learned (Fig.), verifying our motivation stated in Sec..
+
+To further show the advantage of learning to grow the feature backbone in sequential and continual learning. We also compare with state-of-the-art weight regularization based continual learning methods: the L2 Parameter Regularizationand the Elastic Weight Consolidation (EWC), and a strong baseline of Experience Replay. As shown in Tabe, the three methods suffer from catastrophic forgetting significantly. We note that all the methods initially have the same performance on the first ImNet task (82.65). The two weight regularization based methods only maintain the ImNet trained weights via different regularization strategies without introducing any new task-specific parameters, and the experience play method keep track of a small coreset of examples of previous tasks, all the three leading to catastrophic forgetting of earlier tasks after trained on all tasks.
+
+On the VDD benchmark, the number of parameters of our CHEEM increases by 1.06M/task (averaged over 3 different runs). Although this is higher than L2Pwhich uses 12 extra prompts
+(0.01M/task), our method increases the number of FLOPs only by 0.17G/task (due toexperts), as compared to the increase of 2.02G/task of the L2P,times more expensive than ours, due to the quadratic complexity of MHSA with respect to the length of input token sequence. Similarly, our method requires less memory footprint.
+
+. We verify the effectiveness of our HEE sampling (Table), which is significantly better by a large margin,absolute average accuracy increase.
+
+To further verify whether the vanilla PE sampling can catch up the performance gap using more supernet training epochs, we compare it with our proposed HEE sampling using 6 different numbers of training epochs from 50 to 300 on the VDD benchmark across 3 different runs. Fig.shows the comparison in terms of both the average accuracy and the average number of parameter increased per task. In terms of average accuracy, our proposed HEE with 50-epoch supernet training already consistently outperforms the vanilla PE with 300-epoch training. In terms of the average number of parameters increased per task, our proposed HEE is also significantly better with much less new parameters introduced, thanks to its task-similarity oriented sampling (resulting in manyand).The similar observations remain in terms of changing task orders (Appendix).
+
+As shown in Table, L2G+ViT-B using DARTS or-DARTS do not show significant improvement over L2G+ResNet26 using DARTS, although ViT-B has significantly better performance than ResNet26on the first ImNet task (82.65 vs 69.84). Furthermore, as shown in Table, our CHEEM with uniform sampling based SPOS obtains similar performance with L2G. These may suggest that the vanilla L2G+DARTS do not suit ViTs well.
+
+Both L2P and S-Prompts perform better on tasks similar to the first ImNet task and with less training data such as Flwr (918 training images) and DTD (1692 training images), which makes intuitive sense.
+It also indicates that we could harness the best of prompting-based methods and our CHEEM, which we leave for the feature work.
+
+We compare with three state-of-the-art methods: Supermasks in Superposition (SupSup), Efficient Feature Transformation (EFT)and Lightweight Learner (LL). We modify them to work with ViTs with details provided in Appendix.
+
+As shown Table, our CHEEM also obtains the best overall performance. The SupSup method achieves a higher accuracy on tasks different from the first ImNet task such as UCF and OGlt, but does not perform well on similar tasks such as Flwr, Airc. and DTD, whereas both EFT and LL show the opposite behavior. Our CHEEM can perform well across all the tasks, indicating it is much less sensitive to the domain shifts in continual learning, thanks to its learning-to-grow core with a task-similarity oriented NAS. We note that our CHEEM under task-to-task transfer-based learning protocol obtains better performance than its counterpart under the sequential and continual learning protocol at
+the expense of introducing much moreexperts (the first one in Fig.in the Appendix), compared to only oneexpert in Fig.. It also has moreexperts.
+The different behaviors between continual learning and task-to-task transfer learning with CHEEM indicate that there are some room in further improving our HEE-based NAS.
+
+SECTION: Results on the 5-Dataset Benchmark
+Tableshows the comparisons using the continual learning protocol. We use the same ViT-B/8 backbone pretrained on the ImageNet from the VDD benchmark for all the experiments across all the methods and upsample the images in the 5-Dataset benchmark (consisting of CIFAR10, MNIST, Fashion-MNIST, not-MNIST, and SVHN) to.
+Our CHEEM obtains the best performance.
+
+SECTION: Limitations
+One main limitation of our proposed CHEEM is the assumption of task index available in inference. To move forward from task-incremental continual learning to class-incremental continual learning with our proposed CHEEM, a potential solution is to infer the task index of a testing data on the fly. To that end, we may develop methods similar in spirit to S-Prompts. S-Prompts focuses on domain-incremental learning (DIL) by learning domain-specific prompts using frozen pretrained Transformer backbones. It leverages the K-NN method in identifying the domain index in inference, which assumes separable Gaussian-type distributions of domain prompts and works well on the DIL benchmarks in their experiments.
+We will investigate how to leverage the task-aware meantokens learned by each Expert in our CHEEM for explicit task index inference. In our preliminary investigation, we observed that the K-NN is a too strong assumption for benchmarks like the VDD which includes very similar tasks (e.g., CIFAR100 vs ImageNet). One potential solution is to integrate the task-aware meantokens at multiple layers to learn a task index predictor.
+
+SECTION: Related Work
+aim to retain some exemplars, in the form of either raw data or latent features, from the previous tasks and replay them to the model along with the data from the current task. Instead of storing raw exemplars,learn the generative process for the data of a task, and replay exemplars sampled from that process along with the data from the current task.
+For exemplar-free continual learning,explicitly control the plasticity of the model by preventing the parameters of the model from deviating too far from their stable values learned on the previous tasks when learning the current task. Both these approaches aim to balance the stability and plasticity of a fixed-capacity model.
+
+aim to use different parameters for each task to eliminate the use of stored exemplars. Dynamically Expandable Networkadds neurons to a network based on learned sparsity constraints and heuristic loss thresholds. PathNetfinds task-specific submodules from a dense network, and only trains submodules not used by other tasks. Progressive Neural Networkslearn a new network per task and adds lateral connections to the previous tasks’ networks.learns residual adapters which are added between the convolutional and batch normalization layers.learns an expert network per task by transferring the expert network from the most related previous task. The L2Guses Differentiable Architecture Search (DARTS)to determine if a layer can be reused, adapted, or renewed for a task, which is tested for ConvNets and the learning-to-grow operations are applied uniformly at each layer in a ConvNet. Our method is motivated by the L2G method, but with substantially significant differences.
+
+Recently, there has been increasing interest in continual learning using Vision Transformers.learn external parameters appended to the data tokens that encode task-specific information useful for classification.
+Our proposed method is complementary to those prompting-based ones.
+
+SECTION: Conclusion
+This paper presents a method of transforming Vision Transformers (ViTs) for resilient task-incremental continual learning (TCL) with catastrophic forgetting overcome. It identifies the final projection layers of the multi-head self-attention blocks as the task-synergy memory in ViTs, which is then updated in a task-aware way using four operations,,,and. The learning of task-synergy memory is realized by a proposed hierarchical exploration-exploitation sampling based single-path one-short Neural Architecture Search algorithm, where the exploitation utilizes task similarities defined by the normalized cosine similarity between the mean class tokens of a new task and those of old tasks. The proposed method is dubbed as CHEEM (Continual Hierarchical-Exploration-Exploitation Memory). In experiments, the proposed method is tested on the challenging VDD and the 5-Datasets benchmarks.
+It obtains better performance than the prior art with sensible CHEEM learned continually.
+We also take great efforts in materializing several state-of-the-art baseline methods for ViTs and tested on the VDD, which are released in our code.
+
+SECTION: Acknowledgements
+This research is partly supported by NSF IIS-1909644, ARO Grant W911NF1810295, ARO Grant W911NF2210010, NSF IIS-1822477, NSF CMMI-2024688, NSF IUSE-2013451 and DHHS-ACL Grant 90IFDV0017-01-00.
+The views and conclusions contained herein are those of the authors and should not be interpreted as necessarily representing the official policies or endorsements, either expressed or implied, of the NSF, ARO, DHHS or the U.S. Government. The U.S. Government is authorized to reproduce and distribute reprints for Governmental purposes not withstanding any copyright annotation thereon.
+
+SECTION: References
+SECTION: Appendix
+SECTION: Outline
+In this Appendix, we elaborate on the following aspects that are not presented in the submission due to the space limit:
+
+tested in the experiments: the Visual Domain Decathlon (VDD)benchmark (Section) and the 5-Datasetsbenchmark (Section).
+
+: the Vision Transformer (ViT) model specification (ViT-B/8) and how it is initially training on the ImageNet in our experiments.
+
+on the VDD benchmark and the 5-dataset benchmark.
+
+by our proposed hierarchical exploration-exploitation (HEE) sampling scheme and by the vanilla pure exploration (PE) sampling scheme.
+
+:
+
+: We compare with the Query/Key/Value layer and the FFN layer, and verify the effectiveness of the proposed identification in the main paper.
+
+: We elaborate two implementation methods of theoperation and compare their performance.
+
+- Details of Modifying Baseline Methods on the VDD Benchmark:
+
+to leverage task ID in inference.
+
+to work with ViTs.
+
+SECTION: Dataset Details
+SECTION: The VDD Benchmark
+It consists of 10 tasks: ImageNet-1k, CIFAR100, SVHN, UCF101 Dynamic Images (UCF), Omniglot, German Traffic Signs (GTSR), Daimler Pedestrian Classification (DPed), VGG Flowers, FGVC-Aircraft, and Describable Textures (DTD). All the images in the VDD benchmark have been scaled such that the shorter side is 72 pixels. Tableshows the number of samples in each task. Fig.shows examples of images from each task of the VDD benchmark.
+In our experiments, we use 10% offrom each of the tasks for validation (e.g., used in the target network selection in Section 3.2.3 in main text), and report the accuracy ondue to the unavailability of the ground-truth labels for the. In Table, theandsplits are thus referred to 90% of the official training data, 10% of the official training data, and the entire official validation data respectively. When finetuning the learned architecture (i.e., the searched target network) for each task, we useto train and report results on.
+
+SECTION: The 5-Datasets Benchmark
+It consists of 5 tasks: CIFAR10, MNIST, Fashion-MNIST, not-MNIST, and SVHN, all having 10 categories. MNIST, Fashion-MNIST, and not-MNIST have a resolution of, and CIFAR10 and SVHN have a resolution of. We upsample the images toto match the resolution of the ImageNet images on which the backbone ViT model is trained. Tableshows the data statistics. Fig.shows examples of images from each task. To be consistent with the settings used on the VDD benchmark, we use 15% offor validation and report the results on, except for not-MNIST for which an official test split is not available. So, for the not-MNIST dataset, we use the small version of that dataset, with which we construct the test set by randomly sampling 20% of the samples. From the remaining 80%, we use 15% for validation, and the rest as the training set.
+
+SECTION: The Base Vision Transformer: ViT-B/8
+We use the base Vision Transformer (ViT) model, with a patch size of(ViT-B/8) model from. The base ViT model contains 12 Transformer blocks. A Transformer block is defined by stacking a Multi-Head Self-Attention (MHSA) block and a Multi-Layer Perceptron (MLP) block with resudual connections for each block. ViT-B/8 uses 12 attention heads in each of the MHSA blocks, and a feature dimension of 768. The MLP block expands the dimension size to 3072 in the first layer and projects it back to 768 in the second layer. For all the experiments, we use an image size offollowing the VDD setting. We base the implementation of the ViT on thepackage.
+
+To train the ViT-B/8 model, we use the ImageNet data provided by the VDD benchmark (thesplit in Table). To save the training time, we initialize the weights from the ViT-B/8 trained on the full resolution ImageNet dataset (224224) and available in thepackage, and finetune it for 30 epochs on the downsized version of ImageNet (7272) in the VDD benchmark. We use a batch size of 2048 split across 4 Nvidia Quadro RTX 8000 GPUs. We follow the standard training/finetuning recipes for ViT models. The filein our code folder provides all the training hyperparameters used for training the the ViT-B/8 model on ImageNet.
+During testing, we take a single center crop of 7272 from an image scaled with the shortest side to scaled to 72 pixels.
+
+SECTION: Settings and Hyperparameters in
+
+Learning CHEEM
+Starting with the ImageNet trained ViT-B/8, the proposed CHEEM learning consists of three components:.
+
+A full list of data augmentations used for the VDD benchmark is provided in Table, and the data augmentations used for the tasks in the 5-datasets benchmark is provided in Table. The augmentations are chosen so as not to affect the nature of the data. Scale and Crop transformation scales the image randomly between 90% to 100% of the original resolution and takes a random crop with an aspect ratio sampled from a uniform distribution over the original aspect ratio.
+In evaluating the supernet and the finetuned model on the validation set and test set respectively, images are simply resized towith bicubic interpolation.
+
+: For each task, we train the supernet for 100 epochs, unless otherwise stated. We use a label smoothing of 0.1.
+We use a learning rate of 0.001 and the Adam optimierwith a Cosine Decay Rule.
+We use a batch size of 512, and ensure the minimum number of batches in an epoch is 15 (via repeatedly sampling when the number of total samples of a task is not sufficient).
+As stated in the paper, for the Exploration-Exploitation sampling scheme, we use an exploration probability.
+
+: We use the same hyperparameters as those used in the VDD Benchmark, but train the supernet for 50 epochs to account for its relatively lower complexity.
+
+: We train the supernet of the Learn-to-Grow (L2G)for 50 epochs on the VDD benchmark and 25 epochs on the 5-datasets benchmark, since DARTS simultaneously trains all sub-networks (i.e. the entire supernet) at each epoch. We use a weight of 1 for the beta loss in all the experiments with-DARTS.
+
+The evolutionary search is run for 20 epochs. We use a population size of 50. We use 25 candidates both in the mutation stage and the crossover stage. The top 50 candidates are retained. The crossover is performed among the top 10 candidates, and the top 10 candidates are mutated with a probability of. For the Exploration-Exploitation sampling scheme, we use an exploration probabilitywhen generating the initial population.
+
+The target network for a task selected by the evolutionary search is finetuned for 30 epochs with a learning rate of 0.001, Adam optimizer, and a Cosine Learning Rate scheduler. Drop Path of 0.25 and label smoothing of 0.1 are used for regularization. We use a batch size of 512, and a minimum of 30 batches are drawn.
+
+We use a single Nvidia A100 GPU for all the experiments.
+
+SECTION: More Examples of CHEEM Learned Sequentially and Continually
+Fig.shows the CHEEM learned sequentially and continually via the proposed HEE-based NAS on the VDD benchmarkwith three different random seeds.
+
+As comparisons, Fig.shows the structure updates learned using the vanilla PE-based NAS. It can be seen that pure exploration does not reuse components from similar tasks.
+The pure exploration based method adds many unnecessaryandoperations even though the tasks are similar (e.g., ImNet → C100), verifying the effectiveness of the proposed sampling method. While the pure exploration scheme adds manyoperations, thereby reducing the overall FLOPs, the average accuracy is low by a large margin, about 6%. This shows that the pure exploration scheme cannot learn to choose operations in a task synergy aware way.
+
+SECTION: Ablation Studies
+SECTION: CHEEM Placed at Other ViT Components
+Tableshows the performance comparisons with other four different components in the ViT (the Query/Key/Value linear projection layer and the FFN block) used in realizing the proposed CHEEM. The Query/Key/Value component as the CHEEM does not perform as well as the Projection component. The FFN block as the CHEEM performs only slightly better than the Projection layer, but at the expense of a much larger parameter cost. This reinforces our identification above.
+
+SECTION: Implementation Details of theOperation
+The proposedoperation will effectively increase the depth of the network in a plain way. In the worst case, if too many tasks useon top of each other, we will end up stacking too many MLP layers together. This may lead to unstable training due to gradient vanishing. Shortcut connectionshave been shown to alleviate the gradient vanishing and exploding problems, making it possible to train deeper networks. We introduce the shortcut connection in adding a MLPoperation. We test two different implementations: with shortchut in all the three components (supernet training, target network selection and target network finetuing) versus with shortcut only in target network finetuning (i.e., without shortcut in the NAS including both supernet training and target network selection).
+
+Tableshows the performance comparisons on the VDD Benchmark under the continual learning paradigm. In terms of sequentially introduced complexities, a more compact model is learned without the shortcut in theduring NAS (supernet training and target network selection) as evidenced by the number of additional parameters and the increase in FLOPs. Using the shortcut in both supernet training and target network selection results in twice the parameter increase, and almost 4increase in FLOPs.
+Fig.and Fig.show comparisons of the learned CHEEM by the two implementation methods under the two paradigms respectively.
+
+We have two remarks as follows.
+
+We use the more parameter-efficient implementation (i.e., w/o shortcut for thein NAS) in the main paper for both the continual learning and the task-to-task transfer learning paradigms, even though the counterparts have better performance.
+
+We note that although the T2T paradigm results in larger parameter increase per task, its computational costs are relatively lower due to either moreoperations learned and/or the fact that there is no-on-operations since it is task-to-task transfer based learning.
+
+SECTION: Effects of Task Orders
+We investigate the effects of task orders of the 9 tasks in the VDD benchmark. We test four more task sequences in addition to the one presented in the main paper. Overall, The CHEEM learned by our proposed HEE-based NAS achieve similar performance across different task orders, and consistently significantly outperform those learned by the vanilla PE-based NAS.
+
+Tablereports the performance. Fig., Fig., Fig.and Fig.show the learned CHEEM using our proposed HEE-based NAS.
+
+SECTION: Details of Modifying Baseline Methods on the VDD Benchmark
+SECTION: Modifying S-Promts and L2P for Task-Incremental Setting on the VDD Benchmark
+Both the S-Promptsand the Learn-to-Prompt (L2P)can be modified for task-incremental setting (i.e., task ID is available in both training and inference) on the VDD benchmark without altering the core algorithm for learning the prompts.
+
+For the S-Prompts method, the modification is done by trainingprompts (randomly initialized) per task and then by retrieving the correct task-specific prompts with the task ID. Tableand Tableshow the results of varying the number of prompts on the VDD benchmark and 5-dataset benchmark respectively, from which we can observe that varying the number of prompts beyond 10 does not affect the performance significantly, which is also observed in the original paper.
+
+For the L2P method, we follow the official implementationwhich is tested on the 5-datasets benchmark. The vanilla L2P first trains a set ofprompts of length(i.e.tokens) per task. It then learns a set ofkeys such that the distance between the keys and the image encoding (using a fixed feature extractor) is maximized.
+In modifying the vanilla L2P for the task-incremental setting, we can directly retrieve the correct prompts using the Task ID instead of using a key-value matching.
+We initialize the prompts for taskfrom the trained prompts of taskfollowing the original implementation. We note that the prompt initialization is the only difference between the modified S-Prompts and the modified L2P. Base on the above observations of performance changes w.r.t. the number of prompts in modifying S-Prompts, we usefor L2P in our experiments.
+
+SECTION: Modifying SupSup, EFT and LL to Work With ViTs
+In the main paper, we compare with Supermasks in Superposition (SupSup), Efficient Feature Transformation (EFT), and Lightweight Learner (LL)in Table 5 under the task-to-task transfer learning paradigm. The three methods are originally developed for Convolutional Neural Networks. We modify them to be compatible with ViTs for a fair comparison with our CHEEM.
+
+We use the same ViT-B/8 base model (Sec.) for SupSup, EFT and LL.
+For the SupSup method, we learn masks for the weights of the final linear projection layer of the Multi-Head Self-Attention block using the straight through estimator.
+We apply the EFTon all the linear layers in the ViT-B/8 (i.e., all the Query/Key/Value projection layers, the final projection layer, and the FFN layers) by scaling their activation maps via the Hadamard product with learnable scaling vectors, following the original proposed formulation for fully-connected layers in the EFT.
+For the LL methodwhich learns a task-specific bias vector that is added to all the feature maps of convolutional layers, we learn a similar bias vector and add it to the output of all the linear layers of the ViT.

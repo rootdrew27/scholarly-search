@@ -1,0 +1,201 @@
+SECTION: Jumping through Local Minima: Quantization in the Loss Landscape of Vision Transformers
+Quantization scale and bit-width are the most important parameters when considering how to quantize a neural network. Prior work focuses on optimizing quantization scales in a global manner through gradient methods (gradient descent & Hessian analysis). Yet, when applying perturbations to quantization scales, we observe a very jagged, highly non-smooth test loss landscape. In fact, small perturbations in quantization scale can greatly affect accuracy, yielding aaccuracy boost in 4-bit quantized vision transformers (ViTs). In this regime, gradient methods break down, since they cannot reliably reach local minima.
+In our work, dubbed Evol-Q, we use evolutionary search to effectively traverse the non-smooth landscape.
+Additionally, we propose using an infoNCE loss, which not only helps combat overfitting on the small calibration dataset (images) but also makes traversing such a highly non-smooth surface easier. Evol-Q improves the top-1 accuracy of a fully quantized ViT-Base by,, andfor-bit,-bit, and-bit weight quantization levels. Extensive experiments on a variety of CNN and ViT architectures further demonstrate its robustness in extreme quantization scenarios. Our code is available at.
+
+SECTION: Introduction
+Quantization is a widespread technique for efficient neural network inference: reducing data precision frombits tobits is an effective approach to aggressively reduce model footprint and speed up computation.
+Network quantization is an extremely important tool for deploying models in cloudand edge settings, where we aim to maximize accuracy while reducing the computational burden. We consider the post-training quantization (PTQ) setting, where there is access to a small (image) calibration dataset but no access to the original training dataset. PTQ is an integral component of model deployment, when a carefully curated full-precision model is too expensive to retrain. Our work, Evol-Q, is a PTQ method for vision transformers which leverages four key observations:
+
+For example, small adjustments in a self-attention block’s scale can induce a1% change in accuracy.
+
+As shown in,, making stochastic gradient descent a poor choice for optimization. We use evolutionary search to favor nearby local minima to significantly improve accuracy ().
+
+In comparison to non-contrastive loss functions such as mean squared error, cosine similarity, and the KL divergence,. This finding inspires the use of contrastive loss to further facilitate the quantization scale search process. Contrastive losses, specifically the infoNCE loss in this work, also helps in combating overfitting on the small calibration dataset by incorporating negative examples into the loss.
+
+, since the infoNCE loss provides a smoother landscape than other losses.
+
+Combining these observations, we devise a new optimization scheme to adjust the quantization scales of low bit-width ViTs.
+Instead of using gradient descent to optimize all network parameters or estimating a noisy Hessian, we propose a series of cheap evolutionary search procedures to successively minimize the quantization error. Evol-Q injects small perturbations into the quantization scale at one layer and uses a global infoNCE loss to evaluate them. In the next section, we will show how prior work does not properly address the non-smooth ViT loss landscape.
+
+SECTION: Related Work
+When quantizing ViTs, it is natural to borrow techniques from CNN quantization and apply them to vision transformers. In the case of general quantization, one can consider either naive methods (such as MinMaxquantization) or complex methods (such as gradient descent) to find the quantization scale.
+Naive techniques include MinMax, Log2, or Percentile quantization, where we apply some statistical analysis on the values of a model tensor. While simple to implement, these methods can result in unacceptable accuracy degradation, particularly in the-bit and-bit case. This leads us to employ more advanced strategies to recoup some accuracy lost by quantization.
+
+Complex methods involve techniques such as gradient descent, Hessian analysis, or knowledge distillationto maximize the quantized model’s accuracy. In particular, many methods employ a layer-wise loss. A layer-wise loss can serve as a good proxy for a smooth global loss, yet a local loss is unlikely to resemble the ViT’s highly non-smooth global landscape. While Hessian-based methodscan utilize second order information, the ViT loss landscape resembles an “egg carton" with a high density of extremal points. This space cannot be traversed well with only first and second-order gradient information. Moreover, BRECQassumes the Hessian is positive semi-definite (PSD) which is a poor assumption for any non-smooth landscape.
+
+Some work has already achieved very good accuracy on vision transformers. PTQ-for-ViTlearns a quantization scale for each layer by using two loss functions: (1) a ranking loss for each multi-head attention module; and (2) cosine similarity for the MLP layer. The layer-wise loss may achieve good accuracy, but with the non-smooth ViT landscape, this approach may end up at a local maximum and may be very sensitive to initialization.
+PTQ4ViTalso employs a Hessian-guided metric for guided global optimization similar to BRECQ. As we mentioned before, the PSD assumption on the Hessian breaks down for our “egg carton”-shaped loss landscape.
+In contrast, PSAQ-ViT-V2uses a student-teacher MinMax game to minimize the KL divergence between the full precision and quantized models. The KL divergence is applied to kernel density estimations which are much more robust than Hessian-based or gradient-based techniques. We believe this technique can traverse the non-smooth ViT landscape, and despite being data-free, it has the best accuracy of all other methods we compare against.
+
+We apply Evol-Q, our quantization scale learning method, on top of the FQ-ViTwhich incorporates Log2 quantization and an integer Softmax function for end-to-end-bit quantization. FQ-ViTis surprisingly effective on ViTs, likely because Log2 quantization can compensate for the asymmetric distributions following the Softmax and GeLU layers.
+
+Quantization-Aware Training (QAT) has shown impressive results on vision transformers, yet these methods consider training with the entire dataset rather than an unlabeled calibration dataset.
+
+In this work, we use a global infoNCE loss as our preferred loss function for both CNN and ViT quantization. Since we have such a small calibration dataset, the infoNCE loss helps generalize to the unseen test set. We are the first work to use a infoNCE loss in this manner. Prior work has combined quantization and self-supervised learning in a joint training frameworkallowing for regularization from both the contrastive loss and a quantization loss in training. In particular, SSQLuses a joint SimSiam-loss during training to improve quantization for all bit-widths, whereas our method considers how
+the infoNCE loss, in conjunction with an evolutionary search, is used to traverse the highly non-smooth loss landscape and optimize the quantization scale for. Moreover, SSQLuses the loss as regularization and not as a proxy for the test loss . Another workapplies contrastive learning to binarized ResNet and VGG models. They apply a layer-wise infoNCE loss, showing that it achieves good results for the 2-bit loss landscape of small CNNs. While a layer-wise loss is sub-optimal, the ability for the infoNCE loss to perform well on a binary loss landscape is great motivation for our work.
+
+In summary, prior work has migrated CNN quantization techniques to ViT quantization without addressing the non-smooth ViT loss landscape. In the coming section, we present Evol-Q as an effective solution to this problem.
+
+SECTION: The Evol-Q Framework
+In the non-smooth ViT quantization landscape, first and second-order gradient methods are not effective and cannot handle the large number of local minima. In such a regime, small perturbations in quantization scale can lead to a significant boost in accuracy. We apply evolutionary search using an infoNCE loss to evaluate these perturbations, enabling Evol-Q to traverse a non-smooth surface and minimize overfitting on the calibration dataset.
+
+We begin with an overview of uniform quantization and then dive into the core components of our method: traversing perturbations using evolutionary search and evaluating them using an infoNCE loss.
+
+SECTION: Uniform, End-to-End Quantization
+We consider uniform quantization, where full precision values are mapped to a uniform range based on the quantization bit-width (b). Uniform quantization is formally defined as:
+
+whereis a full-precision vector andis the quantization scale. We can generalize this idea to a tensorand a corresponding quantization vector(each element incorresponds to a channel in channel-wise quantization). In our framework, we learn these initial quantization parameters using a fast, layer-wise framework such as FQ-ViT, and then use evolutionary search to adjust the scales of each attention block’s projection layers.
+
+SECTION: Where to Perturb?
+A ViT modelconsists ofmulti-head self-attention (MHSA) blocks stacked on top of each other. Each block applies the following transformation on a given query (Q), key (K), and value (V):
+
+where each attention headis:
+
+Our method applies end-to-end quantization meaning that for each attention block we quantize allweight tensors andintermediary activations where N is number of heads. The quantization scales of all weights and activations can be concatenated and viewed as the vector. This stacked vector is very important for understanding our algorithm – we can perturb the scales for all weights and activations simultaneously by perturbing. We perturb by sampling from a uniform ball centered around:
+
+wherecontrols the size of the uniform ball. Perturbations within a small-ball () yields a change in accuracy oftop-1 accuracy for-bit quantization. This is the same order of magnitude used to compare a variety of quantization methods, further illustrating that small perturbations matter considerably for quantization performance.
+
+We will show in sequel how evolutionary search can quickly evaluate multiple perturbations and choose which local minima to hop into.
+
+SECTION: Global Search for Quantization Scales
+As previously mentioned, we perturb the quantization scales () for one attention block at a time. If we perturb too many scales at once, we end up traversing a very high dimensional search space and the number of iterations for evolutionary search convergence increases exponentially. Of course, gradient descent is often effective for such large search spaces, but first-order methods will not work well in our non-smooth loss regime. After partitioning our search space in a block-wise manner, we find evolutionary search to perform well and achieve acceptable convergence times (on par with the runtime of other PTQ methods).
+
+We apply a small evolutionary search algorithm for each attention block (shown in), and repeat this for all blocks in the model. A block’s evolutionary search algorithm hascycles, where each cycle spawns a perturbation. The search population is initially set tocopies of the original scale, and each cycle progressively updates the population of scales. During one cycle, we choose a parent scale from the population and a perturbation (child scale) is then spawned from the uniform distribution parameterized by the parent scale (see). The child scales are then placed into the population for the next cycle. We evaluate each child scale using the fitness function defined inwhich applies a global infoNCE loss. The block-wise search algorithm is shown in. We refer the reader to evolutionary computing literaturefor more details on parent, child, and fitness function.
+
+In summary, our block-wise evolutionary search consists ofpasses over all attention blocks. For each attention block, we apply a small evolutionary algorithm forcycles, meaning that each block’s quantization scale is adjustedtimes. A full enumeration of the search settings are in.
+
+Calibration DatasetQuantized Model, Full Precision ModelNumber of passes, cyclesPopulation size, Sample size
+
+SECTION: The infoNCE Loss for Scale Search
+If we apply evolutionary search on the test loss landscape, we can quickly traverse the space of local minima and find the best quantization scale. Unfortunately, the test loss is not known to us, and the small calibration dataset may produce a loss landscape that is different from the true loss landscape. We find that the infoNCE loss can incorporate negative samples to reduce the model’s tendency to overfit on positive bias.
+
+The infoNCE loss is a common contrastive loss function used in self-supervised learning to smooth the loss landscape, prevent representation collapseand encourage discrimination between the target representation and a set of negative examples. We find the infoNCE loss to be very effective to prevent overfitting of arepresentation in the same way that it is used to develop richer representations in a self-supervised setting(see supplementary materials for details). Inspired by Chen et al., we use the infoNCEloss:
+
+whereis the prediction of the. The infoNCE loss is, whereis the corresponding prediction to, andis a prediction of other images in the same batch. In, we show how the infoNCE is evaluated in the fitness function for Evol-Q.
+
+calibration datasetquantized model, full precision model
+
+SECTION: Results
+In the following section, we present results on a variety of vision transformers and show the consistency of our method under standard-bit quantization and in extreme quantization schemes (-bit and-bit weights). We present results for end-to-end quantization, where all weights and activations are quantized.
+
+SECTION: Setup
+In our post-training (PTQ) setup, the calibration dataset israndomly sampled images from the ImageNet training set. Experiments are conducted on ImageNet (ILSVRC2012), and we evaluate top-1 accuracy for a variety of ViT model families.
+For Evol-Q, the initial quantized model (in) is generated using FQ-ViT, and our method perturbs its quantization scales to yield better performance. FQ-ViT is an end-to-end quantization framework that uses MinMaxfor weight quantization and Log2for activation quantization. We refer to FQ-ViT and our code for other quantization settings. The Evol-Q search parameters (from) are in.
+
+SECTION: 8-bit Quantization
+We compare our standard 8-bit quantization with state-of-the-art methods in. Evol-Q improves over existingquantization techniques by,, andfor DeiT-Small, DeiT-Base, and ViT-Base, respectively.
+
+We also compare with PSAQ-ViT-V2and find that it outperforms our method byfor DeiT-Tiny. However, PSAQ-ViT-V2 is not a full end-to-end quantization method since itfollowing the Softmax and GeLU layers. These activations are typically very sensitive to quantization and are often maintained at full precision. We applied Evol-Q on an end-to-end quantized model, so we are forced to quantize the post-Softmax/GeLU activations. We leave it to future work to apply our technique on top of PSAQ-ViT-V2, but expect similar improvements to what we achieved with FQ-ViT.
+
+SECTION: 4-bit Quantization
+Moving from-bit to-bit weight quantization, we see an accuracy degradation of aboutacross all models. In, Evol-Q performs similarly to what is shown for 8-bit quantization. In particular, we still see improvement for DeiT-Small, DeiT-Base, and ViT-Base, but now the top-1 accuracy improvement is,, and, respectively.
+
+SECTION: 3-bit Quantization
+We report 3-bit quantization results into show that Evol-Q extends to more extreme quantization scenarios. In particular, Evol-Q improves accuracy over FQ-ViT byfor ViT-Base andfor DeiT-Tiny.
+
+By reducing the precision fromtobits, we achieve a10X reduction in memory footprint while still maintaining a reasonable accuracy for DeiT-Base. We refer to supplementary materials for ablations on using OMSEand bias correctionfor 3W8A which dramatically improves our method’s performance.
+
+SECTION: Extending to Swin & LeViT Models
+We run our experiments on additional model families to ensure that our method is applicable to different types of attention blocks.
+Swin transformershave the same macro-architecture as DeiT and ViT models, with the exception that the Swin transformer block is a windowed attention. We see results for 4-bit Swin transformers in.
+
+Prior quantization techniques do not consider LeViT models, a family of ViTs that improve the inference speed of existing transformers. Using a longer convolutional backbone, they can achieve similar results to classic ViTs while also reducing the complexity of the transformer blocks in favor of ResNet-like stages. We include the LeViT family in our experiments to illustrate how our method can be extended beyond the standard block size. We can see 4W8A results for the LeViT model family in. Across the board, we see a significant improvement in LeViT quantization as compared to FQ-ViT, our baseline.
+
+In fairness, we have not applied any other techniques to boost LeViT’s accuracy (doing so may inflate our method’s improvement), so we leave it to future work to incorporate other quantization techniques on top of our framework.
+
+SECTION: Analysis
+In the following section, we support the three observations set forth in the introduction. First, we show how, and discuss how a variety of loss functions perform in the Evol-Q framework. Next, we visualize the layer-wise weight distributions to illustrate how small perturbations can yield a significant jump in accuracy. Finally, we report runtime and various ablations to contextualize our method in the broader space of quantization techniques. For more ablations and analysis, please refer to the supplementary materials.
+
+SECTION: The Test Loss Landscape of ViTs
+In, we show that perturbing quantization scale yields a smooth test loss landscape for ResNet-18 and a jagged, non-smooth landscape for DeiT-Tiny. This loss landscape illustrates how the test loss is related to thescale at block #10.The DeiT-Tiny loss landscape is very complex and highly non-linear, whereas the ResNet-18 landscape is comparatively smooth. Intuitively, we hypothesize that the presence of many GeLUs and Softmax functions induces in the DeiT loss landscape many more extreme points than in the ResNet loss landscape.
+
+For the smooth landscape in, the infoNCE loss is clearly optimal since it is closest to the global minimum. If we plot the MSE, Cosine (Cossim), and Fisher loss landscapes, we find that they are not as smooth as the infoNCE loss in the CNN case (see supplementary materials, Sec A). The infoNCE loss helps to provide a smoother loss with respect to the calibration dataset by incorporating negative samples to reduce bias.
+
+In the non-smooth landscape,, the global minimum is very hard to find. In fact, proximity to the global loss in this landscape is not a good indicator of loss function quality, since there are many local maxima in close proximity (with an- ball) of the global minimum. In, we provide an empirical justification that the infoNCE loss prevents overfitting and is superior to other loss functions.
+
+SECTION: Gradient Descent vs. Evolutionary Search
+In, we show how evolutionary search finds candidates close the local minima, whereas gradient descent breaks down the ViT loss landscape. We show three initial points, where gradient descent either oscillates (init 3) or does not converge to a local minima (init 1 and 2). In contrast, evolutionary search generates a candidate perturbation and steps in the direction of the best candidate. We find that evolutionary search is very good at finding the closest local minima, which is sufficient to get an accuracy boost ofin this loss landscape.
+
+In Table, we show quantitatively that gradient-based optimizers underperform in comparison to evolutionary search for the same block-wise setting as in Evol-Q. We believe that non-smoothness at the block level is what makes these gradient-based techniques ineffective.
+
+SECTION: Loss Function Choice
+We compare the infoNCE (contrastive) loss with other common loss functions in. We find mean-squared error (MSE) to be equally (if not more) effective in the initial iterations of Evol-Q. However, as the number of passes grows, MSE does not perform as well as the infoNCE loss. Both cosine similarity and the Kullback–Leibler divergence (KL) fail to improve performance as the number of iterations increases. We postulate that the poor performance of these traditional loss functions is due to overfitting to the calibration dataset. On the other hand, the infoNCE loss is naturally regularized by the negative samples in the batch, allowing for it to preserve the quantization parameters that help discriminate between classes.
+
+SECTION: Which layers contribute to non-smoothness?
+In, we visualize which layers of the self-attention mechanism yield the non-smooth loss curve. We show that learning the quantization scale for query, key, value (QKV) and projection layers is more difficult because their loss landscape is filled with local minima. We observe this property across different self-attention blocks and advocate for using ES to jump through the field of local minima.
+
+SECTION: Layer-wise Weight Distributions
+In, we compare the weight distributions of the full precision, FQ-ViT, and Evol-Q quantization schemes. Evol-Q’s quantized values are only a small adjustment of FQ-ViT’s, yet Evol-Q has aimprovement. In summary, a small adjustment in scale yields a significant boost in accuracy.
+
+This observation is consistent with results in AdaRound, where authors show how choosing the correct rounding scheme can significantly impact performance. Unlike AdaRound, our method traverses the global loss landscape (rather than a layer-wise proxy) whereas AdaRound assumes a diagonal Hessian which does not hold in the ViT landscape.
+
+We refer to Sec. F of the supplementary materials for more discussion on layer-wise distributions.
+
+SECTION: Generalization to CNNs
+Our method begins with a pre-quantized model,, and adjusts the quantization scales to improve accuracy. We only require that the model can be abstracted into blocks, which makes our method readily applicable to other types of models such as CNNs, LSTMs, and Graph Neural Networks. In, we show how Evol-Q is run on top of BRECQ to achieve state-of-the-art CNN quantization. In this case, our block is one convolutional layer andis the stacked vector of quantization scales for the one layer’s weight matrix. We find Evol-Q’s method to be suitable for CNN quantization, achieving 1-2.5% accuracy boost over BRECQ for 4-bit quantization.
+We refer to supplementary material for an explanation of using the infoNCE loss to smooth out the CNN loss landscape.
+
+SECTION: Pareto Front for 8-bit Quantized ViTs
+Evol-Q improves over existing PTQ techniques for vision transformers. In, Evol-Q is on the Pareto front in terms of both top-1 accuracy and runtime for 8-bit ViT-Base. Current ViT-specific QAT methodsdo not report 8-bit accuracy, so we do not include them here. These QAT methods are likely to reach the Pareto front, but would take much longer than existing PTQ methods.
+
+All open-source methods are run on a single Nvidia A100 GPU, but some code is not open-sourced at the time of submission. PSAQ-ViT-V2 does not report runtime, so we estimate it to beminutes based on PSAQ-ViT and the relative cost of additional steps.
+
+SECTION: Runtime
+We run our method on an Nvidia A100-PCIE-40GB Tensor Core GPU and find that all experiments take less than one hour to run. The average runtime is shown in. We use PyTorch 1.9.1, built with the CUDA 11.1 toolkit.
+
+In, we compare runtime with other ViT quantization methods and demonstrate that our method achieves superior accuracy on ViT-Base.only captures the Top-1 Accuracy of ViT-Base (or, alternatively, DeiT-base if ViT-Base is unavailable). We refer to the supplementary material for a wider discussion on how this plot changes with different models.
+
+SECTION: Conclusion
+Evol-Q achieves state-of-the-art results on ViT’s highly non-smooth loss landscape with a high density of extremal points. Prior work on ViT quantization does not address the non-smooth loss landscape, nor how small perturbations in quantization scale can affect performance. Using evolutionary search and an infoNCE loss, Evol-Q evaluates small perturbations in quantization scale, improving accuracy byfor 4-bit quantized vision transformers.
+
+SECTION: Acknowledgements
+Partial work completed during a summer internship at Arm Ltd. A special thank you to Jesse Beu for overseeing this internship project, and to Feng Liang for helpful discussion. This work was sponsored by NSF CCF Grant No. 2107085 and the UT Cockrell School of Engineering Doctoral Fellowship.
+
+SECTION: References
+SECTION: Using the infoNCE Loss
+The infoNCE loss is an effective self-supervised learning technique to learn intermediary representations, but why apply it to quantization?
+
+We find, both experimentally (in Fig. 5 of main paper) and qualitatively in, that the infoNCE loss provides better results than existing loss functions for global quantization. To perform global quantization, we try to minimize a loss between the quantized and full precision outputs given by:
+
+whereis the quantized prediction parameterized by quantization scales, andis the full precision prediction. It may seem reasonable to use the mean-squared error (MSE) or cosine similarity as a loss function in this setup.
+Unfortunately, PTQ methods only have access to a small calibration dataset, making it very easy for these loss functions to overfit to the few predictions available. The infoNCE loss combats this by using negative samples to encourage dissimilarity betweenand other predictions in the batch. We can see inthat the infoNCE loss provides a smoothing effect when compared to the MSE loss. The infoNCE loss has a flatter minima which aids in generalization to the unknown test distribution.
+
+Additionally, Hessian-based loss functions allow for second order gradient information, however, they must be estimated using some form of approximation such as the Fisher loss used in BRECQ. In, we find the Fisher estimation to be noisy, and furthermore, does not accurately represent the underlying test loss landscape. The Fisher loss is an, and is a poor approximation when the training distribution does not match the test data distribution. We find that the infoNCE loss performs much better since it does not rely on any gradient approximation, and more closely resembles the test loss. In, we can see that the infoNCE and Fisher losses share a similar minimum, but the infoNCE provides a flatter neighborhood around the minimum which is more robust to data distribution shift. As discussed above, the infoNCE loss encourages diversity of representations by encouraging dissimilarity between predictions.
+
+SECTION: Ablation: Passes vs. Cycles
+In, we ablate the number of passes,, fromto. As we can see, a majority of the accuracy improvement occurs in the firstpasses, so we choosefor all experiments above. This allows for our method to run in less than one hour. However, we note that an additional accuracy boost may be enjoyed with more passes.
+
+We also ablate the number of cycles,, to determine how many mutations should occur per block. We useeven though we seeis optimal in our ablation study. In practice, we find that the choice ofis random seed and model dependent. We find that for some runs, the best choice is simplycycle, but in others it is,or. Ultimately, we choosefor consistency across experiments.
+
+SECTION: Ablation on Calibration Set Size
+As the calibration dataset increases, we’d expect better performance for our PTQ method. However,suggests that a 512 images yields the highest performance, whereas 2,000 and 5,000 images makes performance worse than FQ-ViT (which uses 1,000 calibration images). This is likely an artifact of the way we implement contrastive loss.
+
+When we apply contrastive loss on a batch of images, the contrastive loss minimizes the distance to the corresponding full precision prediction, but maximizes the dissimilarity across all other images, regardless of the whether of not the other images are in the same class. Ideally, we want to avoid maximizing the dissimilarity within a class, so a smaller calibration dataset will minimize the likelihood of two images belonging to the same class.
+
+We use 1,000 images in this paper as in prior work, however, accuracy may be improved by using only 512 images. Alternatively, a labelled calibration set may allow the contrastive loss to ignore other images belonging to the same class.
+
+SECTION: On Variation across Random Seeds
+In, we show the performance of Evol-Q compared to the baseline method, FQ-ViT. Across twelve random seeds, ten runs improve performance over FQ-ViT, and three result in top-1 accuracy that is superior to the full precision model.
+
+The random seed dictates which images are chosen for the calibration dataset, and we attribute the poor accuracy in seeds 4 and 5 to the poor choice of calibration set. This is a limitation of PTQ methods which rely on a calibration dataset, and so we employ a contrastive loss to combat overfitting (we can only minimize it’s effect and not eliminate it).
+
+SECTION: Impact on Attention Maps
+We find that Evol-Q preserves the spatial integrity of the full precision feature maps even as quantization forces discretization of the attention mechanism. In, as quantization becomes more severe from 8-bit to 3-bit, the resolution of the feature map degrades, as is expected when only a finite number of values can be expressed in the quantized scheme. This attention map visualization is averaged over all blocks, and serves as qualitative inspection of how the quantized network’s attention mechanism is performing. All in all,provides confidence that Evol-Q’s quantized attention maps learn reasonable representations of the original full precision network.
+
+SECTION: Layer-wise Weight Distributions
+The weight distributions for ViT-Base’s projection layers are shown in. To recap, the projection layer is the final linear layer of each attention block.
+
+The beauty of Evol-Q is in its global optimization strategy – learning quantization scales with respect to a global objective allows Evol-Q to choose scales for the intermediary layers which improve quantization for other layers. FQ-ViT may approximate the full precision weight distribution well, however, a matching layer-wise distribution may not translate to overall performance gain. As explained in the main paper, a small perturbation in quantization scale can reap a huge accuracy gain. We can see that Evol-Q’s layer-wise distributions are not very different than FQ-ViT, yet Evol-Q has a 0.15% accuracy improvement over FQ-ViT for ViT-Base. In summary, we find that Evol-Q’s slight adjustment in quantization scale can greatly improve accuracy.
+
+Please refer to the last page for.
+
+SECTION: Pareto Front for 4-bit DeiT-Small
+Since most methods report 4-bit weights for DeiT-Small, we compare these methods in terms of both runtime & accuracy. Inwe illustrate tradeoff between runtime and accuracy for PTQ and QAT methods. In comparison to 8-bit ViT-Base (Fig. 7 in the main paper), this figure includes QAT results which are unavailable in the 8-bit setting. We estimate runtime for PSAQ-ViT-V2and OFQ, since they do not open-source their code, nor report runtime. Evol-Q is on the Pareto curve (note x-axis is log scale), and has the best accuracy of all PTQ methods. Still, there is a performance gap () when compared to QAT methods, illustrating that there is room to improve for PTQ methods.
+
+SECTION: Adding Bias Correction and OMSE
+OMSE quantizationand Bias Correctionare statistical techniques we can use to improve quantization performance. We apply them on the original FQ-ViT model, and then use Evol-Q to achieve state-of-the-art PTQ performance. In(last page), we can see the benefits of applying OMSE and Bias Correction techniques and how adding Evol-Q on top of these can boost performance even more.
+
+In this paper, we have shown how Evol-Q can boost performance in a variety of scenarios and does not require a cherry-picked setting. We show that Evol-Q works on top of BRECQ for CNNs, FQ-ViT for ViTs, and even works in this setting, where we boost FQ-ViT’s accuracy by adding Bias Correction and OMSE.
+
+In summary, we are confident that Evol-Q’s novel optimization method in conjunction with evaluating small scale perturbations is orthogonal to other quantization methods and can be used in a variety of scenarios to improve accuracy.
