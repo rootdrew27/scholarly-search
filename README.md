@@ -1,8 +1,8 @@
 # Scholarly Search
 ---
 
-The aim of this repository is to develop a system for improving search in research papers, through semantics.
-This project does not rely strongly on keywords and intends to utilize DL model's awareness of context and semantics.
+The aim of this repository is to develop a system for improving **search** for research papers, through semantics.
+This project does not rely strongly on keywords and intends to utilize a semantic similarity model's awareness of context and semantics.
 
 
 The process is as follows:
