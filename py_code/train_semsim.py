@@ -35,13 +35,29 @@ path_to_log = Path(r'/data/users/roota5351/my_cs426/group_5/SchSearch/scholarly-
 # should all be lower case
 
 end_of_paper_words = [
-
     'references',
 
-    'acknowledgement', 
+    'acknowledgement',
+
+    'author information',
+
+    'acknowledgment',
+
+    'future work',
 
     'appendix',
 
+    'funding',
+
+    'conflict of interest',
+
+    'copyright',
+
+    'data availability',
+
+    'acknowledgment',
+
+    'ethical approval', 
 ]
 
 
@@ -90,15 +106,12 @@ emb_lib = EmbeddingLibrary(
 
 )
 
+# remove bad papers from the emb_lib.paper_paths and emb_lib.paper_ids lists
 emb_lib.update_paper_list()
 
 # create paper chunks and Dataset
 
-
-
-paper_chunks = []
-
-
+paper_chunks = [] 
 
 for paper_path in emb_lib.paper_paths:
 
@@ -113,37 +126,45 @@ for paper_path in emb_lib.paper_paths:
         paper_chunks.append(title)
 
 
+train_split = int(len(paper_chunks) * 0.9)
 
-dataset = Dataset.from_dict({
+train_chunks = paper_chunks[:train_split]
+eval_chunks = paper_chunks[train_split:]
 
-    "anchor": paper_chunks,
 
-    "positive": paper_chunks,
+train_dict = {
+    "anchor": train_chunks,
+    "positive": train_chunks,
+}
 
-})
+eval_dict = {
+    "anchor": eval_chunks,
+    "positive": eval_chunks,
+}
+
+
+train_dataset = Dataset.from_dict(train_dict)
+eval_dataset = Dataset.from_dict(eval_dict)
 
 batch_size = 1000
 
-all_texts = np.random.shuffle([dataset[i : i + batch_size]["anchor"] for i in range(0, len(dataset), batch_size)])
-
-
+# all_texts = np.random.shuffle([dataset[i : i + batch_size]["anchor"] for i in range(0, len(dataset), batch_size)])
 
 def batch_iterator():
 
-    for i in range(0, len(dataset), batch_size):
+    for i in range(0, len(train_dataset), batch_size):
 
-        yield dataset[i : i + batch_size]["anchor"]
-
+        yield train_dataset[i : i + batch_size]["anchor"]
 
 
 model.tokenizer = model.tokenizer.train_new_from_iterator(batch_iterator(), vocab_size=50265)
 
+# split dataset
+
+
 from torch.nn.modules.dropout import Dropout
 
-
-
 def set_dropout(model, p):
-
 
     def set_d(module):
 
@@ -157,52 +178,35 @@ def set_dropout(model, p):
 
             set_d(c)
 
-
-
     for m in model.modules():
 
         set_d(m)
 
 
 
-set_dropout(model, 0.5)   
+set_dropout(model, 0.25)   
 
-train_loss = MultipleNegativesRankingLoss(model, kl_factor=0.5)
+train_loss = MultipleNegativesRankingLoss(model, kl_factor=0.1)
 
 args = SentenceTransformerTrainingArguments(
 
-    output_dir=f"training/{model_name}_1",
-
-    num_train_epochs=50,
-
+    output_dir=f"training/{model_name}_3",
+    num_train_epochs=100,
     per_device_train_batch_size=64,
-
-    #per_device_eval_batch_size=16,
-
+    per_device_eval_batch_size=32,
     warmup_ratio=0.1,
-
-    weight_decay=0.01,
-
-    fp16=True,  # Set to False if your GPU can't handle FP16
-
-    bf16=False,  # Set to True if your GPU supports BF16
-
+    weight_decay=0.0001,
     batch_sampler=BatchSamplers.NO_DUPLICATES,  # Losses using "in-batch negatives" benefit from no duplicates
 
     # Optional tracking/debugging parameters:
-
-    # eval_strategy="steps",
-
-    # eval_steps=100,
-
+    eval_strategy="steps",
+    eval_steps=100,
     save_strategy="steps",
-
     save_steps=100,
-
-    save_total_limit=2,
-
+    include_num_input_tokens_seen=True,
+    save_total_limit=5,
+    log_level='info',
     logging_steps=100,
-
     run_name=f"{model_name}",  # Used in W&B if `wandb` is installed
 
 )
@@ -213,7 +217,9 @@ trainer = SentenceTransformerTrainer(
 
     args = args,
 
-    train_dataset = dataset,
+    train_dataset = train_dataset,
+
+    eval_dataset = eval_dataset,
 
     loss = train_loss,
 
@@ -223,6 +229,6 @@ trainer = SentenceTransformerTrainer(
 
 trainer.train()
 
-path_to_new_weights = r'/data/users/roota5351/my_cs426/group_5/SchSearch/scholarly-search/weights/semsim4'
+path_to_new_weights = r'/data/users/roota5351/my_cs426/group_5/SchSearch/scholarly-search/weights/semsim5'
 
 model.save(path_to_new_weights)

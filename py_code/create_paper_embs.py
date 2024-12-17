@@ -14,8 +14,11 @@ import re
 
 from embedding_library import EmbeddingLibrary
 
+NAME = 'semsim5'
 
-PATH_TO_PAPERS_EMB = Path(r'/data/classes/2024/fall/cs426/group_5/SchSearch/scholarly-search/data/embeddings')
+PATH_TO_PAPER_EMBS = Path(r'/data/classes/2024/fall/cs426/group_5/SchSearch/scholarly-search/data/embeddings/' + f'{NAME}')
+
+PATH_TO_PAPER_EMBS.mkdir(parents=True, exist_ok=True)
 
 PATH_TO_PAPERS_TXT = Path(r'/data/classes/2024/fall/cs426/group_5/SchSearch/scholarly-search/data/paper_texts')
 
@@ -23,7 +26,7 @@ PATH_TO_LOG = Path(r'/data/classes/2024/fall/cs426/group_5/SchSearch/scholarly-s
 
 PATH_TO_LOG.mkdir(parents=True, exist_ok=True)
 
-PATH_TO_SEMSIM_WEIGHTS = r'/data/classes/2024/fall/cs426/group_5/SchSearch/scholarly-search/weights/semsim4'
+PATH_TO_SEMSIM_WEIGHTS = r'/data/classes/2024/fall/cs426/group_5/SchSearch/scholarly-search/weights/' + f'{NAME}'
 
 end_of_paper_words = [
     'references',
@@ -51,13 +54,13 @@ SemSim = SentenceTransformer(PATH_TO_SEMSIM_WEIGHTS, device='cuda')
 
 embLib = EmbeddingLibrary(
     path_to_papers=PATH_TO_PAPERS_TXT,
-    path_to_embs=PATH_TO_PAPERS_EMB,
+    path_to_embs=PATH_TO_PAPER_EMBS,
     model=SemSim,
     end_of_paper_words=end_of_paper_words,
     papers_to_skip=papers_to_skip,
     norm_embs=True,
     path_to_log=PATH_TO_LOG,
-    name="BLAH2"
+    logger=NAME,
 )  
 
 embLib.embed_papers(skip_existing=False)

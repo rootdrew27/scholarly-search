@@ -2,13 +2,16 @@ from pathlib import Path
 import numpy as np
 from sentence_transformers import SentenceTransformer, SimilarityFunction
 from sentence_transformers.models.Normalize import Normalize
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 import logging
+from logging import Logger
 import traceback
 import copy
 import re
 
 class EmbeddingLibrary():
-    def __init__(self, path_to_papers:Path, path_to_embs:Path, model:SentenceTransformer, end_of_paper_words:list[str], papers_to_skip:list[str], norm_embs:bool, name:str, path_to_log:Path, log_lvl=logging.INFO, log_encoding='utf-8'):
+    def __init__(self, path_to_papers:Path, path_to_embs:Path, model:SentenceTransformer, end_of_paper_words:list[str], papers_to_skip:list[str], norm_embs:bool, logger, path_to_log:Path=None, log_lvl=logging.INFO, log_encoding='utf-8'):
         self.path_to_papers:Path = path_to_papers
         self.path_to_embs:Path = path_to_embs
         self.model = model
@@ -19,19 +22,26 @@ class EmbeddingLibrary():
         self.paper_ids:list[str] = sorted([file.stem.replace('_content', '') for file in path_to_papers.iterdir() if file.name not in papers_to_skip])
         self.paper_paths:list[Path] = sorted([file for file in path_to_papers.iterdir() if file.name not in papers_to_skip])
         #self.path_to_clean_papers = None TODO: Implement (perhaps create a PaperLibrary class)
-        self.log_lvl:int = log_lvl
-        self.name:str = name
         self.end_of_paper_words:list[str] = end_of_paper_words
         self.end_of_paper_regex = re.compile('(' + "|".join([f'SECTION: (\d+.?)*{word}s?' for word in end_of_paper_words]).lstrip('|') + ').*', flags=re.IGNORECASE|re.DOTALL)
         self.norm_embs = norm_embs
-        self.logger = logging.getLogger(f'{self.name}_embs_{logging._levelToName[self.log_lvl]}')
-        self.path_to_log = path_to_log
-        self.logger.setLevel(self.log_lvl)
-        logging.basicConfig(
-            filename=self.path_to_log / f'{self.name}_embs_{logging._levelToName[self.log_lvl]}.log',
-            level=self.log_lvl,
-            encoding=log_encoding
-        )
+
+        if isinstance(logger, Logger):
+            self.logger = logger
+        elif isinstance(logger, str):
+            self.logger = logging.getLogger(f'{logger}_embs_{logging._levelToName[log_lvl]}')
+            self.path_to_log = path_to_log
+            self.logger.setLevel(log_lvl)
+            logging.basicConfig(
+                filename=self.path_to_log / f'{logger}_embs_{logging._levelToName[log_lvl]}.log',
+                level=log_lvl,
+                encoding=log_encoding
+            )
+        else:
+            raise Exception(f'Logger must be a logging.Logger or a str but it was a {type(logger)}')
+
+        self.tfidf_vectorizer = TfidfVectorizer()
+        self.paper_embs_tfidf = None
 
     def remove_links(self, chunk):
         chunk = re.sub(r'(\d+)?http[s]?:\/\/[^\s]+([^\.\,:; ])', r'', chunk) # remove [] citations
@@ -41,7 +51,8 @@ class EmbeddingLibrary():
     def remove_citations(self, chunk):
         chunk = re.sub(r'\[(\d+[,]?)+\]([^\w\s])', r'\2', chunk) # for when punc follow cite
         chunk = re.sub(r'\[(\d+[,]?)+\](\w+)', r' \2', chunk) # for when chars follow cite
-        chunk = re.sub(r'\(\w+ et\.? al\.\)(\w+)', r'\1', chunk)
+        chunk = re.sub(r'\[(\d+[,]?)+\]\s', r'', chunk) # for when nothing follows the cite
+        chunk = re.sub(r'\(\w+ et\.? al\.\)(\w+)', r'\1', chunk) # for non-IEEE cites
         return chunk
 
     def preprocess_paper(self, paper: str):
@@ -67,16 +78,11 @@ class EmbeddingLibrary():
             n_secs = len(re.findall(r'SECTION:', paper))
             paper_lower = paper.lower()
             n_important_secs = len(re.findall(r'section: [\d\.]*[introduction|methodology|methods|conclusions|conclusion|results|experimental results and analysis|experimental results]', paper_lower))
-           
-            self.logger.info(f'n_secs = {n_secs}, n_important_secs = {n_important_secs}, has title = {has_title}')
-     
+            
             good_paper = True if n_secs > 4 and n_important_secs > 2 and has_title else False
             if not good_paper:
-                self.logger.info('Starting removal')
-                self.logger.info(f'Old lenght of paper_ids = {len(self.paper_ids)}')
                 self.paper_paths.remove(file)
                 self.paper_ids.remove(file.stem.replace('_content', ''))
-                self.logger.info(f'New Length of paper_ids = {len(self.paper_ids)}')
         except Exception as ex:
             print('Exception caught in is_paper_good')
             raise ex
@@ -100,11 +106,22 @@ class EmbeddingLibrary():
             self.paper_embs = all_embs
         return
 
-    def prep_papers(self):
-        for file in self.paper_paths:
-                with open(file, 'r', encoding='utf-8') as f:
-                    paper = f.read()
-                    if not self.is_paper_good(paper, file): continue
+    def embed_papers_tfidf(self):
+
+        # collect paper strings and fit_transform
+        papers = []
+        for paper_path in self.paper_paths:
+            with open(paper_path, 'r', encoding='utf-8') as f:
+                title, chunks = self.preprocess_paper(f.read())
+                p_text = title + " " + " ".join(chunks)
+                papers.append(p_text)
+        self.paper_embs_tfidf = self.tfidf_vectorizer.fit_transform(papers)
+
+    def search_papers_tfidf(self, prompt:str, n_results=5):
+        prompt_emb = self.tfidf_vectorizer.transform([prompt])
+        scores = cosine_similarity(prompt_emb, self.paper_embs_tfidf)
+        top_idxs = np.argsort(scores[0]).tolist()[-n_results:]
+        return [self.paper_ids[idx] for idx in top_idxs]
 
 
     def embed_papers(self, skip_existing:bool):
@@ -160,23 +177,26 @@ class EmbeddingLibrary():
         response = re.sub(self.end_of_paper_regex, r'', response)
         response_secs = re.split(r'SECTION:.*\n', response)
         response_chunks = [
-            self.remove_citations(self.remove_links(chunk)).strip(' ') 
+            re.sub(r'[\d\*\#]+', r'', self.remove_citations(self.remove_links(chunk)).strip(' '))
             for response_sec in response_secs
             for chunk in re.split(r'\n', response_sec.strip(' \n'))
             if chunk != ''
         ] 
         return response_chunks
 
-    def search_papers(self, prompt:str, response:str, n_results=5, threshold=0.75):
+    def search_papers(self, prompt:str, response:str, n_results=5, threshold=0.25):
         assert self.paper_embs is not None, print("self.paper_embs must be set to use this function!")
         r_secs = self.preprocess_llm_response(prompt, response)
-        r_emb = self.model.encode(r_secs, normalize_embeddings=self.norm_embs).mean(axis=0).to(torch.float32)
-        scores = self.model.similarity(r_emb, self.paper_embs)
-        good_scores = scores > threshold
-        top_n_idxs:list = np.argsort(good_scores).tolist()[0][-n_results:]
+        self.logger.info(f'The preprocessed LLM response = {r_secs}\n')
+        r_emb = self.model.encode(r_secs, normalize_embeddings=self.norm_embs).mean(axis=0).astype(np.float32)
+        scores = self.model.similarity(r_emb, self.paper_embs.astype(np.float32))
+        scores[scores < threshold] = 0.0
+        top_n_idxs:list = np.argsort(scores).tolist()[0][-n_results:]
+        top_scores = np.sort(scores[0]).tolist()[-n_results:]
+        top_scores.reverse()
         top_n_idxs.reverse()
-        top_paper_ids = [self.paper_ids[idx] for idx in top_n_idxs]
-        return top_paper_ids
+        top_paper_ids = [self.paper_ids[idx] for idx in top_n_idxs if scores[0, idx] != 0.0]
+        return top_paper_ids, top_scores
 
      
 # OLD WORK

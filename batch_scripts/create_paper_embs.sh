@@ -6,9 +6,9 @@
 
 #SBATCH --job-name="Create paper embs"     # What is your job called?
 
-#SBATCH --output=output/create_paper_embs.txt     # Output file - Use %j to inject job id, like output-%j.txt
+#SBATCH --output=output/create_paper_embs_2.txt     # Output file - Use %j to inject job id, like output-%j.txt
 
-#SBATCH --error=error/create_paper_embs.txt       # Error file - Use %j to inject job id, like error-%j.txt
+#SBATCH --error=error/create_paper_embs_2.txt       # Error file - Use %j to inject job id, like error-%j.txt
 
 #SBATCH --partition=GPU        # Which group of nodes do you want to use? Use "GPU" for graphics card support
 

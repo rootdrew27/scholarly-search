@@ -8,11 +8,11 @@
 
 # -- Job Specific -- #
 
-#SBATCH --job-name="dload_llama31_70B_weights"     # What is your job called?
+#SBATCH --job-name="dload_llama33_70B_weights"     # What is your job called?
 
-#SBATCH --output=output/dload_llama31.txt     # Output file - Use %j to inject job id, like output-%j.txt
+#SBATCH --output=output/dload_llama33.txt     # Output file - Use %j to inject job id, like output-%j.txt
 
-#SBATCH --error=error/dload_llama31.txt       # Error file - Use %j to inject job id, like error-%j.txt
+#SBATCH --error=error/dload_llama33.txt       # Error file - Use %j to inject job id, like error-%j.txt
 
 
 
@@ -24,9 +24,9 @@
 
 # -- Resource Requirements -- #
 
-#SBATCH --mem=10                # How much memory do you need?
+#SBATCH --mem=24               # How much memory do you need?
 
-#SBATCH --ntasks-per-node=4     # How many CPU cores do you want to use per node (max 64)?
+#SBATCH --ntasks-per-node=12     # How many CPU cores do you want to use per node (max 64)?
 
 #SBATCH --nodes=1               # How many nodes do you need to use at once?
 
@@ -44,4 +44,4 @@
 
 # module load python-libs/3 # Load the Python library / software we want to use
 
-python3.9 ./py_scripts/dload_llama_weights.py
+python3.9 ./py_code/dload_llama_weights.py
